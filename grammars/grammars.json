@@ -193,6 +193,11 @@
     "src.extra": []
   },
   {
+    "name": "gitattributes",
+    "composite": false,
+    "src.extra": []
+  },
+  {
     "name": "gitcommit",
     "composite": false,
     "src.extra": [
@@ -399,16 +404,6 @@
     "src.extra": [
       "src/scanner.c"
     ]
-  },
-  {
-    "name": "ocaml",
-    "composite": true,
-    "sub.paths": [
-      "grammars/interface",
-      "grammars/ocaml",
-      "grammars/type"
-    ],
-    "src.extra": []
   },
   {
     "name": "org",
