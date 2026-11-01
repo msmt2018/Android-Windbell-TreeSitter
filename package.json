@@ -1,0 +1,7 @@
+{
+  "name": "android-windChime-tree-sitter-root",
+  "private": true,
+  "workspaces": [
+    "grammars/*"
+  ]
+}

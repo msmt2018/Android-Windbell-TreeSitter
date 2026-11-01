@@ -64,8 +64,14 @@ jobs:
       - name: Install dependencies
         run: $ATS_SUDO $ATS_APT_UPDATE && $ATS_SUDO $ATS_APT_UPGRADE && $ATS_SUDO $ATS_APT_INSTALL $ATS_APT_DEPS
       - name: Install Node packages
-        run: |
-          cd grammars/cpp && npm install && cd -
+        run: npm install --legacy-peer-deps
+          # 1. 寻找 grammars 目录下所有包含 package.json 的子目录
+          # 2. 自动进入每个目录执行 npm install
+          # find grammars -maxdepth 2 -name "package.json" | while read -r config_path; do
+            # dir_path=$(dirname "$config_path")
+            # echo "📦 正在为子模块安装依赖: $dir_path"
+            # cd "$dir_path" && npm install && cd - > /dev/null
+          # done
       - name: Restore cache
         uses: actions/cache@v4
         with:

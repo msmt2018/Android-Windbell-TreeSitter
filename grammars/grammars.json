@@ -586,14 +586,14 @@
     "entry": "tree_sitter_query",
     "src.extra": []
   },
-  {
-    "name": "r2cmd",
-    "composite": false,
-    "entry": "tree_sitter_r2cmd",
-    "src.extra": [
-      "src/scanner.c"
-    ]
-  },
+  // {
+    // "name": "r2cmd",
+    // "composite": false,
+    // "entry": "tree_sitter_r2cmd",
+    // "src.extra": [
+      // "src/scanner.c"
+    // ]
+  // },
   {
     "name": "regex",
     "composite": true,
@@ -625,14 +625,14 @@
     "entry": "tree_sitter_requirements",
     "src.extra": []
   },
-  {
-    "name": "ron",
-    "composite": false,
-    "entry": "tree_sitter_ron",
-    "src.extra": [
-      "src/scanner.c"
-    ]
-  },
+  // {
+    // "name": "ron",
+    // "composite": false,
+    // "entry": "tree_sitter_ron",
+    // "src.extra": [
+      // "src/scanner.c"
+    // ]
+  // },
   {
     "name": "rst",
     "composite": false,
