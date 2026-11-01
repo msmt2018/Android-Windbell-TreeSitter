@@ -27,6 +27,7 @@ import javax.lang.model.element.TypeElement
 
 /**
  * @author Akash Yadav
+ * @author android_zero <github.com/msmt2018> [update] : Fixed header overwriting bug for composite multi-inner-classes.
  */
 object NativeHeaderGenerator {
 
@@ -44,6 +45,8 @@ object NativeHeaderGenerator {
 
     val trees = task.parse()
     task.analyze()
+
+    outputDirectory.mkdirs()
 
     trees.forEach { cu ->
       val visitor = object : TreePathScanner<Unit, Unit>() {
@@ -66,6 +69,16 @@ object NativeHeaderGenerator {
       }
 
       visitor.scan(cu, Unit)
+    }
+
+    // 按头文件名称分组聚合，彻底杜绝多内部类互相覆盖的 Bug！
+    val grouped = results.groupBy { it.headerFilename }
+    grouped.forEach { (filename, headerResults) ->
+      if (filename.isNotEmpty()) {
+        val headerFile = File(outputDirectory, filename)
+        val combinedContent = headerResults.joinToString("\n\n") { it.headerContents }
+        headerFile.writeText(combinedContent)
+      }
     }
 
     return results
@@ -95,16 +108,7 @@ object NativeHeaderGenerator {
     val fileName = annotation.elementValues!![valueFunc]!!.value.toString()
     val result = writer.generate(type)
 
-    if (outputDirectory.exists()) {
-      outputDirectory.delete()
-    }
-
-    outputDirectory.mkdirs()
-
     val headerFilename = "ts_$fileName.h"
-    val header = File(outputDirectory, headerFilename)
-    header.writeText(result.headerContents)
-
     result.headerFilename = headerFilename
     results.add(result)
   }

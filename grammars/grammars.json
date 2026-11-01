@@ -11,19 +11,19 @@
     "entry": "tree_sitter_arm64",
     "src.extra": []
   },
-  // {
-    // "name": "asciidoc",
-    // "composite": true,
-    // "sub.paths": [
-      // "tree-sitter-asciidoc",
-      // "tree-sitter-asciidoc_inline"
-    // ],
-    // "sub.entries": [
-      // "tree_sitter_asciidoc",
-      // "tree_sitter_asciidoc_inline"
-    // ],
-    // "src.extra": []
-  // },
+  {
+    "name": "asciidoc",
+    "composite": true,
+    "sub.paths": [
+      "tree-sitter-asciidoc",
+      "tree-sitter-asciidoc_inline"
+    ],
+    "sub.entries": [
+      "tree_sitter_asciidoc",
+      "tree_sitter_asciidoc_inline"
+    ],
+    "src.extra": []
+  },
   {
     "name": "asm",
     "composite": false,
@@ -143,17 +143,17 @@
       "src/scanner.c"
     ]
   },
-  {
-    "name": "dart",
-    "composite": true,
-    "sub.paths": [
-      "tree_sitter/tree-sitter/lib"
-    ],
-    "sub.entries": [
-      "tree_sitter_lib"
-    ],
-    "src.extra": []
-  },
+  // {
+    // "name": "dart",
+    // "composite": true,
+    // "sub.paths": [
+      // "tree_sitter/tree-sitter/lib"
+    // ],
+    // "sub.entries": [
+      // "tree_sitter_lib"
+    // ],
+    // "src.extra": []
+  // },
   {
     "name": "dhall",
     "composite": false,
@@ -558,12 +558,12 @@
     "entry": "tree_sitter_proto",
     "src.extra": []
   },
-  {
-    "name": "protobuf",
-    "composite": false,
-    "entry": "tree_sitter_proto",
-    "src.extra": []
-  },
+  // {
+    // "name": "protobuf",
+    // "composite": false,
+    // "entry": "tree_sitter_proto",
+    // "src.extra": []
+  // },
   {
     "name": "pug",
     "composite": false,

@@ -150,7 +150,7 @@
 	url = https://github.com/msmt2018/Tree-Sitter-smali
 [submodule "grammars/dart"]
 	path = grammars/dart
-	url = https://github.com/UserNobody14/tree-sitter-dart
+	url = https://github.com/WillBooster/tree-sitter-dart
 [submodule "grammars/asm"]
 	path = grammars/asm
 	url = https://github.com/RubixDev/tree-sitter-asm

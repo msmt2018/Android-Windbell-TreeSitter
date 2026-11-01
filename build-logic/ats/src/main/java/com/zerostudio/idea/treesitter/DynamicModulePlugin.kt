@@ -29,7 +29,7 @@ import java.io.FileNotFoundException
  * Dynamically creates and adds the grammar project modules to the build.
  *
  * @author Akash Yadav
- * @author android_zero <github.com/msmt2018> [update] : On October 31, 2026, upgraded to support precise abstract C-entries mapping and advanced binary size/performance optimizations.
+ * @author android_zero <github.com/msmt2018> [update] : On October 31, 2026, fixed C++ JNI function naming collisions and aligned with combined headers.
  */
 @Suppress("unused")
 class DynamicModulePlugin : Plugin<Settings> {
@@ -113,12 +113,12 @@ static jint JNI_VERSION = JNI_VERSION_10;
 
 extern "C" TSLanguage *${cEntry}();
 
-static jlong TSLanguage${capitalizedName()}_getInstance(JNIEnv *env, jclass clazz) {
+static jlong TSLanguage${capitalizedName()}_Native_getInstance_impl(JNIEnv *env, jclass clazz) {
     return (jlong) ${cEntry}();
 }
 
 void TSLanguage${capitalizedName()}_Native__SetJniMethods(JNINativeMethod *methods, int count) {
-  SET_JNI_METHOD(methods, TSLanguage${capitalizedName()}_Native_getInstance, TSLanguage${capitalizedName()}_getInstance);
+  SET_JNI_METHOD(methods, TSLanguage${capitalizedName()}_Native_getInstance, TSLanguage${capitalizedName()}_Native_getInstance_impl);
 }
 
 JNIEXPORT jint JNI_OnLoad(JavaVM *vm, void *reserved) {
@@ -136,7 +136,6 @@ JNIEXPORT jint JNI_OnLoad(JavaVM *vm, void *reserved) {
     """.trimIndent()
   }
 
-  // 1. 严格对齐多解析器下每个子类期望的外部 C 符号声明
   val subInits = subEntries.indices.joinToString("\n") { i ->
     val cEntry = if (i < subEntries.size) subEntries[i] else {
       val fallbackSub = subPaths[i].substringAfterLast('/')
@@ -145,23 +144,23 @@ JNIEXPORT jint JNI_OnLoad(JavaVM *vm, void *reserved) {
     """extern "C" TSLanguage *$cEntry();"""
   }
 
-  // 2. 严格对齐 Java 生成的嵌套类名称（形如 TSLanguageAsciidoc_AsciidocNative），彻底消除 __ARR_IDX 找不到的编译错误
+  // 为内部类生成独立的实现函数，加上 _impl 后缀，彻底解决与宏/变量名冲突问题
   val methodRegistrations = subPaths.indices.joinToString("\n\n") { i ->
     val path = subPaths[i]
     val cEntry = if (i < subEntries.size) subEntries[i] else {
       val fallbackSub = path.substringAfterLast('/')
       "tree_sitter_${fallbackSub.replace('-', '_')}"
     }
-    val subName = path.substringAfterLast('/')
-    val capSubName = subName.split(Regex("[-_]")).joinToString("") { it.replaceFirstChar { c -> c.titlecaseChar() } }
+    val subFolderName = path.substringAfterLast('/')
+    val capSubName = subFolderName.split(Regex("[-_]")).joinToString("") { it.replaceFirstChar { c -> c.titlecaseChar() } }
     
     """
-static jlong TSLanguage${capitalizedName()}_${capSubName}Native_getInstance(JNIEnv *env, jclass clazz) {
+static jlong TSLanguage${capitalizedName()}_TreeSitter${capSubName}Native_getInstance_impl(JNIEnv *env, jclass clazz) {
     return (jlong) $cEntry();
 }
 
-void TSLanguage${capitalizedName()}_${capSubName}Native__SetJniMethods(JNINativeMethod *methods, int count) {
-  SET_JNI_METHOD(methods, TSLanguage${capitalizedName()}_${capSubName}Native_getInstance, TSLanguage${capitalizedName()}_${capSubName}Native_getInstance);
+void TSLanguage${capitalizedName()}_TreeSitter${capSubName}Native__SetJniMethods(JNINativeMethod *methods, int count) {
+  SET_JNI_METHOD(methods, TSLanguage${capitalizedName()}_TreeSitter${capSubName}Native_getInstance, TSLanguage${capitalizedName()}_TreeSitter${capSubName}Native_getInstance_impl);
 }
     """.trimIndent()
   }
@@ -221,7 +220,6 @@ project("tree-sitter-$name")
 set(PROJECT_DIR ${rootDir.absolutePath})
 include(${rootDir.absolutePath}/cmake/common-config.cmake)
 
-# Performance & Size Optimization Flags (Max O3, LTO, Symbol Stripping & Hiding)
 set(CMAKE_C_FLAGS "${'$'}{CMAKE_C_FLAGS} -O3 -flto -fvisibility=hidden")
 set(CMAKE_CXX_FLAGS "${'$'}{CMAKE_CXX_FLAGS} -O3 -flto -fvisibility=hidden")
 set(CMAKE_SHARED_LINKER_FLAGS "${'$'}{CMAKE_SHARED_LINKER_FLAGS} -Wl,--gc-sections -s")
@@ -240,7 +238,6 @@ endif()
     """.trimIndent()
   }
 
-  // Composite multi-parser CMake configuration with aggressive optimizations
   val sourceFiles = mutableListOf<String>()
   val includeDirs = mutableListOf<String>()
 
@@ -273,7 +270,6 @@ project("tree-sitter-$name")
 set(PROJECT_DIR ${rootDir.absolutePath})
 include(${rootDir.absolutePath}/cmake/common-config.cmake)
 
-# Performance & Size Optimization Flags for Composite Parsers
 set(CMAKE_C_FLAGS "${'$'}{CMAKE_C_FLAGS} -O3 -flto -fvisibility=hidden")
 set(CMAKE_CXX_FLAGS "${'$'}{CMAKE_CXX_FLAGS} -O3 -flto -fvisibility=hidden")
 set(CMAKE_SHARED_LINKER_FLAGS "${'$'}{CMAKE_SHARED_LINKER_FLAGS} -Wl,--gc-sections -s")
@@ -302,12 +298,6 @@ import com.zerostudio.idea.treesitter.annotations.GenerateNativeHeaders;
 import com.zerostudio.idea.treesitter.TSLanguage;
 import com.zerostudio.idea.treesitter.TSLanguageCache;
 
-/**
- * Tree Sitter for ${capitalizedName()}.
- *
- * @author Akash Yadav
- * @author android_zero <github.com/msmt2018>
- */
 public final class TSLanguage${capitalizedName()} {
 
   static {
@@ -342,12 +332,10 @@ public final class TSLanguage${capitalizedName()} {
     """.trimIndent()
   }
 
-  // 复合多解析器：自动选取第一个子解析器作为统一默认主入口（例如 Asciidoc），对外完美支持单实例调用
   val primaryPath = subPaths.firstOrNull() ?: ""
   val primarySubName = primaryPath.substringAfterLast('/')
   val primaryCapName = primarySubName.split(Regex("[-_]")).joinToString("") { it.replaceFirstChar { c -> c.titlecaseChar() } }
 
-  // 复合多解析器 Java 绑定实现：同时包含独立子实例访问以及统一聚合入口
   val innerClasses = subPaths.indices.joinToString("\n\n") { i ->
     val path = subPaths[i]
     val subName = path.substringAfterLast('/')
@@ -360,13 +348,13 @@ public final class TSLanguage${capitalizedName()} {
       return language;
     }
 
-    language = TSLanguage.create("$cacheKey", ${capSubName}Native.getInstance());
+    language = TSLanguage.create("$cacheKey", TreeSitter${capSubName}Native.getInstance());
     TSLanguageCache.cache("$cacheKey", language);
     return language;
   }
 
   @GenerateNativeHeaders(fileName = "$name")
-  public static class ${capSubName}Native {
+  public static class TreeSitter${capSubName}Native {
     public static native long getInstance();
   }
     """.trimIndent()
@@ -383,8 +371,6 @@ import com.zerostudio.idea.treesitter.TSLanguageCache;
 
 /**
  * Composite Tree Sitter for ${capitalizedName()}.
- * Optimized with a unified primary instance and sub-parsers support
- * for high-performance hybrid rendering and incremental highlighting in AndroidIDE.
  *
  * @author android_zero <github.com/msmt2018>
  */
@@ -398,18 +384,10 @@ public final class TSLanguage${capitalizedName()} {
     throw new UnsupportedOperationException();
   }
 
-  /**
-   * 获取统一的主语言实例。
-   * 对外屏蔽底层多解析器细节，让 AndroidIDE 高亮渲染器可以直接将该复合模块当作标准单语言使用。
-   */
   public static TSLanguage getInstance() {
     return get${primaryCapName}Instance();
   }
 
-  /**
-   * 预加载并缓存所有底层复合子语言（如主语言及内联注入语言），
-   * 确保在一套 scm / injections.scm 渲染时能够全量就绪。
-   */
   public static void preloadAll() {
     ${subPaths.joinToString("\n    ") { p ->
         val sName = p.substringAfterLast('/')
