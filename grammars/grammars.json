@@ -5,11 +5,42 @@
     "src.extra": []
   },
   {
+    "name": "arm64",
+    "composite": false,
+    "src.extra": []
+  },
+  {
+    "name": "asciidoc",
+    "composite": true,
+    "sub.paths": [
+      "tree-sitter-asciidoc",
+      "tree-sitter-asciidoc_inline"
+    ],
+    "src.extra": []
+  },
+  {
+    "name": "asm",
+    "composite": false,
+    "src.extra": []
+  },
+  {
+    "name": "astro",
+    "composite": false,
+    "src.extra": [
+      "src/scanner.c"
+    ]
+  },
+  {
     "name": "bash",
     "composite": false,
     "src.extra": [
       "src/scanner.c"
     ]
+  },
+  {
+    "name": "bibtex",
+    "composite": false,
+    "src.extra": []
   },
   {
     "name": "c",
@@ -36,6 +67,13 @@
     ]
   },
   {
+    "name": "cobol",
+    "composite": false,
+    "src.extra": [
+      "src/scanner.c"
+    ]
+  },
+  {
     "name": "containerfile",
     "composite": false,
     "src.extra": [
@@ -50,6 +88,13 @@
     ]
   },
   {
+    "name": "crystal",
+    "composite": false,
+    "src.extra": [
+      "src/scanner.c"
+    ]
+  },
+  {
     "name": "css",
     "composite": false,
     "src.extra": [
@@ -57,7 +102,32 @@
     ]
   },
   {
+    "name": "csv",
+    "composite": true,
+    "sub.paths": [
+      "csv",
+      "psv",
+      "tsv"
+    ],
+    "src.extra": []
+  },
+  {
+    "name": "d",
+    "composite": false,
+    "src.extra": [
+      "src/scanner.c"
+    ]
+  },
+  {
     "name": "dart",
+    "composite": true,
+    "sub.paths": [
+      "tree_sitter/tree-sitter/lib"
+    ],
+    "src.extra": []
+  },
+  {
+    "name": "dhall",
     "composite": false,
     "src.extra": [
       "src/scanner.c"
@@ -67,6 +137,13 @@
     "name": "diff",
     "composite": false,
     "src.extra": []
+  },
+  {
+    "name": "disassembly",
+    "composite": false,
+    "src.extra": [
+      "src/scanner.c"
+    ]
   },
   {
     "name": "dockerfile",
@@ -90,9 +167,56 @@
     ]
   },
   {
+    "name": "erlang",
+    "composite": false,
+    "src.extra": [
+      "src/scanner.c"
+    ]
+  },
+  {
+    "name": "fortran",
+    "composite": false,
+    "src.extra": [
+      "src/scanner.c"
+    ]
+  },
+  {
+    "name": "fsharp",
+    "composite": false,
+    "src.extra": [
+      "src/scanner.c"
+    ]
+  },
+  {
+    "name": "git_rebase",
+    "composite": false,
+    "src.extra": []
+  },
+  {
+    "name": "gitcommit",
+    "composite": false,
+    "src.extra": [
+      "src/scanner.c"
+    ]
+  },
+  {
+    "name": "gitignore",
+    "composite": false,
+    "src.extra": [
+      "src/scanner.c"
+    ]
+  },
+  {
     "name": "go",
     "composite": false,
     "src.extra": []
+  },
+  {
+    "name": "godot_gdb_tree_sitter",
+    "composite": false,
+    "src.extra": [
+      "src/scanner.c"
+    ]
   },
   {
     "name": "gomod",
@@ -100,7 +224,19 @@
     "src.extra": []
   },
   {
+    "name": "graphql",
+    "composite": false,
+    "src.extra": []
+  },
+  {
     "name": "groovy",
+    "composite": false,
+    "src.extra": [
+      "src/scanner.c"
+    ]
+  },
+  {
+    "name": "handlebars",
     "composite": false,
     "src.extra": [
       "src/scanner.c"
@@ -122,11 +258,21 @@
     "src.extra": []
   },
   {
+    "name": "heex",
+    "composite": false,
+    "src.extra": []
+  },
+  {
     "name": "html",
     "composite": false,
     "src.extra": [
       "src/scanner.c"
     ]
+  },
+  {
+    "name": "ini",
+    "composite": false,
+    "src.extra": []
   },
   {
     "name": "irules",
@@ -148,6 +294,11 @@
     ]
   },
   {
+    "name": "jinja2",
+    "composite": false,
+    "src.extra": []
+  },
+  {
     "name": "jsdoc",
     "composite": false,
     "src.extra": [
@@ -161,6 +312,13 @@
   },
   {
     "name": "julia",
+    "composite": false,
+    "src.extra": [
+      "src/scanner.c"
+    ]
+  },
+  {
+    "name": "kdl",
     "composite": false,
     "src.extra": [
       "src/scanner.c"
@@ -181,6 +339,16 @@
     ]
   },
   {
+    "name": "llvm",
+    "composite": false,
+    "src.extra": []
+  },
+  {
+    "name": "llvm_mir",
+    "composite": false,
+    "src.extra": []
+  },
+  {
     "name": "log",
     "composite": false,
     "src.extra": []
@@ -193,6 +361,11 @@
     ]
   },
   {
+    "name": "make",
+    "composite": false,
+    "src.extra": []
+  },
+  {
     "name": "markdwon",
     "composite": true,
     "sub.paths": [
@@ -200,6 +373,32 @@
       "tree-sitter-markdown-inline"
     ],
     "src.extra": []
+  },
+  {
+    "name": "mermaid",
+    "composite": false,
+    "src.extra": []
+  },
+  {
+    "name": "nginx",
+    "composite": false,
+    "src.extra": [
+      "src/scanner.c"
+    ]
+  },
+  {
+    "name": "nim",
+    "composite": false,
+    "src.extra": [
+      "src/scanner.c"
+    ]
+  },
+  {
+    "name": "nix",
+    "composite": false,
+    "src.extra": [
+      "src/scanner.c"
+    ]
   },
   {
     "name": "ocaml",
@@ -210,6 +409,13 @@
       "grammars/type"
     ],
     "src.extra": []
+  },
+  {
+    "name": "org",
+    "composite": false,
+    "src.extra": [
+      "src/scanner.c"
+    ]
   },
   {
     "name": "perl",
@@ -235,9 +441,36 @@
     ]
   },
   {
+    "name": "printf",
+    "composite": false,
+    "src.extra": []
+  },
+  {
+    "name": "prisma",
+    "composite": false,
+    "src.extra": []
+  },
+  {
     "name": "properties",
     "composite": false,
     "src.extra": []
+  },
+  {
+    "name": "proto",
+    "composite": false,
+    "src.extra": []
+  },
+  {
+    "name": "protobuf",
+    "composite": false,
+    "src.extra": []
+  },
+  {
+    "name": "pug",
+    "composite": false,
+    "src.extra": [
+      "src/scanner.c"
+    ]
   },
   {
     "name": "python",
@@ -252,7 +485,55 @@
     "src.extra": []
   },
   {
+    "name": "r2cmd",
+    "composite": false,
+    "src.extra": [
+      "src/scanner.c"
+    ]
+  },
+  {
+    "name": "regex",
+    "composite": true,
+    "sub.paths": [
+      "ecmascript/ecmaregex",
+      "ecmascript/ecmaregex_u",
+      "ecmascript/ecmaregex_v",
+      "pcre2",
+      "posix/bre",
+      "posix/ere",
+      "python/pyregex",
+      "python/pyregex_verbose"
+    ],
+    "src.extra": []
+  },
+  {
+    "name": "requirements",
+    "composite": false,
+    "src.extra": []
+  },
+  {
+    "name": "ron",
+    "composite": false,
+    "src.extra": [
+      "src/scanner.c"
+    ]
+  },
+  {
+    "name": "rst",
+    "composite": false,
+    "src.extra": [
+      "src/scanner.c"
+    ]
+  },
+  {
     "name": "ruby",
+    "composite": false,
+    "src.extra": [
+      "src/scanner.c"
+    ]
+  },
+  {
+    "name": "rust",
     "composite": false,
     "src.extra": [
       "src/scanner.c"
@@ -292,6 +573,13 @@
     "src.extra": []
   },
   {
+    "name": "svelte",
+    "composite": false,
+    "src.extra": [
+      "src/scanner.c"
+    ]
+  },
+  {
     "name": "swift",
     "composite": false,
     "src.extra": [
@@ -299,11 +587,21 @@
     ]
   },
   {
+    "name": "thrift",
+    "composite": false,
+    "src.extra": []
+  },
+  {
     "name": "toml",
     "composite": false,
     "src.extra": [
       "src/scanner.c"
     ]
+  },
+  {
+    "name": "twig",
+    "composite": false,
+    "src.extra": []
   },
   {
     "name": "typescript",
@@ -315,9 +613,21 @@
     "src.extra": []
   },
   {
+    "name": "v",
+    "composite": false,
+    "src.extra": []
+  },
+  {
     "name": "verilog",
     "composite": false,
     "src.extra": []
+  },
+  {
+    "name": "vue",
+    "composite": false,
+    "src.extra": [
+      "src/scanner.c"
+    ]
   },
   {
     "name": "xml",
@@ -332,8 +642,20 @@
     ]
   },
   {
+    "name": "yara",
+    "composite": false,
+    "src.extra": []
+  },
+  {
     "name": "zig",
     "composite": false,
     "src.extra": []
+  },
+  {
+    "name": "zsh",
+    "composite": false,
+    "src.extra": [
+      "src/scanner.c"
+    ]
   }
 ]

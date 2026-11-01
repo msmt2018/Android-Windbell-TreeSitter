@@ -39,6 +39,18 @@ jobs:
         with:
           fetch-depth: 0
           submodules: true
+          
+      # - name: Sync and Update Submodules
+        # run: |
+          # # 必须先进行多线程深度初始化，在本地把所有嵌套子模块的“坑位”和追踪关系建立好
+          # git submodule update --init --recursive --progress --recommend-shallow --jobs 15
+          
+          # #  建立好追踪关系后，再同步 URL 配置
+          # git submodule sync --recursive
+          
+          # # 最后强行将所有已初始化的子模块更新到远程最新状态
+          # git submodule update --remote --recursive --force
+
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
