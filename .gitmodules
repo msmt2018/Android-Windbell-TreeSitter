@@ -49,9 +49,6 @@
 [submodule "grammars/scss"]
 	path = grammars/scss
 	url = https://github.com/simeonoff/tree-sitter-scss
-[submodule "grammars/css"]
-	path = grammars/css
-	url = https://github.com/WillBooster/tree-sitter-css
 [submodule "grammars/dockerfile"]
 	path = grammars/dockerfile
 	url = https://github.com/camdencheek/tree-sitter-dockerfile
@@ -169,12 +166,6 @@
 [submodule "grammars/yara"]
 	path = grammars/yara
 	url = https://github.com/pop-ecx/tree-sitter-yara
-[submodule "grammars/godot-gdb-tree-sitter"]
-	path = grammars/godot-gdb-tree-sitter
-	url = https://github.com/Shane-Gadsby/godot-gdb-tree-sitter
-[submodule "grammars/godot_gdb_tree_sitter"]
-	path = grammars/godot_gdb_tree_sitter
-	url = https://github.com/Shane-Gadsby/godot-gdb-tree-sitter
 [submodule "grammars/radare2"]
 	path = grammars/radare2
 	url = https://github.com/ret2libc/radare2-shell-parser
@@ -313,3 +304,6 @@
 [submodule "grammars/gitattributes"]
 	path = grammars/gitattributes
 	url = https://github.com/tree-sitter-grammars/tree-sitter-gitattributes
+[submodule "grammars/gdb"]
+	path = grammars/gdb
+	url = https://github.com/Shane-Gadsby/godot-gdb-tree-sitter

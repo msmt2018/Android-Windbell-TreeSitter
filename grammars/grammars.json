@@ -2,30 +2,38 @@
   {
     "name": "aidl",
     "composite": false,
+    "entry": "tree_sitter_aidl",
     "src.extra": []
   },
   {
     "name": "arm64",
     "composite": false,
+    "entry": "tree_sitter_arm64",
     "src.extra": []
   },
-  {
-    "name": "asciidoc",
-    "composite": true,
-    "sub.paths": [
-      "tree-sitter-asciidoc",
-      "tree-sitter-asciidoc_inline"
-    ],
-    "src.extra": []
-  },
+  // {
+    // "name": "asciidoc",
+    // "composite": true,
+    // "sub.paths": [
+      // "tree-sitter-asciidoc",
+      // "tree-sitter-asciidoc_inline"
+    // ],
+    // "sub.entries": [
+      // "tree_sitter_asciidoc",
+      // "tree_sitter_asciidoc_inline"
+    // ],
+    // "src.extra": []
+  // },
   {
     "name": "asm",
     "composite": false,
+    "entry": "tree_sitter_asm",
     "src.extra": []
   },
   {
     "name": "astro",
     "composite": false,
+    "entry": "tree_sitter_astro",
     "src.extra": [
       "src/scanner.c"
     ]
@@ -33,6 +41,7 @@
   {
     "name": "bash",
     "composite": false,
+    "entry": "tree_sitter_bash",
     "src.extra": [
       "src/scanner.c"
     ]
@@ -40,16 +49,19 @@
   {
     "name": "bibtex",
     "composite": false,
+    "entry": "tree_sitter_bibtex",
     "src.extra": []
   },
   {
     "name": "c",
     "composite": false,
+    "entry": "tree_sitter_c",
     "src.extra": []
   },
   {
     "name": "c_sharp",
     "composite": false,
+    "entry": "tree_sitter_c_sharp",
     "src.extra": [
       "src/scanner.c"
     ]
@@ -57,11 +69,13 @@
   {
     "name": "clojure",
     "composite": false,
+    "entry": "tree_sitter_clojure",
     "src.extra": []
   },
   {
     "name": "cmake",
     "composite": false,
+    "entry": "tree_sitter_cmake",
     "src.extra": [
       "src/scanner.c"
     ]
@@ -69,6 +83,7 @@
   {
     "name": "cobol",
     "composite": false,
+    "entry": "tree_sitter_COBOL",
     "src.extra": [
       "src/scanner.c"
     ]
@@ -76,6 +91,7 @@
   {
     "name": "containerfile",
     "composite": false,
+    "entry": "tree_sitter_containerfile",
     "src.extra": [
       "src/scanner.c"
     ]
@@ -83,6 +99,7 @@
   {
     "name": "cpp",
     "composite": false,
+    "entry": "tree_sitter_cpp",
     "src.extra": [
       "src/scanner.c"
     ]
@@ -90,17 +107,19 @@
   {
     "name": "crystal",
     "composite": false,
+    "entry": "tree_sitter_crystal",
     "src.extra": [
       "src/scanner.c"
     ]
   },
-  {
-    "name": "css",
-    "composite": false,
-    "src.extra": [
-      "src/scanner.c"
-    ]
-  },
+  // {
+    // "name": "css",
+    // "composite": false,
+    // "entry": "tree_sitter_css",
+    // "src.extra": [
+      // "src/scanner.c"
+    // ]
+  // },
   {
     "name": "csv",
     "composite": true,
@@ -109,11 +128,17 @@
       "psv",
       "tsv"
     ],
+    "sub.entries": [
+      "tree_sitter_csv",
+      "tree_sitter_psv",
+      "tree_sitter_tsv"
+    ],
     "src.extra": []
   },
   {
     "name": "d",
     "composite": false,
+    "entry": "tree_sitter_d",
     "src.extra": [
       "src/scanner.c"
     ]
@@ -124,11 +149,15 @@
     "sub.paths": [
       "tree_sitter/tree-sitter/lib"
     ],
+    "sub.entries": [
+      "tree_sitter_lib"
+    ],
     "src.extra": []
   },
   {
     "name": "dhall",
     "composite": false,
+    "entry": "tree_sitter_dhall",
     "src.extra": [
       "src/scanner.c"
     ]
@@ -136,11 +165,13 @@
   {
     "name": "diff",
     "composite": false,
+    "entry": "tree_sitter_diff",
     "src.extra": []
   },
   {
     "name": "disassembly",
     "composite": false,
+    "entry": "tree_sitter_disassembly",
     "src.extra": [
       "src/scanner.c"
     ]
@@ -148,6 +179,7 @@
   {
     "name": "dockerfile",
     "composite": false,
+    "entry": "tree_sitter_dockerfile",
     "src.extra": [
       "src/scanner.c"
     ]
@@ -155,6 +187,7 @@
   {
     "name": "elixir",
     "composite": false,
+    "entry": "tree_sitter_elixir",
     "src.extra": [
       "src/scanner.c"
     ]
@@ -162,6 +195,7 @@
   {
     "name": "elm",
     "composite": false,
+    "entry": "tree_sitter_elm",
     "src.extra": [
       "src/scanner.c"
     ]
@@ -169,6 +203,7 @@
   {
     "name": "erlang",
     "composite": false,
+    "entry": "tree_sitter_erlang",
     "src.extra": [
       "src/scanner.c"
     ]
@@ -176,6 +211,7 @@
   {
     "name": "fortran",
     "composite": false,
+    "entry": "tree_sitter_fortran",
     "src.extra": [
       "src/scanner.c"
     ]
@@ -183,6 +219,15 @@
   {
     "name": "fsharp",
     "composite": false,
+    "entry": "tree_sitter_fsharp",
+    "src.extra": [
+      "src/scanner.c"
+    ]
+  },
+  {
+    "name": "gdb",
+    "composite": false,
+    "entry": "tree_sitter_gdb",
     "src.extra": [
       "src/scanner.c"
     ]
@@ -190,16 +235,19 @@
   {
     "name": "git_rebase",
     "composite": false,
+    "entry": "tree_sitter_git_rebase",
     "src.extra": []
   },
   {
     "name": "gitattributes",
     "composite": false,
+    "entry": "tree_sitter_gitattributes",
     "src.extra": []
   },
   {
     "name": "gitcommit",
     "composite": false,
+    "entry": "tree_sitter_gitcommit",
     "src.extra": [
       "src/scanner.c"
     ]
@@ -207,6 +255,7 @@
   {
     "name": "gitignore",
     "composite": false,
+    "entry": "tree_sitter_gitignore",
     "src.extra": [
       "src/scanner.c"
     ]
@@ -214,28 +263,25 @@
   {
     "name": "go",
     "composite": false,
+    "entry": "tree_sitter_go",
     "src.extra": []
-  },
-  {
-    "name": "godot_gdb_tree_sitter",
-    "composite": false,
-    "src.extra": [
-      "src/scanner.c"
-    ]
   },
   {
     "name": "gomod",
     "composite": false,
+    "entry": "tree_sitter_gomod",
     "src.extra": []
   },
   {
     "name": "graphql",
     "composite": false,
+    "entry": "tree_sitter_graphql",
     "src.extra": []
   },
   {
     "name": "groovy",
     "composite": false,
+    "entry": "tree_sitter_groovy",
     "src.extra": [
       "src/scanner.c"
     ]
@@ -243,6 +289,7 @@
   {
     "name": "handlebars",
     "composite": false,
+    "entry": "tree_sitter_handlebars",
     "src.extra": [
       "src/scanner.c"
     ]
@@ -250,6 +297,7 @@
   {
     "name": "haskell",
     "composite": false,
+    "entry": "tree_sitter_haskell",
     "src.extra": [
       "src/scanner.c"
     ]
@@ -260,16 +308,21 @@
     "sub.paths": [
       "dialects/terraform"
     ],
+    "sub.entries": [
+      "tree_sitter_terraform"
+    ],
     "src.extra": []
   },
   {
     "name": "heex",
     "composite": false,
+    "entry": "tree_sitter_heex",
     "src.extra": []
   },
   {
     "name": "html",
     "composite": false,
+    "entry": "tree_sitter_html",
     "src.extra": [
       "src/scanner.c"
     ]
@@ -277,11 +330,13 @@
   {
     "name": "ini",
     "composite": false,
+    "entry": "tree_sitter_ini",
     "src.extra": []
   },
   {
     "name": "irules",
     "composite": false,
+    "entry": "tree_sitter_irules",
     "src.extra": [
       "src/scanner.c"
     ]
@@ -289,11 +344,13 @@
   {
     "name": "java",
     "composite": false,
+    "entry": "tree_sitter_java",
     "src.extra": []
   },
   {
     "name": "javascript",
     "composite": false,
+    "entry": "tree_sitter_javascript",
     "src.extra": [
       "src/scanner.c"
     ]
@@ -301,11 +358,13 @@
   {
     "name": "jinja2",
     "composite": false,
+    "entry": "tree_sitter_jinja2",
     "src.extra": []
   },
   {
     "name": "jsdoc",
     "composite": false,
+    "entry": "tree_sitter_jsdoc",
     "src.extra": [
       "src/scanner.c"
     ]
@@ -313,11 +372,13 @@
   {
     "name": "json",
     "composite": false,
+    "entry": "tree_sitter_json",
     "src.extra": []
   },
   {
     "name": "julia",
     "composite": false,
+    "entry": "tree_sitter_julia",
     "src.extra": [
       "src/scanner.c"
     ]
@@ -325,6 +386,7 @@
   {
     "name": "kdl",
     "composite": false,
+    "entry": "tree_sitter_kdl",
     "src.extra": [
       "src/scanner.c"
     ]
@@ -332,6 +394,7 @@
   {
     "name": "kotlin",
     "composite": false,
+    "entry": "tree_sitter_kotlin",
     "src.extra": [
       "src/scanner.c"
     ]
@@ -339,6 +402,7 @@
   {
     "name": "latex",
     "composite": false,
+    "entry": "tree_sitter_latex",
     "src.extra": [
       "src/scanner.c"
     ]
@@ -346,21 +410,25 @@
   {
     "name": "llvm",
     "composite": false,
+    "entry": "tree_sitter_llvm",
     "src.extra": []
   },
   {
     "name": "llvm_mir",
     "composite": false,
+    "entry": "tree_sitter_llvm_mir",
     "src.extra": []
   },
   {
     "name": "log",
     "composite": false,
+    "entry": "tree_sitter_log",
     "src.extra": []
   },
   {
     "name": "lua",
     "composite": false,
+    "entry": "tree_sitter_lua",
     "src.extra": [
       "src/scanner.c"
     ]
@@ -368,6 +436,7 @@
   {
     "name": "make",
     "composite": false,
+    "entry": "tree_sitter_make",
     "src.extra": []
   },
   {
@@ -377,16 +446,22 @@
       "tree-sitter-markdown",
       "tree-sitter-markdown-inline"
     ],
+    "sub.entries": [
+      "tree_sitter_markdown",
+      "tree_sitter_markdown_inline"
+    ],
     "src.extra": []
   },
   {
     "name": "mermaid",
     "composite": false,
+    "entry": "tree_sitter_mermaid",
     "src.extra": []
   },
   {
     "name": "nginx",
     "composite": false,
+    "entry": "tree_sitter_nginx",
     "src.extra": [
       "src/scanner.c"
     ]
@@ -394,6 +469,7 @@
   {
     "name": "nim",
     "composite": false,
+    "entry": "tree_sitter_nim",
     "src.extra": [
       "src/scanner.c"
     ]
@@ -401,13 +477,30 @@
   {
     "name": "nix",
     "composite": false,
+    "entry": "tree_sitter_nix",
     "src.extra": [
       "src/scanner.c"
     ]
   },
   {
+    "name": "ocaml",
+    "composite": true,
+    "sub.paths": [
+      "grammars/interface",
+      "grammars/ocaml",
+      "grammars/type"
+    ],
+    "sub.entries": [
+      "tree_sitter_ocaml_interface",
+      "tree_sitter_ocaml",
+      "tree_sitter_ocaml_type"
+    ],
+    "src.extra": []
+  },
+  {
     "name": "org",
     "composite": false,
+    "entry": "tree_sitter_org",
     "src.extra": [
       "src/scanner.c"
     ]
@@ -415,6 +508,7 @@
   {
     "name": "perl",
     "composite": false,
+    "entry": "tree_sitter_perl",
     "src.extra": [
       "src/scanner.c"
     ]
@@ -426,11 +520,16 @@
       "php",
       "php_only"
     ],
+    "sub.entries": [
+      "tree_sitter_php",
+      "tree_sitter_php_only"
+    ],
     "src.extra": []
   },
   {
     "name": "pkl",
     "composite": false,
+    "entry": "tree_sitter_pkl",
     "src.extra": [
       "src/scanner.c"
     ]
@@ -438,31 +537,37 @@
   {
     "name": "printf",
     "composite": false,
+    "entry": "tree_sitter_printf",
     "src.extra": []
   },
   {
     "name": "prisma",
     "composite": false,
+    "entry": "tree_sitter_prisma",
     "src.extra": []
   },
   {
     "name": "properties",
     "composite": false,
+    "entry": "tree_sitter_properties",
     "src.extra": []
   },
   {
     "name": "proto",
     "composite": false,
+    "entry": "tree_sitter_proto",
     "src.extra": []
   },
   {
     "name": "protobuf",
     "composite": false,
+    "entry": "tree_sitter_proto",
     "src.extra": []
   },
   {
     "name": "pug",
     "composite": false,
+    "entry": "tree_sitter_pug",
     "src.extra": [
       "src/scanner.c"
     ]
@@ -470,6 +575,7 @@
   {
     "name": "python",
     "composite": false,
+    "entry": "tree_sitter_python",
     "src.extra": [
       "src/scanner.c"
     ]
@@ -477,11 +583,13 @@
   {
     "name": "query",
     "composite": false,
+    "entry": "tree_sitter_query",
     "src.extra": []
   },
   {
     "name": "r2cmd",
     "composite": false,
+    "entry": "tree_sitter_r2cmd",
     "src.extra": [
       "src/scanner.c"
     ]
@@ -499,16 +607,28 @@
       "python/pyregex",
       "python/pyregex_verbose"
     ],
+    "sub.entries": [
+      "tree_sitter_ecmaregex",
+      "tree_sitter_ecmaregex_u",
+      "tree_sitter_ecmaregex_v",
+      "tree_sitter_pcre2",
+      "tree_sitter_posix_bre",
+      "tree_sitter_posix_ere",
+      "tree_sitter_pyregex",
+      "tree_sitter_pyregex_verbose"
+    ],
     "src.extra": []
   },
   {
     "name": "requirements",
     "composite": false,
+    "entry": "tree_sitter_requirements",
     "src.extra": []
   },
   {
     "name": "ron",
     "composite": false,
+    "entry": "tree_sitter_ron",
     "src.extra": [
       "src/scanner.c"
     ]
@@ -516,6 +636,7 @@
   {
     "name": "rst",
     "composite": false,
+    "entry": "tree_sitter_rst",
     "src.extra": [
       "src/scanner.c"
     ]
@@ -523,6 +644,7 @@
   {
     "name": "ruby",
     "composite": false,
+    "entry": "tree_sitter_ruby",
     "src.extra": [
       "src/scanner.c"
     ]
@@ -530,6 +652,7 @@
   {
     "name": "rust",
     "composite": false,
+    "entry": "tree_sitter_rust",
     "src.extra": [
       "src/scanner.c"
     ]
@@ -537,6 +660,7 @@
   {
     "name": "scala",
     "composite": false,
+    "entry": "tree_sitter_scala",
     "src.extra": [
       "src/scanner.c"
     ]
@@ -544,6 +668,7 @@
   {
     "name": "scss",
     "composite": false,
+    "entry": "tree_sitter_scss",
     "src.extra": [
       "src/scanner.c"
     ]
@@ -551,6 +676,7 @@
   {
     "name": "smali",
     "composite": false,
+    "entry": "tree_sitter_smali",
     "src.extra": [
       "src/scanner.c"
     ]
@@ -558,6 +684,7 @@
   {
     "name": "sql",
     "composite": false,
+    "entry": "tree_sitter_sql",
     "src.extra": [
       "src/scanner.c"
     ]
@@ -565,11 +692,13 @@
   {
     "name": "ssh",
     "composite": false,
+    "entry": "tree_sitter_ssh_client_config",
     "src.extra": []
   },
   {
     "name": "svelte",
     "composite": false,
+    "entry": "tree_sitter_svelte",
     "src.extra": [
       "src/scanner.c"
     ]
@@ -577,6 +706,7 @@
   {
     "name": "swift",
     "composite": false,
+    "entry": "tree_sitter_swift",
     "src.extra": [
       "src/scanner.c"
     ]
@@ -584,11 +714,13 @@
   {
     "name": "thrift",
     "composite": false,
+    "entry": "tree_sitter_thrift",
     "src.extra": []
   },
   {
     "name": "toml",
     "composite": false,
+    "entry": "tree_sitter_toml",
     "src.extra": [
       "src/scanner.c"
     ]
@@ -596,6 +728,7 @@
   {
     "name": "twig",
     "composite": false,
+    "entry": "tree_sitter_twig",
     "src.extra": []
   },
   {
@@ -605,21 +738,28 @@
       "tsx",
       "typescript"
     ],
+    "sub.entries": [
+      "tree_sitter_tsx",
+      "tree_sitter_typescript"
+    ],
     "src.extra": []
   },
   {
     "name": "v",
     "composite": false,
+    "entry": "tree_sitter_v",
     "src.extra": []
   },
   {
     "name": "verilog",
     "composite": false,
+    "entry": "tree_sitter_verilog",
     "src.extra": []
   },
   {
     "name": "vue",
     "composite": false,
+    "entry": "tree_sitter_vue",
     "src.extra": [
       "src/scanner.c"
     ]
@@ -627,11 +767,13 @@
   {
     "name": "xml",
     "composite": false,
+    "entry": "tree_sitter_xml",
     "src.extra": []
   },
   {
     "name": "yaml",
     "composite": false,
+    "entry": "tree_sitter_yaml",
     "src.extra": [
       "src/scanner.c"
     ]
@@ -639,16 +781,19 @@
   {
     "name": "yara",
     "composite": false,
+    "entry": "tree_sitter_yara",
     "src.extra": []
   },
   {
     "name": "zig",
     "composite": false,
+    "entry": "tree_sitter_zig",
     "src.extra": []
   },
   {
     "name": "zsh",
     "composite": false,
+    "entry": "tree_sitter_zsh",
     "src.extra": [
       "src/scanner.c"
     ]

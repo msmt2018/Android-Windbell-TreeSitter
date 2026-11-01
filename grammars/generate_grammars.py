@@ -1,4 +1,4 @@
-# @author android_zero <github.com/msmt2018> [update] : Enhanced to support deep nested composite sub.paths (e.g., ocaml/grammars/interface) and recursive parser search.
+# @author android_zero <github.com/msmt2018> [update] : Enhanced to support deep nested composite sub.paths and precise AST/symbol C-entry extraction (entry / sub.entries) from parser.c.
 # Used for automatically generating grammars/grammars.json, thus no manual addition or maintenance is required
 
 import os
@@ -19,10 +19,33 @@ def get_gitmodules_paths():
         
     return set(path_regex.findall(content))
 
+def extract_tree_sitter_entry(parser_c_path):
+    """
+    通过高精度正则精准解析 parser.c 文件，寻找形如：
+    TS_PUBLIC const TSLanguage *tree_sitter_yaml(void)
+    或 const TSLanguage * tree_sitter_markdown_inline ( void )
+    的 C 语言函数入口符号。
+    """
+    if not os.path.exists(parser_c_path):
+        return None
+    
+    pattern = re.compile(r'(?:TS_PUBLIC\s+)?const\s+TSLanguage\s*\*\s*(tree_sitter_[a-zA-Z0-9_-]+)\s*\(\s*void\s*\)', re.DOTALL)
+    
+    try:
+        with open(parser_c_path, "r", encoding="utf-8", errors="ignore") as f:
+            content = f.read()
+            match = pattern.search(content)
+            if match:
+                return match.group(1)
+    except Exception as e:
+        print(f"⚠️ Warning: Failed to read {parser_c_path}: {e}")
+        
+    return None
+
 def find_parser_subpaths(base_dir, current_rel_path=""):
     """
     递归向下递归扫描目录，寻找所有包含 src/parser.c 或 src/parser.cc 的叶子或中间子目录。
-    返回形如相对于 base_dir 的子路径列表，例如 ["grammars/interface", "grammars/ocaml", "grammars/type"]
+    返回形如相对于 base_dir 的子路径列表，例如 ["grammars/interface", "grammars/ocaml", "grammars/type"] 或 ["tree-sitter-markdown", "tree-sitter-markdown-inline"]
     """
     results = []
     abs_current_dir = os.path.join(base_dir, current_rel_path) if current_rel_path else base_dir
@@ -30,12 +53,10 @@ def find_parser_subpaths(base_dir, current_rel_path=""):
     if not os.path.exists(abs_current_dir) or not os.path.isdir(abs_current_dir):
         return results
 
-    # 检查当前目录下是否有 src/parser.c 或 src/parser.cc
     src_dir = os.path.join(abs_current_dir, "src")
     has_parser = os.path.exists(os.path.join(src_dir, "parser.c")) or os.path.exists(os.path.join(src_dir, "parser.cc"))
     
     if has_parser and current_rel_path:
-        # 如果当前层级本身就是一个完整的 parser 目录，则记录
         results.append(current_rel_path)
 
     try:
@@ -49,7 +70,6 @@ def find_parser_subpaths(base_dir, current_rel_path=""):
         full_entry_path = os.path.join(abs_current_dir, entry)
         if os.path.isdir(full_entry_path):
             next_rel_path = os.path.join(current_rel_path, entry) if current_rel_path else entry
-            # 递归调用
             results.extend(find_parser_subpaths(base_dir, next_rel_path))
 
     return results
@@ -77,24 +97,35 @@ def generate_grammars_json():
     for lang_name in valid_languages:
         lang_full_path = os.path.join(grammars_dir, lang_name)
         
-        # 使用递归深度扫描探测是否存在多个子解析器
         discovered_subpaths = find_parser_subpaths(lang_full_path)
-        # 路径格式化为统一的斜杠
         discovered_subpaths = [p.replace("\\", "/") for p in discovered_subpaths]
 
-        # 如果发现多于 1 个子解析器，或者子路径包含深层嵌套（例如带 grammars/ 或类似结构）
+        # 判定是否为复合多解析器架构
         if len(discovered_subpaths) >= 2 or any("/grammars/" in p or p.count("/") >= 1 for p in discovered_subpaths):
-            # 过滤掉根目录自己（如果根目录本身也有 src/parser.c 且被误判的情况）
             sub_paths = [p for p in discovered_subpaths if p != "src"]
+            sub_entries = []
+            
+            # 精准提取每个子路径下的真实 C 函数入口符号
+            for sp in sub_paths:
+                p_c = os.path.join(lang_full_path, sp, "src", "parser.c")
+                if not os.path.exists(p_c):
+                    p_c = os.path.join(lang_full_path, sp, "src", "parser.cc")
+                
+                entry_name = extract_tree_sitter_entry(p_c)
+                if not entry_name:
+                    # 安全降级兜底方案
+                    fallback_name = sp.split('/')[-1]
+                    entry_name = f"tree_sitter_{fallback_name.replace('-', '_')}"
+                sub_entries.append(entry_name)
             
             grammar_entry = {
                 "name": lang_name,
                 "composite": True,
                 "sub.paths": sub_paths,
+                "sub.entries": sub_entries,
                 "src.extra": []
             }
             
-            # 检查根目录是否有额外的 scanner
             extra_scanner_c = os.path.join(lang_full_path, "scanner.c")
             extra_scanner_cc = os.path.join(lang_full_path, "scanner.cc")
             if os.path.exists(extra_scanner_c):
@@ -103,14 +134,19 @@ def generate_grammars_json():
                 grammar_entry["src.extra"].append("scanner.cc")
                 
             new_grammars_list.append(grammar_entry)
-            print(f"🧩 Detected Deep Composite Grammar -> [{lang_name}] with sub.paths: {sub_paths}")
+            print(f"🧩 Detected Composite Grammar -> [{lang_name}] sub.paths: {sub_paths} | sub.entries: {sub_entries}")
 
         else:
-            # 传统单解析器
+            # 传统单解析器架构
             src_dir = os.path.join(lang_full_path, "src")
-            if not os.path.exists(src_dir):
-                continue
+            p_c = os.path.join(src_dir, "parser.c")
+            if not os.path.exists(p_c):
+                p_c = os.path.join(src_dir, "parser.cc")
                 
+            entry_name = extract_tree_sitter_entry(p_c)
+            if not entry_name:
+                entry_name = f"tree_sitter_{lang_name.replace('-', '_')}"
+
             scanner_c = os.path.join(src_dir, "scanner.c")
             scanner_cc = os.path.join(src_dir, "scanner.cc")
             
@@ -123,10 +159,12 @@ def generate_grammars_json():
             new_grammars_list.append({
                 "name": lang_name,
                 "composite": False,
+                "entry": entry_name,
                 "src.extra": src_extra
             })
-            print(f"📦 Detected Single Grammar           -> [{lang_name}]")
+            print(f"📦 Detected Single Grammar     -> [{lang_name}] entry: {entry_name}")
 
+    # 安全写入策略：原子替换机制保护原文件
     try:
         with open(tmp_output_file, "w", encoding="utf-8") as f:
             json.dump(new_grammars_list, f, indent=2, ensure_ascii=False)
@@ -135,7 +173,7 @@ def generate_grammars_json():
             os.remove(output_file)
         os.rename(tmp_output_file, output_file)
         
-        print(f"\n✨ Success! Deep composite data generated.")
+        print(f"\n✨ Success! Precise entry symbols generated.")
         print(f"📄 Total valid grammars: {len(new_grammars_list)} -> Synchronized to {output_file}")
 
     except Exception as e:

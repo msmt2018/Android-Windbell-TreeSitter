@@ -29,7 +29,7 @@ import java.io.FileNotFoundException
  * Dynamically creates and adds the grammar project modules to the build.
  *
  * @author Akash Yadav
- * @author android_zero <github.com/msmt2018> [update] : On October 31, 2026, upgraded the complex ts parser to support building multiple parser.c files
+ * @author android_zero <github.com/msmt2018> [update] : On October 31, 2026, upgraded to support precise abstract C-entries mapping and advanced binary size/performance optimizations.
  */
 @Suppress("unused")
 class DynamicModulePlugin : Plugin<Settings> {
@@ -95,6 +95,7 @@ class DynamicModulePlugin : Plugin<Settings> {
 
 private fun TsGrammar.jniImplSrc(): String {
   if (!composite) {
+    val cEntry = entry ?: "tree_sitter_$name"
     return """
 $LICENSE
 
@@ -110,10 +111,10 @@ static jint JNI_VERSION = JNI_VERSION_1_6;
 static jint JNI_VERSION = JNI_VERSION_10;
 #endif
 
-extern "C" TSLanguage *tree_sitter_${name}();
+extern "C" TSLanguage *${cEntry}();
 
 static jlong TSLanguage${capitalizedName()}_getInstance(JNIEnv *env, jclass clazz) {
-    return (jlong) tree_sitter_${name}();
+    return (jlong) ${cEntry}();
 }
 
 void TSLanguage${capitalizedName()}_Native__SetJniMethods(JNINativeMethod *methods, int count) {
@@ -135,22 +136,32 @@ JNIEXPORT jint JNI_OnLoad(JavaVM *vm, void *reserved) {
     """.trimIndent()
   }
 
-  // Composite multi-parser JNI template implementation
-  val subInits = subPaths.joinToString("\n") { path ->
-    val subName = path.substringAfterLast('/')
-    """extern "C" TSLanguage *tree_sitter_$subName();"""
+  // 1. 严格对齐多解析器下每个子类期望的外部 C 符号声明
+  val subInits = subEntries.indices.joinToString("\n") { i ->
+    val cEntry = if (i < subEntries.size) subEntries[i] else {
+      val fallbackSub = subPaths[i].substringAfterLast('/')
+      "tree_sitter_${fallbackSub.replace('-', '_')}"
+    }
+    """extern "C" TSLanguage *$cEntry();"""
   }
 
-  val methodRegistrations = subPaths.joinToString("\n") { path ->
+  // 2. 严格对齐 Java 生成的嵌套类名称（形如 TSLanguageAsciidoc_AsciidocNative），彻底消除 __ARR_IDX 找不到的编译错误
+  val methodRegistrations = subPaths.indices.joinToString("\n\n") { i ->
+    val path = subPaths[i]
+    val cEntry = if (i < subEntries.size) subEntries[i] else {
+      val fallbackSub = path.substringAfterLast('/')
+      "tree_sitter_${fallbackSub.replace('-', '_')}"
+    }
     val subName = path.substringAfterLast('/')
-    val capSubName = subName.split("-").joinToString("") { it.replaceFirstChar { c -> c.titlecaseChar() } }
+    val capSubName = subName.split(Regex("[-_]")).joinToString("") { it.replaceFirstChar { c -> c.titlecaseChar() } }
+    
     """
-static jlong TSLanguage${capSubName}_getInstance(JNIEnv *env, jclass clazz) {
-    return (jlong) tree_sitter_$subName();
+static jlong TSLanguage${capitalizedName()}_${capSubName}Native_getInstance(JNIEnv *env, jclass clazz) {
+    return (jlong) $cEntry();
 }
 
-void TSLanguage${capSubName}_Native__SetJniMethods(JNINativeMethod *methods, int count) {
-  SET_JNI_METHOD(methods, TSLanguage${capSubName}_Native_getInstance, TSLanguage${capSubName}_getInstance);
+void TSLanguage${capitalizedName()}_${capSubName}Native__SetJniMethods(JNINativeMethod *methods, int count) {
+  SET_JNI_METHOD(methods, TSLanguage${capitalizedName()}_${capSubName}Native_getInstance, TSLanguage${capitalizedName()}_${capSubName}Native_getInstance);
 }
     """.trimIndent()
   }
@@ -194,8 +205,7 @@ private fun TsGrammar.cmakeListsSrc(rootDir: File,
                                       "grammars/$name")
 ): String {
   if (!grammarDir.exists()) {
-    throw FileNotFoundException(
-      "Source directory for grammar '$name' not found")
+    throw FileNotFoundException("Source directory for grammar '$name' not found")
   }
 
   if (!composite) {
@@ -208,16 +218,16 @@ cmake_minimum_required(VERSION 3.22.1)
 
 project("tree-sitter-$name")
 
-# Set the root project directory
 set(PROJECT_DIR ${rootDir.absolutePath})
-
-# Include common configuration
 include(${rootDir.absolutePath}/cmake/common-config.cmake)
 
-# This includes the header file for the parser
+# Performance & Size Optimization Flags (Max O3, LTO, Symbol Stripping & Hiding)
+set(CMAKE_C_FLAGS "${'$'}{CMAKE_C_FLAGS} -O3 -flto -fvisibility=hidden")
+set(CMAKE_CXX_FLAGS "${'$'}{CMAKE_CXX_FLAGS} -O3 -flto -fvisibility=hidden")
+set(CMAKE_SHARED_LINKER_FLAGS "${'$'}{CMAKE_SHARED_LINKER_FLAGS} -Wl,--gc-sections -s")
+
 include_directories(${grammarDir.absolutePath}/src)
 
-# add tree-sitter library
 add_library(${'$'}{CMAKE_PROJECT_NAME} SHARED
         ${grammarDir.absolutePath}/src/parser.c
         $sources
@@ -230,12 +240,12 @@ endif()
     """.trimIndent()
   }
 
-  // Composite multi-parser CMake configuration
+  // Composite multi-parser CMake configuration with aggressive optimizations
   val sourceFiles = mutableListOf<String>()
   val includeDirs = mutableListOf<String>()
 
   subPaths.forEach { subPath ->
-    val subDir = File(rootDir, "grammars/$name/$subPath")
+    val subDir = File(grammarDir, subPath)
     sourceFiles.add("${subDir.absolutePath}/src/parser.c")
     if (subDir.resolve("src/scanner.c").exists()) {
       sourceFiles.add("${subDir.absolutePath}/src/scanner.c")
@@ -260,16 +270,16 @@ cmake_minimum_required(VERSION 3.22.1)
 
 project("tree-sitter-$name")
 
-# Set the root project directory
 set(PROJECT_DIR ${rootDir.absolutePath})
-
-# Include common configuration
 include(${rootDir.absolutePath}/cmake/common-config.cmake)
 
-# Include directories for sub-parsers
+# Performance & Size Optimization Flags for Composite Parsers
+set(CMAKE_C_FLAGS "${'$'}{CMAKE_C_FLAGS} -O3 -flto -fvisibility=hidden")
+set(CMAKE_CXX_FLAGS "${'$'}{CMAKE_CXX_FLAGS} -O3 -flto -fvisibility=hidden")
+set(CMAKE_SHARED_LINKER_FLAGS "${'$'}{CMAKE_SHARED_LINKER_FLAGS} -Wl,--gc-sections -s")
+
 $includesStr
 
-# add composite tree-sitter library
 add_library(${'$'}{CMAKE_PROJECT_NAME} SHARED
         $sourcesStr
         tree-sitter-${name}.cpp)
@@ -332,19 +342,26 @@ public final class TSLanguage${capitalizedName()} {
     """.trimIndent()
   }
 
-  // Composite multi-parser Java binding implementation
-  val innerClasses = subPaths.joinToString("\n\n") { path ->
+  // 复合多解析器：自动选取第一个子解析器作为统一默认主入口（例如 Asciidoc），对外完美支持单实例调用
+  val primaryPath = subPaths.firstOrNull() ?: ""
+  val primarySubName = primaryPath.substringAfterLast('/')
+  val primaryCapName = primarySubName.split(Regex("[-_]")).joinToString("") { it.replaceFirstChar { c -> c.titlecaseChar() } }
+
+  // 复合多解析器 Java 绑定实现：同时包含独立子实例访问以及统一聚合入口
+  val innerClasses = subPaths.indices.joinToString("\n\n") { i ->
+    val path = subPaths[i]
     val subName = path.substringAfterLast('/')
-    val capSubName = subName.split("-").joinToString("") { it.replaceFirstChar { c -> c.titlecaseChar() } }
+    val cacheKey = subName
+    val capSubName = subName.split(Regex("[-_]")).joinToString("") { it.replaceFirstChar { c -> c.titlecaseChar() } }
     """
   public static TSLanguage get${capSubName}Instance() {
-    var language = TSLanguageCache.get("$subName");
+    var language = TSLanguageCache.get("$cacheKey");
     if (language != null) {
       return language;
     }
 
-    language = TSLanguage.create("$subName", ${capSubName}Native.getInstance());
-    TSLanguageCache.cache("$subName", language);
+    language = TSLanguage.create("$cacheKey", ${capSubName}Native.getInstance());
+    TSLanguageCache.cache("$cacheKey", language);
     return language;
   }
 
@@ -366,6 +383,8 @@ import com.zerostudio.idea.treesitter.TSLanguageCache;
 
 /**
  * Composite Tree Sitter for ${capitalizedName()}.
+ * Optimized with a unified primary instance and sub-parsers support
+ * for high-performance hybrid rendering and incremental highlighting in AndroidIDE.
  *
  * @author android_zero <github.com/msmt2018>
  */
@@ -377,6 +396,26 @@ public final class TSLanguage${capitalizedName()} {
 
   private TSLanguage${capitalizedName()}() {
     throw new UnsupportedOperationException();
+  }
+
+  /**
+   * 获取统一的主语言实例。
+   * 对外屏蔽底层多解析器细节，让 AndroidIDE 高亮渲染器可以直接将该复合模块当作标准单语言使用。
+   */
+  public static TSLanguage getInstance() {
+    return get${primaryCapName}Instance();
+  }
+
+  /**
+   * 预加载并缓存所有底层复合子语言（如主语言及内联注入语言），
+   * 确保在一套 scm / injections.scm 渲染时能够全量就绪。
+   */
+  public static void preloadAll() {
+    ${subPaths.joinToString("\n    ") { p ->
+        val sName = p.substringAfterLast('/')
+        val cName = sName.split(Regex("[-_]")).joinToString("") { it.replaceFirstChar { c -> c.titlecaseChar() } }
+        "get${cName}Instance();"
+    }}
   }
 
 $innerClasses
@@ -392,6 +431,24 @@ plugins {
   id("maven-publish")
   id("android-tree-sitter.ts")
   id("android-tree-sitter.ts-grammar")
+}
+
+android {
+    defaultConfig {
+        externalNativeBuild {
+            cmake {
+                arguments("-DANDROID_STL=c++_static")
+                abiFilters("armeabi-v7a", "arm64-v8a", "x86", "x86_64")
+            }
+        }
+
+        consumerProguardFiles("consumer-rules.pro")
+    }
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
 }
 
 dependencies {
@@ -418,7 +475,7 @@ private const val LICENSE = """
  *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
  *  Lesser General Public License for more details.
  *
- *   You should have received a node of the GNU General Public License
+ *   You should have received a copy of the GNU General Public License
  *  along with android-tree-sitter.  If not, see <https://www.gnu.org/licenses/>.
  */
 """
@@ -436,7 +493,7 @@ private const val CMAKE_LICENSE = """#
 #  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
 #  Lesser General Public License for more details.
 #
-#   Type should have received a copy of the GNU General Public License
+#   You should have received a copy of the GNU General Public License
 #  along with android-tree-sitter.  If not, see <https://www.gnu.org/licenses/>.
 #"""
 
