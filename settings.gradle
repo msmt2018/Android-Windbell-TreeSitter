@@ -40,7 +40,7 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "ATS"
+rootProject.name = "Android-Windbell-TreeSitter"
 
 // Test application
 include ':app'

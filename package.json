@@ -1,5 +1,5 @@
 {
-  "name": "android-windChime-tree-sitter-root",
+  "name": "Android-Windbell-TreeSitter-root",
   "private": true,
   "workspaces": [
     "grammars/*"

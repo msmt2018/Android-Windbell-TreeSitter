@@ -1,5 +1,5 @@
 /grammar-modules
-
+/node_modules
 # Built application files
 *.apk
 *.aar

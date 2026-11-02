@@ -7,9 +7,9 @@
 set -e
 
 # ======================= [配置区：按需修改以下参数] =======================
-MODULE_PATH="grammars/properties"
-NEW_URL="https://github.com/tree-sitter-grammars/tree-sitter-properties"
-TARGET_COMMIT="6310671"  # 选填：指定commit hash（如 a1b2c3d...）；留空 "" 则自动同步到新仓库默认分支最新提交
+MODULE_PATH="grammars/c-sharp"
+NEW_URL="https://github.com"
+TARGET_COMMIT="6bb3b16"  # 选填：指定commit hash（如 a1b2c3d...）；留空 "" 则自动同步到新仓库默认分支最新提交
 # ========================================================================
 
 echo "--------------------------------------------------------"

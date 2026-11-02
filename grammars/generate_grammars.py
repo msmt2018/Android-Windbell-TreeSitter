@@ -1,9 +1,18 @@
-# @author android_zero <github.com/msmt2018> [update] : Enhanced to support deep nested composite sub.paths and precise AST/symbol C-entry extraction (entry / sub.entries) from parser.c.
+# @author android_zero <github.com/msmt2018> [update] : Enhanced to support deep nested composite sub.paths, precise AST/symbol C-entry extraction, and strictly ignore node_modules folders.
 # Used for automatically generating grammars/grammars.json, thus no manual addition or maintenance is required
 
 import os
 import re
 import json
+
+# 定义需要严格忽略/排除的黑名单目录名集合
+EXCLUDED_DIR_NAMES = {
+    "node_modules",
+    ".git",
+    ".github",
+    "build",
+    "target"
+}
 
 def get_gitmodules_paths():
     """Parse the .gitmodules file to extract all paths and language names registered under grammars/"""
@@ -44,7 +53,8 @@ def extract_tree_sitter_entry(parser_c_path):
 
 def find_parser_subpaths(base_dir, current_rel_path=""):
     """
-    递归向下递归扫描目录，寻找所有包含 src/parser.c 或 src/parser.cc 的叶子或中间子目录。
+    递归向下扫描目录，寻找所有包含 src/parser.c 或 src/parser.cc 的叶子或中间子目录。
+    自动忽略并排除 node_modules 等干扰目录。
     返回形如相对于 base_dir 的子路径列表，例如 ["grammars/interface", "grammars/ocaml", "grammars/type"] 或 ["tree-sitter-markdown", "tree-sitter-markdown-inline"]
     """
     results = []
@@ -52,6 +62,12 @@ def find_parser_subpaths(base_dir, current_rel_path=""):
     
     if not os.path.exists(abs_current_dir) or not os.path.isdir(abs_current_dir):
         return results
+
+    # 路径安全检查：如果当前相对路径的任何一级目录属于黑名单（如 node_modules），直接跳过不探测
+    if current_rel_path:
+        path_segments = set(current_rel_path.replace("\\", "/").split("/"))
+        if path_segments.intersection(EXCLUDED_DIR_NAMES):
+            return results
 
     src_dir = os.path.join(abs_current_dir, "src")
     has_parser = os.path.exists(os.path.join(src_dir, "parser.c")) or os.path.exists(os.path.join(src_dir, "parser.cc"))
@@ -65,8 +81,10 @@ def find_parser_subpaths(base_dir, current_rel_path=""):
         return results
 
     for entry in sorted(entries):
-        if entry.startswith('.'):
+        # 排除隐藏目录/文件 以及 node_modules 等黑名单目录
+        if entry.startswith('.') or entry in EXCLUDED_DIR_NAMES:
             continue
+            
         full_entry_path = os.path.join(abs_current_dir, entry)
         if os.path.isdir(full_entry_path):
             next_rel_path = os.path.join(current_rel_path, entry) if current_rel_path else entry
@@ -89,7 +107,7 @@ def generate_grammars_json():
         return
 
     local_dirs = set([d for d in os.listdir(grammars_dir) 
-                      if os.path.isdir(os.path.join(grammars_dir, d)) and not d.startswith('.')])
+                      if os.path.isdir(os.path.join(grammars_dir, d)) and not d.startswith('.') and d not in EXCLUDED_DIR_NAMES])
 
     valid_languages = sorted(list(git_languages.intersection(local_dirs)))
 
@@ -97,6 +115,7 @@ def generate_grammars_json():
     for lang_name in valid_languages:
         lang_full_path = os.path.join(grammars_dir, lang_name)
         
+        # 递归探测子路径，自动过滤 node_modules 等目录
         discovered_subpaths = find_parser_subpaths(lang_full_path)
         discovered_subpaths = [p.replace("\\", "/") for p in discovered_subpaths]
 
@@ -113,7 +132,6 @@ def generate_grammars_json():
                 
                 entry_name = extract_tree_sitter_entry(p_c)
                 if not entry_name:
-                    # 安全降级兜底方案
                     fallback_name = sp.split('/')[-1]
                     entry_name = f"tree_sitter_{fallback_name.replace('-', '_')}"
                 sub_entries.append(entry_name)
@@ -164,7 +182,6 @@ def generate_grammars_json():
             })
             print(f"📦 Detected Single Grammar     -> [{lang_name}] entry: {entry_name}")
 
-    # 安全写入策略：原子替换机制保护原文件
     try:
         with open(tmp_output_file, "w", encoding="utf-8") as f:
             json.dump(new_grammars_list, f, indent=2, ensure_ascii=False)
@@ -173,7 +190,7 @@ def generate_grammars_json():
             os.remove(output_file)
         os.rename(tmp_output_file, output_file)
         
-        print(f"\n✨ Success! Precise entry symbols generated.")
+        print(f"\n✨ Success! Precise entry symbols generated with exclusions applied.")
         print(f"📄 Total valid grammars: {len(new_grammars_list)} -> Synchronized to {output_file}")
 
     except Exception as e:

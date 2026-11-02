@@ -112,14 +112,6 @@
       "src/scanner.c"
     ]
   },
-  // {
-    // "name": "css",
-    // "composite": false,
-    // "entry": "tree_sitter_css",
-    // "src.extra": [
-      // "src/scanner.c"
-    // ]
-  // },
   {
     "name": "csv",
     "composite": true,
@@ -143,17 +135,6 @@
       "src/scanner.c"
     ]
   },
-  // {
-    // "name": "dart",
-    // "composite": true,
-    // "sub.paths": [
-      // "tree_sitter/tree-sitter/lib"
-    // ],
-    // "sub.entries": [
-      // "tree_sitter_lib"
-    // ],
-    // "src.extra": []
-  // },
   {
     "name": "dhall",
     "composite": false,
@@ -558,12 +539,6 @@
     "entry": "tree_sitter_proto",
     "src.extra": []
   },
-  // {
-    // "name": "protobuf",
-    // "composite": false,
-    // "entry": "tree_sitter_proto",
-    // "src.extra": []
-  // },
   {
     "name": "pug",
     "composite": false,
