@@ -64,7 +64,12 @@ jobs:
       - name: Install dependencies
         run: $ATS_SUDO $ATS_APT_UPDATE && $ATS_SUDO $ATS_APT_UPGRADE && $ATS_SUDO $ATS_APT_INSTALL $ATS_APT_DEPS
       - name: Install Node packages
-        run: npm install --legacy-peer-deps
+        run: |
+          # 1. 先安装依赖，但禁止其自动执行有权限风险的钩子脚本
+          npm install --legacy-peer-deps --ignore-scripts
+          
+          # 2. 手动对所有工作区执行重建和编译，这会由 node 进程直接调用，免受 sh 权限限制
+          npm rebuild --legacy-peer-deps
           # 1. 寻找 grammars 目录下所有包含 package.json 的子目录
           # 2. 自动进入每个目录执行 npm install
           # find grammars -maxdepth 2 -name "package.json" | while read -r config_path; do

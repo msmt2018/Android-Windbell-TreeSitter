@@ -9,13 +9,13 @@
 	url = https://github.com/AndroidIDEOfficial/tree-sitter-log
 [submodule "grammars/xml"]
 	path = grammars/xml
-	url = https://github.com/AndroidIDEOfficial/tree-sitter-xml
+	url = https://github.com/WillBooster/tree-sitter-xml
 [submodule "grammars/irules"]
 	path = grammars/irules
 	url = https://github.com/dekobon/tree-sitter-irules
 [submodule "grammars/properties"]
 	path = grammars/properties
-	url = https://github.com/AndroidIDEOfficial/tree-sitter-properties
+	url = https://github.com/tree-sitter-grammars/tree-sitter-properties
 [submodule "grammars/c"]
 	path = grammars/c
 	url = https://github.com/tree-sitter/tree-sitter-c
@@ -27,7 +27,7 @@
 	url = https://github.com/tree-sitter/tree-sitter.git
 [submodule "grammars/java"]
 	path = grammars/java
-	url = https://github.com/tree-sitter/tree-sitter-java
+	url = https://github.com/WillBooster/tree-sitter-java
 [submodule "grammars/aidl"]
 	path = grammars/aidl
 	url = https://github.com/amaanq/tree-sitter-aidl
@@ -39,7 +39,7 @@
 	url = https://github.com/tree-sitter/tree-sitter-cpp
 [submodule "grammars/c_sharp"]
 	path = grammars/c_sharp
-	url = https://github.com/tree-sitter/tree-sitter-c-sharp
+	url = https://github.com/WillBooster/tree-sitter-c-sharp
 [submodule "grammars/bash"]
 	path = grammars/bash
 	url = https://github.com/tree-sitter/tree-sitter-bash
@@ -307,3 +307,5 @@
 [submodule "grammars/gdb"]
 	path = grammars/gdb
 	url = https://github.com/Shane-Gadsby/godot-gdb-tree-sitter
+[submodule "grammars/c-sharp"]
+	url = https://github.com
