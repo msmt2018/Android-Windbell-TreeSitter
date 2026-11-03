@@ -190,9 +190,6 @@
 [submodule "grammars/crystal"]
 	path = grammars/crystal
 	url = https://github.com/crystal-lang-tools/tree-sitter-crystal
-[submodule "grammars/v"]
-	path = grammars/v
-	url = https://github.com/undivisible/tree-sitter-v
 [submodule "grammars/d"]
 	path = grammars/d
 	url = https://github.com/gdamore/tree-sitter-d
@@ -304,3 +301,6 @@
 [submodule "grammars/gdb"]
 	path = grammars/gdb
 	url = https://github.com/Shane-Gadsby/godot-gdb-tree-sitter
+#[submodule "grammars/vlang"]
+#	path = grammars/vlang
+#	url = https://github.com/vlang/v-analyzer

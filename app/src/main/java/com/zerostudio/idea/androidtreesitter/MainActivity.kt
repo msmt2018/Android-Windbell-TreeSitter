@@ -127,8 +127,10 @@ class MainActivity : AppCompatActivity() {
     content.tsMeta.text =
       "Tree Sitter Language Version: " + TreeSitter.getLanguageVersion()
 
-    String displayVersion = "Tree Sitter Version : " + TreeSitter.getEngineVersion();
-    binding.tsVersion.setText(displayVersion);
+     content.tsVersion.text = "Tree Sitter Version : " + TreeSitter.getEngineVersion()
+         // binding.tsVersion.text = displayVersion
+
+
 
     loadLanguages()
 
