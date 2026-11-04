@@ -23,7 +23,7 @@
 #include "ts_meta.h"
 
 #define TS_VERSION_NUM   "0.28.0"
-#define TS_GIT_HASH      "ad067fd"
+#define TS_GIT_HASH      "9632b56"
 
 static jint ats_language_version(JNIEnv *env, jclass self) {
   return (jint) TREE_SITTER_LANGUAGE_VERSION;
