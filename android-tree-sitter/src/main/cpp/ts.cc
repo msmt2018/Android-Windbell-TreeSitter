@@ -16,13 +16,22 @@
  */
 
 #include <array>
+#include <string>
 #include <tree_sitter/api.h>
 
 #include "ts__log.h"
 #include "ts_meta.h"
 
+#define TS_VERSION_NUM   "0.28.0"
+#define TS_GIT_HASH      "ad067fd"
+
 static jint ats_language_version(JNIEnv *env, jclass self) {
   return (jint) TREE_SITTER_LANGUAGE_VERSION;
+}
+
+static jstring ats_engine_version(JNIEnv *env, jclass self) {
+  std::string version_str = "V" TS_VERSION_NUM "-" TS_GIT_HASH;
+  return env->NewStringUTF(version_str.c_str());
 }
 
 static jint ats_min_compatible_language_version(JNIEnv *env, jclass self) {
@@ -30,8 +39,8 @@ static jint ats_min_compatible_language_version(JNIEnv *env, jclass self) {
 }
 
 void TreeSitter_Native__SetJniMethods(JNINativeMethod *methods, int count) {
-
   SET_JNI_METHOD(methods, TreeSitter_Native_getLanguageVersion, ats_language_version);
+  SET_JNI_METHOD(methods, TreeSitter_Native_getEngineVersion, ats_engine_version);
   SET_JNI_METHOD(methods, TreeSitter_Native_getMinimumCompatibleLanguageVersion,
                  ats_min_compatible_language_version);
 }

@@ -63,13 +63,13 @@ JNIEXPORT void JNI_OnUnload(JavaVM *vm, void *reserved) {
 }
 
 
-extern "C" {
-JNIEXPORT jstring JNICALL
-Java_com_zerostudio_idea_treesitter_TreeSitter_00024Native_getEngineVersion(JNIEnv *env, jobject /* thiz */) {
-    // 使用 std::string 动态连接格式：Vxx.xx-hasa (例如: V0.28.0-a1b2c3d)
-    std::string version_str = "V" TS_VERSION_NUM "-" TS_GIT_HASH;
+// extern "C" {
+// JNIEXPORT jstring JNICALL
+// Java_com_zerostudio_idea_treesitter_TreeSitter_00024Native_getEngineVersion(JNIEnv *env, jobject /* thiz */) {
+    // // 使用 std::string 动态连接格式：Vxx.xx-hasa (例如: V0.28.0-a1b2c3d)
+    // std::string version_str = "V" TS_VERSION_NUM "-" TS_GIT_HASH;
 
-    // 将 C++ 字符串转换为 Java 能够识别的 UTF-8 jstring 并返回
-    return env->NewStringUTF(version_str.c_str());
-}
-} // extern "C"
+    // // 将 C++ 字符串转换为 Java 能够识别的 UTF-8 jstring 并返回
+    // return env->NewStringUTF(version_str.c_str());
+// }
+// } // extern "C"
