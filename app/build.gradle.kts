@@ -73,7 +73,7 @@ dependencies {
     implementation(projects.treeSitterJava)
     implementation(projects.treeSitterJson)
     implementation(projects.treeSitterKotlin)
-    implementation(projects.treeSitterLog)
+    implementation(projects.treeSitterLogcat)
     implementation(projects.treeSitterPython)
     implementation(projects.treeSitterXml)
    

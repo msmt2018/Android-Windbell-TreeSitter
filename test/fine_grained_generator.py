@@ -24,7 +24,7 @@ def generate_java_chunk(method_id):
     )
 
 def create_fine_grained_file(lang, size_mb, filename):
-    target_bytes = size_mb * 1024 * 1024
+    target_bytes = size_mb * 1024
     current_bytes = 0
     item_id = 0
     
@@ -50,7 +50,7 @@ def create_fine_grained_file(lang, size_mb, filename):
         footer = "}\n"
         f.write(footer)
         
-    print(f"[完成] 实际: {os.path.getsize(filename) / (1024*1024):.2f} MB")
+    print(f"[完成] 实际: {os.path.getsize(filename) / (1024):.2f} MB")
 
 if __name__ == "__main__":
     size_stairs = []
@@ -67,7 +67,7 @@ if __name__ == "__main__":
     size_stairs = sorted(list(set(size_stairs)))
     
     total_files = len(size_stairs) * 2
-    estimated_space_gb = sum(size_stairs) * 2 / 1024
+    estimated_space_gb = sum(size_stairs) * 1 / 1024
     
     print("==================================================================")
     print("               编辑器极限性能压测：超精细梯度生成器                 ")

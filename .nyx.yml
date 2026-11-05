@@ -11,7 +11,7 @@ changelog:
     Added: "^feat$"
     Fixed: "^fix$"
   substitutions:
-    "(?m)#([0-9]+)(?s)": "[#%s](https://github.com/AndroidIDEOfficial/android-tree-sitter/issues/%s)"
+    "(?m)#([0-9]+)(?s)": "[#%s](https://github.com/msmt2018/Android-Windbell-TreeSitter/issues/%s)"
 
 releaseAssets:
   apk:

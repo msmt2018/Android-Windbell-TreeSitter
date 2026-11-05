@@ -35,7 +35,7 @@ dependencies {
   testImplementation(projects.treeSitterJava)
   testImplementation(projects.treeSitterJson)
   testImplementation(projects.treeSitterKotlin)
-  testImplementation(projects.treeSitterLog)
+  testImplementation(projects.treeSitterLogcat)
   testImplementation(projects.treeSitterXml)
   testImplementation(projects.treeSitterPython)
   testImplementation(libs.tests.google.truth)
