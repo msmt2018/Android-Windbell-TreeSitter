@@ -1,0 +1,260 @@
+
+> Task :android-tree-sitter:buildForHost                                 -- Configuring done (0.2s)
+-- Generating done (0.1s)                                                -- Build files have been written to: /root/Android-Windbell-TreeSitter/android-tree-sitter/src/main/cpp/host-build                                [  4%] Building CXX object CMakeFiles/android-tree-sitter.dir/main.cc.o  [  9%] Building CXX object CMakeFiles/android-tree-sitter.dir/ts.cc.o
+[ 14%] Building CXX object CMakeFiles/android-tree-sitter.dir/ts_cursor.cc.o                                                                      /root/Android-Windbell-TreeSitter/android-tree-sitter/src/main/cpp/ts_cursor.cc: In function ‘void TreeCursor_delete(JNIEnv*, jclass, jlong)’:    /root/Android-Windbell-TreeSitter/android-tree-sitter/src/main/cpp/ts_cursor.cc:47:39: warning: unused parameter ‘env’ [-Wunused-parameter]          47 | static void TreeCursor_delete(JNIEnv *env, jclass self, jlong cursor_ptr) {                                                                     |                               ~~~~~~~~^~~
+[ 19%] Building CXX object CMakeFiles/android-tree-sitter.dir/ts_language.cc.o
+[ 23%] Building CXX object CMakeFiles/android-tree-sitter.dir/ts_lookahead_iterator.cc.o
+/root/Android-Windbell-TreeSitter/android-tree-sitter/src/main/cpp/ts_lookahead_iterator.cc: In function ‘void TSLookaheadIterator_delete(JNIEnv*, jclass, jlong)’:
+/root/Android-Windbell-TreeSitter/android-tree-sitter/src/main/cpp/ts_lookahead_iterator.cc:25:48: warning: unused parameter ‘env’ [-Wunused-parameter]
+   25 | static void TSLookaheadIterator_delete(JNIEnv *env, jclass clazz, jlong iter_ptr) {
+      |                                        ~~~~~~~~^~~
+[ 28%] Building CXX object CMakeFiles/android-tree-sitter.dir/ts_node.cc.o                                                                        [ 33%] Building CXX object CMakeFiles/android-tree-sitter.dir/ts_parser.cc.o                                                                      [ 38%] Building CXX object CMakeFiles/android-tree-sitter.dir/ts_query.cc.o
+[ 42%] Building CXX object CMakeFiles/android-tree-sitter.dir/ts_query_cursor.cc.o
+[ 47%] Building CXX object CMakeFiles/android-tree-sitter.dir/ts_tree.cc.o                                                                        /root/Android-Windbell-TreeSitter/android-tree-sitter/src/main/cpp/ts_tree.cc: In function ‘void TSTree_delete(JNIEnv*, jclass, jlong)’:          /root/Android-Windbell-TreeSitter/android-tree-sitter/src/main/cpp/ts_tree.cc:23:35: warning: unused parameter ‘env’ [-Wunused-parameter]            23 | static void TSTree_delete(JNIEnv *env, jclass self, jlong tree_ptr) {                                                                           |                           ~~~~~~~~^~~                            [ 52%] Building CXX object CMakeFiles/android-tree-sitter.dir/ts_highlight.cc.o
+[ 57%] Building CXX object CMakeFiles/android-tree-sitter.dir/ts_tags.cc.o
+[ 61%] Building CXX object CMakeFiles/android-tree-sitter.dir/utf16str/JavaUTF16String.cpp.o
+/root/Android-Windbell-TreeSitter/android-tree-sitter/src/main/cpp/utf16str/JavaUTF16String.cpp: In function ‘void UTF16String_append(JNIEnv*, jclass, jlong, jstring)’:                                                   /root/Android-Windbell-TreeSitter/android-tree-sitter/src/main/cpp/utf16str/JavaUTF16String.cpp:29:40: warning: unused parameter ‘clazz’ [-Wunused-parameter]                                                                 29 | UTF16String_append(JNIEnv *env, jclass clazz, jlong pointer, jstring str) {
+      |                                 ~~~~~~~^~~~~                     /root/Android-Windbell-TreeSitter/android-tree-sitter/src/main/cpp/utf16str/JavaUTF16String.cpp: In function ‘void UTF16String_appendPart(JNIEnv*, jclass, jlong, jstring, jint, jint)’:                                   /root/Android-Windbell-TreeSitter/android-tree-sitter/src/main/cpp/utf16str/JavaUTF16String.cpp:34:43: warning: unused parameter ‘clazz’ [-Wunused-parameter]                                                                 34 |                                    jclass clazz,
+      |                                    ~~~~~~~^~~~~
+/root/Android-Windbell-TreeSitter/android-tree-sitter/src/main/cpp/utf16str/JavaUTF16String.cpp: In function ‘jint UTF16String_length(JNIEnv*, jclass, jlong)’:
+/root/Android-Windbell-TreeSitter/android-tree-sitter/src/main/cpp/utf16str/JavaUTF16String.cpp:42:52: warning: unused parameter ‘clazz’ [-Wunused-parameter]
+   42 | static jint UTF16String_length(JNIEnv *env, jclass clazz, jlong pointer) {
+      |                                             ~~~~~~~^~~~~
+/root/Android-Windbell-TreeSitter/android-tree-sitter/src/main/cpp/utf16str/JavaUTF16String.cpp: In function ‘void UTF16String_erase(JNIEnv*, jclass, jlong)’:
+/root/Android-Windbell-TreeSitter/android-tree-sitter/src/main/cpp/utf16str/JavaUTF16String.cpp:46:51: warning: unused parameter ‘clazz’ [-Wunused-parameter]
+   46 | static void UTF16String_erase(JNIEnv *env, jclass clazz, jlong pointer) {
+      |                                            ~~~~~~~^~~~~
+/root/Android-Windbell-TreeSitter/android-tree-sitter/src/main/cpp/utf16str/JavaUTF16String.cpp: In function ‘jint UTF16String_byteLength(JNIEnv*, jclass, jlong)’:                                                        /root/Android-Windbell-TreeSitter/android-tree-sitter/src/main/cpp/utf16str/JavaUTF16String.cpp:51:56: warning: unused parameter ‘clazz’ [-Wunused-parameter]                                                                 51 | static jint UTF16String_byteLength(JNIEnv *env, jclass clazz, jlong pointer) {                                                                  |                                                 ~~~~~~~^~~~~     /root/Android-Windbell-TreeSitter/android-tree-sitter/src/main/cpp/utf16str/JavaUTF16String.cpp: In function ‘void UTF16String_insert(JNIEnv*, jclass, jlong, jstring, jint)’:                                             /root/Android-Windbell-TreeSitter/android-tree-sitter/src/main/cpp/utf16str/JavaUTF16String.cpp:56:39: warning: unused parameter ‘clazz’ [-Wunused-parameter]
+   56 |                                jclass clazz,
+      |                                ~~~~~~~^~~~~
+/root/Android-Windbell-TreeSitter/android-tree-sitter/src/main/cpp/utf16str/JavaUTF16String.cpp: In function ‘void UTF16String_deleteChars(JNIEnv*, jclass, jlong, jint, jint)’:                                           /root/Android-Windbell-TreeSitter/android-tree-sitter/src/main/cpp/utf16str/JavaUTF16String.cpp:64:44: warning: unused parameter ‘clazz’ [-Wunused-parameter]                                                                 64 |                                     jclass clazz,
+      |                                     ~~~~~~~^~~~~
+/root/Android-Windbell-TreeSitter/android-tree-sitter/src/main/cpp/utf16str/JavaUTF16String.cpp: In function ‘void UTF16String_deleteBytes(JNIEnv*, jclass, jlong, jint, jint)’:                                           /root/Android-Windbell-TreeSitter/android-tree-sitter/src/main/cpp/utf16str/JavaUTF16String.cpp:72:44: warning: unused parameter ‘clazz’ [-Wunused-parameter]                                                                 72 |                                     jclass clazz,                      |                                     ~~~~~~~^~~~~
+/root/Android-Windbell-TreeSitter/android-tree-sitter/src/main/cpp/utf16str/JavaUTF16String.cpp: In function ‘void UTF16String_replaceChars(JNIEnv*, jclass, jlong, jint, jint, jstring)’:
+/root/Android-Windbell-TreeSitter/android-tree-sitter/src/main/cpp/utf16str/JavaUTF16String.cpp:80:45: warning: unused parameter ‘clazz’ [-Wunused-parameter]
+   80 |                                      jclass clazz,
+      |                                      ~~~~~~~^~~~~
+/root/Android-Windbell-TreeSitter/android-tree-sitter/src/main/cpp/utf16str/JavaUTF16String.cpp: In function ‘void UTF16String_replaceBytes(JNIEnv*, jclass, jlong, jint, jint, jstring)’:
+/root/Android-Windbell-TreeSitter/android-tree-sitter/src/main/cpp/utf16str/JavaUTF16String.cpp:89:45: warning: unused parameter ‘clazz’ [-Wunused-parameter]
+   89 |                                      jclass clazz,
+      |                                      ~~~~~~~^~~~~                /root/Android-Windbell-TreeSitter/android-tree-sitter/src/main/cpp/utf16str/JavaUTF16String.cpp: In function ‘jlong UTF16String_substring_chars(JNIEnv*, jclass, jlong, jint, jint)’:
+/root/Android-Windbell-TreeSitter/android-tree-sitter/src/main/cpp/utf16str/JavaUTF16String.cpp:98:49: warning: unused parameter ‘clazz’ [-Wunused-parameter]                                                                 98 |                                          jclass clazz,                 |                                          ~~~~~~~^~~~~            /root/Android-Windbell-TreeSitter/android-tree-sitter/src/main/cpp/utf16str/JavaUTF16String.cpp: In function ‘jlong UTF16String_substring_bytes(JNIEnv*, jclass, jlong, jint, jint)’:                                      /root/Android-Windbell-TreeSitter/android-tree-sitter/src/main/cpp/utf16str/JavaUTF16String.cpp:106:49: warning: unused parameter ‘clazz’ [-Wunused-parameter]                                                               106 |                                          jclass clazz,
+      |                                          ~~~~~~~^~~~~
+/root/Android-Windbell-TreeSitter/android-tree-sitter/src/main/cpp/utf16str/JavaUTF16String.cpp: In function ‘_jstring* UTF16String_subjstring_chars(JNIEnv*, jclass, jlong, jint, jint)’:
+/root/Android-Windbell-TreeSitter/android-tree-sitter/src/main/cpp/utf16str/JavaUTF16String.cpp:114:52: warning: unused parameter ‘clazz’ [-Wunused-parameter]                                                               114 |                                             jclass clazz,              |                                             ~~~~~~~^~~~~         /root/Android-Windbell-TreeSitter/android-tree-sitter/src/main/cpp/utf16str/JavaUTF16String.cpp: In function ‘_jstring* UTF16String_subjstring_bytes(JNIEnv*, jclass, jlong, jint, jint)’:
+/root/Android-Windbell-TreeSitter/android-tree-sitter/src/main/cpp/utf16str/JavaUTF16String.cpp:122:52: warning: unused parameter ‘clazz’ [-Wunused-parameter]                                                               122 |                                             jclass clazz,              |                                             ~~~~~~~^~~~~         /root/Android-Windbell-TreeSitter/android-tree-sitter/src/main/cpp/utf16str/JavaUTF16String.cpp: In function ‘jbyte UTF16String_byteAt(JNIEnv*, jclass, jlong, jint)’:
+/root/Android-Windbell-TreeSitter/android-tree-sitter/src/main/cpp/utf16str/JavaUTF16String.cpp:130:40: warning: unused parameter ‘clazz’ [-Wunused-parameter]
+  130 | UTF16String_byteAt(JNIEnv *env, jclass clazz, jlong pointer, jint index) {
+      |                                 ~~~~~~~^~~~~
+/root/Android-Windbell-TreeSitter/android-tree-sitter/src/main/cpp/utf16str/JavaUTF16String.cpp: In function ‘void UTF16String_setByteAt(JNIEnv*, jclass, jlong, jint, jbyte)’:
+/root/Android-Windbell-TreeSitter/android-tree-sitter/src/main/cpp/utf16str/JavaUTF16String.cpp:135:42: warning: unused parameter ‘clazz’ [-Wunused-parameter]
+  135 |                                   jclass clazz,
+      |                                   ~~~~~~~^~~~~
+/root/Android-Windbell-TreeSitter/android-tree-sitter/src/main/cpp/utf16str/JavaUTF16String.cpp: In function ‘jchar UTF16String_chatAt(JNIEnv*, jclass, jlong, jint)’:                                                     /root/Android-Windbell-TreeSitter/android-tree-sitter/src/main/cpp/utf16str/JavaUTF16String.cpp:143:40: warning: unused parameter ‘clazz’ [-Wunused-parameter]                                                               143 | UTF16String_chatAt(JNIEnv *env, jclass clazz, jlong pointer, jint index) {                                                                      |                                 ~~~~~~~^~~~~                     /root/Android-Windbell-TreeSitter/android-tree-sitter/src/main/cpp/utf16str/JavaUTF16String.cpp: In function ‘void UTF16String_setCharAt(JNIEnv*, jclass, jlong, jint, jchar)’:
+/root/Android-Windbell-TreeSitter/android-tree-sitter/src/main/cpp/utf16str/JavaUTF16String.cpp:148:42: warning: unused parameter ‘clazz’ [-Wunused-parameter]
+  148 |                                   jclass clazz,
+      |                                   ~~~~~~~^~~~~                   /root/Android-Windbell-TreeSitter/android-tree-sitter/src/main/cpp/utf16str/JavaUTF16String.cpp: In function ‘_jstring* UTF16String_toString(JNIEnv*, jclass, jlong)’:                                                     /root/Android-Windbell-TreeSitter/android-tree-sitter/src/main/cpp/utf16str/JavaUTF16String.cpp:155:57: warning: unused parameter ‘clazz’ [-Wunused-parameter]                                                               155 | static jstring UTF16String_toString(JNIEnv *env, jclass clazz, jlong pointer) {                                                                 |                                                  ~~~~~~~^~~~~    /root/Android-Windbell-TreeSitter/android-tree-sitter/src/main/cpp/utf16str/JavaUTF16String.cpp: In function ‘void UTF16String_Native__SetJniMethods(JNINativeMethod*, int)’:
+/root/Android-Windbell-TreeSitter/android-tree-sitter/src/main/cpp/utf16str/JavaUTF16String.cpp:159:70: warning: unused parameter ‘count’ [-Wunused-parameter]
+  159 | void UTF16String_Native__SetJniMethods(JNINativeMethod *methods, int count) {
+      |                                                                  ~~~~^~~~~
+[ 66%] Building CXX object CMakeFiles/android-tree-sitter.dir/utf16str/JavaUTF16StringFactory.cpp.o                                               /root/Android-Windbell-TreeSitter/android-tree-sitter/src/main/cpp/utf16str/JavaUTF16StringFactory.cpp: In function ‘jlong UTF16StringFactory_newString(JNIEnv*, jclass, jstring)’:
+/root/Android-Windbell-TreeSitter/android-tree-sitter/src/main/cpp/utf16str/JavaUTF16StringFactory.cpp:28:12: warning: unused parameter ‘clazz’ [-Wunused-parameter]                                                          28 |     jclass clazz,
+      |     ~~~~~~~^~~~~                                                 /root/Android-Windbell-TreeSitter/android-tree-sitter/src/main/cpp/utf16str/JavaUTF16StringFactory.cpp: In function ‘jlong UTF16StringFactory_newStringBytes(JNIEnv*, jclass, jbyteArray, jint, jint)’:                    /root/Android-Windbell-TreeSitter/android-tree-sitter/src/main/cpp/utf16str/JavaUTF16StringFactory.cpp:38:12: warning: unused parameter ‘clazz’ [-Wunused-parameter]
+   38 |     jclass clazz,
+      |     ~~~~~~~^~~~~
+/root/Android-Windbell-TreeSitter/android-tree-sitter/src/main/cpp/utf16str/JavaUTF16StringFactory.cpp: In function ‘void UTF16StringFactory_Native__SetJniMethods(JNINativeMethod*, int)’:
+/root/Android-Windbell-TreeSitter/android-tree-sitter/src/main/cpp/utf16str/JavaUTF16StringFactory.cpp:53:77: warning: unused parameter ‘count’ [-Wunused-parameter]
+   53 | void UTF16StringFactory_Native__SetJniMethods(JNINativeMethod *methods, int count) {
+      |                                                                         ~~~~^~~~~
+[ 71%] Building CXX object CMakeFiles/android-tree-sitter.dir/utils/ts_exceptions.cpp.o
+[ 76%] Building CXX object CMakeFiles/android-tree-sitter.dir/utils/ts_preconditions.cpp.o
+[ 80%] Linking CXX shared library libandroid-tree-sitter.so
+lto-wrapper: warning: using serial compilation of 6 LTRANS jobs          lto-wrapper: note: see the ‘-flto’ option documentation for more information                                                                      [100%] Built target android-tree-sitter                                                                                                           > Task :android-tree-sitter:configureCMakeDebug[arm64-v8a]               C/C++: WARNING: linker: Warning: failed to find generated linker configuration from "/linkerconfig/ld.config.txt"                                 C/C++:    Compiling memchr v2.8.3                                        C/C++:    Compiling regex-syntax v0.8.11                                 C/C++:    Compiling tree-sitter-language v0.1.8 (/root/Android-Windbell-TreeSitter/tree-sitter-lib/crates/language)
+C/C++:    Compiling streaming-iterator v0.1.9
+C/C++:    Compiling thiserror v2.0.21
+C/C++:    Compiling tree-sitter v0.28.0 (/root/Android-Windbell-TreeSitter/tree-sitter-lib/lib)                                                   C/C++:    Compiling aho-corasick v1.1.5
+C/C++:    Compiling regex-automata v0.4.18                               C/C++:    Compiling regex v1.13.1                                        C/C++: warning: tree-sitter@0.28.0: WARNING: linker: Warning: failed to find generated linker configuration from "/linkerconfig/ld.config.txt"    C/C++: warning: tree-sitter@0.28.0: WARNING: linker: Warning: failed to find generated linker configuration from "/linkerconfig/ld.config.txt"
+C/C++: error: failed to run custom build command for `tree-sitter v0.28.0 (/root/Android-Windbell-TreeSitter/tree-sitter-lib/lib)`
+C/C++: Caused by:                                                        C/C++:   process didn't exit successfully: `/root/Android-Windbell-TreeSitter/tree-sitter-lib/cli/build/release/build/tree-sitter-41f3764428d67c9e/build-script-build` (exit status: 1)                                    C/C++:   --- stdout                                                      C/C++:   cargo:rerun-if-env-changed=CARGO_FEATURE_WASM
+C/C++:   cargo:rerun-if-changed=/root/Android-Windbell-TreeSitter/tree-sitter-lib/lib/src/alloc.c
+C/C++:   cargo:rerun-if-changed=/root/Android-Windbell-TreeSitter/tree-sitter-lib/lib/src/alloc.h
+C/C++:   cargo:rerun-if-changed=/root/Android-Windbell-TreeSitter/tree-sitter-lib/lib/src/array.h                                                 C/C++:   cargo:rerun-if-changed=/root/Android-Windbell-TreeSitter/tree-sitter-lib/lib/src/atomic.h
+C/C++:   cargo:rerun-if-changed=/root/Android-Windbell-TreeSitter/tree-sitter-lib/lib/src/error_costs.h
+C/C++:   cargo:rerun-if-changed=/root/Android-Windbell-TreeSitter/tree-sitter-lib/lib/src/get_changed_ranges.c
+C/C++:   cargo:rerun-if-changed=/root/Android-Windbell-TreeSitter/tree-sitter-lib/lib/src/get_changed_ranges.h
+C/C++:   cargo:rerun-if-changed=/root/Android-Windbell-TreeSitter/tree-sitter-lib/lib/src/host.h
+C/C++:   cargo:rerun-if-changed=/root/Android-Windbell-TreeSitter/tree-sitter-lib/lib/src/language.c
+C/C++:   cargo:rerun-if-changed=/root/Android-Windbell-TreeSitter/tree-sitter-lib/lib/src/language.h
+C/C++:   cargo:rerun-if-changed=/root/Android-Windbell-TreeSitter/tree-sitter-lib/lib/src/length.h                                                C/C++:   cargo:rerun-if-changed=/root/Android-Windbell-TreeSitter/tree-sitter-lib/lib/src/lexer.c                                                 C/C++:   cargo:rerun-if-changed=/root/Android-Windbell-TreeSitter/tree-sitter-lib/lib/src/lexer.h
+C/C++:   cargo:rerun-if-changed=/root/Android-Windbell-TreeSitter/tree-sitter-lib/lib/src/lib.c
+C/C++:   cargo:rerun-if-changed=/root/Android-Windbell-TreeSitter/tree-sitter-lib/lib/src/node.c
+C/C++:   cargo:rerun-if-changed=/root/Android-Windbell-TreeSitter/tree-sitter-lib/lib/src/parser.c
+C/C++:   cargo:rerun-if-changed=/root/Android-Windbell-TreeSitter/tree-sitter-lib/lib/src/parser.h
+C/C++:   cargo:rerun-if-changed=/root/Android-Windbell-TreeSitter/tree-sitter-lib/lib/src/point.c
+C/C++:   cargo:rerun-if-changed=/root/Android-Windbell-TreeSitter/tree-sitter-lib/lib/src/point.h                                                 C/C++:   cargo:rerun-if-changed=/root/Android-Windbell-TreeSitter/tree-sitter-lib/lib/src/portable                                                C/C++:   cargo:rerun-if-changed=/root/Android-Windbell-TreeSitter/tree-sitter-lib/lib/src/query.c
+C/C++:   cargo:rerun-if-changed=/root/Android-Windbell-TreeSitter/tree-sitter-lib/lib/src/reduce_action.h
+C/C++:   cargo:rerun-if-changed=/root/Android-Windbell-TreeSitter/tree-sitter-lib/lib/src/reusable_node.h                                         C/C++:   cargo:rerun-if-changed=/root/Android-Windbell-TreeSitter/tree-sitter-lib/lib/src/stack.c                                                 C/C++:   cargo:rerun-if-changed=/root/Android-Windbell-TreeSitter/tree-sitter-lib/lib/src/stack.h
+C/C++:   cargo:rerun-if-changed=/root/Android-Windbell-TreeSitter/tree-sitter-lib/lib/src/subtree.c
+C/C++:   cargo:rerun-if-changed=/root/Android-Windbell-TreeSitter/tree-sitter-lib/lib/src/subtree.h                                               C/C++:   cargo:rerun-if-changed=/root/Android-Windbell-TreeSitter/tree-sitter-lib/lib/src/tree.c
+C/C++:   cargo:rerun-if-changed=/root/Android-Windbell-TreeSitter/tree-sitter-lib/lib/src/tree.h
+C/C++:   cargo:rerun-if-changed=/root/Android-Windbell-TreeSitter/tree-sitter-lib/lib/src/tree_cursor.c
+C/C++:   cargo:rerun-if-changed=/root/Android-Windbell-TreeSitter/tree-sitter-lib/lib/src/tree_cursor.h
+C/C++:   cargo:rerun-if-changed=/root/Android-Windbell-TreeSitter/tree-sitter-lib/lib/src/tree_sitter.def
+C/C++:   cargo:rerun-if-changed=/root/Android-Windbell-TreeSitter/tree-sitter-lib/lib/src/tree_sitter_wasm.def                                    C/C++:   cargo:rerun-if-changed=/root/Android-Windbell-TreeSitter/tree-sitter-lib/lib/src/ts_assert.h                                             C/C++:   cargo:rerun-if-changed=/root/Android-Windbell-TreeSitter/tree-sitter-lib/lib/src/unicode.h                                               C/C++:   cargo:rerun-if-changed=/root/Android-Windbell-TreeSitter/tree-sitter-lib/lib/src/unicode                                                 C/C++:   cargo:rerun-if-changed=/root/Android-Windbell-TreeSitter/tree-sitter-lib/lib/src/wasm-stdlib
+C/C++:   cargo:rerun-if-changed=/root/Android-Windbell-TreeSitter/tree-sitter-lib/lib/src/wasm_store.c
+C/C++:   cargo:rerun-if-changed=/root/Android-Windbell-TreeSitter/tree-sitter-lib/lib/src/wasm_store.h
+C/C++:   cargo:rerun-if-env-changed=CC_FORCE_DISABLE                     C/C++:   CC_FORCE_DISABLE = None                                         C/C++:   cargo:rerun-if-env-changed=CC_aarch64-linux-android             C/C++:   CC_aarch64-linux-android = None                                 C/C++:   cargo:rerun-if-env-changed=CC_aarch64_linux_android             C/C++:   CC_aarch64_linux_android = None                                 C/C++:   cargo:rerun-if-env-changed=TARGET_CC                            C/C++:   TARGET_CC = None                                                C/C++:   cargo:rerun-if-env-changed=CC                                   C/C++:   CC = Some(/root/android-sdk/ndk/24.0.8215888/toolchains/llvm/prebuilt/linux-aarch64/bin/clang)                                           C/C++:   cargo:rerun-if-env-changed=CC_ENABLE_DEBUG_OUTPUT               C/C++:   cargo:warning=WARNING: linker: Warning: failed to find generated linker configuration from "/linkerconfig/ld.config.txt"
+C/C++:   cargo:rerun-if-env-changed=CPATH
+C/C++:   cargo:rerun-if-env-changed=C_INCLUDE_PATH
+C/C++:   cargo:rerun-if-env-changed=CPLUS_INCLUDE_PATH
+C/C++:   cargo:rerun-if-env-changed=OBJC_INCLUDE_PATH
+C/C++:   cargo:rerun-if-env-changed=OBJCPLUS_INCLUDE_PATH                C/C++:   cargo:rerun-if-env-changed=COMPILER_PATH
+C/C++:   cargo:rerun-if-env-changed=SOURCE_DATE_EPOCH                    C/C++:   cargo:rerun-if-env-changed=CCC_OVERRIDE_OPTIONS                 C/C++:   cargo:rerun-if-env-changed=CLANG_NO_DEFAULT_CONFIG              C/C++:   cargo:rerun-if-env-changed=CRATE_CC_NO_DEFAULTS                 C/C++:   CRATE_CC_NO_DEFAULTS = None
+C/C++:   cargo:rerun-if-env-changed=CFLAGS
+C/C++:   CFLAGS = None
+C/C++:   cargo:rerun-if-env-changed=TARGET_CFLAGS                        C/C++:   TARGET_CFLAGS = None
+C/C++:   cargo:rerun-if-env-changed=CFLAGS_aarch64_linux_android         C/C++:   CFLAGS_aarch64_linux_android = None                             C/C++:   cargo:rerun-if-env-changed=CFLAGS_aarch64-linux-android         C/C++:   CFLAGS_aarch64-linux-android = None                             C/C++:   CRATE_CC_NO_DEFAULTS = None
+C/C++:   CFLAGS = None
+C/C++:   TARGET_CFLAGS = None
+C/C++:   CFLAGS_aarch64_linux_android = None
+C/C++:   CFLAGS_aarch64-linux-android = None
+C/C++:   CRATE_CC_NO_DEFAULTS = None
+C/C++:   CFLAGS = None
+C/C++:   TARGET_CFLAGS = None
+C/C++:   CFLAGS_aarch64_linux_android = None
+C/C++:   CFLAGS_aarch64-linux-android = None
+C/C++:   CRATE_CC_NO_DEFAULTS = None
+C/C++:   CFLAGS = None
+C/C++:   TARGET_CFLAGS = None
+C/C++:   CFLAGS_aarch64_linux_android = None                             C/C++:   CFLAGS_aarch64-linux-android = None
+C/C++:   CRATE_CC_NO_DEFAULTS = None
+C/C++:   CFLAGS = None
+C/C++:   TARGET_CFLAGS = None
+C/C++:   CFLAGS_aarch64_linux_android = None
+C/C++:   CFLAGS_aarch64-linux-android = None
+C/C++:   cargo:warning=WARNING: linker: Warning: failed to find generated linker configuration from "/linkerconfig/ld.config.txt"
+C/C++:   CC_FORCE_DISABLE = None
+C/C++:   cargo:rerun-if-env-changed=AR_aarch64-linux-android
+C/C++:   AR_aarch64-linux-android = None
+C/C++:   cargo:rerun-if-env-changed=AR_aarch64_linux_android
+C/C++:   AR_aarch64_linux_android = None
+C/C++:   cargo:rerun-if-env-changed=TARGET_AR                            C/C++:   TARGET_AR = None
+C/C++:   cargo:rerun-if-env-changed=AR                                   C/C++:   AR = None                                                       C/C++:   cargo:rerun-if-env-changed=ARFLAGS                              C/C++:   ARFLAGS = None                                                  C/C++:   cargo:rerun-if-env-changed=TARGET_ARFLAGS
+C/C++:   TARGET_ARFLAGS = None
+C/C++:   cargo:rerun-if-env-changed=ARFLAGS_aarch64_linux_android
+C/C++:   ARFLAGS_aarch64_linux_android = None                            C/C++:   cargo:rerun-if-env-changed=ARFLAGS_aarch64-linux-android
+C/C++:   ARFLAGS_aarch64-linux-android = None                            C/C++:   AR_aarch64-linux-android = None                                 C/C++:   AR_aarch64_linux_android = None                                 C/C++:   TARGET_AR = None                                                C/C++:   AR = None                                                       C/C++:   ARFLAGS = None
+C/C++:   TARGET_ARFLAGS = None
+C/C++:   ARFLAGS_aarch64_linux_android = None
+C/C++:   ARFLAGS_aarch64-linux-android = None
+C/C++:   AR_aarch64-linux-android = None
+C/C++:   AR_aarch64_linux_android = None
+C/C++:   TARGET_AR = None
+C/C++:   AR = None
+C/C++:   ARFLAGS = None
+C/C++:   TARGET_ARFLAGS = None
+C/C++:   ARFLAGS_aarch64_linux_android = None
+C/C++:   ARFLAGS_aarch64-linux-android = None
+C/C++:   --- stderr
+C/C++:   error occurred in cc-rs: failed to find tool "aarch64-linux-android-ar": No such file or directory (os error 2)
+C/C++: CMake Error at CMakeLists.txt:130 (message):                      C/C++:   cargo build failed for the 'highlight' crate.
+
+> Task :android-tree-sitter:configureCMakeDebug[arm64-v8a] FAILED
+
+FAILURE: Build failed with an exception.                                 
+* What went wrong:
+Execution failed for task ':android-tree-sitter:configureCMakeDebug[arm64-v8a]'.
+> [CXX1429] error when building with cmake using /root/Android-Windbell-TreeSitter/android-tree-sitter/src/main/cpp/CMakeLists.txt: -- Android: Targeting API '21' with architecture 'arm64', ABI 'arm64-v8a', and processor 'aarch64'                                                                -- Android: Selected unified Clang toolchain                             -- The C compiler identification is Clang 14.0.1                         -- The CXX compiler identification is Clang 14.0.1                       -- Detecting C compiler ABI info
+  -- Detecting C compiler ABI info - done
+  -- Check for working C compiler: /root/android-sdk/ndk/24.0.8215888/toolchains/llvm/prebuilt/linux-aarch64/bin/clang - skipped
+  -- Detecting C compile features                                          -- Detecting C compile features - done                                   -- Detecting CXX compiler ABI info                                       -- Detecting CXX compiler ABI info - done                                -- Check for working CXX compiler: /root/android-sdk/ndk/24.0.8215888/toolchains/llvm/prebuilt/linux-aarch64/bin/clang++ - skipped
+  -- Detecting CXX compile features
+  -- Detecting CXX compile features - done
+  -- Building tree-sitter Rust lib 'highlight' (/root/Android-Windbell-TreeSitter/tree-sitter-lib/cli/build/aarch64-linux-android/release)          -- Configuring incomplete, errors occurred!
+  See also "/root/Android-Windbell-TreeSitter/android-tree-sitter/.cxx/Debug/10203o5a/arm64-v8a/CMakeFiles/CMakeOutput.log".                      
+  C++ build system [configure] failed while executing:
+      /root/android-sdk/cmake/3.22.1/bin/cmake \
+        -H/root/Android-Windbell-TreeSitter/android-tree-sitter/src/main/cpp \                                                                            -DCMAKE_SYSTEM_NAME=Android \
+        -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+        -DCMAKE_SYSTEM_VERSION=21 \
+        -DANDROID_PLATFORM=android-21 \
+        -DANDROID_ABI=arm64-v8a \
+        -DCMAKE_ANDROID_ARCH_ABI=arm64-v8a \
+        -DANDROID_NDK=/root/android-sdk/ndk/24.0.8215888 \
+        -DCMAKE_ANDROID_NDK=/root/android-sdk/ndk/24.0.8215888 \
+        -DCMAKE_TOOLCHAIN_FILE=/root/android-sdk/ndk/24.0.8215888/build/cmake/android.toolchain.cmake \
+        -DCMAKE_MAKE_PROGRAM=/root/android-sdk/cmake/3.22.1/bin/ninja \
+        -DCMAKE_LIBRARY_OUTPUT_DIRECTORY=/root/Android-Windbell-TreeSitter/android-tree-sitter/build/intermediates/cxx/Debug/10203o5a/obj/arm64-v8a \                                                                              -DCMAKE_RUNTIME_OUTPUT_DIRECTORY=/root/Android-Windbell-TreeSitter/android-tree-sitter/build/intermediates/cxx/Debug/10203o5a/obj/arm64-v8a \                                                                              -DCMAKE_BUILD_TYPE=Debug \                                               -B/root/Android-Windbell-TreeSitter/android-tree-sitter/.cxx/Debug/10203o5a/arm64-v8a \                                                           -GNinja \                                                                -DAUTOGEN_HEADERS=/root/Android-Windbell-TreeSitter/android-tree-sitter/build/generated/native_headers \
+        -DPROJECT_DIR=/root/Android-Windbell-TreeSitter \
+        -DTS_DIR=/root/Android-Windbell-TreeSitter/tree-sitter-lib
+    from /root/Android-Windbell-TreeSitter/android-tree-sitter
+  WARNING: linker: Warning: failed to find generated linker configuration from "/linkerconfig/ld.config.txt"                                           Compiling memchr v2.8.3                                                  Compiling regex-syntax v0.8.11                                           Compiling tree-sitter-language v0.1.8 (/root/Android-Windbell-TreeSitter/tree-sitter-lib/crates/language)                                         Compiling streaming-iterator v0.1.9                                      Compiling thiserror v2.0.21                                              Compiling tree-sitter v0.28.0 (/root/Android-Windbell-TreeSitter/tree-sitter-lib/lib)                                                             Compiling aho-corasick v1.1.5                                            Compiling regex-automata v0.4.18                                         Compiling regex v1.13.1                                               warning: tree-sitter@0.28.0: WARNING: linker: Warning: failed to find generated linker configuration from "/linkerconfig/ld.config.txt"
+  warning: tree-sitter@0.28.0: WARNING: linker: Warning: failed to find generated linker configuration from "/linkerconfig/ld.config.txt"
+  error: failed to run custom build command for `tree-sitter v0.28.0 (/root/Android-Windbell-TreeSitter/tree-sitter-lib/lib)`
+                                                                           Caused by:
+    process didn't exit successfully: `/root/Android-Windbell-TreeSitter/tree-sitter-lib/cli/build/release/build/tree-sitter-41f3764428d67c9e/build-script-build` (exit status: 1)                                             --- stdout                                                               cargo:rerun-if-env-changed=CARGO_FEATURE_WASM
+    cargo:rerun-if-changed=/root/Android-Windbell-TreeSitter/tree-sitter-lib/lib/src/alloc.c
+    cargo:rerun-if-changed=/root/Android-Windbell-TreeSitter/tree-sitter-lib/lib/src/alloc.h
+    cargo:rerun-if-changed=/root/Android-Windbell-TreeSitter/tree-sitter-lib/lib/src/array.h                                                          cargo:rerun-if-changed=/root/Android-Windbell-TreeSitter/tree-sitter-lib/lib/src/atomic.h                                                         cargo:rerun-if-changed=/root/Android-Windbell-TreeSitter/tree-sitter-lib/lib/src/error_costs.h
+    cargo:rerun-if-changed=/root/Android-Windbell-TreeSitter/tree-sitter-lib/lib/src/get_changed_ranges.c
+    cargo:rerun-if-changed=/root/Android-Windbell-TreeSitter/tree-sitter-lib/lib/src/get_changed_ranges.h
+    cargo:rerun-if-changed=/root/Android-Windbell-TreeSitter/tree-sitter-lib/lib/src/host.h
+    cargo:rerun-if-changed=/root/Android-Windbell-TreeSitter/tree-sitter-lib/lib/src/language.c
+    cargo:rerun-if-changed=/root/Android-Windbell-TreeSitter/tree-sitter-lib/lib/src/language.h
+    cargo:rerun-if-changed=/root/Android-Windbell-TreeSitter/tree-sitter-lib/lib/src/length.h                                                         cargo:rerun-if-changed=/root/Android-Windbell-TreeSitter/tree-sitter-lib/lib/src/lexer.c                                                          cargo:rerun-if-changed=/root/Android-Windbell-TreeSitter/tree-sitter-lib/lib/src/lexer.h
+    cargo:rerun-if-changed=/root/Android-Windbell-TreeSitter/tree-sitter-lib/lib/src/lib.c
+    cargo:rerun-if-changed=/root/Android-Windbell-TreeSitter/tree-sitter-lib/lib/src/node.c                                                           cargo:rerun-if-changed=/root/Android-Windbell-TreeSitter/tree-sitter-lib/lib/src/parser.c                                                         cargo:rerun-if-changed=/root/Android-Windbell-TreeSitter/tree-sitter-lib/lib/src/parser.h                                                         cargo:rerun-if-changed=/root/Android-Windbell-TreeSitter/tree-sitter-lib/lib/src/point.c                                                          cargo:rerun-if-changed=/root/Android-Windbell-TreeSitter/tree-sitter-lib/lib/src/point.h                                                          cargo:rerun-if-changed=/root/Android-Windbell-TreeSitter/tree-sitter-lib/lib/src/portable
+    cargo:rerun-if-changed=/root/Android-Windbell-TreeSitter/tree-sitter-lib/lib/src/query.c
+    cargo:rerun-if-changed=/root/Android-Windbell-TreeSitter/tree-sitter-lib/lib/src/reduce_action.h                                                  cargo:rerun-if-changed=/root/Android-Windbell-TreeSitter/tree-sitter-lib/lib/src/reusable_node.h                                                  cargo:rerun-if-changed=/root/Android-Windbell-TreeSitter/tree-sitter-lib/lib/src/stack.c                                                          cargo:rerun-if-changed=/root/Android-Windbell-TreeSitter/tree-sitter-lib/lib/src/stack.h
+    cargo:rerun-if-changed=/root/Android-Windbell-TreeSitter/tree-sitter-lib/lib/src/subtree.c                                                        cargo:rerun-if-changed=/root/Android-Windbell-TreeSitter/tree-sitter-lib/lib/src/subtree.h                                                        cargo:rerun-if-changed=/root/Android-Windbell-TreeSitter/tree-sitter-lib/lib/src/tree.c                                                           cargo:rerun-if-changed=/root/Android-Windbell-TreeSitter/tree-sitter-lib/lib/src/tree.h                                                           cargo:rerun-if-changed=/root/Android-Windbell-TreeSitter/tree-sitter-lib/lib/src/tree_cursor.c
+    cargo:rerun-if-changed=/root/Android-Windbell-TreeSitter/tree-sitter-lib/lib/src/tree_cursor.h
+    cargo:rerun-if-changed=/root/Android-Windbell-TreeSitter/tree-sitter-lib/lib/src/tree_sitter.def
+    cargo:rerun-if-changed=/root/Android-Windbell-TreeSitter/tree-sitter-lib/lib/src/tree_sitter_wasm.def
+    cargo:rerun-if-changed=/root/Android-Windbell-TreeSitter/tree-sitter-lib/lib/src/ts_assert.h
+    cargo:rerun-if-changed=/root/Android-Windbell-TreeSitter/tree-sitter-lib/lib/src/unicode.h
+    cargo:rerun-if-changed=/root/Android-Windbell-TreeSitter/tree-sitter-lib/lib/src/unicode                                                          cargo:rerun-if-changed=/root/Android-Windbell-TreeSitter/tree-sitter-lib/lib/src/wasm-stdlib                                                      cargo:rerun-if-changed=/root/Android-Windbell-TreeSitter/tree-sitter-lib/lib/src/wasm_store.c                                                     cargo:rerun-if-changed=/root/Android-Windbell-TreeSitter/tree-sitter-lib/lib/src/wasm_store.h                                                     cargo:rerun-if-env-changed=CC_FORCE_DISABLE                              CC_FORCE_DISABLE = None                                                  cargo:rerun-if-env-changed=CC_aarch64-linux-android                      CC_aarch64-linux-android = None                                          cargo:rerun-if-env-changed=CC_aarch64_linux_android
+    CC_aarch64_linux_android = None
+    cargo:rerun-if-env-changed=TARGET_CC
+    TARGET_CC = None
+    cargo:rerun-if-env-changed=CC
+    CC = Some(/root/android-sdk/ndk/24.0.8215888/toolchains/llvm/prebuilt/linux-aarch64/bin/clang)                                                    cargo:rerun-if-env-changed=CC_ENABLE_DEBUG_OUTPUT                        cargo:warning=WARNING: linker: Warning: failed to find generated linker configuration from "/linkerconfig/ld.config.txt"                          cargo:rerun-if-env-changed=CPATH                                         cargo:rerun-if-env-changed=C_INCLUDE_PATH                                cargo:rerun-if-env-changed=CPLUS_INCLUDE_PATH                            cargo:rerun-if-env-changed=OBJC_INCLUDE_PATH                             cargo:rerun-if-env-changed=OBJCPLUS_INCLUDE_PATH                         cargo:rerun-if-env-changed=COMPILER_PATH                                 cargo:rerun-if-env-changed=SOURCE_DATE_EPOCH                             cargo:rerun-if-env-changed=CCC_OVERRIDE_OPTIONS
+    cargo:rerun-if-env-changed=CLANG_NO_DEFAULT_CONFIG
+    cargo:rerun-if-env-changed=CRATE_CC_NO_DEFAULTS
+    CRATE_CC_NO_DEFAULTS = None
+    cargo:rerun-if-env-changed=CFLAGS
+    CFLAGS = None
+    cargo:rerun-if-env-changed=TARGET_CFLAGS                                 TARGET_CFLAGS = None
+    cargo:rerun-if-env-changed=CFLAGS_aarch64_linux_android                  CFLAGS_aarch64_linux_android = None                                      cargo:rerun-if-env-changed=CFLAGS_aarch64-linux-android                  CFLAGS_aarch64-linux-android = None                                      CRATE_CC_NO_DEFAULTS = None                                              CFLAGS = None
+    TARGET_CFLAGS = None
+    CFLAGS_aarch64_linux_android = None
+    CFLAGS_aarch64-linux-android = None                                      CRATE_CC_NO_DEFAULTS = None
+    CFLAGS = None                                                            TARGET_CFLAGS = None                                                     CFLAGS_aarch64_linux_android = None                                      CFLAGS_aarch64-linux-android = None                                      CRATE_CC_NO_DEFAULTS = None                                              CFLAGS = None
+    TARGET_CFLAGS = None
+    CFLAGS_aarch64_linux_android = None
+    CFLAGS_aarch64-linux-android = None
+    CRATE_CC_NO_DEFAULTS = None
+    CFLAGS = None
+    TARGET_CFLAGS = None
+    CFLAGS_aarch64_linux_android = None
+    CFLAGS_aarch64-linux-android = None
+    cargo:warning=WARNING: linker: Warning: failed to find generated linker configuration from "/linkerconfig/ld.config.txt"
+    CC_FORCE_DISABLE = None
+    cargo:rerun-if-env-changed=AR_aarch64-linux-android
+    AR_aarch64-linux-android = None                                          cargo:rerun-if-env-changed=AR_aarch64_linux_android
+    AR_aarch64_linux_android = None                                          cargo:rerun-if-env-changed=TARGET_AR
+    TARGET_AR = None
+    cargo:rerun-if-env-changed=AR
+    AR = None
+    cargo:rerun-if-env-changed=ARFLAGS                                       ARFLAGS = None                                                           cargo:rerun-if-env-changed=TARGET_ARFLAGS                                TARGET_ARFLAGS = None                                                    cargo:rerun-if-env-changed=ARFLAGS_aarch64_linux_android                 ARFLAGS_aarch64_linux_android = None                                     cargo:rerun-if-env-changed=ARFLAGS_aarch64-linux-android                 ARFLAGS_aarch64-linux-android = None                                     AR_aarch64-linux-android = None                                          AR_aarch64_linux_android = None                                          TARGET_AR = None
+    AR = None
+    ARFLAGS = None
+    TARGET_ARFLAGS = None
+    ARFLAGS_aarch64_linux_android = None
+    ARFLAGS_aarch64-linux-android = None                                     AR_aarch64-linux-android = None
+    AR_aarch64_linux_android = None                                          TARGET_AR = None                                                         AR = None                                                                ARFLAGS = None                                                           TARGET_ARFLAGS = None
+    ARFLAGS_aarch64_linux_android = None
+    ARFLAGS_aarch64-linux-android = None                                 
+    --- stderr                                                                                                                                                                                                                 error occurred in cc-rs: failed to find tool "aarch64-linux-android-ar": No such file or directory (os error 2)                               
+
+  CMake Error at CMakeLists.txt:130 (message):
+    cargo build failed for the 'highlight' crate.
