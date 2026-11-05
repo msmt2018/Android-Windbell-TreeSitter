@@ -178,3 +178,6 @@
 [submodule "grammars/csharp"]
 	path = grammars/csharp
 	url = https://github.com/tree-sitter/tree-sitter-c-sharp
+[submodule "android-tree-sitter/src/main/cpp/oniguruma"]
+	path = android-tree-sitter/src/main/cpp/oniguruma
+	url = https://github.com/project-sora/oniguruma
