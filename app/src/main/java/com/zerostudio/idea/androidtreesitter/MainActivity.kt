@@ -40,7 +40,7 @@ import com.zerostudio.idea.treesitter.TreeSitter
 import com.zerostudio.idea.treesitter.java.TSLanguageJava
 import com.zerostudio.idea.treesitter.json.TSLanguageJson
 import com.zerostudio.idea.treesitter.kotlin.TSLanguageKotlin
-import com.zerostudio.idea.treesitter.log.TSLanguageLog
+import com.zerostudio.idea.treesitter.logcat.TSLanguageLogcat
 import com.zerostudio.idea.treesitter.python.TSLanguagePython
 import com.zerostudio.idea.treesitter.string.UTF16String
 import com.zerostudio.idea.treesitter.string.UTF16StringFactory
@@ -95,14 +95,14 @@ class MainActivity : AppCompatActivity() {
       System.loadLibrary("tree-sitter-java")
       System.loadLibrary("tree-sitter-json")
       System.loadLibrary("tree-sitter-kotlin")
-      System.loadLibrary("tree-sitter-log")
+      System.loadLibrary("tree-sitter-logcat")
       System.loadLibrary("tree-sitter-python")
       System.loadLibrary("tree-sitter-xml")
 
       languageMap["Java"] = TSLanguageJava.getInstance()
       languageMap["JSON"] = TSLanguageJson.getInstance()
       languageMap["Kotlin"] = TSLanguageKotlin.getInstance()
-      languageMap["Log"] = TSLanguageLog.getInstance()
+      languageMap["Logcat"] = TSLanguageLog.getInstance()
       languageMap["Python"] = TSLanguagePython.getInstance()
       languageMap["XML"] = TSLanguageXml.getInstance()
     }
