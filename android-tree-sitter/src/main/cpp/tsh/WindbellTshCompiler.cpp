@@ -1968,6 +1968,10 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
             auto child_dark_ui = std::move(child.ui_dark_colors);
             auto child_scope_rules = std::move(child.scope_rules);
             child.colors = parent.colors;
+            for (auto& inherited : child.colors) {
+                inherited.second.explicit_light_color = false;
+                inherited.second.explicit_dark_color = false;
+            }
             child.ui_colors = parent.ui_colors;
             child.ui_light_colors = parent.ui_light_colors;
             child.ui_dark_colors = parent.ui_dark_colors;
