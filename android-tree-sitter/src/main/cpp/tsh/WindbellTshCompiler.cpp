@@ -904,7 +904,12 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                 auto style_name = lexer.nextToken();
                 if (style_name.type != TshLexer::TokenType::TOK_STRING &&
                     style_name.type != TshLexer::TokenType::TOK_IDENT) return false;
-                rule.group_style_map[group_index] = ensureStyleId(style_name.text);
+                if (!rule.group_style_map.emplace(
+                        group_index, ensureStyleId(style_name.text)).second) {
+                    g_tsh_last_error_detail = "duplicate numeric capture declaration: " +
+                        std::to_string(group_index);
+                    return false;
+                }
                 continue;
             }
 
