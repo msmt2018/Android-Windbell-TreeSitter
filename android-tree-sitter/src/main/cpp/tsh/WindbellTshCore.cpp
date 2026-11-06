@@ -161,16 +161,23 @@ void WindbellEngine::matchBlockRecursive(
                                 in_span.allow_overlap = nested.allow_overlap ? 1 : 0;
                                 out_spans.push_back(in_span);
                             };
-                            if (nested.group_style_map.empty()) {
+                            if (nested.group_style_map.empty() && nested.named_group_style_map.empty()) {
                                 if (nested.has_style) append_nested_capture(0, nested.style_id);
                             } else {
                                 auto whole = nested.group_style_map.find(0);
                                 if (whole != nested.group_style_map.end()) append_nested_capture(0, whole->second);
                                 for (int group = 1; group < inner_region->num_regs; ++group) {
                                     auto style = nested.group_style_map.find(group);
-                                    if (style != nested.group_style_map.end()) {
-                                        append_nested_capture(group, style->second);
-                                    }
+                                    if (style != nested.group_style_map.end()) append_nested_capture(group, style->second);
+                                }
+                                for (const auto& named : nested.named_group_style_map) {
+                                    std::vector<uint16_t> encoded_name(named.first.begin(), named.first.end());
+                                    int group = onig_name_to_backref_number(
+                                        nested.onig_start,
+                                        reinterpret_cast<const UChar*>(encoded_name.data()),
+                                        reinterpret_cast<const UChar*>(encoded_name.data() + encoded_name.size()),
+                                        inner_region);
+                                    append_nested_capture(group, named.second);
                                 }
                             }
                             inner_curr = (inner_region->end[0] <= inner_region->beg[0]) ?
@@ -254,18 +261,23 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                         micro_spans.push_back(capture);
                     };
 
-                    if (rule.group_style_map.empty()) {
+                    if (rule.group_style_map.empty() && rule.named_group_style_map.empty()) {
                         if (rule.has_style) append_capture(0, rule.style_id);
                     } else {
                         auto whole_match = rule.group_style_map.find(0);
-                        if (whole_match != rule.group_style_map.end()) {
-                            append_capture(0, whole_match->second);
-                        }
+                        if (whole_match != rule.group_style_map.end()) append_capture(0, whole_match->second);
                         for (int g = 1; g < region->num_regs; ++g) {
                             auto style_it = rule.group_style_map.find(g);
-                            if (style_it != rule.group_style_map.end()) {
-                                append_capture(g, style_it->second);
-                            }
+                            if (style_it != rule.group_style_map.end()) append_capture(g, style_it->second);
+                        }
+                        for (const auto& named : rule.named_group_style_map) {
+                            std::vector<uint16_t> encoded_name(named.first.begin(), named.first.end());
+                            int group = onig_name_to_backref_number(
+                                rule.onig_start,
+                                reinterpret_cast<const UChar*>(encoded_name.data()),
+                                reinterpret_cast<const UChar*>(encoded_name.data() + encoded_name.size()),
+                                region);
+                            append_capture(group, named.second);
                         }
                     }
                 }
