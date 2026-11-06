@@ -1592,8 +1592,9 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
             if (state == 2) return true;
             if (state == 1) return false;
             state = 1;
-            const auto& rules = grammar->monarch_states.at(state_name);
-            for (const auto& rule : rules) {
+            auto rules_it = grammar->monarch_states.find(state_name);
+            if (rules_it == grammar->monarch_states.end()) return false;
+            for (const auto& rule : rules_it->second) {
                 if (!rule.include_state.empty() && !validate_includes(rule.include_state)) return false;
             }
             state = 2;
