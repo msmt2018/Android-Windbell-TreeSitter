@@ -1435,7 +1435,7 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                             if (!grammar->monarch_start_state.empty() && grammar->monarch_start_state.front() == '@')
                                 grammar->monarch_start_state.erase(grammar->monarch_start_state.begin());
                         } else {
-                            grammar->monarch_default_style_id = ensureStyleId(value.text + grammar->monarch_token_postfix);
+                            grammar->monarch_default_style_name = value.text;
                             grammar->monarch_has_default_style = true;
                         }
                     } else if (field.text == "tokenizer") {
@@ -1983,6 +1983,11 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
         if (!versioned_document_closed || lexer.nextToken().type != TshLexer::TokenType::TOK_EOF) {
             return nullptr;
         }
+    }
+
+    if (!grammar->monarch_default_style_name.empty()) {
+        grammar->monarch_default_style_id =
+            ensureStyleId(grammar->monarch_default_style_name + grammar->monarch_token_postfix);
     }
 
     if (!grammar->monarch_states.empty()) {
