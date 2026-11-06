@@ -1558,8 +1558,9 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                     } else if (field.text == "start" || field.text == "defaultToken") {
                         if (lexer.nextToken().type != TshLexer::TokenType::TOK_COLON) return nullptr;
                         auto value = lexer.nextToken();
-                        if (value.type != TshLexer::TokenType::TOK_STRING &&
-                            value.type != TshLexer::TokenType::TOK_IDENT) return nullptr;
+                        if ((value.type != TshLexer::TokenType::TOK_STRING &&
+                             value.type != TshLexer::TokenType::TOK_IDENT) ||
+                            value.text.empty()) return nullptr;
                         if (field.text == "start") {
                             grammar->monarch_start_state = value.text;
                             if (!grammar->monarch_start_state.empty() && grammar->monarch_start_state.front() == '@')
@@ -1575,8 +1576,9 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                             auto state_name = lexer.nextToken();
                             if (state_name.type == TshLexer::TokenType::TOK_RBRACE) break;
                             if (state_name.type == TshLexer::TokenType::TOK_COMMA) continue;
-                            if (state_name.type != TshLexer::TokenType::TOK_IDENT &&
-                                state_name.type != TshLexer::TokenType::TOK_STRING) return nullptr;
+                            if ((state_name.type != TshLexer::TokenType::TOK_IDENT &&
+                                 state_name.type != TshLexer::TokenType::TOK_STRING) ||
+                                state_name.text.empty()) return nullptr;
                             if (grammar->monarch_states.find(state_name.text) != grammar->monarch_states.end()) return nullptr;
                             if (lexer.nextToken().type != TshLexer::TokenType::TOK_COLON ||
                                 lexer.nextToken().type != TshLexer::TokenType::TOK_LBRACKET) return nullptr;
