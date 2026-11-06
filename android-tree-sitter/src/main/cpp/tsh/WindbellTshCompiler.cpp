@@ -1201,6 +1201,12 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                         AstSelectorRule ast_rule;
                         ast_rule.declaration_order = ast_declaration_order++;
                         std::string node_name, field_name, parent_name, style_bind_name;
+                        auto read_ast_value = [&]() -> TshLexer::Token {
+                            if (lexer.nextToken().type != TshLexer::TokenType::TOK_COLON) {
+                                return {TshLexer::TokenType::TOK_EOF, ""};
+                            }
+                            return lexer.nextToken();
+                        };
 
                         while (true) {
                             auto field = lexer.nextToken();
@@ -1208,35 +1214,34 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                             if (field.type == TshLexer::TokenType::TOK_EOF) return nullptr;
                             if (field.type == TshLexer::TokenType::TOK_COMMA) continue;
 
-                            if (field.text == "node") {
-                                lexer.nextToken();
-                                node_name = lexer.nextToken().text;
-                            } else if (field.text == "field") {
-                                lexer.nextToken();
-                                field_name = lexer.nextToken().text;
-                            } else if (field.text == "parent") {
-                                lexer.nextToken();
-                                parent_name = lexer.nextToken().text;
-                            } else if (field.text == "style") {
-                                lexer.nextToken();
-                                style_bind_name = lexer.nextToken().text;
+                            if (field.text == "node" || field.text == "field" || field.text == "parent" ||
+                                field.text == "style" || field.text == "id") {
+                                auto value = read_ast_value();
+                                if (value.type != TshLexer::TokenType::TOK_STRING &&
+                                    value.type != TshLexer::TokenType::TOK_IDENT) return nullptr;
+                                if (field.text == "node") node_name = value.text;
+                                else if (field.text == "field") field_name = value.text;
+                                else if (field.text == "parent") parent_name = value.text;
+                                else if (field.text == "style") style_bind_name = value.text;
+                                else ast_rule.id = value.text;
                             } else if (field.text == "query") {
-                                lexer.nextToken();
-                                dynamic_query_accumulator += lexer.nextToken().text + "\n";
-                            } else if (field.text == "id") {
-                                lexer.nextToken();
-                                ast_rule.id = lexer.nextToken().text;
+                                auto value = read_ast_value();
+                                if (value.type != TshLexer::TokenType::TOK_STRING) return nullptr;
+                                dynamic_query_accumulator += value.text + "\n";
                             } else if (field.text == "priority") {
-                                lexer.nextToken();
-                                auto value = lexer.nextToken();
+                                auto value = read_ast_value();
                                 if (value.type != TshLexer::TokenType::TOK_NUMBER) return nullptr;
                                 ast_rule.priority = std::stoi(value.text);
                             } else if (field.text == "enabled") {
-                                lexer.nextToken();
-                                ast_rule.enabled = lexer.nextToken().text != "false";
+                                auto value = read_ast_value();
+                                if (value.text == "true") ast_rule.enabled = true;
+                                else if (value.text == "false") ast_rule.enabled = false;
+                                else return nullptr;
                             } else if (field.text == "overlap") {
-                                lexer.nextToken();
-                                ast_rule.allow_overlap = lexer.nextToken().text == "allow";
+                                auto value = read_ast_value();
+                                if (value.text == "allow") ast_rule.allow_overlap = true;
+                                else if (value.text == "deny") ast_rule.allow_overlap = false;
+                                else return nullptr;
                             } else {
                                 return nullptr;
                             }
