@@ -67,6 +67,8 @@ class MainActivity : AppCompatActivity() {
     private var editorView: EditorView? = null
     private var editorTree: TSTree? = null
     private var currentEditorRawText: String = ""
+    @Volatile private var javaTshReady: Boolean = false
+    private var activeTshHighlighter: TshSyntaxHighlighter? = null
 
     companion object {
         private const val TAG = "Windbell_MainActivity"
@@ -122,7 +124,11 @@ class MainActivity : AppCompatActivity() {
                     javaTshContent,
                     TSLanguageJava.getInstance()
                 )
-                Log.d(TAG, "Windbell-TSH [Java] configuration compiled: $ok")
+                withContext(Dispatchers.Main) {
+                    javaTshReady = ok
+                    installTshHighlighterIfReady()
+                    Log.d(TAG, "Windbell-TSH [Java] configuration compiled: $ok")
+                }
             }.onFailure {
                 Log.e(TAG, "Failed to load java.tsh from assets: ${it.message}")
             }
@@ -178,6 +184,7 @@ class MainActivity : AppCompatActivity() {
             override fun onItemSelected(parent: android.widget.AdapterView<*>, view: View?, position: Int, id: Long) {
                 currentLanguageKey = parent.getItemAtPosition(position) as String
                 currentLanguage = languageMap[currentLanguageKey]
+                installTshHighlighterIfReady()
                 currentLanguage?.let { lang ->
                     parser?.close()
                     parser = TSParser.create()
@@ -194,6 +201,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun setupEditorTab(editorBinding: LayoutEditorPageBinding) {
         editorView = editorBinding.editorViewContainer
+        installTshHighlighterIfReady()
 
         // 弹窗引导是否载入大型示例文件 (View.java.txt)
         MaterialAlertDialogBuilder(this)
@@ -236,6 +244,22 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
+    private fun installTshHighlighterIfReady() {
+        val view = editorView ?: return
+        if (javaTshReady && currentLanguageKey.equals("Java", ignoreCase = true)) {
+            if (activeTshHighlighter == null) {
+                activeTshHighlighter = TshSyntaxHighlighter(
+                    language = TSLanguageJava.getInstance(),
+                    extension = "java"
+                )
+            }
+            view.setSyntaxHighlighter(activeTshHighlighter)
+        } else {
+            view.setSyntaxHighlighter(null)
+            activeTshHighlighter = null
+        }
+    }
+
     private fun setEditorContent(text: String) {
         currentEditorRawText = text
         val buffer = PieceTreeBuffer(PieceTreeTextBufferBuilder().build().apply {
@@ -249,6 +273,7 @@ class MainActivity : AppCompatActivity() {
      * 驱动 TSH 引擎执行宏微双通道高亮与语义分析
      */
     private fun triggerEditorFullHighlight() {
+        installTshHighlighterIfReady()
         val currentJob = editorHighlightJob
 
         editorHighlightJob = activityScope.launch(Dispatchers.Default) {
@@ -274,11 +299,7 @@ class MainActivity : AppCompatActivity() {
                 extension = ext
             )
 
-            // 3. 计算折叠和符号大纲
-            val folds = editorTree?.let { WindbellTshEngine.instance.computeFolds(it, rawText, ext) } ?: emptyList()
-            val outlines = editorTree?.let { WindbellTshEngine.instance.computeOutline(it, rawText, ext) } ?: emptyList()
-
-            Log.d(TAG, "TSH Highlighting complete: spans=${spans.size}, folds=${folds.size}, outlines=${outlines.size}")
+            Log.d(TAG, "TSH Highlighting complete: spans=${spans.size}")
         }
     }
 
