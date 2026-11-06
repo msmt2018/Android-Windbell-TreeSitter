@@ -37,6 +37,7 @@ class WindbellTshEngine private constructor() {
         val lineComments: List<String> = emptyList(),
         val blockComments: List<Pair<String, String>> = emptyList(),
         val brackets: List<Pair<String, String>> = emptyList(),
+        val bracketNotIn: List<String> = emptyList(),
         val autoClosingPairs: List<AutoClosingPair> = emptyList(),
         val surroundingPairs: List<Pair<String, String>> = emptyList(),
         val wordPattern: String? = null,
@@ -120,6 +121,7 @@ class WindbellTshEngine private constructor() {
         val lineComments = ArrayList<String>()
         val blockComments = ArrayList<Pair<String, String>>()
         val brackets = ArrayList<Pair<String, String>>()
+        val bracketNotIn = ArrayList<String>()
         val autoClosingPairs = ArrayList<AutoClosingPair>()
         val surroundingPairs = ArrayList<Pair<String, String>>()
         val indentation = LinkedHashMap<String, String>()
@@ -135,6 +137,7 @@ class WindbellTshEngine private constructor() {
                 "lineComment" -> lineComments += first
                 "blockComment" -> blockComments += first to second
                 "bracket" -> brackets += first to second
+                "bracketNotIn" -> bracketNotIn += first
                 "surrounding" -> surroundingPairs += first to second
                 "autoClosing" -> {
                     val parts = second.split('\u001F')
@@ -149,7 +152,7 @@ class WindbellTshEngine private constructor() {
             index += 3
         }
         return EditorMetadata(
-            lineComments, blockComments, brackets, autoClosingPairs, surroundingPairs,
+            lineComments, blockComments, brackets, bracketNotIn, autoClosingPairs, surroundingPairs,
             wordPattern, indentation, completionTriggers
         )
     }
