@@ -104,10 +104,13 @@ TshGrammar::~TshGrammar() {
         }
     }
 
-    if (dynamic_ts_query) {
-        ts_query_delete(dynamic_ts_query);
-        dynamic_ts_query = nullptr;
+    for (auto& native_query : native_queries) {
+        if (native_query.query) {
+            ts_query_delete(native_query.query);
+            native_query.query = nullptr;
+        }
     }
+    native_queries.clear();
 }
 
 WindbellEngine::WindbellEngine() {
@@ -627,32 +630,39 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
         ts_tree_cursor_delete(&cursor);
     }
 
-    if (tree && grammar->dynamic_ts_query) {
-        TSQueryCursor* q_cursor = ts_query_cursor_new();
-        if (q_cursor) {
-        ts_query_cursor_exec(q_cursor, grammar->dynamic_ts_query, ts_tree_root_node(tree));
+    if (tree && !grammar->native_queries.empty()) {
+        // Each .tsh query block has its own native TSQuery and capture namespace.
+        // This preserves per-block priority/order and avoids concatenating query
+        // sources into a synthetic aggregate program.
+        for (const auto& native_query : grammar->native_queries) {
+            if (!native_query.enabled || !native_query.query) continue;
+            TSQueryCursor* q_cursor = ts_query_cursor_new();
+            if (!q_cursor) continue;
+            ts_query_cursor_exec(q_cursor, native_query.query, ts_tree_root_node(tree));
 
-        TSQueryMatch match;
-        uint32_t capture_index = 0;
-        while (ts_query_cursor_next_capture(q_cursor, &match, &capture_index)) {
-            const TSQueryCapture& capture = match.captures[capture_index];
-            uint32_t name_len = 0;
-            const char* cap_name = ts_query_capture_name_for_id(grammar->dynamic_ts_query, capture.index, &name_len);
+            TSQueryMatch match;
+            uint32_t capture_index = 0;
+            while (ts_query_cursor_next_capture(q_cursor, &match, &capture_index)) {
+                const TSQueryCapture& capture = match.captures[capture_index];
+                uint32_t name_len = 0;
+                const char* cap_name = ts_query_capture_name_for_id(
+                    native_query.query, capture.index, &name_len);
+                if (!cap_name) continue;
 
-            std::string cap_str(cap_name, name_len);
-            auto it = grammar->style_name_to_id.find(cap_str);
-            if (it != grammar->style_name_to_id.end()) {
+                const std::string cap_str(cap_name, name_len);
+                auto it = grammar->style_name_to_id.find(cap_str);
+                if (it == grammar->style_name_to_id.end()) continue;
+
                 HighlightSpan span;
                 span.start_byte = ts_node_start_byte(capture.node);
                 span.end_byte = ts_node_end_byte(capture.node);
                 span.style_id = it->second;
                 span.flags = 0;
-                span.priority = 0;
-                span.declaration_order = capture_index;
+                span.priority = native_query.priority;
+                span.declaration_order = native_query.declaration_order + capture_index;
                 macro_spans.push_back(span);
             }
-        }
-        ts_query_cursor_delete(q_cursor);
+            ts_query_cursor_delete(q_cursor);
         }
     }
 
