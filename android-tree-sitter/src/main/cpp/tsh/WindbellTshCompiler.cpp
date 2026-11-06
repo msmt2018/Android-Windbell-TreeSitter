@@ -383,6 +383,132 @@ private:
     bool active_ = true;
 };
 
+static std::string trimScopeToken(const std::string& value) {
+    const size_t first = value.find_first_not_of(" \t\r\n");
+    if (first == std::string::npos) return "";
+    const size_t last = value.find_last_not_of(" \t\r\n");
+    return value.substr(first, last - first + 1);
+}
+
+static bool scopeAtomMatches(const std::string& selector_atom, const std::string& scope) {
+    if (selector_atom == "*") return true;
+    if (selector_atom.size() > 2 &&
+        selector_atom.compare(selector_atom.size() - 2, 2, ".*") == 0) {
+        const std::string prefix = selector_atom.substr(0, selector_atom.size() - 1);
+        return scope.rfind(prefix, 0) == 0;
+    }
+    return scope == selector_atom ||
+        (scope.size() > selector_atom.size() &&
+         scope.compare(0, selector_atom.size(), selector_atom) == 0 &&
+         scope[selector_atom.size()] == '.');
+}
+
+static int matchOneTextMateSelector(const std::string& selector, const std::vector<std::string>& scopes) {
+    std::vector<std::string> tokens;
+    std::string current;
+    auto flush = [&]() {
+        if (!current.empty()) {
+            tokens.push_back(current);
+            current.clear();
+        }
+    };
+    for (char ch : selector) {
+        if (std::isspace(static_cast<unsigned char>(ch))) {
+            flush();
+        } else if (ch == '>') {
+            flush();
+            tokens.emplace_back(">");
+        } else {
+            current.push_back(ch);
+        }
+    }
+    flush();
+
+    std::vector<std::pair<std::string, bool>> positive;
+    std::vector<std::string> excluded;
+    bool exclusion_mode = false;
+    bool direct_child = false;
+    for (const auto& token : tokens) {
+        if (token == ">") { direct_child = true; continue; }
+        if (token == "-") { exclusion_mode = true; direct_child = false; continue; }
+        if (exclusion_mode) excluded.push_back(token);
+        else {
+            positive.emplace_back(token, direct_child);
+            direct_child = false;
+        }
+    }
+    if (positive.empty()) return -1;
+
+    int previous_index = -1;
+    int specificity = 0;
+    for (size_t term = 0; term < positive.size(); ++term) {
+        const auto& atom = positive[term].first;
+        const bool direct = positive[term].second;
+        int found = -1;
+        const int start = term == 0 ? 0 : previous_index + 1;
+        const int end = direct && term > 0 ?
+            std::min<int>(static_cast<int>(scopes.size()), previous_index + 2) :
+            static_cast<int>(scopes.size());
+        for (int index = start; index < end; ++index) {
+            if (scopeAtomMatches(atom, scopes[static_cast<size_t>(index)])) {
+                found = index;
+                break;
+            }
+        }
+        if (found < 0) return -1;
+        previous_index = found;
+        specificity += 100 + static_cast<int>(std::min<size_t>(atom.size(), 32));
+        if (direct) specificity += 20;
+    }
+    for (const auto& atom : excluded) {
+        for (const auto& scope : scopes) {
+            if (scopeAtomMatches(atom, scope)) return -1;
+        }
+    }
+    return specificity;
+}
+
+static int textMateSelectorSpecificity(const std::string& selector, const std::vector<std::string>& scopes) {
+    int best = -1;
+    size_t start = 0;
+    while (start <= selector.size()) {
+        const size_t comma = selector.find(',', start);
+        std::string alternative = trimScopeToken(selector.substr(
+            start, comma == std::string::npos ? std::string::npos : comma - start));
+        if (alternative.rfind("L:", 0) == 0 || alternative.rfind("R:", 0) == 0) {
+            alternative.erase(0, 2);
+        }
+        best = std::max(best, matchOneTextMateSelector(alternative, scopes));
+        if (comma == std::string::npos) break;
+        start = comma + 1;
+    }
+    return best;
+}
+
+static std::vector<std::string> buildStyleScopeStack(
+    const TshGrammar& grammar, const TshStyle& style
+) {
+    std::vector<std::string> scopes;
+    if (!grammar.id.empty()) scopes.push_back("source." + grammar.id);
+    std::vector<const TshStyle*> chain;
+    const TshStyle* current = &style;
+    std::unordered_map<std::string, bool> seen;
+    while (current && seen.emplace(current->name, true).second) {
+        chain.push_back(current);
+        if (current->parent.empty()) break;
+        auto parent = std::find_if(grammar.styles.begin(), grammar.styles.end(),
+            [&](const TshStyle& candidate) { return candidate.name == current->parent; });
+        current = parent == grammar.styles.end() ? nullptr : &*parent;
+    }
+    std::reverse(chain.begin(), chain.end());
+    for (const TshStyle* entry : chain) {
+        std::istringstream stream(entry->scope);
+        std::string scope;
+        while (stream >> scope) scopes.push_back(scope);
+    }
+    return scopes;
+}
+
 static bool decodePatternUtf8ToUtf16(const std::string& input, std::vector<uint16_t>& output) {
     output.clear();
     output.reserve(input.size());
