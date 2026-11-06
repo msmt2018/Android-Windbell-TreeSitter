@@ -50,8 +50,6 @@ struct AstSelectorRule {
     TSSymbol parent_symbol = 0;
     uint16_t style_id = 0;
     bool has_style = false;
-    bool is_foldable = false;
-    uint8_t outline_kind = 0;
 };
 
 // Compiled style catalog entry. IDs are opaque runtime indices; names carry semantics.
@@ -61,27 +59,6 @@ struct TshStyle {
     uint32_t light_color = 0;
     uint32_t dark_color = 0;
     uint16_t font_flags = 0;
-};
-
-// Legacy result records retained temporarily until the public API migration is complete.
-struct FoldRange {
-    uint32_t start_byte = 0;
-    uint32_t end_byte = 0;
-    uint8_t kind = 0;
-};
-
-struct OutlineTag {
-    uint32_t start_byte = 0;
-    uint32_t end_byte = 0;
-    uint8_t kind = 0;
-    char name[64] = {};
-};
-
-struct HoverInfo {
-    uint32_t start_byte = 0;
-    uint32_t end_byte = 0;
-    std::string node_type;
-    std::string detail;
 };
 
 // 单个 Token 的方案配色定义
