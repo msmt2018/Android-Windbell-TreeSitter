@@ -518,6 +518,42 @@ class WindbellTshLinkageTest {
     }
 
     @Test
+    fun testAstSelectorNodeFlagsAreExecuted() {
+        val engine = WindbellTshEngine.instance
+        val language = TSLanguageJava.getInstance()
+        val source = """
+            tsh 2 {
+                language { id: "java-ast-node-flags" name: "Java AST Node Flags" extensions: [".janf"] }
+                styles { declaration { scope: "entity.name.type" } }
+                ast: [
+                    {
+                        node: "identifier"
+                        named: true
+                        missing: false
+                        extra: false
+                        error: false
+                        hasError: false
+                        style: "declaration"
+                        priority: 35
+                    }
+                ]
+            }
+        """.trimIndent()
+        assertTrue(engine.loadTshSource("java-ast-node-flags", source, language))
+        val parser = TSParser.create().apply { setLanguage(language) }
+        val code = "class Demo {}"
+        val tree = parser.parseString(code)
+        val spans = engine.computeHighlights(tree, code, "java-ast-node-flags")
+        val styleId = engine.getStyleCatalog("java-ast-node-flags")
+            .first { it.name == "declaration" }.styleId
+        assertTrue(spans.any {
+            it.styleId == styleId && it.startByte == code.indexOf("Demo") && it.priority == 35
+        })
+        tree?.close()
+        parser.close()
+    }
+
+    @Test
     fun testNativeQueryPatternMetadataControlsPatternsIndependently() {
         val engine = WindbellTshEngine.instance
         val language = TSLanguageJava.getInstance()
