@@ -867,11 +867,13 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
         }
 
         if (!rule.id.empty() && !regex_rule_ids.emplace(rule.id, true).second) return false;
+        const bool has_delimiter_captures = !rule.start_group_style_map.empty() ||
+            !rule.start_named_group_style_map.empty() || !rule.end_group_style_map.empty() ||
+            !rule.end_named_group_style_map.empty();
         const bool valid = rule.type == RegexRuleType::BLOCK ?
-            ((rule.has_style || rule.has_content_style || !rule.start_group_style_map.empty() ||
-              !rule.start_named_group_style_map.empty() || !rule.end_group_style_map.empty() ||
-              !rule.end_named_group_style_map.empty()) && rule.onig_start && rule.onig_end) :
-            (rule.onig_start != nullptr);
+            ((rule.has_style || rule.has_content_style || has_delimiter_captures) &&
+             rule.onig_start && rule.onig_end) :
+            (rule.onig_start != nullptr && !rule.has_content_style && !has_delimiter_captures);
         if (valid) rule_guard.release();
         return valid;
     };
