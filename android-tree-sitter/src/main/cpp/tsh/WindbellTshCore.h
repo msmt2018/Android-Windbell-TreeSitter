@@ -66,6 +66,7 @@ struct CompiledRegexRule {
 struct MonarchRule {
     regex_t* pattern = nullptr;
     uint16_t style_id = 0;
+    std::string token_name;
     bool has_style = false;
     std::string include_state;
     std::string next_state;
