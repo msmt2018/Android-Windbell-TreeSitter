@@ -118,9 +118,10 @@ class WindbellTshLinkageTest {
                 }
                 repository {
                     identifier: /[A-Za-z_][A-Za-z0-9_]*/
+                    identifierAlias: include("#identifier")
                 }
                 contains: [
-                    { match: include("#identifier"), style: "identifier" }
+                    { match: include("#identifierAlias"), style: "identifier" }
                 ]
             }
         """.trimIndent()
