@@ -705,10 +705,16 @@ static regex_t* compileOnigurumaUtf16(const std::string& pattern_str, OnigOption
         &einfo
     );
     if (r != ONIG_NORMAL) {
-        char err[ONIG_MAX_ERROR_MESSAGE_LEN];
-        onig_error_code_to_str(reinterpret_cast<UChar*>(err), r, &einfo);
-        g_tsh_last_error_detail = std::string("Oniguruma regex error: ") + reinterpret_cast<const char*>(err);
-        LOGE("WindbellTSH", "Oniguruma UTF-16 Regex Compile Failed: %s, pat: %s", err, pattern_str.c_str());
+        UChar err[ONIG_MAX_ERROR_MESSAGE_LEN] = {};
+        onig_error_code_to_str(err, r, &einfo);
+        std::string message;
+        for (size_t i = 0; i < ONIG_MAX_ERROR_MESSAGE_LEN && err[i] != 0; ++i) {
+            const uint16_t ch = static_cast<uint16_t>(err[i]);
+            message.push_back(ch <= 0x7F ? static_cast<char>(ch) : '?');
+        }
+        g_tsh_last_error_detail = "Oniguruma regex error: " + message;
+        LOGE("WindbellTSH", "Oniguruma UTF-16 Regex Compile Failed: %s, pat: %s",
+             message.c_str(), pattern_str.c_str());
         return nullptr;
     }
     return reg;
