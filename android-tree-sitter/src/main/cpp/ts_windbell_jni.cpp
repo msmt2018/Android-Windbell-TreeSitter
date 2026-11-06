@@ -7,6 +7,7 @@
 
 #include <jni.h>
 #include <vector>
+#include <algorithm>
 #include <string>
 #include <cstdint>
 #include <cstring>
