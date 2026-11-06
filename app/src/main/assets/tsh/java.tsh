@@ -5,7 +5,7 @@
         extensions: [".java", ".jav"]
         aliases: ["Java"]
         mimeTypes: ["text/x-java-source", "text/x-java"]
-        firstLine: /^#!.*\\bjava\\b/
+        firstLine: /^#!.*\bjava\b/
     }
     name: ["Java", ".java", ".jav"],
     ignoreCase: false,
