@@ -119,6 +119,19 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeGetDefaultScheme
     return env->NewStringUTF(grammar->default_scheme_name.c_str());
 }
 
+JNIEXPORT jboolean JNICALL
+Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeGetDefaultIsDark(
+    JNIEnv* env, jobject, jstring extension_jstr
+) {
+    if (!extension_jstr) return JNI_FALSE;
+    const char* ext = env->GetStringUTFChars(extension_jstr, nullptr);
+    if (!ext) return JNI_FALSE;
+    const std::string extension(ext);
+    env->ReleaseStringUTFChars(extension_jstr, ext);
+    auto grammar = WindbellEngine::getInstance().getGrammarByExtension(extension);
+    return grammar && grammar->default_is_dark ? JNI_TRUE : JNI_FALSE;
+}
+
 /**
  * Export palette for the explicitly selected scheme.
  * Layout: [styleId, lightColor, darkColor, fontFlags] * N.
