@@ -828,6 +828,45 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                     if (!child_found) continue;
                 }
 
+                if (ast_rule.child_index != UINT32_MAX ||
+                    ast_rule.named_child_index != UINT32_MAX ||
+                    ast_rule.first_child >= 0 || ast_rule.last_child >= 0 ||
+                    ast_rule.previous_sibling_symbol != 0 || ast_rule.next_sibling_symbol != 0) {
+                    if (ts_node_is_null(parent)) continue;
+                    const uint32_t sibling_count = ts_node_child_count(parent);
+                    uint32_t current_index = UINT32_MAX;
+                    uint32_t current_named_index = UINT32_MAX;
+                    uint32_t named_seen = 0;
+                    for (uint32_t sibling_index = 0; sibling_index < sibling_count; ++sibling_index) {
+                        TSNode sibling = ts_node_child(parent, sibling_index);
+                        if (ts_node_eq(sibling, node)) {
+                            current_index = sibling_index;
+                            if (ts_node_is_named(sibling)) current_named_index = named_seen;
+                            break;
+                        }
+                        if (ts_node_is_named(sibling)) ++named_seen;
+                    }
+                    if (current_index == UINT32_MAX) continue;
+                    if (ast_rule.child_index != UINT32_MAX &&
+                        current_index != ast_rule.child_index) continue;
+                    if (ast_rule.named_child_index != UINT32_MAX &&
+                        current_named_index != ast_rule.named_child_index) continue;
+                    if (ast_rule.first_child >= 0 &&
+                        (current_index == 0) != (ast_rule.first_child != 0)) continue;
+                    if (ast_rule.last_child >= 0 &&
+                        (current_index + 1 == sibling_count) != (ast_rule.last_child != 0)) continue;
+                    if (ast_rule.previous_sibling_symbol != 0) {
+                        if (current_index == 0 ||
+                            ts_node_symbol(ts_node_child(parent, current_index - 1)) !=
+                                ast_rule.previous_sibling_symbol) continue;
+                    }
+                    if (ast_rule.next_sibling_symbol != 0) {
+                        if (current_index + 1 >= sibling_count ||
+                            ts_node_symbol(ts_node_child(parent, current_index + 1)) !=
+                                ast_rule.next_sibling_symbol) continue;
+                    }
+                }
+
                 if (ast_rule.has_style) {
                     HighlightSpan span;
                     const uint32_t node_start = ts_node_start_byte(node);
