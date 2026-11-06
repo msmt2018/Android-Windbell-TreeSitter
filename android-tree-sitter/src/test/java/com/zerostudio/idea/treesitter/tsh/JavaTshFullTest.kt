@@ -88,17 +88,18 @@ class JavaTshFullTest {
 
         // 5. 校验多态色彩应用 (Light / Dark 热切换上屏)
         val ssb = SpannableStringBuilder(testSource)
-        WindbellTshEngine.instance.isDarkTheme = false
+        WindbellTshEngine.instance.setAppearance("java", false)
         assertDoesNotThrow {
             WindbellTshEngine.instance.applyHighlightsToSpannable(tree, testSource, "java", ssb)
         }
         assertEquals(testSource.length, ssb.length)
 
-        WindbellTshEngine.instance.isDarkTheme = true
+        WindbellTshEngine.instance.setAppearance("java", true)
         assertDoesNotThrow {
             WindbellTshEngine.instance.applyHighlightsToSpannable(tree, testSource, "java", ssb)
         }
 
+        WindbellTshEngine.instance.clearAppearanceOverride("java")
         parser.close()
     }
 
