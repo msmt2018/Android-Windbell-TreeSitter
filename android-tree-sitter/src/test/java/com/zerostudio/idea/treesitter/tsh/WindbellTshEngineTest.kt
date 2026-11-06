@@ -10,6 +10,9 @@ import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.Test
+import android.text.SpannableStringBuilder
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 class WindbellTshLinkageTest {
 
@@ -489,4 +492,47 @@ class WindbellTshLinkageTest {
             }
         }
     }
+
+    @Test
+    fun testConcurrentHighlightAndSharedSpannableRendering() {
+        val engine = WindbellTshEngine.instance
+        assertTrue(engine.loadTshSource("java-concurrency", javaTestDsl(), null))
+
+        val source = """
+            // concurrency 👨‍👩‍👧‍👦 𠮷
+            public class Demo {
+                String value = "hello 🌍";
+                static void run() { return; }
+            }
+        """.trimIndent()
+        val expected = engine.computeHighlights(null, source, "java-concurrency")
+        assertFalse(expected.isEmpty(), "The single-thread baseline must produce tokens.")
+
+        // Deliberately share one mutable Spannable to verify that only writes to
+        // that document are serialized; native highlight computation stays parallel.
+        val sharedBuffer = SpannableStringBuilder(source)
+        val pool = Executors.newFixedThreadPool(32)
+        try {
+            val jobs = (0 until 32).map {
+                pool.submit {
+                    repeat(30) {
+                        val actual = engine.computeHighlights(null, source, "java-concurrency")
+                        assertEquals(expected, actual, "Concurrent output must equal the single-thread baseline.")
+                        engine.applyHighlightSpansToSpannable(
+                            spans = actual,
+                            documentOffset = 0,
+                            text = source,
+                            extension = "java-concurrency",
+                            spannable = sharedBuffer
+                        )
+                    }
+                }
+            }
+            jobs.forEach { it.get(60, TimeUnit.SECONDS) }
+            assertTrue(sharedBuffer.getSpans(0, sharedBuffer.length, android.text.style.CharacterStyle::class.java).isNotEmpty())
+        } finally {
+            pool.shutdownNow()
+        }
+    }
+
 }
