@@ -738,6 +738,18 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                 if (ast_rule.parent_symbol != 0 && ast_rule.parent_symbol != parent_sym) {
                     continue;
                 }
+                if (ast_rule.ancestor_symbol != 0) {
+                    bool ancestor_found = false;
+                    TSNode ancestor = parent;
+                    while (!ts_node_is_null(ancestor)) {
+                        if (ts_node_symbol(ancestor) == ast_rule.ancestor_symbol) {
+                            ancestor_found = true;
+                            break;
+                        }
+                        ancestor = ts_node_parent(ancestor);
+                    }
+                    if (!ancestor_found) continue;
+                }
 
                 if (ast_rule.has_style) {
                     HighlightSpan span;
