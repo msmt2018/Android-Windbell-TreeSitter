@@ -82,14 +82,25 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeLoadTshSource(
 
     const TSLanguage* ts_lang = reinterpret_cast<const TSLanguage*>(language_ptr);
     
-    // 动态编译 DSL 规则并对齐 Tree-sitter AST 符号
-    auto grammar = TshCompiler::getInstance().compile(src_str, ts_lang);
-    if (!grammar) {
+    // Keep diagnostics attached to this exact invocation. Reading the compiler's
+    // compatibility "last diagnostics" slot here would race with other documents
+    // compiling different language grammars on worker threads.
+    auto compilation = TshCompiler::getInstance().compileDetailed(src_str, ts_lang);
+    if (!compilation.grammar) {
+        for (const auto& diagnostic : compilation.diagnostics) {
+            LOGE("WindbellTSH",
+                 "[%s] %s (offset=%u, line=%u, column=%u)",
+                 diagnostic.code.c_str(),
+                 diagnostic.message.c_str(),
+                 diagnostic.offset,
+                 diagnostic.line,
+                 diagnostic.column);
+        }
         LOGE("WindbellTSH", "Failed to compile TSH grammar rules for: %s", ext_str.c_str());
         return JNI_FALSE;
     }
 
-    WindbellEngine::getInstance().registerGrammar(ext_str, grammar);
+    WindbellEngine::getInstance().registerGrammar(ext_str, compilation.grammar);
     return JNI_TRUE;
 }
 
