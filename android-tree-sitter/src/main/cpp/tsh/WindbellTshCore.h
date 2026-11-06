@@ -24,11 +24,13 @@ struct HighlightSpan {
     uint32_t start_byte; // UTF-16 字节偏移量
     uint32_t end_byte;   // UTF-16 字节偏移量
     uint16_t style_id;   // 方案样式索引
-    uint16_t flags;      // 字体修饰位: 0x01(粗体), 0x02(斜体), 0x04(下划线)
+    uint16_t flags;
+    int32_t priority = 0;
+    uint32_t declaration_order = 0;
 };
 #pragma pack(pop)
 
-static_assert(sizeof(HighlightSpan) == 12, "HighlightSpan must be exactly 12 bytes.");
+static_assert(sizeof(HighlightSpan) == 20, "HighlightSpan ABI must remain 20 bytes.");
 
 enum class RegexRuleType : uint8_t {
     MATCH,
@@ -46,6 +48,7 @@ struct CompiledRegexRule {
     int32_t priority = 0;
     uint32_t declaration_order = 0;
     bool enabled = true;
+    bool allow_overlap = false;
 };
 
 struct AstSelectorRule {
@@ -54,6 +57,8 @@ struct AstSelectorRule {
     TSSymbol parent_symbol = 0;
     uint16_t style_id = 0;
     bool has_style = false;
+    int32_t priority = 0;
+    uint32_t declaration_order = 0;
 };
 
 // Compiled style catalog entry. IDs are opaque runtime indices; names carry semantics.
