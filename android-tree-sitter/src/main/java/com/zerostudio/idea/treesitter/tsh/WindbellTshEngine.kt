@@ -63,7 +63,8 @@ class WindbellTshEngine private constructor() {
         val surroundingPairs: List<Pair<String, String>> = emptyList(),
         val wordPattern: String? = null,
         val indentationPatterns: Map<String, String> = emptyMap(),
-        val completionTriggerCharacters: List<String> = emptyList()
+        val completionTriggerCharacters: List<String> = emptyList(),
+        val options: Map<String, String> = emptyMap()
     )
 
     data class SemanticStyle(
@@ -176,6 +177,7 @@ class WindbellTshEngine private constructor() {
         val surroundingPairs = ArrayList<Pair<String, String>>()
         val indentation = LinkedHashMap<String, String>()
         val completionTriggers = ArrayList<String>()
+        val options = LinkedHashMap<String, String>()
         var wordPattern: String? = null
 
         var index = 0
@@ -198,12 +200,13 @@ class WindbellTshEngine private constructor() {
                 "indentIncrease", "indentDecrease", "indentNextLine", "unIndentedLine" ->
                     indentation[kind] = first
                 "completionTrigger" -> completionTriggers += first
+                "editorOption" -> options[first] = second
             }
             index += 3
         }
         return EditorMetadata(
             lineComments, blockComments, brackets, bracketNotIn, autoClosingPairs, surroundingPairs,
-            wordPattern, indentation, completionTriggers
+            wordPattern, indentation, completionTriggers, options
         )
     }
 
