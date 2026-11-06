@@ -70,6 +70,52 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeLoadTshSource(
 }
 
 /**
+ * Export language identity metadata as key/value pairs.
+ */
+JNIEXPORT jobjectArray JNICALL
+Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeGetLanguageMetadata(
+    JNIEnv* env, jobject, jstring extension_jstr
+) {
+    if (!extension_jstr) return nullptr;
+    const char* ext = env->GetStringUTFChars(extension_jstr, nullptr);
+    if (!ext) return nullptr;
+    const std::string extension(ext);
+    env->ReleaseStringUTFChars(extension_jstr, ext);
+    auto grammar = WindbellEngine::getInstance().getGrammarByExtension(extension);
+    std::vector<std::pair<std::string, std::string>> values;
+    if (grammar) {
+        auto join = [](const std::vector<std::string>& items) {
+            std::string out;
+            for (size_t i = 0; i < items.size(); ++i) {
+                if (i) out.push_back('\x1F');
+                out += items[i];
+            }
+            return out;
+        };
+        values.emplace_back("id", grammar->id);
+        values.emplace_back("name", grammar->name);
+        values.emplace_back("extensions", join(grammar->file_extensions));
+        values.emplace_back("aliases", join(grammar->aliases));
+        values.emplace_back("mimeTypes", join(grammar->mime_types));
+        values.emplace_back("firstLine", grammar->first_line_pattern);
+    }
+    jclass string_class = env->FindClass("java/lang/String");
+    if (!string_class) return nullptr;
+    jobjectArray result = env->NewObjectArray(static_cast<jsize>(values.size() * 2), string_class, nullptr);
+    if (!result) { env->DeleteLocalRef(string_class); return nullptr; }
+    for (size_t i = 0; i < values.size(); ++i) {
+        jstring key = env->NewStringUTF(values[i].first.c_str());
+        jstring value = env->NewStringUTF(values[i].second.c_str());
+        env->SetObjectArrayElement(result, static_cast<jsize>(i * 2), key);
+        env->SetObjectArrayElement(result, static_cast<jsize>(i * 2 + 1), value);
+        env->DeleteLocalRef(key);
+        env->DeleteLocalRef(value);
+    }
+    env->DeleteLocalRef(string_class);
+    return result;
+}
+
+/**
  * Return structured compiler diagnostics as [code, message, offset, line, column] tuples.
  */
 JNIEXPORT jobjectArray JNICALL
