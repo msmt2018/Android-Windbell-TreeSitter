@@ -6,6 +6,7 @@
 #include "WindbellTshCore.h"
 #include <algorithm>
 #include <cstring>
+#include <limits>
 #include <functional>
 #include <unordered_set>
 #include "ts__log.h"
@@ -138,6 +139,11 @@ void WindbellEngine::matchBlockRecursive(
 ) {
     OnigRegion* start_region = onig_region_new();
     OnigRegion* end_region = onig_region_new();
+    if (!start_region || !end_region) {
+        if (start_region) onig_region_free(start_region, 1);
+        if (end_region) onig_region_free(end_region, 1);
+        return;
+    }
     const UChar* curr = range_start;
 
     while (curr < range_end) {
@@ -223,6 +229,7 @@ void WindbellEngine::matchBlockRecursive(
                     }
                     if (nested.type == RegexRuleType::MATCH && nested.onig_start) {
                         OnigRegion* inner_region = onig_region_new();
+                        if (!inner_region) continue;
                         const UChar* inner_curr = inner_start;
                         while (inner_curr < inner_end) {
                             int inner_hit = onig_search(
@@ -302,6 +309,8 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
     const std::string& extension
 ) {
     std::vector<HighlightSpan> final_spans;
+    if (length_chars != 0 && input_chars == nullptr) return final_spans;
+    if (length_chars > (std::numeric_limits<uint32_t>::max() / sizeof(uint16_t))) return final_spans;
     auto grammar = getGrammarByExtension(extension);
     if (!grammar) return final_spans;
 
@@ -322,6 +331,7 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
         if (!rule.onig_start) continue;
 
         OnigRegion* region = onig_region_new();
+        if (!region) continue;
         const UChar* current = text_start;
 
         while (current < text_end) {
@@ -391,6 +401,11 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
         std::vector<std::string> state_stack{grammar->monarch_start_state};
         OnigRegion* monarch_region = onig_region_new();
         OnigRegion* monarch_case_region = onig_region_new();
+        if (!monarch_region || !monarch_case_region) {
+            if (monarch_region) onig_region_free(monarch_region, 1);
+            if (monarch_case_region) onig_region_free(monarch_case_region, 1);
+            return final_spans;
+        }
         uint32_t position = 0;
         uint32_t zero_width_steps = 0;
         while (position < total_bytes) {
@@ -602,6 +617,7 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
 
     if (tree && grammar->dynamic_ts_query) {
         TSQueryCursor* q_cursor = ts_query_cursor_new();
+        if (q_cursor) {
         ts_query_cursor_exec(q_cursor, grammar->dynamic_ts_query, ts_tree_root_node(tree));
 
         TSQueryMatch match;
@@ -625,6 +641,7 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
             }
         }
         ts_query_cursor_delete(q_cursor);
+        }
     }
 
     if (macro_spans.empty()) {
