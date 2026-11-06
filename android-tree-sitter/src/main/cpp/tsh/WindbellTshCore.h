@@ -27,6 +27,8 @@ struct HighlightSpan {
     uint16_t flags;
     int32_t priority = 0;
     uint32_t declaration_order = 0;
+    std::string id;
+    bool enabled = true;
 };
 #pragma pack(pop)
 
