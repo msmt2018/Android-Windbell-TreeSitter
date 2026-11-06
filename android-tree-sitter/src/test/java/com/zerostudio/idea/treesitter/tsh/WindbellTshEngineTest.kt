@@ -259,7 +259,6 @@ class WindbellTshLinkageTest {
                     variables {
                         identifier: /[A-Za-z_][A-Za-z0-9_]*/
                     }
-                    tokenPostfix: ".state"
                     start: "root"
                     tokenizer {
                         root: [
@@ -274,6 +273,7 @@ class WindbellTshLinkageTest {
                             { match: /[^"]+/, token: "string" }
                         ]
                     }
+                    tokenPostfix: ".state"
                 }
             }
         """.trimIndent()
