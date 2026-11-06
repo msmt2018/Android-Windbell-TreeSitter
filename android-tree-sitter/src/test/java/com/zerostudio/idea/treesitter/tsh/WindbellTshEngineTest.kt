@@ -44,7 +44,7 @@ class WindbellTshLinkageTest {
 
         // 断言 nativeLoadTshSource 绝不产生 UnsatisfiedLinkError
         assertDoesNotThrow {
-            val loaded = engine.loadTshSource("java", tshDsl, null)
+            val loaded = engine.loadTshSource("java-test", tshDsl, null)
             assertTrue(loaded, "TSH DSL source parsing and compilation should succeed.")
         }
     }
@@ -105,7 +105,7 @@ class WindbellTshLinkageTest {
         """.trimIndent()
 
         assertDoesNotThrow {
-            val spans = engine.computeHighlights(null, testCode, "java")
+            val spans = engine.computeHighlights(null, testCode, "java-test")
             assertNotNull(spans, "Highlight spans should not be null.")
             assertFalse(spans.isEmpty(), "Should produce highlight spans for keyword and strings.")
             
