@@ -396,7 +396,7 @@ std::shared_ptr<TshGrammar> TshCompiler::compile(const std::string& source, cons
         if (rule.type == RegexRuleType::BLOCK) {
             return rule.has_style && rule.onig_start && rule.onig_end;
         }
-        return rule.onig_start || !rule.group_style_map.empty();
+        return rule.onig_start != nullptr;
     };
 
     TshLexer::Token tok = lexer.nextToken();
