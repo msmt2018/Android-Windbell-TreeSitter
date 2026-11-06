@@ -236,7 +236,7 @@
         {match: keywordsToRegex("true false null"), 0: "constant"},
 
         // ---------- 5.11 方法调用微观补充 ----------
-        {match: /\b(/ + include("identifier") + /)(?=\s*\()/, 1: "function"},
+        {match: /\b[A-Za-z_$][A-Za-z0-9_$]*(?=\s*\()/, 0: "function"},
 
         // ---------- 5.12 常用核心类自动高亮 ----------
         {match: keywordsToRegex(
