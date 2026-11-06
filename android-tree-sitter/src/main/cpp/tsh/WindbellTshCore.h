@@ -121,6 +121,7 @@ struct TshEditorMetadata {
     std::string indent_next_line_pattern;
     std::string unindented_line_pattern;
     std::vector<std::string> completion_trigger_characters;
+    std::unordered_map<std::string, std::string> options;
 };
 
 class TshGrammar {
