@@ -749,7 +749,6 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                     span.declaration_order = ast_rule.declaration_order;
                     span.allow_overlap = ast_rule.allow_overlap ? 1 : 0;
                     macro_spans.push_back(span);
-                    break;
                 }
             }
 
