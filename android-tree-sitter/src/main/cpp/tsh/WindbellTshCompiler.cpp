@@ -269,6 +269,41 @@ static bool isValidColorHex(const std::string& value) {
     });
 }
 
+static bool expandRepositoryIncludes(
+    const std::string& input,
+    const std::unordered_map<std::string, std::string>& repository,
+    std::unordered_map<std::string, bool>& active,
+    std::string& output
+) {
+    size_t cursor = 0;
+    while (cursor < input.size()) {
+        const size_t include_pos = input.find("include(", cursor);
+        if (include_pos == std::string::npos) {
+            output.append(input, cursor, std::string::npos);
+            return true;
+        }
+        output.append(input, cursor, include_pos - cursor);
+        size_t name_start = include_pos + 8;
+        while (name_start < input.size() && std::isspace(static_cast<unsigned char>(input[name_start]))) ++name_start;
+        if (name_start >= input.size() || (input[name_start] != '"' && input[name_start] != '\'')) return false;
+        const char quote = input[name_start++];
+        const size_t name_end = input.find(quote, name_start);
+        if (name_end == std::string::npos) return false;
+        std::string name = input.substr(name_start, name_end - name_start);
+        size_t close = name_end + 1;
+        while (close < input.size() && std::isspace(static_cast<unsigned char>(input[close]))) ++close;
+        if (close >= input.size() || input[close] != ')') return false;
+        if (!name.empty() && name.front() == '#') name.erase(name.begin());
+        auto entry = repository.find(name);
+        if (entry == repository.end() || active[name]) return false;
+        active[name] = true;
+        if (!expandRepositoryIncludes(entry->second, repository, active, output)) return false;
+        active.erase(name);
+        cursor = close + 1;
+    }
+    return true;
+}
+
 uint32_t TshCompiler::parseColorHex(const std::string& hex_str) {
     std::string clean = hex_str;
     if (!clean.empty() && clean.front() == '#') clean.erase(clean.begin());
@@ -565,15 +600,17 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
             }
         }
 
+        auto expand_pattern = [&](std::string& pattern) -> bool {
+            if (pattern.empty()) return true;
+            std::unordered_map<std::string, bool> active;
+            std::string expanded;
+            if (!expandRepositoryIncludes(pattern, defines_map, active, expanded)) return false;
+            pattern = std::move(expanded);
+            return true;
+        };
+        if (!expand_pattern(raw_match_pattern) || !expand_pattern(raw_start_pattern) ||
+            !expand_pattern(raw_end_pattern)) return false;
         if (!raw_match_pattern.empty()) {
-            for (const auto& definition : defines_map) {
-                const std::string include_call = "include(\"" + definition.first + "\")";
-                size_t position = 0;
-                while ((position = raw_match_pattern.find(include_call, position)) != std::string::npos) {
-                    raw_match_pattern.replace(position, include_call.size(), definition.second);
-                    position += definition.second.size();
-                }
-            }
             rule.onig_start = compileOnigurumaUtf16(raw_match_pattern, rule.regex_options);
             if (!rule.onig_start) return false;
         }
