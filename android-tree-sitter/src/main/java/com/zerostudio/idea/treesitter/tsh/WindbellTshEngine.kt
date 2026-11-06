@@ -136,7 +136,7 @@ class WindbellTshEngine private constructor() {
     /** Returns arbitrary DSL-defined UI colors (for example editor.background). */
     fun getThemeTokens(extension: String): Map<String, Int> {
         val scheme = selectedSchemes[extension] ?: getDefaultScheme(extension) ?: return emptyMap()
-        val raw = nativeGetThemeTokens(extension, scheme) ?: return emptyMap()
+        val raw = nativeGetThemeTokens(extension, scheme, isDark(extension)) ?: return emptyMap()
         val tokens = LinkedHashMap<String, Int>(raw.size / 2)
         var index = 0
         while (index + 1 < raw.size) {
@@ -264,7 +264,7 @@ class WindbellTshEngine private constructor() {
     private external fun nativeGetDefaultIsDark(extension: String): Boolean
 
     @FastNative
-    private external fun nativeGetThemeTokens(extension: String, schemeName: String): Array<String>?
+    private external fun nativeGetThemeTokens(extension: String, schemeName: String, isDark: Boolean): Array<String>?
 
     @FastNative
     private external fun nativeGetPalette(extension: String, schemeName: String): IntArray?
