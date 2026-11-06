@@ -466,9 +466,11 @@ class MonarchRuleGuard {
 public:
     explicit MonarchRuleGuard(MonarchRule& rule) : rule_(rule) {}
     ~MonarchRuleGuard() {
-        if (active_ && rule_.pattern) {
-            onig_free(rule_.pattern);
-            rule_.pattern = nullptr;
+        if (active_) {
+            if (rule_.pattern) { onig_free(rule_.pattern); rule_.pattern = nullptr; }
+            for (auto& entry : rule_.cases) {
+                if (entry.matcher) { onig_free(entry.matcher); entry.matcher = nullptr; }
+            }
         }
     }
     void release() { active_ = false; }
