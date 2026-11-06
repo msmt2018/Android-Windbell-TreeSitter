@@ -311,6 +311,15 @@ private:
 };
 
 std::shared_ptr<TshGrammar> TshCompiler::compile(const std::string& source, const TSLanguage* ts_lang) {
+    auto compiled = compileDetailed(source, ts_lang);
+    {
+        std::lock_guard<std::mutex> lock(diagnostic_mutex_);
+        last_diagnostics_ = compiled.diagnostics;
+    }
+    return std::move(compiled.grammar);
+}
+
+TshCompileResult TshCompiler::compileDetailed(const std::string& source, const TSLanguage* ts_lang) {
     g_tsh_last_source_offset = 0;
     g_tsh_last_error_detail.clear();
     auto result = compileInternal(source, ts_lang);
@@ -341,11 +350,7 @@ std::shared_ptr<TshGrammar> TshCompiler::compile(const std::string& source, cons
             offset, line, column
         });
     }
-    {
-        std::lock_guard<std::mutex> lock(diagnostic_mutex_);
-        last_diagnostics_ = std::move(diagnostics);
-    }
-    return result;
+    return TshCompileResult{std::move(result), std::move(diagnostics)};
 }
 
 std::vector<TshCompileDiagnostic> TshCompiler::getLastDiagnostics() const {
