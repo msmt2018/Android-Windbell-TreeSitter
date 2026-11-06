@@ -3,11 +3,32 @@
     ignoreCase: false,
 
     // =========================================================================
-    // 1. 词法容器定界与括号配对 (Bracket & Comment Pairing)
+    // 1. Editor language metadata
     // =========================================================================
-    comment: {startsWith: "//"},
-    comment: {startsWith: "/*", endsWith: "*/"},
-    bracketPairs: ["{}", "[]", "()", "<>"],
+    editor {
+        comments {
+            line: ["//"]
+            block: [["/*", "*/"]]
+        }
+        brackets: ["{}", "[]", "()", "<>"]
+        autoClosingPairs: [
+            { open: "(", close: ")", notIn: ["string", "comment"] }
+            { open: "[", close: "]", notIn: ["string", "comment"] }
+            { open: "{", close: "}", notIn: ["string", "comment"] }
+            { open: "\"", close: "\"", notIn: ["string", "comment"] }
+        ]
+        surroundingPairs: ["{}", "[]", "()", "\"\""]
+        wordPattern: /[A-Za-z_$][A-Za-z0-9_$]*/
+        indentation {
+            increaseIndentPattern: /\\{[^}]*$/
+            decreaseIndentPattern: /^\\s*\\}/
+            indentNextLine: /=>\\s*$/
+            unIndentedLinePattern: /^\\s*(\\/\\/|\\*)/
+        }
+        completion {
+            triggerCharacters: [".", "@", ":"]
+        }
+    },
 
     // =========================================================================
     // 2. Semantic style catalog and unlimited named schemes
