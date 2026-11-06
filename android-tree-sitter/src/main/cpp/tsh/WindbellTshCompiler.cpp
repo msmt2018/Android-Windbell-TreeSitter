@@ -555,6 +555,55 @@ static bool decodePatternUtf8ToUtf16(const std::string& input, std::vector<uint1
     return true;
 }
 
+static bool expandMonarchVariables(
+    const std::string& input,
+    const std::unordered_map<std::string, std::string>& variables,
+    std::unordered_map<std::string, bool>& active,
+    std::string& output
+) {
+    output.clear();
+    for (size_t i = 0; i < input.size();) {
+        const char ch = input[i];
+        if (ch == '\\') {
+            output.push_back(ch);
+            ++i;
+            if (i < input.size()) output.push_back(input[i++]);
+            continue;
+        }
+        if (ch == '[') {
+            const size_t start = i++;
+            bool escaped = false;
+            while (i < input.size()) {
+                const char current = input[i++];
+                if (escaped) { escaped = false; continue; }
+                if (current == '\\') { escaped = true; continue; }
+                if (current == ']') break;
+            }
+            output.append(input, start, i - start);
+            continue;
+        }
+        if (ch == '@' && i + 1 < input.size() &&
+            (std::isalpha(static_cast<unsigned char>(input[i + 1])) || input[i + 1] == '_')) {
+            size_t end = i + 2;
+            while (end < input.size() &&
+                (std::isalnum(static_cast<unsigned char>(input[end])) || input[end] == '_')) ++end;
+            const std::string name = input.substr(i + 1, end - i - 1);
+            const auto found = variables.find(name);
+            if (found == variables.end() || active[name]) return false;
+            active[name] = true;
+            std::string expanded;
+            if (!expandMonarchVariables(found->second, variables, active, expanded)) return false;
+            active.erase(name);
+            output += "(?:" + expanded + ")";
+            i = end;
+            continue;
+        }
+        output.push_back(ch);
+        ++i;
+    }
+    return true;
+}
+
 static regex_t* compileOnigurumaUtf16(const std::string& pattern_str, OnigOptionType options = ONIG_OPTION_DEFAULT) {
     if (pattern_str.empty()) return nullptr;
     std::vector<uint16_t> u16;
