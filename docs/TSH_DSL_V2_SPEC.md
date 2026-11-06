@@ -137,7 +137,9 @@ The `editor` block includes host-consumable editing options such as `tabSize`, `
 
 Language-wide regex behavior is declared in `matching`: `caseSensitive`, `multiline` (line-anchor behavior), `dotAll` (dot matches newline), `extended`, and `unicode`. Individual regex rules may add Oniguruma flags with `flags: ["i", "m", "s", "x"]`: `i` ignores case, Oniguruma `m` enables dot-newline matching, `s` makes anchors match only the whole input, and `x` enables extended syntax. Named capture groups and numeric capture groups can both bind semantic styles. UTF-8/modified-UTF-8 source patterns are decoded to UTF-16 before Oniguruma compilation.
 
-Every rule has a stable `id`, a backend, optional `name`, `enabled`, `priority`, `when`, `scope`, `captures`, and metadata. Higher priority wins on overlapping spans; ties are resolved by declaration order unless a rule explicitly sets `overlap: "allow"`. A rule never infers priority from its style name.
+The currently executable regex-rule attributes are `id`, `match` (or `start/end`), `style` (with `name` as a compatibility alias), `contentName`, `flags`, `enabled`, `priority`, `overlap: "allow"|"deny"`, `captures`, `beginCaptures`/`startCaptures`, `endCaptures`, and nested `contains`/`patterns`. Numeric and named capture keys are resolved against the compiled Oniguruma expression. Higher priority participates in span arbitration; declaration order breaks ties. `overlap: "allow"` opts a span out of exclusive overlap suppression. The parser rejects unknown rule attributes rather than silently accepting them.
+
+Planned, not currently executable: rule-level `when` predicates, independent capture `scope` assignment, arbitrary rule `metadata`, `applyEndPatternLast`, `while`, `maxIterations`, and lookaround convenience properties. Do not add these keys to a production .tsh file until the compiler and runtime implement them. A rule never infers priority from its style name.
 
 ### 5.1 Tree-sitter query / ATS
 
