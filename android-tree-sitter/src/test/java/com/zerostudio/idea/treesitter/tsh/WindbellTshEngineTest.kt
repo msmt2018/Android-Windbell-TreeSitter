@@ -264,7 +264,7 @@ class WindbellTshLinkageTest {
             }
             repository {
                 todoBase: /FIXME/
-                todoWord: "include(\\\"#todoBase\\\")"
+                todoWord: "include(\"#todoBase\")"
             }
             contains: [
                 {
