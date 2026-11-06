@@ -108,6 +108,31 @@ class WindbellTshLinkageTest {
     }
 
     @Test
+    fun testTextMateNamedRepositoryIncludeExecutes() {
+        val engine = WindbellTshEngine.instance
+        val source = """
+            tsh 2 {
+                language { id: "repository-test" extensions: [".repository-test"] }
+                styles {
+                    identifier { scope: "variable.other", tags: ["identifier"] }
+                }
+                repository {
+                    identifier: /[A-Za-z_][A-Za-z0-9_]*/
+                }
+                contains: [
+                    { match: include("#identifier"), style: "identifier" }
+                ]
+            }
+        """.trimIndent()
+
+        assertTrue(engine.loadTshSource("repository-test", source, null))
+        val spans = engine.computeHighlights(null, "alpha beta", "repository-test")
+        val identifierId = engine.getStyleCatalog("repository-test")
+            .first { it.name == "identifier" }.styleId
+        assertEquals(2, spans.count { it.styleId == identifierId })
+    }
+
+    @Test
     fun testNativeLoadTshSourceLinkageAndExecution() {
         val engine = WindbellTshEngine.instance
 
