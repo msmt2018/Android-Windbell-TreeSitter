@@ -182,7 +182,7 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeGetStyleCatalog(
  */
 JNIEXPORT jobjectArray JNICALL
 Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeGetThemeTokens(
-    JNIEnv* env, jobject, jstring extension_jstr, jstring scheme_jstr
+    JNIEnv* env, jobject, jstring extension_jstr, jstring scheme_jstr, jboolean is_dark
 ) {
     if (!extension_jstr || !scheme_jstr) return nullptr;
     const char* ext = env->GetStringUTFChars(extension_jstr, nullptr);
@@ -202,9 +202,14 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeGetThemeTokens(
     auto scheme_it = grammar->schemes.find(selected_scheme);
     if (scheme_it == grammar->schemes.end()) return nullptr;
 
+    auto effective_tokens = scheme_it->second.ui_colors;
+    const auto& appearance_tokens = is_dark ?
+        scheme_it->second.ui_dark_colors : scheme_it->second.ui_light_colors;
+    for (const auto& entry : appearance_tokens) effective_tokens[entry.first] = entry.second;
+
     std::vector<std::string> keys;
-    keys.reserve(scheme_it->second.ui_colors.size());
-    for (const auto& entry : scheme_it->second.ui_colors) keys.push_back(entry.first);
+    keys.reserve(effective_tokens.size());
+    for (const auto& entry : effective_tokens) keys.push_back(entry.first);
     std::sort(keys.begin(), keys.end());
 
     jclass string_class = env->FindClass("java/lang/String");
@@ -212,7 +217,7 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeGetThemeTokens(
     jobjectArray result = env->NewObjectArray(static_cast<jsize>(keys.size() * 2), string_class, nullptr);
     if (!result) { env->DeleteLocalRef(string_class); return nullptr; }
     for (size_t i = 0; i < keys.size(); ++i) {
-        const auto color = scheme_it->second.ui_colors.at(keys[i]);
+        const auto color = effective_tokens.at(keys[i]);
         jstring key = env->NewStringUTF(keys[i].c_str());
         jstring value = env->NewStringUTF(std::to_string(color).c_str());
         env->SetObjectArrayElement(result, static_cast<jsize>(i * 2), key);
