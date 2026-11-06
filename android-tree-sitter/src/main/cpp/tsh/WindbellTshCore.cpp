@@ -69,6 +69,13 @@ static void appendRegexCaptureSpans(
 }
 
 TshGrammar::~TshGrammar() {
+    // firstLine is compiled independently from rule patterns and must be
+    // released with the grammar snapshot that owns it.
+    if (first_line_regex) {
+        onig_free(first_line_regex);
+        first_line_regex = nullptr;
+    }
+
     std::function<void(CompiledRegexRule&)> release_rule;
     release_rule = [&](CompiledRegexRule& rule) {
         for (auto& nested : rule.nested_rules) release_rule(nested);
@@ -315,7 +322,12 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
     if (!grammar) return final_spans;
 
     uint32_t total_bytes = length_chars * sizeof(uint16_t);
-    const UChar* text_start = reinterpret_cast<const UChar*>(input_chars);
+    // Avoid pointer arithmetic on a null input pointer for an empty document.
+    // Empty buffers are valid inputs (for example, immediately after clearing an editor).
+    static const UChar kEmptyInput = 0;
+    const UChar* text_start = input_chars
+        ? reinterpret_cast<const UChar*>(input_chars)
+        : &kEmptyInput;
     const UChar* text_end = text_start + total_bytes;
 
     std::vector<HighlightSpan> micro_spans;
