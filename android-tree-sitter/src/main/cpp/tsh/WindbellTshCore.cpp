@@ -95,6 +95,8 @@ void WindbellEngine::matchBlockRecursive(
             block_span.end_byte = block_end_byte;
             block_span.style_id = rule.style_id;
             block_span.flags = 0;
+            block_span.priority = rule.priority;
+            block_span.declaration_order = rule.declaration_order;
             out_spans.push_back(block_span);
 
             if (!rule.nested_rules.empty() && hit_end >= 0) {
@@ -125,6 +127,8 @@ void WindbellEngine::matchBlockRecursive(
                                 in_span.end_byte = in_e;
                                 in_span.style_id = nested.style_id;
                                 in_span.flags = 0;
+                                in_span.priority = nested.priority;
+                                in_span.declaration_order = nested.declaration_order;
                                 out_spans.push_back(in_span);
                             }
                             inner_curr = (inner_region->end[0] <= inner_region->beg[0]) ?
@@ -166,6 +170,7 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
     micro_spans.reserve(length_chars / 4);
 
     for (const auto& rule : grammar->regex_rules) {
+        if (!rule.enabled) continue;
         if (rule.type == RegexRuleType::BLOCK && rule.onig_start && rule.onig_end) {
             matchBlockRecursive(rule, text_start, text_end, text_start, text_end, micro_spans);
             continue;
@@ -191,25 +196,30 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                 uint32_t match_end = static_cast<uint32_t>(region->end[0]);
 
                 if ((match_start & 1u) == 0 && (match_end & 1u) == 0) {
+                    auto append_capture = [&](int group, uint16_t style_id) {
+                        if (group < 0 || group >= region->num_regs ||
+                            region->beg[group] < 0 || region->end[group] < 0) return;
+                        HighlightSpan capture;
+                        capture.start_byte = static_cast<uint32_t>(region->beg[group]);
+                        capture.end_byte = static_cast<uint32_t>(region->end[group]);
+                        capture.style_id = style_id;
+                        capture.flags = 0;
+                        capture.priority = rule.priority;
+                        capture.declaration_order = rule.declaration_order;
+                        micro_spans.push_back(capture);
+                    };
+
                     if (rule.group_style_map.empty()) {
-                        HighlightSpan span;
-                        span.start_byte = match_start;
-                        span.end_byte = match_end;
-                        span.style_id = rule.style_id;
-                        span.flags = 0;
-                        micro_spans.push_back(span);
+                        append_capture(0, rule.style_id);
                     } else {
+                        auto whole_match = rule.group_style_map.find(0);
+                        if (whole_match != rule.group_style_map.end()) {
+                            append_capture(0, whole_match->second);
+                        }
                         for (int g = 1; g < region->num_regs; ++g) {
-                            if (region->beg[g] >= 0 && region->end[g] >= 0) {
-                                auto style_it = rule.group_style_map.find(g);
-                                if (style_it != rule.group_style_map.end()) {
-                                    HighlightSpan g_span;
-                                    g_span.start_byte = static_cast<uint32_t>(region->beg[g]);
-                                    g_span.end_byte = static_cast<uint32_t>(region->end[g]);
-                                    g_span.style_id = style_it->second;
-                                    g_span.flags = 0;
-                                    micro_spans.push_back(g_span);
-                                }
+                            auto style_it = rule.group_style_map.find(g);
+                            if (style_it != rule.group_style_map.end()) {
+                                append_capture(g, style_it->second);
                             }
                         }
                     }
@@ -259,6 +269,8 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                     span.end_byte = ts_node_end_byte(node);
                     span.style_id = ast_rule.style_id;
                     span.flags = 0;
+                    span.priority = ast_rule.priority;
+                    span.declaration_order = ast_rule.declaration_order;
                     macro_spans.push_back(span);
                     break;
                 }
@@ -300,6 +312,8 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                 span.end_byte = ts_node_end_byte(capture.node);
                 span.style_id = it->second;
                 span.flags = 0;
+                span.priority = 0;
+                span.declaration_order = capture_index;
                 macro_spans.push_back(span);
             }
         }
@@ -325,8 +339,12 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
         final_spans.insert(final_spans.end(), micro_spans.begin(), micro_spans.end());
     }
 
-    std::sort(final_spans.begin(), final_spans.end(), [](const HighlightSpan& a, const HighlightSpan& b) {
-        return (a.start_byte != b.start_byte) ? a.start_byte < b.start_byte : a.end_byte < b.end_byte;
+    std::stable_sort(final_spans.begin(), final_spans.end(), [](const HighlightSpan& a, const HighlightSpan& b) {
+        if (a.start_byte != b.start_byte) return a.start_byte < b.start_byte;
+        // Apply outer captures first, then inner/high-priority captures.
+        if (a.end_byte != b.end_byte) return a.end_byte > b.end_byte;
+        if (a.priority != b.priority) return a.priority < b.priority;
+        return a.declaration_order < b.declaration_order;
     });
 
     return final_spans;
