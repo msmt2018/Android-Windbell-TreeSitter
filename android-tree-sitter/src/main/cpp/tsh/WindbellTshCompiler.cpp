@@ -134,7 +134,11 @@ public:
             ++cursor_;
             std::string content;
             auto append_utf8 = [&](uint32_t cp) {
-                if (cp <= 0x7F) content.push_back(static_cast<char>(cp));
+                if (cp == 0) {
+                    // JNI modified UTF-8 encodes U+0000 as C0 80, never a C NUL.
+                    content.push_back(static_cast<char>(0xC0));
+                    content.push_back(static_cast<char>(0x80));
+                } else if (cp <= 0x7F) content.push_back(static_cast<char>(cp));
                 else if (cp <= 0x7FF) {
                     content.push_back(static_cast<char>(0xC0 | (cp >> 6)));
                     content.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
