@@ -142,6 +142,7 @@ public:
     std::string default_scheme_name;
     bool default_is_dark = false;
     TshEditorMetadata editor_metadata;
+    uint32_t default_regex_options = ONIG_OPTION_DEFAULT;
 
     std::vector<CompiledRegexRule> regex_rules;
     std::vector<AstSelectorRule> ast_selector_rules;
