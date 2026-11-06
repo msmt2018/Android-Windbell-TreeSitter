@@ -891,8 +891,8 @@ static regex_t* compileOnigurumaUtf16(const std::string& pattern_str, OnigOption
 std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& source, const TSLanguage* ts_lang) {
     auto grammar = std::make_shared<TshGrammar>();
     std::unordered_map<std::string, std::string> defines_map;
-    std::string native_query_sources;
     std::unordered_map<std::string, bool> tree_sitter_query_ids;
+    uint32_t native_query_declaration_order = 0;
 
     uint32_t global_style_counter = 0;
     bool style_id_overflow = false;
@@ -2276,9 +2276,9 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                         if (entry.type == TshLexer::TokenType::TOK_RBRACKET) break;
                         if (entry.type == TshLexer::TokenType::TOK_COMMA) continue;
                         if (entry.type != TshLexer::TokenType::TOK_LBRACE) return nullptr;
-                        std::string query_id;
+                        NativeQueryProgram program;
+                        program.declaration_order = native_query_declaration_order++;
                         std::string query_source;
-                        bool enabled = true;
                         while (true) {
                             auto field = lexer.nextToken();
                             if (field.type == TshLexer::TokenType::TOK_RBRACE) break;
@@ -2289,21 +2289,57 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                             if (field.text == "id") {
                                 if (value.type != TshLexer::TokenType::TOK_STRING &&
                                     value.type != TshLexer::TokenType::TOK_IDENT) return nullptr;
-                                query_id = value.text;
+                                program.id = value.text;
                             } else if (field.text == "source") {
                                 if (value.type != TshLexer::TokenType::TOK_STRING) return nullptr;
                                 query_source = value.text;
                             } else if (field.text == "enabled") {
-                                if (value.text == "true") enabled = true;
-                                else if (value.text == "false") enabled = false;
+                                if (value.text == "true") program.enabled = true;
+                                else if (value.text == "false") program.enabled = false;
                                 else return nullptr;
+                            } else if (field.text == "priority") {
+                                if (value.type != TshLexer::TokenType::TOK_NUMBER) return nullptr;
+                                try {
+                                    size_t consumed = 0;
+                                    program.priority = std::stoi(value.text, &consumed);
+                                    if (consumed != value.text.size()) return nullptr;
+                                } catch (...) { return nullptr; }
                             } else {
                                 return nullptr;
                             }
                         }
                         if (query_source.empty()) return nullptr;
-                        if (!query_id.empty() && !tree_sitter_query_ids.emplace(query_id, true).second) return nullptr;
-                        if (enabled) native_query_sources += query_source + "\n";
+                        if (!program.id.empty() &&
+                            !tree_sitter_query_ids.emplace(program.id, true).second) return nullptr;
+                        if (program.enabled) {
+                            if (!ts_lang) return nullptr;
+                            uint32_t error_offset = 0;
+                            TSQueryError error_type = TSQueryErrorNone;
+                            program.query = ts_query_new(
+                                ts_lang, query_source.c_str(),
+                                static_cast<uint32_t>(query_source.size()),
+                                &error_offset, &error_type);
+                            if (!program.query) {
+                                g_tsh_last_source_offset = error_offset;
+                                g_tsh_last_error_detail =
+                                    "native Tree-sitter query compilation failed (error " +
+                                    std::to_string(static_cast<int>(error_type)) + ")";
+                                return nullptr;
+                            }
+                            const uint32_t capture_count = ts_query_capture_count(program.query);
+                            for (uint32_t capture_id = 0; capture_id < capture_count; ++capture_id) {
+                                uint32_t name_length = 0;
+                                const char* capture_name = ts_query_capture_name_for_id(
+                                    program.query, capture_id, &name_length);
+                                if (!capture_name || grammar->style_name_to_id.find(
+                                    std::string(capture_name, name_length)) == grammar->style_name_to_id.end()) {
+                                    ts_query_delete(program.query);
+                                    program.query = nullptr;
+                                    return nullptr;
+                                }
+                            }
+                        }
+                        grammar->native_queries.push_back(std::move(program));
                     }
                 }
             }
@@ -2690,34 +2726,12 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
         }
     }
 
-    if ((!grammar->ast_selector_rules.empty() || !native_query_sources.empty()) && !ts_lang) {
+    if (!grammar->ast_selector_rules.empty() && !ts_lang) {
         return nullptr;
     }
 
-    // Query source is a native Tree-sitter query-language block, not an
-    // intermediate representation generated from ATS selector declarations.
-    if (ts_lang && !native_query_sources.empty()) {
-        uint32_t err_offset = 0;
-        TSQueryError err_type = TSQueryErrorNone;
-        grammar->dynamic_ts_query = ts_query_new(
-            ts_lang,
-            native_query_sources.c_str(),
-            static_cast<uint32_t>(native_query_sources.length()),
-            &err_offset,
-            &err_type
-        );
-        if (!grammar->dynamic_ts_query) return nullptr;
-        const uint32_t capture_count = ts_query_capture_count(grammar->dynamic_ts_query);
-        for (uint32_t i = 0; i < capture_count; ++i) {
-            uint32_t name_length = 0;
-            const char* capture_name = ts_query_capture_name_for_id(
-                grammar->dynamic_ts_query, static_cast<uint32_t>(i), &name_length);
-            if (!capture_name || grammar->style_name_to_id.find(
-                std::string(capture_name, name_length)) == grammar->style_name_to_id.end()) {
-                return nullptr;
-            }
-        }
-    }
+    // Each native query block was compiled independently by Tree-sitter's
+    // own query parser. No SCM source is synthesized or written to disk.
 
     return grammar;
 }
