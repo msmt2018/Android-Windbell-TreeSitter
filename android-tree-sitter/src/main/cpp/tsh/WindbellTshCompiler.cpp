@@ -26,6 +26,7 @@
 #include <vector>
 #include <functional>
 #include <cmath>
+#include <limits>
 #include "ts__log.h"
 
 namespace windbell::tsh {
@@ -415,11 +416,16 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
     std::string dynamic_query_accumulator;
     std::unordered_map<std::string, bool> tree_sitter_query_ids;
 
-    uint16_t global_style_counter = 0;
+    uint32_t global_style_counter = 0;
+    bool style_id_overflow = false;
     auto ensureStyleId = [&](const std::string& name) -> uint16_t {
         auto it = grammar->style_name_to_id.find(name);
         if (it != grammar->style_name_to_id.end()) return it->second;
-        const uint16_t id = global_style_counter++;
+        if (global_style_counter > std::numeric_limits<uint16_t>::max()) {
+            style_id_overflow = true;
+            return 0;
+        }
+        const uint16_t id = static_cast<uint16_t>(global_style_counter++);
         grammar->style_name_to_id.emplace(name, id);
         return id;
     };
@@ -864,8 +870,7 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                             uint16_t sid = 0;
                             auto style_it = grammar->style_name_to_id.find(symbol_name);
                             if (style_it == grammar->style_name_to_id.end()) {
-                                sid = global_style_counter++;
-                                grammar->style_name_to_id.emplace(symbol_name, sid);
+                                sid = ensureStyleId(symbol_name);
                             } else {
                                 sid = style_it->second;
                             }
@@ -1515,8 +1520,8 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                         if (!style_bind_name.empty()) {
                             auto style_it = grammar->style_name_to_id.find(style_bind_name);
                             if (style_it == grammar->style_name_to_id.end()) {
-                                const uint16_t sid = global_style_counter++;
-                                style_it = grammar->style_name_to_id.emplace(style_bind_name, sid).first;
+                                const uint16_t sid = ensureStyleId(style_bind_name);
+                                style_it = grammar->style_name_to_id.find(style_bind_name);
                             }
                             ast_rule.style_id = style_it->second;
                             ast_rule.has_style = true;
@@ -1619,6 +1624,8 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
             }
         }
     }
+
+    if (style_id_overflow) return nullptr;
 
     if (!grammar->default_scheme_name.empty() &&
         grammar->schemes.find(grammar->default_scheme_name) == grammar->schemes.end()) {
