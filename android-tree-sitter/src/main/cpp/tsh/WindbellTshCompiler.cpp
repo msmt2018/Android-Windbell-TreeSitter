@@ -119,20 +119,84 @@ public:
             return {TokenType::TOK_NUMBER, number};
         }
 
-        // 解析字符串 (支持单双引号)
+        // Quoted strings use JSON-style escapes; backticks are raw multiline strings.
         if (c == '"' || c == '\'' || c == '`') {
-            char quote = c;
+            const char quote = c;
             const bool raw_string = quote == '`';
-            cursor_++;
+            ++cursor_;
             std::string content;
-            while (cursor_ < src_.size() && src_[cursor_] != quote) {
-                if (!raw_string && src_[cursor_] == '\\' && cursor_ + 1 < src_.size()) {
-                    cursor_++;
+            auto append_utf8 = [&](uint32_t cp) {
+                if (cp <= 0x7F) content.push_back(static_cast<char>(cp));
+                else if (cp <= 0x7FF) {
+                    content.push_back(static_cast<char>(0xC0 | (cp >> 6)));
+                    content.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+                } else if (cp <= 0xFFFF) {
+                    content.push_back(static_cast<char>(0xE0 | (cp >> 12)));
+                    content.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F)));
+                    content.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+                } else {
+                    content.push_back(static_cast<char>(0xF0 | (cp >> 18)));
+                    content.push_back(static_cast<char>(0x80 | ((cp >> 12) & 0x3F)));
+                    content.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F)));
+                    content.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
                 }
-                content += src_[cursor_++];
+            };
+            auto read_hex4 = [&](uint32_t& value) -> bool {
+                if (cursor_ + 4 > src_.size()) return false;
+                value = 0;
+                for (int i = 0; i < 4; ++i) {
+                    const unsigned char digit = static_cast<unsigned char>(src_[cursor_++]);
+                    value <<= 4;
+                    if (digit >= '0' && digit <= '9') value |= digit - '0';
+                    else if (digit >= 'a' && digit <= 'f') value |= digit - 'a' + 10;
+                    else if (digit >= 'A' && digit <= 'F') value |= digit - 'A' + 10;
+                    else return false;
+                }
+                return true;
+            };
+            while (cursor_ < src_.size() && src_[cursor_] != quote) {
+                const char current = src_[cursor_++];
+                if (raw_string || current != '\\') {
+                    content.push_back(current);
+                    continue;
+                }
+                if (cursor_ >= src_.size()) return {TokenType::TOK_INVALID, "unterminated escape"};
+                const char escaped = src_[cursor_++];
+                switch (escaped) {
+                    case '"': content.push_back('"'); break;
+                    case '\'': content.push_back('\''); break;
+                    case '\\': content.push_back('\\'); break;
+                    case '/': content.push_back('/'); break;
+                    case 'b': content.push_back('\b'); break;
+                    case 'f': content.push_back('\f'); break;
+                    case 'n': content.push_back('\n'); break;
+                    case 'r': content.push_back('\r'); break;
+                    case 't': content.push_back('\t'); break;
+                    case 'u': {
+                        uint32_t cp = 0;
+                        if (!read_hex4(cp)) return {TokenType::TOK_INVALID, "invalid unicode escape"};
+                        if (cp >= 0xD800 && cp <= 0xDBFF) {
+                            if (cursor_ + 6 > src_.size() || src_[cursor_] != '\\' ||
+                                src_[cursor_ + 1] != 'u') {
+                                return {TokenType::TOK_INVALID, "unpaired high surrogate"};
+                            }
+                            cursor_ += 2;
+                            uint32_t low = 0;
+                            if (!read_hex4(low) || low < 0xDC00 || low > 0xDFFF) {
+                                return {TokenType::TOK_INVALID, "invalid low surrogate"};
+                            }
+                            cp = 0x10000 + ((cp - 0xD800) << 10) + (low - 0xDC00);
+                        } else if (cp >= 0xDC00 && cp <= 0xDFFF) {
+                            return {TokenType::TOK_INVALID, "unpaired low surrogate"};
+                        }
+                        append_utf8(cp);
+                        break;
+                    }
+                    default: return {TokenType::TOK_INVALID, "unsupported string escape"};
+                }
             }
             if (cursor_ >= src_.size()) return {TokenType::TOK_INVALID, "unterminated string"};
-            cursor_++;
+            ++cursor_;
             return {TokenType::TOK_STRING, content};
         }
 
