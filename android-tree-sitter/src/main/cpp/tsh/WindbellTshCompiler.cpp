@@ -2628,6 +2628,14 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                                     ast_rule.text_suffix = value.text;
                                     ast_rule.has_text_suffix = true;
                                 }
+                            } else if (field.text == "textRegex") {
+                                auto value = read_ast_value();
+                                if (value.type != TshLexer::TokenType::TOK_REGEX &&
+                                    value.type != TshLexer::TokenType::TOK_STRING) {
+                                    g_tsh_last_error_detail = "ATS textRegex requires a regex literal or quoted pattern";
+                                    return nullptr;
+                                }
+                                ast_rule.text_regex_pattern = value.text;
                             } else if (field.text == "firstChild" || field.text == "lastChild") {
                                 auto value = read_ast_value();
                                 int8_t flag = -1;
@@ -2738,7 +2746,12 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                             }
                         }
 
-                        grammar->ast_selector_rules.push_back(ast_rule);
+                        if (!ast_rule.text_regex_pattern.empty()) {
+                            ast_rule.text_regex = compileOnigurumaUtf16(
+                                ast_rule.text_regex_pattern, ONIG_OPTION_DEFAULT);
+                            if (!ast_rule.text_regex) return nullptr;
+                        }
+                        grammar->ast_selector_rules.push_back(std::move(ast_rule));
                     }
                 }
             }
