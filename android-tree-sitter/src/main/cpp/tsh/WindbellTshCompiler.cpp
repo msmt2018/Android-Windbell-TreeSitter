@@ -995,6 +995,25 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                             if (pair.open.empty() || pair.close.empty()) return nullptr;
                             grammar->editor_metadata.auto_closing_pairs.push_back(std::move(pair));
                         }
+                    } else if (field.text == "tabSize" || field.text == "fontSize" ||
+                               field.text == "lineHeight" || field.text == "letterSpacing" ||
+                               field.text == "insertSpaces" || field.text == "autoIndent" ||
+                               field.text == "trimTrailingWhitespace" || field.text == "formatOnType" ||
+                               field.text == "formatOnPaste" || field.text == "renderWhitespace" ||
+                               field.text == "lineNumbers" || field.text == "maxTokenizationLineLength") {
+                        if (lexer.nextToken().type != TshLexer::TokenType::TOK_COLON) return nullptr;
+                        auto value = lexer.nextToken();
+                        if (value.type != TshLexer::TokenType::TOK_IDENT &&
+                            value.type != TshLexer::TokenType::TOK_NUMBER &&
+                            value.type != TshLexer::TokenType::TOK_STRING) return nullptr;
+                        if (field.text == "tabSize" || field.text == "fontSize" ||
+                            field.text == "lineHeight" || field.text == "maxTokenizationLineLength") {
+                            try {
+                                const int numeric = std::stoi(value.text);
+                                if (numeric <= 0) return nullptr;
+                            } catch (...) { return nullptr; }
+                        }
+                        grammar->editor_metadata.options[field.text] = value.text;
                     } else if (field.text == "wordPattern") {
                         if (lexer.nextToken().type != TshLexer::TokenType::TOK_COLON) return nullptr;
                         auto value = lexer.nextToken();
