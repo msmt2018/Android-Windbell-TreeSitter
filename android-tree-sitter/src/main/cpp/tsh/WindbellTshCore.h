@@ -94,6 +94,8 @@ struct ColorScheme {
     // Style ID -> Color mapping
     std::unordered_map<uint16_t, SchemeColor> colors;
     std::unordered_map<std::string, uint32_t> ui_colors;
+    std::unordered_map<std::string, uint32_t> ui_light_colors;
+    std::unordered_map<std::string, uint32_t> ui_dark_colors;
 };
 
 class TshGrammar {
