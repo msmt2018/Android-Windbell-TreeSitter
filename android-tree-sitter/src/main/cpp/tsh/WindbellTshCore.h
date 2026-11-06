@@ -63,6 +63,13 @@ struct CompiledRegexRule {
     uint32_t regex_options = 0;
 };
 
+struct MonarchCase {
+    regex_t* matcher = nullptr;
+    uint16_t style_id = 0;
+    std::string token_name;
+    bool is_default = false;
+};
+
 struct MonarchRule {
     regex_t* pattern = nullptr;
     uint16_t style_id = 0;
@@ -72,6 +79,7 @@ struct MonarchRule {
     std::string next_state;
     std::string push_state;
     std::string switch_state;
+    std::vector<MonarchCase> cases;
     bool pop = false;
     bool rematch = false;
     bool enabled = true;
