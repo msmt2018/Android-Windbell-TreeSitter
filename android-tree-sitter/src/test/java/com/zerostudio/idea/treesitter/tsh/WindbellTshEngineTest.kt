@@ -220,6 +220,9 @@ class WindbellTshLinkageTest {
                     tokenizer {
                         root: [
                             { match: /"/, token: "string", push: "@string" }
+                            { include: "@identifiers" }
+                        ]
+                        identifiers: [
                             { match: /[A-Za-z]+/, token: "identifier" }
                         ]
                         string: [
