@@ -278,6 +278,31 @@ class WindbellTshLinkageTest {
     }
 
     @Test
+    fun testMonarchRejectsUnknownAndCyclicVariables() {
+        val engine = WindbellTshEngine.instance
+        val cyclic = """
+            tsh 2 {
+                language { id: "monarch-cycle" name: "Monarch Cycle" extensions: [".mcycle"] }
+                styles { identifier { scope: "variable.other" } }
+                schemes { plain { light [ identifier: #111111 ] dark [ identifier: #EEEEEE ] } }
+                monarch {
+                    variables {
+                        first: /@second/
+                        second: /@first/
+                    }
+                    tokenizer {
+                        root: [{ match: /@first/, token: "identifier" }]
+                    }
+                }
+            }
+        """.trimIndent()
+        assertFalse(engine.loadTshSource("monarch-cycle", cyclic, null))
+
+        val unknown = cyclic.replace("second: /@first/", "second: /@missing/")
+        assertFalse(engine.loadTshSource("monarch-unknown", unknown, null))
+    }
+
+    @Test
     fun testEmbeddedTreeSitterQueryAndCaptureBinding() {
         val engine = WindbellTshEngine.instance
         val language = TSLanguageJava.getInstance()
