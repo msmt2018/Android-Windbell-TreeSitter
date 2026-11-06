@@ -1170,7 +1170,7 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                                         if (value.text != "true" && value.text != "false") return nullptr;
                                         if (key.text == "pop") rule.pop = value.text == "true";
                                         else if (key.text == "rematch") rule.rematch = value.text == "true";
-                                        else if (value.text == "false") continue;
+                                        else rule.enabled = value.text == "true";
                                     } else if (key.text == "priority") {
                                         if (value.type != TshLexer::TokenType::TOK_NUMBER) return nullptr;
                                         try {
