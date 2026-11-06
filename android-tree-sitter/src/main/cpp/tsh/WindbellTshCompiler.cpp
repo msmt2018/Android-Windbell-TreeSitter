@@ -751,7 +751,12 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                         if (key.text == "id") grammar->id = value.text;
                         else if (key.text == "name") grammar->name = value.text;
                         else if (value.type != TshLexer::TokenType::TOK_REGEX) return nullptr;
-                        else grammar->first_line_pattern = value.text;
+                        else {
+                            regex_t* validation = compileOnigurumaUtf16(value.text);
+                            if (!validation) return nullptr;
+                            onig_free(validation);
+                            grammar->first_line_pattern = value.text;
+                        }
                     } else if (key.text == "extensions") {
                         std::vector<std::string> values;
                         if (!read_values(values)) return nullptr;
@@ -1323,7 +1328,8 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                             grammar->editor_metadata.brackets : grammar->editor_metadata.surrounding_pairs;
                         for (const auto& value : values) {
                             if (value.size() < 2) return nullptr;
-                            target.emplace_back(value.substr(0, 1), value.substr(value.size() - 1, 1));
+                            if (value.size() != 2) return nullptr;
+                            target.emplace_back(value.substr(0, 1), value.substr(1, 1));
                         }
                     } else if (field.text == "bracketNotIn") {
                         if (lexer.nextToken().type != TshLexer::TokenType::TOK_COLON) return nullptr;
@@ -1383,7 +1389,8 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                         } else if (field.text == "insertSpaces" || field.text == "autoIndent" ||
                                    field.text == "trimTrailingWhitespace" || field.text == "formatOnType" ||
                                    field.text == "formatOnPaste" || field.text == "lineNumbers") {
-                            if (value.text != "true" && value.text != "false") return nullptr;
+                            if (value.type != TshLexer::TokenType::TOK_IDENT ||
+                                (value.text != "true" && value.text != "false")) return nullptr;
                         } else if (field.text == "renderWhitespace") {
                             if (value.text != "none" && value.text != "boundary" &&
                                 value.text != "selection" && value.text != "all") return nullptr;
@@ -1403,6 +1410,9 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                             if (lexer.nextToken().type != TshLexer::TokenType::TOK_COLON) return nullptr;
                             auto value = lexer.nextToken();
                             if (value.type != TshLexer::TokenType::TOK_REGEX) return nullptr;
+                            regex_t* validation = compileOnigurumaUtf16(value.text);
+                            if (!validation) return nullptr;
+                            onig_free(validation);
                             if (key.text == "increaseIndentPattern") grammar->editor_metadata.increase_indent_pattern = value.text;
                             else if (key.text == "decreaseIndentPattern") grammar->editor_metadata.decrease_indent_pattern = value.text;
                             else if (key.text == "indentNextLine") grammar->editor_metadata.indent_next_line_pattern = value.text;
