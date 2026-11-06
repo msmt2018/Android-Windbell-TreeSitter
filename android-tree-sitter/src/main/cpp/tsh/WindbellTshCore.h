@@ -49,13 +49,49 @@ struct AstSelectorRule {
     TSFieldId field_id = 0;
     TSSymbol parent_symbol = 0;
     uint16_t style_id = 0;
+    bool has_style = false;
+    bool is_foldable = false;
+    uint8_t outline_kind = 0;
+};
+
+// Compiled style catalog entry. IDs are opaque runtime indices; names carry semantics.
+struct TshStyle {
+    std::string name;
+    uint16_t style_id = 0;
+    uint32_t light_color = 0;
+    uint32_t dark_color = 0;
+    uint16_t font_flags = 0;
+};
+
+// Legacy result records retained temporarily until the public API migration is complete.
+struct FoldRange {
+    uint32_t start_byte = 0;
+    uint32_t end_byte = 0;
+    uint8_t kind = 0;
+};
+
+struct OutlineTag {
+    uint32_t start_byte = 0;
+    uint32_t end_byte = 0;
+    uint8_t kind = 0;
+    char name[64] = {};
+};
+
+struct HoverInfo {
+    uint32_t start_byte = 0;
+    uint32_t end_byte = 0;
+    std::string node_type;
+    std::string detail;
 };
 
 // 单个 Token 的方案配色定义
 struct SchemeColor {
-    uint32_t light_color = 0xFF000000; // 0xAARRGGBB
-    uint32_t dark_color  = 0xFFFFFFFF; // 0xAARRGGBB
-    uint16_t font_flags  = 0;          // 0x01: Bold, 0x02: Italic
+    // Zero is an absent value, never a fallback color. The DSL owns all visible values.
+    uint32_t light_color = 0;
+    uint32_t dark_color = 0;
+    uint16_t font_flags = 0;
+    bool has_light_color = false;
+    bool has_dark_color = false;
 };
 
 // 多主题方案实体 (Schemes Block)
@@ -72,6 +108,7 @@ public:
     const TSLanguage* ts_language = nullptr;
     
     std::unordered_map<std::string, uint16_t> style_name_to_id;
+    std::vector<TshStyle> styles;
     
     // 多主题方案集合 (Key: scheme 名称，如 "darcula", "github_light")
     std::unordered_map<std::string, ColorScheme> schemes;
