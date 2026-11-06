@@ -148,17 +148,17 @@
     // 4. 原生 AST 节点选择器规则 (Native AST Selectors: 100% 解耦 SCM，内核寄存器直连)
     // =========================================================================
     ast: [
-        // --- 4.1 符号大纲、代码折叠与类结构声明 ---
+        // --- 4.1 类型声明节点 ---
         { node: "class_declaration", field: "name", style: "type" },
         { node: "interface_declaration", field: "name", style: "type" },
         { node: "record_declaration", field: "name", style: "type" },
         { node: "enum_declaration", field: "name", style: "type" },
 
-        // --- 4.2 方法与构造器声明 (绑定大纲与折叠) ---
+        // --- 4.2 方法与构造器声明 ---
         { node: "method_declaration", field: "name", style: "function" },
         { node: "constructor_declaration", field: "name", style: "function" },
 
-        // --- 4.3 字段、常量与枚举项声明 ---
+        // --- 4.3 枚举常量声明 ---
         { node: "enum_constant", field: "name", style: "constant" },
 
         // --- 4.4 函数调用与动态属性绑定 (消除 AST 歧义) ---
