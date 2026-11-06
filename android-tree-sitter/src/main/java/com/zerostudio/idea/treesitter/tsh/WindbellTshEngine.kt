@@ -27,6 +27,23 @@ class WindbellTshEngine private constructor() {
         val declarationOrder: Int
     )
 
+    data class AutoClosingPair(
+        val open: String,
+        val close: String,
+        val notIn: List<String>
+    )
+
+    data class EditorMetadata(
+        val lineComments: List<String> = emptyList(),
+        val blockComments: List<Pair<String, String>> = emptyList(),
+        val brackets: List<Pair<String, String>> = emptyList(),
+        val autoClosingPairs: List<AutoClosingPair> = emptyList(),
+        val surroundingPairs: List<Pair<String, String>> = emptyList(),
+        val wordPattern: String? = null,
+        val indentationPatterns: Map<String, String> = emptyMap(),
+        val completionTriggerCharacters: List<String> = emptyList()
+    )
+
     data class SemanticStyle(
         val styleId: Int,
         val name: String,
@@ -95,6 +112,46 @@ class WindbellTshEngine private constructor() {
             map[id] = StylePalette(id, light, dark, lightFlags, darkFlags, hasLight, hasDark)
         }
         paletteCache[extension] = map
+    }
+
+    /** Returns editor behaviors and language metadata declared by the .tsh file. */
+    fun getEditorMetadata(extension: String): EditorMetadata {
+        val raw = nativeGetEditorMetadata(extension) ?: return EditorMetadata()
+        val lineComments = ArrayList<String>()
+        val blockComments = ArrayList<Pair<String, String>>()
+        val brackets = ArrayList<Pair<String, String>>()
+        val autoClosingPairs = ArrayList<AutoClosingPair>()
+        val surroundingPairs = ArrayList<Pair<String, String>>()
+        val indentation = LinkedHashMap<String, String>()
+        val completionTriggers = ArrayList<String>()
+        var wordPattern: String? = null
+
+        var index = 0
+        while (index + 2 < raw.size) {
+            val kind = raw[index]
+            val first = raw[index + 1]
+            val second = raw[index + 2]
+            when (kind) {
+                "lineComment" -> lineComments += first
+                "blockComment" -> blockComments += first to second
+                "bracket" -> brackets += first to second
+                "surrounding" -> surroundingPairs += first to second
+                "autoClosing" -> {
+                    val parts = second.split('\u001F')
+                    autoClosingPairs += AutoClosingPair(first, parts.firstOrNull().orEmpty(),
+                        parts.getOrNull(1)?.split('\u001F')?.filter { it.isNotEmpty() }.orEmpty())
+                }
+                "wordPattern" -> wordPattern = first
+                "indentIncrease", "indentDecrease", "indentNextLine", "unIndentedLine" ->
+                    indentation[kind] = first
+                "completionTrigger" -> completionTriggers += first
+            }
+            index += 3
+        }
+        return EditorMetadata(
+            lineComments, blockComments, brackets, autoClosingPairs, surroundingPairs,
+            wordPattern, indentation, completionTriggers
+        )
     }
 
     /** Returns all semantic style declarations authored in the .tsh file. */
@@ -250,6 +307,9 @@ class WindbellTshEngine private constructor() {
 
     @FastNative
     private external fun nativeLoadTshSource(extension: String, tshSourceContent: String, languagePtr: Long): Boolean
+
+    @FastNative
+    private external fun nativeGetEditorMetadata(extension: String): Array<String>?
 
     @FastNative
     private external fun nativeGetStyleCatalog(extension: String): Array<String>?
