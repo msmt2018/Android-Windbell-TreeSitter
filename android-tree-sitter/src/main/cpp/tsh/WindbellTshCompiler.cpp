@@ -387,7 +387,8 @@ std::shared_ptr<TshGrammar> TshCompiler::compile(const std::string& source, cons
                                 color_entry.dark_color = color_val;
                                 color_entry.has_dark_color = true;
                             }
-                            color_entry.font_flags |= flags;
+                            if (is_light) color_entry.light_font_flags |= flags;
+                            else color_entry.dark_font_flags |= flags;
                         }
                     }
                     grammar->schemes[scheme_name] = std::move(scheme);
@@ -490,8 +491,14 @@ std::shared_ptr<TshGrammar> TshCompiler::compile(const std::string& source, cons
                         while (modifier.type == TshLexer::TokenType::TOK_AT) {
                             auto flag = lexer.nextToken();
                             if (flag.text == "B" || flag.text == "bold") color.font_flags |= 0x01;
-                            else if (flag.text == "I" || flag.text == "italic") color.font_flags |= 0x02;
-                            else if (flag.text == "U" || flag.text == "underline") color.font_flags |= 0x04;
+                            else if (flag.text == "I" || flag.text == "italic") {
+                            color.light_font_flags |= 0x02;
+                            color.dark_font_flags |= 0x02;
+                        }
+                            else if (flag.text == "U" || flag.text == "underline") {
+                            color.light_font_flags |= 0x04;
+                            color.dark_font_flags |= 0x04;
+                        }
                             modifier = lexer.nextToken();
                             if (modifier.type == TshLexer::TokenType::TOK_COMMA) {
                                 modifier = lexer.nextToken();
@@ -694,7 +701,7 @@ std::shared_ptr<TshGrammar> TshCompiler::compile(const std::string& source, cons
                 const SchemeColor& color = color_it->second;
                 if (color.has_light_color) style.light_color = color.light_color;
                 if (color.has_dark_color) style.dark_color = color.dark_color;
-                style.font_flags = color.font_flags;
+                style.font_flags = color.light_font_flags | color.dark_font_flags;
             }
         }
         if (style.style_id >= grammar->styles.size()) {
