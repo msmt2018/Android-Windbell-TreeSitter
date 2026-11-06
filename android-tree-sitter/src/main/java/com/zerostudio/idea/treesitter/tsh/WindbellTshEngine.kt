@@ -167,41 +167,66 @@ class WindbellTshEngine private constructor() {
         extension: String,
         spannable: SpannableStringBuilder
     ) {
-        val spans = computeHighlights(tree, text, extension)
-        val palette = paletteCache[extension] ?: emptyMap()
+        applyHighlightSpansToSpannable(
+            spans = computeHighlights(tree, text, extension),
+            documentOffset = 0,
+            text = text,
+            extension = extension,
+            spannable = spannable
+        )
+    }
 
+    /**
+     * Paints already-computed document captures into a line-local Spannable.
+     * [documentOffset] is the line's UTF-16 character offset in the full document.
+     */
+    fun applyHighlightSpansToSpannable(
+        spans: List<HighlightSpan>,
+        documentOffset: Int,
+        text: String,
+        extension: String,
+        spannable: SpannableStringBuilder,
+        start: Int = 0,
+        end: Int = spannable.length
+    ) {
         val oldSpans = spannable.getSpans(0, spannable.length, CharacterStyle::class.java)
-        for (old in oldSpans) {
-            spannable.removeSpan(old)
-        }
+        for (old in oldSpans) spannable.removeSpan(old)
+
+        val palette = paletteCache[extension] ?: emptyMap()
+        val darkMode = isDark(extension)
+        val visibleStart = start.coerceIn(0, spannable.length)
+        val visibleEnd = end.coerceIn(visibleStart, spannable.length)
 
         for (span in spans) {
-            val charStart = span.startByte shr 1
-            val charEnd = (span.endByte shr 1).coerceAtMost(spannable.length)
-            if (charStart < charEnd) {
-                val colorDef = palette[span.styleId]
-                // A missing DSL color means "leave the editor's foreground alone".
-                // Never inject a platform black/white fallback.
-                val darkMode = appearanceOverrides[extension] ?: defaultAppearances[extension] ?: isDarkTheme
-                val hasColor = if (darkMode) colorDef?.hasDarkColor == true else colorDef?.hasLightColor == true
-                val color = if (darkMode) colorDef?.darkColor ?: 0 else colorDef?.lightColor ?: 0
-                if (hasColor) {
-                    spannable.setSpan(ForegroundColorSpan(color), charStart, charEnd, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
-                }
-                val schemeFlags = if (darkMode) colorDef?.darkFontFlags ?: 0 else colorDef?.lightFontFlags ?: 0
-                val flags = span.fontFlags or schemeFlags
-                if ((flags and 0x01) != 0) {
-                    spannable.setSpan(StyleSpan(android.graphics.Typeface.BOLD), charStart, charEnd, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
-                }
-                if ((flags and 0x02) != 0) {
-                    spannable.setSpan(StyleSpan(android.graphics.Typeface.ITALIC), charStart, charEnd, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
-                }
-                if ((flags and 0x04) != 0) {
-                    spannable.setSpan(UnderlineSpan(), charStart, charEnd, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
-                }
-                if ((flags and 0x08) != 0) {
-                    spannable.setSpan(StrikethroughSpan(), charStart, charEnd, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
-                }
+            val globalStart = span.startByte shr 1
+            val globalEnd = span.endByte shr 1
+            val localStart = globalStart - documentOffset
+            val localEnd = globalEnd - documentOffset
+            val charStart = maxOf(localStart, visibleStart)
+            val charEnd = minOf(localEnd, visibleEnd)
+            if (charStart >= charEnd) continue
+
+            val colorDef = palette[span.styleId]
+            // Missing colors leave the editor's base foreground untouched.
+            val hasColor = if (darkMode) colorDef?.hasDarkColor == true else colorDef?.hasLightColor == true
+            val color = if (darkMode) colorDef?.darkColor ?: 0 else colorDef?.lightColor ?: 0
+            if (hasColor) {
+                spannable.setSpan(ForegroundColorSpan(color), charStart, charEnd, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+            }
+
+            val schemeFlags = if (darkMode) colorDef?.darkFontFlags ?: 0 else colorDef?.lightFontFlags ?: 0
+            val flags = span.fontFlags or schemeFlags
+            if ((flags and 0x01) != 0) {
+                spannable.setSpan(StyleSpan(android.graphics.Typeface.BOLD), charStart, charEnd, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+            }
+            if ((flags and 0x02) != 0) {
+                spannable.setSpan(StyleSpan(android.graphics.Typeface.ITALIC), charStart, charEnd, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+            }
+            if ((flags and 0x04) != 0) {
+                spannable.setSpan(UnderlineSpan(), charStart, charEnd, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+            }
+            if ((flags and 0x08) != 0) {
+                spannable.setSpan(StrikethroughSpan(), charStart, charEnd, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
             }
         }
     }
