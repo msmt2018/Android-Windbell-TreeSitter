@@ -750,6 +750,17 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                     }
                     if (!ancestor_found) continue;
                 }
+                if (ast_rule.child_symbol != 0) {
+                    bool child_found = false;
+                    const uint32_t child_count = ts_node_child_count(node);
+                    for (uint32_t child_index = 0; child_index < child_count; ++child_index) {
+                        if (ts_node_symbol(ts_node_child(node, child_index)) == ast_rule.child_symbol) {
+                            child_found = true;
+                            break;
+                        }
+                    }
+                    if (!child_found) continue;
+                }
 
                 if (ast_rule.has_style) {
                     HighlightSpan span;
