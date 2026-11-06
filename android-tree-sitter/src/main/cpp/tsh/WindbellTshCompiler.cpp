@@ -680,6 +680,7 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                 if (!mark_root_section("ignoreCase")) return nullptr;
                 if (lexer.nextToken().type != TshLexer::TokenType::TOK_COLON) return nullptr;
                 auto value = lexer.nextToken();
+                if (value.type != TshLexer::TokenType::TOK_IDENT) return nullptr;
                 if (value.text == "true") grammar->default_regex_options |= ONIG_OPTION_IGNORECASE;
                 else if (value.text != "false") return nullptr;
             }
@@ -697,6 +698,7 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                     if (key.type == TshLexer::TokenType::TOK_EOF ||
                         lexer.nextToken().type != TshLexer::TokenType::TOK_COLON) return nullptr;
                     auto value = lexer.nextToken();
+                    if (value.type != TshLexer::TokenType::TOK_IDENT) return nullptr;
                     const bool enabled = value.text == "true";
                     if (value.text != "true" && value.text != "false") return nullptr;
                     if (key.text == "caseSensitive") {
@@ -948,6 +950,7 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                 auto separator = lexer.nextToken();
                 if (separator.type != TshLexer::TokenType::TOK_COLON) return nullptr;
                 auto value = lexer.nextToken();
+                if (value.type != TshLexer::TokenType::TOK_IDENT) return nullptr;
                 if (value.text == "true") grammar->default_is_dark = true;
                 else if (value.text == "false") grammar->default_is_dark = false;
                 else return nullptr;
@@ -1404,6 +1407,7 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                             else if (key.text == "decreaseIndentPattern") grammar->editor_metadata.decrease_indent_pattern = value.text;
                             else if (key.text == "indentNextLine") grammar->editor_metadata.indent_next_line_pattern = value.text;
                             else if (key.text == "unIndentedLinePattern") grammar->editor_metadata.unindented_line_pattern = value.text;
+                            else return nullptr;
                         }
                     } else if (field.text == "completion") {
                         if (lexer.nextToken().type != TshLexer::TokenType::TOK_LBRACE) return nullptr;
@@ -1415,7 +1419,7 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                             if (key.text == "triggerCharacters") {
                                 if (!read_string_array(grammar->editor_metadata.completion_trigger_characters)) return nullptr;
                             } else {
-                                lexer.nextToken();
+                                return nullptr;
                             }
                         }
                     } else {
