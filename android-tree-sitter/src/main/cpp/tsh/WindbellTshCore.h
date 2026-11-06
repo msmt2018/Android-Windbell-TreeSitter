@@ -61,6 +61,20 @@ struct CompiledRegexRule {
     uint32_t regex_options = 0;
 };
 
+struct MonarchRule {
+    regex_t* pattern = nullptr;
+    uint16_t style_id = 0;
+    bool has_style = false;
+    std::string include_state;
+    std::string next_state;
+    std::string push_state;
+    std::string switch_state;
+    bool pop = false;
+    bool rematch = false;
+    int32_t priority = 0;
+    uint32_t declaration_order = 0;
+};
+
 struct AstSelectorRule {
     TSSymbol target_symbol = 0;
     TSFieldId field_id = 0;
@@ -152,6 +166,10 @@ public:
     uint32_t default_regex_options = ONIG_OPTION_DEFAULT;
 
     std::vector<CompiledRegexRule> regex_rules;
+    std::unordered_map<std::string, std::vector<MonarchRule>> monarch_states;
+    std::string monarch_start_state = "root";
+    uint16_t monarch_default_style_id = 0;
+    bool monarch_has_default_style = false;
     std::vector<AstSelectorRule> ast_selector_rules;
     TSQuery* dynamic_ts_query = nullptr;
 
