@@ -518,6 +518,49 @@ class WindbellTshLinkageTest {
     }
 
     @Test
+    fun testNativeQueryRegexPredicates() {
+        val engine = WindbellTshEngine.instance
+        val language = TSLanguageJava.getInstance()
+        val source = """
+            tsh 2 {
+                language { id: "java-query-regex" name: "Java Query Regex" extensions: [".jqr"] }
+                styles { method { scope: "entity.name.function" } }
+                treeSitter {
+                    queries: [
+                        {
+                            id: "matching-method"
+                            priority: 50
+                            source: `(method_declaration name: (identifier) @method (#match? @method "^(run|start)$"))`
+                        },
+                        {
+                            id: "nonmatching-method"
+                            priority: 60
+                            source: `(method_declaration name: (identifier) @method (#not-match? @method "^skip$"))`
+                        }
+                    ]
+                }
+            }
+        """.trimIndent()
+        assertTrue(engine.loadTshSource("java-query-regex", source, language))
+        val parser = TSParser.create().apply { setLanguage(language) }
+        val code = "class Demo { void run() {} void skip() {} void other() {} }"
+        val tree = parser.parseString(code)
+        val spans = engine.computeHighlights(tree, code, "java-query-regex")
+        val methodId = engine.getStyleCatalog("java-query-regex").first { it.name == "method" }.styleId
+
+        assertTrue(spans.any { it.styleId == methodId && it.priority == 50 })
+        assertTrue(spans.any { it.styleId == methodId && it.priority == 60 })
+        assertFalse(spans.any {
+            it.styleId == methodId && it.priority == 50 && it.startByte == code.indexOf("other") * 2
+        })
+        assertFalse(spans.any {
+            it.styleId == methodId && it.priority == 60 && it.startByte == code.indexOf("skip") * 2
+        })
+        tree?.close()
+        parser.close()
+    }
+
+    @Test
     fun testNativeQueryCaptureBindingsSeparateNamesFromStyles() {
         val engine = WindbellTshEngine.instance
         val language = TSLanguageJava.getInstance()
