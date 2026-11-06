@@ -539,8 +539,15 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                             numeric_map = &rule.end_group_style_map;
                             named_map = &rule.end_named_group_style_map;
                         }
+                        if (style_name.type != TshLexer::TokenType::TOK_STRING &&
+                            style_name.type != TshLexer::TokenType::TOK_IDENT) return false;
                         if (child_token.type == TshLexer::TokenType::TOK_NUMBER) {
-                            (*numeric_map)[std::stoi(child_token.text)] = ensureStyleId(style_name.text);
+                            try {
+                                size_t consumed = 0;
+                                const int group = std::stoi(child_token.text, &consumed);
+                                if (consumed != child_token.text.size() || group < 0) return false;
+                                (*numeric_map)[group] = ensureStyleId(style_name.text);
+                            } catch (...) { return false; }
                         } else {
                             (*named_map)[child_token.text] = ensureStyleId(style_name.text);
                         }
@@ -1307,7 +1314,11 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                             } else if (field.text == "priority") {
                                 auto value = read_ast_value();
                                 if (value.type != TshLexer::TokenType::TOK_NUMBER) return nullptr;
-                                ast_rule.priority = std::stoi(value.text);
+                                try {
+                                    size_t consumed = 0;
+                                    ast_rule.priority = std::stoi(value.text, &consumed);
+                                    if (consumed != value.text.size()) return nullptr;
+                                } catch (...) { return nullptr; }
                             } else if (field.text == "enabled") {
                                 auto value = read_ast_value();
                                 if (value.text == "true") ast_rule.enabled = true;
