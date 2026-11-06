@@ -234,13 +234,21 @@ The currently executable Monarch subset is optional and may coexist with ATS and
 ```tsh
 monarch {
   start: "root"
+  ignoreCase: false
+  tokenPostfix: ".java"
+  variables {
+    identifier: /[A-Za-z_$][A-Za-z0-9_$]*/
+    digits: /[0-9]+/
+  }
+  defaultToken: "invalid"
   tokenizer {
     root: [
       { match: /"/, token: "string", push: "@string" }
       { include: "@identifiers" }
     ]
     identifiers: [
-      { match: /[A-Za-z_$][A-Za-z0-9_$]*/, token: "identifier" }
+      { match: /@identifier/, token: "identifier" }
+      { match: /@digits/, token: "number" }
     ]
     string: [
       { match: /"/, token: "string", pop: true }
@@ -250,7 +258,7 @@ monarch {
 }
 ```
 
-The runtime tokenizes the complete UTF-16 document with a persistent state stack and emits normalized spans into the shared arbitration pipeline. State references and include cycles are validated. Not yet implemented: `cases`, action arrays, `@keywords`/character-class variables, embedded-language tokens, `tokenPostfix`, `goBack`, `@rematch` action syntax and bracket actions.
+The runtime tokenizes the complete UTF-16 document with a persistent state stack and emits normalized spans into the shared arbitration pipeline. State references and include cycles are validated. Regex variables declared in `variables` are recursively expanded (with unknown references and cycles rejected); escaped references and character classes are not rewritten. `tokenPostfix` is appended to token names and `defaultToken` after parsing, so declarations are order-independent. `ignoreCase` sets the tokenizer's default Oniguruma option. Remaining planned Monarch features include `cases`, action arrays, embedded-language tokens, `goBack`, `@rematch` action syntax, and bracket actions.
 
 ## 8. Editor/language metadata
 
