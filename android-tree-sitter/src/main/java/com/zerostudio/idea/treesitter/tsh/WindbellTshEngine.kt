@@ -20,7 +20,8 @@ class WindbellTshEngine private constructor() {
         val startByte: Int,
         val endByte: Int,
         val styleId: Int,
-        val fontFlags: Int,
+        val lightFontFlags: Int,
+        val darkFontFlags: Int,
         val hasLightColor: Boolean,
         val hasDarkColor: Boolean
     )
@@ -78,15 +79,16 @@ class WindbellTshEngine private constructor() {
     private fun reloadPalette(extension: String, schemeName: String) {
         val flatPalette = nativeGetPalette(extension, schemeName) ?: return
         val map = HashMap<Int, StylePalette>()
-        val count = flatPalette.size / 6
+        val count = flatPalette.size / 7
         for (i in 0 until count) {
-            val id = flatPalette[i * 6]
-            val light = flatPalette[i * 6 + 1]
-            val dark = flatPalette[i * 6 + 2]
-            val flags = flatPalette[i * 6 + 3]
-            val hasLight = flatPalette[i * 6 + 4] != 0
-            val hasDark = flatPalette[i * 6 + 5] != 0
-            map[id] = StylePalette(id, light, dark, flags, hasLight, hasDark)
+            val id = flatPalette[i * 7]
+            val light = flatPalette[i * 7 + 1]
+            val dark = flatPalette[i * 7 + 2]
+            val lightFlags = flatPalette[i * 7 + 3]
+            val darkFlags = flatPalette[i * 7 + 4]
+            val hasLight = flatPalette[i * 7 + 5] != 0
+            val hasDark = flatPalette[i * 7 + 6] != 0
+            map[id] = StylePalette(id, light, dark, lightFlags, darkFlags, hasLight, hasDark)
         }
         paletteCache[extension] = map
     }
@@ -182,7 +184,8 @@ class WindbellTshEngine private constructor() {
                 if (hasColor) {
                     spannable.setSpan(ForegroundColorSpan(color), charStart, charEnd, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
                 }
-                val flags = span.fontFlags or (colorDef?.fontFlags ?: 0)
+                val schemeFlags = if (darkMode) colorDef?.darkFontFlags ?: 0 else colorDef?.lightFontFlags ?: 0
+                val flags = span.fontFlags or schemeFlags
                 if ((flags and 0x01) != 0) {
                     spannable.setSpan(StyleSpan(android.graphics.Typeface.BOLD), charStart, charEnd, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
                 }
