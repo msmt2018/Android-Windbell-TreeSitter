@@ -24,7 +24,7 @@ tsh 2 {
     extensions: [".java", ".jav"]
     aliases: ["Java"]
     mimeTypes: ["text/x-java"]
-    firstLine: /^#!.*\\bjava\\b/
+    firstLine: /^#!.*\bjava\b/
   }
   matching {
     caseSensitive: true
@@ -53,7 +53,7 @@ tsh 2 {
 }
 ```
 
-The compiler accepts the versioned `tsh 2 { ... }` envelope and the legacy root-object form. The currently implemented root rule sections are `treeSitter.queries`, `ast`, `repository`, and `contains`; the higher-level unified `rules { ats { ... } regex { ... } }` façade remains a planned syntax layer. It rejects unsupported DSL versions, duplicate root sections/style/scheme IDs, malformed blocks, unknown root/style/editor properties, invalid color values, unresolved style references, inheritance cycles, invalid regexes and invalid Tree-sitter queries with source diagnostics (file, line, column, code and message). Unknown keys are errors by default; an explicit `extensions` namespace is reserved for vendor/user metadata.
+The compiler accepts the versioned `tsh 2 { ... }` envelope and the legacy root-object form. The currently implemented root rule sections are `treeSitter.queries`, `ast`, `repository`, and `contains`; the higher-level unified `rules { ats { ... } regex { ... } }` façade remains a planned syntax layer. It rejects unsupported DSL versions, duplicate root sections/style/scheme IDs, malformed blocks, unknown root/style/editor properties, invalid color values, unresolved style references, inheritance cycles, invalid regexes and invalid Tree-sitter queries with source diagnostics (file, line, column, code and message). Unknown keys are errors by default. A vendor/user extension namespace is not yet implemented and must not be used as if it were accepted syntax.
 
 ## 3. Semantic style catalog
 
