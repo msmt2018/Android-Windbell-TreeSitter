@@ -887,11 +887,25 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
         std::string raw_match_pattern;
         std::string raw_start_pattern;
         std::string raw_end_pattern;
+        std::unordered_map<std::string, bool> seen_rule_properties;
         while (true) {
             auto item = lexer.nextToken();
             if (item.type == TshLexer::TokenType::TOK_RBRACE) break;
             if (item.type == TshLexer::TokenType::TOK_EOF) return false;
             if (item.type == TshLexer::TokenType::TOK_COMMA) continue;
+
+            if (item.type == TshLexer::TokenType::TOK_IDENT) {
+                std::string property = item.text;
+                // These aliases write the same compiled slot and must not
+                // overwrite one another within a single rule.
+                if (property == "begin") property = "start";
+                else if (property == "builtin") property = "match";
+                else if (property == "patterns") property = "contains";
+                if (!seen_rule_properties.emplace(property, true).second) {
+                    g_tsh_last_error_detail = "duplicate rule property: " + item.text;
+                    return false;
+                }
+            }
 
             if (item.type == TshLexer::TokenType::TOK_NUMBER) {
                 int group_index = -1;
