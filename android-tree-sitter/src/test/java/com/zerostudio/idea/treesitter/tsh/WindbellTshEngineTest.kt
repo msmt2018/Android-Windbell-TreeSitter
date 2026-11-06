@@ -496,7 +496,7 @@ class WindbellTshLinkageTest {
 
         assertTrue(engine.loadTshSource("java-query-predicates", source, language))
         val parser = TSParser.create().apply { setLanguage(language) }
-        val code = "class Demo { void run() {} void skip() {} void other() {} }"
+        val code = "// 😀 prefix\nclass Demo { void run() {} void skip() {} void other() {} }"
         val tree = parser.parseString(code)
         val spans = engine.computeHighlights(tree, code, "java-query-predicates")
         val catalog = engine.getStyleCatalog("java-query-predicates")
@@ -577,7 +577,7 @@ class WindbellTshLinkageTest {
         """.trimIndent()
         assertTrue(engine.loadTshSource("java-ast-node-flags", source, language))
         val parser = TSParser.create().apply { setLanguage(language) }
-        val code = "class Demo { int value = 1 + 2; void run() {} }"
+        val code = "// 😀 prefix\nclass Demo { int value = 1 + 2; void run() {} }"
         val tree = parser.parseString(code)
         val spans = engine.computeHighlights(tree, code, "java-ast-node-flags")
         val styleId = engine.getStyleCatalog("java-ast-node-flags")
