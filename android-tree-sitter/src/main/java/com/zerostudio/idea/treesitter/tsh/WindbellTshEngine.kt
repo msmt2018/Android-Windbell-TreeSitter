@@ -18,6 +18,15 @@ import com.zerostudio.idea.treesitter.TreeSitter
  */
 class WindbellTshEngine private constructor() {
 
+    data class LanguageMetadata(
+        val id: String = "",
+        val name: String = "",
+        val extensions: List<String> = emptyList(),
+        val aliases: List<String> = emptyList(),
+        val mimeTypes: List<String> = emptyList(),
+        val firstLinePattern: String? = null
+    )
+
     data class CompileDiagnostic(
         val code: String,
         val message: String,
@@ -126,6 +135,20 @@ class WindbellTshEngine private constructor() {
             map[id] = StylePalette(id, light, dark, lightFlags, darkFlags, hasLight, hasDark)
         }
         paletteCache[extension] = map
+    }
+
+    fun getLanguageMetadata(extension: String): LanguageMetadata {
+        val raw = nativeGetLanguageMetadata(extension) ?: return LanguageMetadata()
+        val values = raw.toList().chunked(2).filter { it.size == 2 }.associate { it[0] to it[1] }
+        fun list(key: String) = values[key].orEmpty().split('\u001F').filter { it.isNotEmpty() }
+        return LanguageMetadata(
+            id = values["id"].orEmpty(),
+            name = values["name"].orEmpty(),
+            extensions = list("extensions"),
+            aliases = list("aliases"),
+            mimeTypes = list("mimeTypes"),
+            firstLinePattern = values["firstLine"]?.takeIf { it.isNotEmpty() }
+        )
     }
 
     fun getCompileDiagnostics(): List<CompileDiagnostic> {
@@ -337,6 +360,9 @@ class WindbellTshEngine private constructor() {
 
     @FastNative
     private external fun nativeLoadTshSource(extension: String, tshSourceContent: String, languagePtr: Long): Boolean
+
+    @FastNative
+    private external fun nativeGetLanguageMetadata(extension: String): Array<String>?
 
     @FastNative
     private external fun nativeGetCompileDiagnostics(): Array<String>?
