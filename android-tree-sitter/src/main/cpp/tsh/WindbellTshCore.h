@@ -224,7 +224,7 @@ public:
     }
 
     bool registerGrammar(const std::string& extension, std::shared_ptr<TshGrammar> grammar);
-    std::shared_ptr<TshGrammar> getGrammarByExtension(const std::string& extension);
+    std::shared_ptr<const TshGrammar> getGrammarByExtension(const std::string& extension);
 
     // 双通道混合高亮入口（线程安全）
     std::vector<HighlightSpan> highlightHybrid(
@@ -249,7 +249,9 @@ private:
     );
 
     std::mutex registry_lock_;
-    std::unordered_map<std::string, std::shared_ptr<TshGrammar>> grammar_registry_;
+    // Published grammars are immutable snapshots. Compilation owns the mutable builder;
+    // readers only receive const access for the entire render lifetime.
+    std::unordered_map<std::string, std::shared_ptr<const TshGrammar>> grammar_registry_;
 };
 
 } // namespace windbell::tsh
