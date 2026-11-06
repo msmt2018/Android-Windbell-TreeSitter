@@ -772,16 +772,16 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
             // =================================================================
             else if (tok.text == "name") {
                 if (!mark_root_section("name")) return nullptr;
-                lexer.nextToken(); // :
-                lexer.nextToken(); // [
+                if (lexer.nextToken().type != TshLexer::TokenType::TOK_COLON ||
+                    lexer.nextToken().type != TshLexer::TokenType::TOK_LBRACKET) return nullptr;
                 while (true) {
                     auto t = lexer.nextToken();
-                    if (t.type == TshLexer::TokenType::TOK_RBRACKET || t.type == TshLexer::TokenType::TOK_EOF) break;
-                    if (t.type == TshLexer::TokenType::TOK_STRING) {
-                        if (grammar->name.empty()) grammar->name = t.text;
-                        if (!t.text.empty() && t.text[0] == '.') {
-                            grammar->file_extensions.push_back(t.text.substr(1));
-                        }
+                    if (t.type == TshLexer::TokenType::TOK_RBRACKET) break;
+                    if (t.type == TshLexer::TokenType::TOK_COMMA) continue;
+                    if (t.type != TshLexer::TokenType::TOK_STRING) return nullptr;
+                    if (grammar->name.empty()) grammar->name = t.text;
+                    if (!t.text.empty() && t.text[0] == '.') {
+                        grammar->file_extensions.push_back(t.text.substr(1));
                     }
                 }
             }
@@ -936,7 +936,10 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
             else if (tok.text == "defaultScheme") {
                 if (!mark_root_section("defaultScheme")) return nullptr;
                 if (lexer.nextToken().type != TshLexer::TokenType::TOK_COLON) return nullptr;
-                grammar->default_scheme_name = lexer.nextToken().text;
+                auto value = lexer.nextToken();
+                if (value.type != TshLexer::TokenType::TOK_STRING &&
+                    value.type != TshLexer::TokenType::TOK_IDENT) return nullptr;
+                grammar->default_scheme_name = value.text;
             }
 
             // DSL default rendering mode: false = light/day, true = dark/night.
@@ -1478,11 +1481,13 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
             // =================================================================
             else if (tok.text == "ast") {
                 if (!mark_root_section("ast")) return nullptr;
-                lexer.nextToken(); // :
-                lexer.nextToken(); // [
+                if (lexer.nextToken().type != TshLexer::TokenType::TOK_COLON ||
+                    lexer.nextToken().type != TshLexer::TokenType::TOK_LBRACKET) return nullptr;
                 while (true) {
                     auto at = lexer.nextToken();
-                    if (at.type == TshLexer::TokenType::TOK_RBRACKET || at.type == TshLexer::TokenType::TOK_EOF) break;
+                    if (at.type == TshLexer::TokenType::TOK_RBRACKET) break;
+                    if (at.type == TshLexer::TokenType::TOK_EOF) return nullptr;
+                    if (at.type == TshLexer::TokenType::TOK_COMMA) continue;
                     if (at.type == TshLexer::TokenType::TOK_LBRACE) {
                         AstSelectorRule ast_rule;
                         ast_rule.declaration_order = ast_declaration_order++;
