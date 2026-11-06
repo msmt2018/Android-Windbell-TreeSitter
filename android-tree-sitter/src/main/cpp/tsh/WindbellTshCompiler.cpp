@@ -605,7 +605,8 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                     const bool enabled = value.text == "true";
                     if (value.text != "true" && value.text != "false") return nullptr;
                     if (key.text == "caseSensitive") {
-                        if (!enabled) grammar->default_regex_options |= ONIG_OPTION_IGNORECASE;
+                        if (enabled) grammar->default_regex_options &= ~ONIG_OPTION_IGNORECASE;
+                        else grammar->default_regex_options |= ONIG_OPTION_IGNORECASE;
                     } else if (key.text == "multiline") {
                         if (enabled) grammar->default_regex_options &= ~ONIG_OPTION_SINGLELINE;
                         else grammar->default_regex_options |= ONIG_OPTION_SINGLELINE;
@@ -614,6 +615,7 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                         else grammar->default_regex_options &= ~ONIG_OPTION_MULTILINE;
                     } else if (key.text == "extended") {
                         if (enabled) grammar->default_regex_options |= ONIG_OPTION_EXTEND;
+                        else grammar->default_regex_options &= ~ONIG_OPTION_EXTEND;
                     } else if (key.text == "unicode") {
                         // Oniguruma is always compiled in UTF-16LE mode. Reject
                         // disabling Unicode rather than silently changing encoding.
