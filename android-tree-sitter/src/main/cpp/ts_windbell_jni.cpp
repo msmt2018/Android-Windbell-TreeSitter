@@ -276,7 +276,7 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeGetPalette(
 /**
  * 3. 双通道混合高亮计算 (微观正则 + 宏观 AST 语法树剪枝)
  * 签名: (JLjava/lang/String;Ljava/lang/String;)[I
- * 返回结构: [start_byte, end_byte, (style_id | (font_flags << 16))] * N
+ * 返回结构: [start_byte, end_byte, packed_style_flags, priority, declaration_order] * N
  */
 JNIEXPORT jintArray JNICALL
 Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlight(
@@ -317,7 +317,7 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlight(
         ext_str
     );
 
-    const jsize out_size = static_cast<jsize>(spans.size() * 3);
+    const jsize out_size = static_cast<jsize>(spans.size() * 5);
     jintArray result = env->NewIntArray(out_size);
     if (!result) {
         throw_npe(env, "Out of memory allocating spans int array");
@@ -326,9 +326,11 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlight(
 
     std::vector<jint> flat_spans(out_size);
     for (size_t i = 0; i < spans.size(); ++i) {
-        flat_spans[i * 3 + 0] = static_cast<jint>(spans[i].start_byte);
-        flat_spans[i * 3 + 1] = static_cast<jint>(spans[i].end_byte);
-        flat_spans[i * 3 + 2] = static_cast<jint>(spans[i].style_id | (static_cast<uint32_t>(spans[i].flags) << 16));
+        flat_spans[i * 5 + 0] = static_cast<jint>(spans[i].start_byte);
+        flat_spans[i * 5 + 1] = static_cast<jint>(spans[i].end_byte);
+        flat_spans[i * 5 + 2] = static_cast<jint>(spans[i].style_id | (static_cast<uint32_t>(spans[i].flags) << 16));
+        flat_spans[i * 5 + 3] = static_cast<jint>(spans[i].priority);
+        flat_spans[i * 5 + 4] = static_cast<jint>(spans[i].declaration_order);
     }
 
     env->SetIntArrayRegion(result, 0, out_size, flat_spans.data());
