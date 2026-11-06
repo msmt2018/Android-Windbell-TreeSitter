@@ -14,6 +14,14 @@
     // 1. Editor language metadata
     // =========================================================================
     editor {
+        tabSize: 4
+        fontSize: 14
+        insertSpaces: true
+        autoIndent: true
+        trimTrailingWhitespace: true
+        formatOnType: false
+        renderWhitespace: "selection"
+        lineNumbers: true
         comments {
             line: ["//"]
             block: [["/*", "*/"]]
