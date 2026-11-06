@@ -112,6 +112,32 @@ The current implementation has concrete integration defects that must be correct
 - The Kotlin sample selects the `kt` extension without loading a corresponding Kotlin TSH grammar.
 - The current Kotlin renderer falls back to hard-coded black/white colors when a style is missing. The rework removes this fallback.
 
+## Implementation progress (branch: `fix/tsh-core-architecture`)
+
+### Implemented in the current working branch
+
+- Added `docs/TSH_DSL_V2_SPEC.md` as the expanded DSL contract.
+- Removed hard-coded black/white fallback colors from the Kotlin renderer and removed built-in Java/C regex fragments from the C++ compiler. Regex fragments must now be declared in the .tsh `defines` section.
+- Added semantic style catalog parsing (`scope`, `tags`, `description`, `parent`) and Kotlin catalog access.
+- Added `schemes { name { light [...] dark [...] ui {...} } }` parsing, arbitrary scheme enumeration, explicit `defaultScheme`, `isDark` default appearance, named scheme selection and runtime appearance overrides.
+- Added arbitrary UI color-token export and a sample-app bridge for editor background, foreground, selection, current-line and gutter colors.
+- Added per-appearance bold/italic/underline/strikethrough modifiers, correct style-ID-zero handling, explicit color-presence transport (including transparent colors), and RGB/RGBA/ARGB normalization.
+- Fixed ATS field selectors so `node + field` styles the selected child node; removed numeric style-ID assumptions from span arbitration.
+- Added recursive Oniguruma block/contains parsing, numeric capture maps, `captures { ... }`, named rule IDs, priority, enablement and overlap declarations. Capture results carry priority and declaration order; nested regions are range-constrained and recursively released.
+- Added a Kotlin `TshSyntaxHighlighter` adapter and installed it in the sample `EditorView`; captures are indexed by line and recalculated off the drawing thread.
+- Removed TSH fold/outline/hover extraction calls from the app diagnostics and removed the obsolete native/Kotlin fold and outline APIs.
+- Migrated the active Java asset to semantic styles, named schemes, UI tokens and DSL-defined regex fragments.
+
+### Still pending / not yet verified
+
+- The compiler still needs structured source diagnostics (line/column, error code, precise source range) and transactional preservation of the last valid grammar.
+- Embedded Tree-sitter query parsing/capture maps need full validation and dedicated tests.
+- TextMate selector inheritance/injections and Monarch state-machine execution remain target features, not implemented runtime features yet.
+- Additional rule attributes such as lookarounds/options, begin/while/end state, named capture groups, content scopes and rule repository includes need implementation.
+- Editor metadata parsing (comments, bracket pairs, auto-closing/surrounding pairs, indentation rules, completion trigger characters) remains pending.
+- The sample currently loads the Java TSH only; Kotlin and other language-specific TSH packages still need to be added and wired.
+- A full Android/NDK build and device/editor integration run have not yet been performed. Do not treat the current commits as build-verified.
+
 ## Acceptance criteria
 
 - Every visible syntax color and font style comes from the selected `.tsh` scheme.
