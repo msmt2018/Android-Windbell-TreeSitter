@@ -13,6 +13,7 @@ import android.os.Bundle
 import android.text.Editable
 import android.text.TextWatcher
 import android.util.Log
+import android.util.TypedValue
 import android.view.Menu
 import android.view.MenuItem
 import android.view.View
@@ -272,6 +273,16 @@ class MainActivity : AppCompatActivity() {
         val view = editorView ?: return
         val highlighter = activeTshHighlighter ?: return
         val metadata = WindbellTshEngine.instance.getEditorMetadata("java")
+        metadata.options["tabSize"]?.toIntOrNull()?.let { size ->
+            if (size in 1..16) view.setTabSize(size)
+        }
+        metadata.options["fontSize"]?.toFloatOrNull()?.let { size ->
+            if (size in 6f..48f) {
+                view.setTextSize(TypedValue.applyDimension(
+                    TypedValue.COMPLEX_UNIT_SP, size, resources.displayMetrics
+                ))
+            }
+        }
         val pairs = metadata.autoClosingPairs.mapNotNull { pair ->
             if (pair.open.length == 1 && pair.close.length == 1) {
                 AutoPair(pair.open[0], pair.close[0])
