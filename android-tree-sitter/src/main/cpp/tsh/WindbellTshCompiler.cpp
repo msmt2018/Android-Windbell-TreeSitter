@@ -233,6 +233,16 @@ std::string TshCompiler::expandKeywordsToRegex(const std::string& word_list) {
     return out;
 }
 
+static bool isValidColorHex(const std::string& value) {
+    std::string clean = value;
+    if (!clean.empty() && clean.front() == '#') clean.erase(clean.begin());
+    if (clean.size() != 3 && clean.size() != 4 &&
+        clean.size() != 6 && clean.size() != 8) return false;
+    return std::all_of(clean.begin(), clean.end(), [](unsigned char ch) {
+        return std::isxdigit(ch) != 0;
+    });
+}
+
 uint32_t TshCompiler::parseColorHex(const std::string& hex_str) {
     std::string clean = hex_str;
     if (!clean.empty() && clean.front() == '#') clean.erase(clean.begin());
@@ -683,6 +693,7 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                                         if (lexer.nextToken().type != TshLexer::TokenType::TOK_COLON) return nullptr;
                                         auto value = lexer.nextToken();
                                         if (value.type != TshLexer::TokenType::TOK_IDENT) return nullptr;
+                                        if (value.type != TshLexer::TokenType::TOK_IDENT || !isValidColorHex(value.text)) return nullptr;
                                         auto& target = light_mode ? scheme.ui_light_colors : scheme.ui_dark_colors;
                                         target[key.text] = parseColorHex(value.text);
                                     }
@@ -690,6 +701,7 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                                     if (lexer.nextToken().type != TshLexer::TokenType::TOK_COLON) return nullptr;
                                     auto value = lexer.nextToken();
                                     if (value.type != TshLexer::TokenType::TOK_IDENT) return nullptr;
+                                    if (value.type != TshLexer::TokenType::TOK_IDENT || !isValidColorHex(value.text)) return nullptr;
                                     scheme.ui_colors[token_name.text] = parseColorHex(value.text);
                                 }
                             }
@@ -713,7 +725,7 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                             auto separator = lexer.nextToken();
                             if (separator.type != TshLexer::TokenType::TOK_COLON) return nullptr;
                             auto color_tok = lexer.nextToken();
-                            if (color_tok.type != TshLexer::TokenType::TOK_IDENT) return nullptr;
+                            if (color_tok.type != TshLexer::TokenType::TOK_IDENT || !isValidColorHex(color_tok.text)) return nullptr;
 
                             uint16_t sid = 0;
                             auto style_it = grammar->style_name_to_id.find(symbol_name);
@@ -846,11 +858,11 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                         auto light_sep = lexer.nextToken();
                         if (light_sep.type != TshLexer::TokenType::TOK_COMMA) return nullptr;
                         auto light_tok = lexer.nextToken();
-                        if (light_tok.type != TshLexer::TokenType::TOK_IDENT) return nullptr;
+                        if (light_tok.type != TshLexer::TokenType::TOK_IDENT || !isValidColorHex(light_tok.text)) return nullptr;
                         auto dark_sep = lexer.nextToken();
                         if (dark_sep.type != TshLexer::TokenType::TOK_COMMA) return nullptr;
                         auto dark_tok = lexer.nextToken();
-                        if (dark_tok.type != TshLexer::TokenType::TOK_IDENT) return nullptr;
+                        if (dark_tok.type != TshLexer::TokenType::TOK_IDENT || !isValidColorHex(dark_tok.text)) return nullptr;
 
                         SchemeColor color;
                         color.light_color = parseColorHex(light_tok.text);
