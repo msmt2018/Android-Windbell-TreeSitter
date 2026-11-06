@@ -153,11 +153,11 @@ class WindbellTshLinkageTest {
                     triggerCharacters: [".", ":"]
                 }
                 electricCharacters: ["}", ";"]
-                autoCloseBefore: /[\\s)\\]};,]/
+                autoCloseBefore: /[\s)\]};,]/
                 onEnterRules: [
                     {
-                        beforeText: /\\{[^}]*$/
-                        afterText: /^\\s*\\}/
+                        beforeText: /\{[^}]*$/
+                        afterText: /^\s*\\}/
                         action: { indent: "indentOutdent", appendText: "" }
                     }
                 ]
