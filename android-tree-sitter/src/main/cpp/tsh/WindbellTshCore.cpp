@@ -777,6 +777,8 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
     if (tree && tree_source_map_valid && !grammar->ast_selector_rules.empty()) {
         macro_spans.reserve(length_chars / 6);
         TSTreeCursor cursor = ts_tree_cursor_new(ts_tree_root_node(tree));
+        std::vector<const AstSelectorRule*> candidate_rules;
+        candidate_rules.reserve(grammar->ast_wildcard_rules.size() + 16);
 
         while (true) {
             TSNode node = ts_tree_cursor_current_node(&cursor);
@@ -786,7 +788,28 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
             TSNode parent = ts_node_parent(node);
             TSSymbol parent_sym = ts_node_is_null(parent) ? 0 : ts_node_symbol(parent);
 
-            for (const auto& ast_rule : grammar->ast_selector_rules) {
+            candidate_rules.clear();
+            auto append_indexed_rules = [&](const std::vector<uint32_t>& indices) {
+                for (uint32_t index : indices) {
+                    if (index < grammar->ast_selector_rules.size()) {
+                        candidate_rules.push_back(&grammar->ast_selector_rules[index]);
+                    }
+                }
+            };
+            append_indexed_rules(grammar->ast_wildcard_rules);
+            auto node_rules = grammar->ast_rules_by_node_symbol.find(sym);
+            if (node_rules != grammar->ast_rules_by_node_symbol.end()) {
+                append_indexed_rules(node_rules->second);
+            }
+            if (!ts_node_is_null(parent)) {
+                auto field_rules = grammar->ast_field_rules_by_parent_symbol.find(parent_sym);
+                if (field_rules != grammar->ast_field_rules_by_parent_symbol.end()) {
+                    append_indexed_rules(field_rules->second);
+                }
+            }
+
+            for (const AstSelectorRule* ast_rule_ptr : candidate_rules) {
+                const AstSelectorRule& ast_rule = *ast_rule_ptr;
                 if (!ast_rule.enabled) continue;
                 if (ast_rule.named >= 0 &&
                     ts_node_is_named(node) != (ast_rule.named != 0)) continue;
