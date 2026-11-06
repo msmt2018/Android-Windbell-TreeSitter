@@ -116,6 +116,12 @@ struct AstSelectorRule {
     TSSymbol target_symbol = 0;
     TSFieldId field_id = 0;
     TSSymbol parent_symbol = 0;
+    // -1 means unconstrained; 0/1 require the corresponding Tree-sitter node flag.
+    int8_t named = -1;
+    int8_t missing = -1;
+    int8_t extra = -1;
+    int8_t error = -1;
+    int8_t has_error = -1;
     uint16_t style_id = 0;
     bool has_style = false;
     int32_t priority = 0;
