@@ -38,6 +38,7 @@ class TshLexer {
 public:
     enum class TokenType {
         TOK_EOF,
+        TOK_INVALID,
         TOK_IDENT,
         TOK_NUMBER,
         TOK_STRING,
@@ -71,6 +72,7 @@ public:
         }
         skipIgnored();
         g_tsh_last_source_offset = static_cast<uint32_t>(cursor_);
+        if (lexical_error_) return {TokenType::TOK_INVALID, "unterminated comment"};
         if (cursor_ >= src_.size()) {
             return {TokenType::TOK_EOF, ""};
         }
@@ -129,7 +131,8 @@ public:
                 }
                 content += src_[cursor_++];
             }
-            if (cursor_ < src_.size()) cursor_++; // 消费闭合引号
+            if (cursor_ >= src_.size()) return {TokenType::TOK_INVALID, "unterminated string"};
+            cursor_++;
             return {TokenType::TOK_STRING, content};
         }
 
@@ -143,7 +146,8 @@ public:
                 }
                 regex_body += src_[cursor_++];
             }
-            if (cursor_ < src_.size()) cursor_++; // 消费闭合斜杠
+            if (cursor_ >= src_.size()) return {TokenType::TOK_INVALID, "unterminated regex"};
+            cursor_++;
             return {TokenType::TOK_REGEX, regex_body};
         }
 
@@ -196,6 +200,11 @@ private:
             } else if (c == '/' && cursor_ + 1 < src_.size() && src_[cursor_ + 1] == '*') {
                 cursor_ += 2;
                 while (cursor_ + 1 < src_.size() && !(src_[cursor_] == '*' && src_[cursor_ + 1] == '/')) cursor_++;
+                if (cursor_ + 1 >= src_.size()) {
+                    cursor_ = src_.size();
+                    lexical_error_ = true;
+                    return;
+                }
                 cursor_ += 2;
             } else {
                 break;
@@ -207,6 +216,7 @@ private:
     size_t cursor_;
     Token pending_{TokenType::TOK_EOF, ""};
     bool has_pending_ = false;
+    bool lexical_error_ = false;
 };
 
 std::shared_ptr<TshGrammar> TshCompiler::compile(const std::string& source, const TSLanguage* ts_lang) {
@@ -657,6 +667,7 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
     while (tok.type != TshLexer::TokenType::TOK_EOF &&
            !(versioned_document && tok.type == TshLexer::TokenType::TOK_RBRACE)) {
         if (versioned_document && tok.type == TshLexer::TokenType::TOK_EOF) break;
+        if (tok.type == TshLexer::TokenType::TOK_INVALID) return nullptr;
         if (tok.type == TshLexer::TokenType::TOK_IDENT) {
 
             // Legacy shorthand retained with explicit, validated semantics.
