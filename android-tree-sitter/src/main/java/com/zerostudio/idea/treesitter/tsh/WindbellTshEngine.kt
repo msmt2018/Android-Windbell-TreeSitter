@@ -10,7 +10,7 @@ import com.zerostudio.idea.treesitter.TSLanguage
 import com.zerostudio.idea.treesitter.TSTree
 import dalvik.annotation.optimization.FastNative
 import java.util.concurrent.ConcurrentHashMap
-
+import com.zerostudio.idea.treesitter.TreeSitter
 /**
  * Windbell Treesitter Highlighting Configuration Engine (Windbell-TSH)
  * 提供双模高亮渲染桥接、代码折叠、符号大纲与悬停提示。
@@ -61,7 +61,7 @@ class WindbellTshEngine private constructor() {
         }
 
         init {
-            System.loadLibrary("android-tree-sitter")
+            TreeSitter.loadLibrary()
         }
     }
 

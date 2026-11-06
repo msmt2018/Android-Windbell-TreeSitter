@@ -1,9 +1,22 @@
 /*
- * Windbell Treesitter Highlighting Configuration Core (Windbell-TSH)
- * 完整的纯 C++20 词法分析与递归下降语法解析器
+ * Copyright © 2026 com.zerostudio.idea.treesitter
  *
- * 绝对零硬编码：
- * 所有的 AST 节点、字段名、父节点约束、正则表达式、高亮样式完全动态从传入的 source 读取！
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+/*
+ * Windbell Treesitter Highlighting Configuration Core (Windbell-TSH)
+ * 纯 C++20 词法分析与递归下降 DSL 编译器（完全解耦、零硬编码、多主题方案驱动）
  */
 
 #include "WindbellTshCompiler.h"
@@ -15,7 +28,7 @@
 
 namespace windbell::tsh {
 
-// 内部词法分析器，支持规范的 JSON5、注释过滤、无引号键名、正则表达式与字符串提取
+// 内部高性能 DSL 词法分析器（支持 JSON5、嵌套块、注释过滤、正则解析）
 class TshLexer {
 public:
     enum class TokenType {
@@ -56,7 +69,7 @@ public:
         if (c == '>') { cursor_++; return {TokenType::TOK_GT, ">"}; }
         if (c == '@') { cursor_++; return {TokenType::TOK_AT, "@"}; }
 
-        // 解析字符串 (单双引号)
+        // 解析字符串 (支持单双引号)
         if (c == '"' || c == '\'') {
             char quote = c;
             cursor_++;
@@ -85,7 +98,7 @@ public:
             return {TokenType::TOK_REGEX, regex_body};
         }
 
-        // 解析标识符、带 # 符号的内置宏或颜色（如 keywordsToRegex, #JAVA_NUMBER#, #FFFFFF）
+        // 解析标识符、宏定义、颜色（如 keywordsToRegex, #FF0000, @B）
         if (std::isalpha(static_cast<unsigned char>(c)) || c == '_' || c == '#' || c == '.') {
             std::string ident;
             while (cursor_ < src_.size()) {
@@ -100,20 +113,11 @@ public:
             return {TokenType::TOK_IDENT, ident};
         }
 
-        // 解析数值
-        if (std::isdigit(static_cast<unsigned char>(c))) {
-            std::string num_str;
-            while (cursor_ < src_.size() && (std::isdigit(static_cast<unsigned char>(src_[cursor_])) || src_[cursor_] == 'x' || src_[cursor_] == 'X')) {
-                num_str += src_[cursor_++];
-            }
-            return {TokenType::TOK_IDENT, num_str};
-        }
-
         cursor_++;
         return nextToken();
     }
 
-    // 提取括号内部的完整原始文本内容（专门针对 keywordsToRegex("...") 嵌套调用）
+    // 提取括号内的原始内容（用于 keywordsToRegex("...") 提取）
     std::string extractParenthesizedBlock() {
         skipIgnored();
         if (cursor_ < src_.size() && src_[cursor_] == '(') {
@@ -191,7 +195,7 @@ uint32_t TshCompiler::parseColorHex(const std::string& hex_str) {
     ss << std::hex << clean;
     ss >> val;
     if (clean.length() <= 6) {
-        val |= 0xFF000000; // 默认不透明 Alpha 0xFF
+        val |= 0xFF000000; // 默认不透明 Alpha (0xFF)
     }
     return val;
 }
@@ -224,29 +228,13 @@ std::shared_ptr<TshGrammar> TshCompiler::compile(const std::string& source, cons
     std::unordered_map<std::string, std::string> defines_map;
     std::string dynamic_query_accumulator;
 
-    // 基础标准内置调色板字典预设
-    grammar->style_name_to_id["default"]     = 0;
-    grammar->style_name_to_id["keyword"]     = 1;
-    grammar->style_name_to_id["string"]      = 2;
-    grammar->style_name_to_id["comment"]     = 3;
-    grammar->style_name_to_id["number"]      = 4;
-    grammar->style_name_to_id["type"]        = 5;
-    grammar->style_name_to_id["constant"]    = 6;
-    grammar->style_name_to_id["variable"]    = 7;
-    grammar->style_name_to_id["annotation"]  = 8;
-    grammar->style_name_to_id["operator"]    = 9;
-    grammar->style_name_to_id["function"]    = 10;
-    grammar->style_name_to_id["docComment"]  = 11;
-    grammar->style_name_to_id["stringBlock"] = 12;
-    grammar->style_name_to_id["keyword2"]    = 13;
-    grammar->style_name_to_id["typeBuiltin"] = 14;
-
-    uint16_t custom_style_counter = 100;
+    uint16_t global_style_counter = 0;
     TshLexer lexer(source);
     TshLexer::Token tok = lexer.nextToken();
 
     while (tok.type != TshLexer::TokenType::TOK_EOF) {
         if (tok.type == TshLexer::TokenType::TOK_IDENT) {
+
             // =================================================================
             // 1. 解析语法元信息: name: ["Java", ".java"]
             // =================================================================
@@ -264,48 +252,78 @@ std::shared_ptr<TshGrammar> TshCompiler::compile(const std::string& source, cons
                     }
                 }
             }
+
             // =================================================================
-            // 2. 解析多态调色板: styles: [ "keyword", #0000FF, #CC7832, @B ]
+            // 2. 解析多主题方案: schemes { name { light [...], dark [...] } }
             // =================================================================
-            else if (tok.text == "styles") {
+            else if (tok.text == "schemes") {
                 lexer.nextToken(); // :
-                lexer.nextToken(); // [
+                lexer.nextToken(); // {
                 while (true) {
-                    auto st = lexer.nextToken();
-                    if (st.type == TshLexer::TokenType::TOK_RBRACKET || st.type == TshLexer::TokenType::TOK_EOF) break;
-                    if (st.type == TshLexer::TokenType::TOK_STRING || st.type == TshLexer::TokenType::TOK_IDENT) {
-                        std::string style_name = st.text;
-                        uint16_t sid = 0;
-                        if (grammar->style_name_to_id.count(style_name)) {
-                            sid = grammar->style_name_to_id[style_name];
-                        } else {
-                            sid = custom_style_counter++;
-                            grammar->style_name_to_id[style_name] = sid;
-                        }
-
-                        StyleDefinition def;
-                        def.style_id = sid;
-                        def.name = style_name;
-
-                        // 循环读取本项后续参数直至遇到下一个逗号或括号
-                        while (true) {
-                            auto param = lexer.nextToken();
-                            if (param.type == TshLexer::TokenType::TOK_COMMA || param.type == TshLexer::TokenType::TOK_RBRACKET) break;
-                            if (param.type == TshLexer::TokenType::TOK_IDENT && param.text[0] == '#') {
-                                if (def.light_color == 0xFF000000) def.light_color = parseColorHex(param.text);
-                                else def.dark_color = parseColorHex(param.text);
-                            } else if (param.type == TshLexer::TokenType::TOK_AT) {
-                                auto flag_tok = lexer.nextToken();
-                                if (flag_tok.text == "B") def.font_flags |= 0x01; // 粗体
-                                else if (flag_tok.text == "I") def.font_flags |= 0x02; // 斜体
-                            }
-                        }
-                        grammar->styles.push_back(def);
+                    auto scheme_name_tok = lexer.nextToken();
+                    if (scheme_name_tok.type == TshLexer::TokenType::TOK_RBRACE || scheme_name_tok.type == TshLexer::TokenType::TOK_EOF) break;
+                    
+                    std::string scheme_name = scheme_name_tok.text;
+                    if (grammar->default_scheme_name.empty()) {
+                        grammar->default_scheme_name = scheme_name;
                     }
+
+                    ColorScheme scheme;
+                    scheme.name = scheme_name;
+
+                    lexer.nextToken(); // { (进入 scheme 体)
+                    while (true) {
+                        auto mode_tok = lexer.nextToken(); // "light" 或 "dark"
+                        if (mode_tok.type == TshLexer::TokenType::TOK_RBRACE || mode_tok.type == TshLexer::TokenType::TOK_EOF) break;
+                        
+                        bool is_light = (mode_tok.text == "light");
+                        lexer.nextToken(); // [
+                        while (true) {
+                            auto item_tok = lexer.nextToken(); // 符号名，如 keyword, string
+                            if (item_tok.type == TshLexer::TokenType::TOK_RBRACKET || item_tok.type == TshLexer::TokenType::TOK_EOF) break;
+                            
+                            std::string symbol_name = item_tok.text;
+                            uint16_t sid = 0;
+                            if (grammar->style_name_to_id.count(symbol_name)) {
+                                sid = grammar->style_name_to_id[symbol_name];
+                            } else {
+                                sid = global_style_counter++;
+                                grammar->style_name_to_id[symbol_name] = sid;
+                            }
+
+                            auto color_tok = lexer.nextToken(); // 十六进制颜色 #FF007F
+                            uint32_t color_val = parseColorHex(color_tok.text);
+
+                            uint16_t flags = 0;
+                            // 扫描后续是否有修饰符（如 @B 粗体, @I 斜体）
+                            while (true) {
+                                auto next_t = lexer.nextToken();
+                                if (next_t.type == TshLexer::TokenType::TOK_COMMA || next_t.type == TshLexer::TokenType::TOK_RBRACKET) {
+                                    break;
+                                }
+                                if (next_t.type == TshLexer::TokenType::TOK_AT) {
+                                    auto f_tok = lexer.nextToken();
+                                    if (f_tok.text == "B") flags |= 0x01; // 粗体
+                                    else if (f_tok.text == "I") flags |= 0x02; // 斜体
+                                }
+                            }
+
+                            auto& color_entry = scheme.colors[sid];
+                            if (is_light) {
+                                color_entry.light_color = color_val;
+                            } else {
+                                color_entry.dark_color = color_val;
+                            }
+                            color_entry.font_flags = flags;
+                        }
+                        lexer.nextToken(); // } (闭合 light/dark)
+                    }
+                    grammar->schemes[scheme_name] = scheme;
                 }
             }
+
             // =================================================================
-            // 3. 解析宏复用: defines: [ "identifier": /[a-zA-Z_$].../ ]
+            // 3. 解析宏复用: defines: [ "ident": /[a-zA-Z_$].../ ]
             // =================================================================
             else if (tok.text == "defines") {
                 lexer.nextToken(); // :
@@ -323,8 +341,9 @@ std::shared_ptr<TshGrammar> TshCompiler::compile(const std::string& source, cons
                     }
                 }
             }
+
             // =================================================================
-            // 4. 解析全动态 AST 选择器与谓词: ast: [ ... ] (杜绝任何硬编码)
+            // 4. 解析宏观 Tree-sitter AST 选择器: ast: [ ... ]
             // =================================================================
             else if (tok.text == "ast") {
                 lexer.nextToken(); // :
@@ -334,47 +353,38 @@ std::shared_ptr<TshGrammar> TshCompiler::compile(const std::string& source, cons
                     if (at.type == TshLexer::TokenType::TOK_RBRACKET || at.type == TshLexer::TokenType::TOK_EOF) break;
                     if (at.type == TshLexer::TokenType::TOK_LBRACE) {
                         AstSelectorRule ast_rule;
-                        std::string node_name, field_name, parent_name;
+                        std::string node_name, field_name, parent_name, style_bind_name;
 
                         while (true) {
                             auto field = lexer.nextToken();
                             if (field.type == TshLexer::TokenType::TOK_RBRACE || field.type == TshLexer::TokenType::TOK_EOF) break;
                             
                             if (field.text == "node") {
-                                lexer.nextToken(); // :
+                                lexer.nextToken();
                                 node_name = lexer.nextToken().text;
                             } else if (field.text == "field") {
-                                lexer.nextToken(); // :
+                                lexer.nextToken();
                                 field_name = lexer.nextToken().text;
                             } else if (field.text == "parent") {
-                                lexer.nextToken(); // :
+                                lexer.nextToken();
                                 parent_name = lexer.nextToken().text;
                             } else if (field.text == "style") {
-                                lexer.nextToken(); // :
-                                auto s_val = lexer.nextToken().text;
-                                if (grammar->style_name_to_id.count(s_val)) {
-                                    ast_rule.style_id = grammar->style_name_to_id[s_val];
-                                }
-                            } else if (field.text == "outline") {
-                                lexer.nextToken(); // :
-                                auto o_val = lexer.nextToken().text;
-                                if (o_val == "class") ast_rule.outline_kind = 1;
-                                else if (o_val == "method") ast_rule.outline_kind = 2;
-                                else if (o_val == "field") ast_rule.outline_kind = 3;
-                                else if (o_val == "enum") ast_rule.outline_kind = 4;
-                            } else if (field.text == "fold") {
-                                lexer.nextToken(); // :
-                                auto f_val = lexer.nextToken().text;
-                                ast_rule.is_foldable = (f_val == "true");
+                                lexer.nextToken();
+                                style_bind_name = lexer.nextToken().text;
                             } else if (field.text == "query") {
-                                // 允许直接在 .tsh 中定义外部 Lisp SCM Pattern
-                                lexer.nextToken(); // :
-                                auto q_val = lexer.nextToken().text;
-                                dynamic_query_accumulator += q_val + "\n";
+                                lexer.nextToken();
+                                dynamic_query_accumulator += lexer.nextToken().text + "\n";
                             }
                         }
 
-                        // 如果关联了 Tree-sitter Language，直接编译为原生 16 位符号 ID
+                        if (grammar->style_name_to_id.count(style_bind_name)) {
+                            ast_rule.style_id = grammar->style_name_to_id[style_bind_name];
+                        } else {
+                            uint16_t sid = global_style_counter++;
+                            grammar->style_name_to_id[style_bind_name] = sid;
+                            ast_rule.style_id = sid;
+                        }
+
                         if (ts_lang) {
                             if (!node_name.empty()) {
                                 ast_rule.target_symbol = ts_language_symbol_for_name(ts_lang, node_name.c_str(), static_cast<uint32_t>(node_name.length()), true);
@@ -391,6 +401,7 @@ std::shared_ptr<TshGrammar> TshCompiler::compile(const std::string& source, cons
                     }
                 }
             }
+
             // =================================================================
             // 5. 解析微观正则流与 Block 跨行结构: contains: [ ... ]
             // =================================================================
@@ -409,12 +420,11 @@ std::shared_ptr<TshGrammar> TshCompiler::compile(const std::string& source, cons
                             if (item.type == TshLexer::TokenType::TOK_RBRACE || item.type == TshLexer::TokenType::TOK_EOF) break;
 
                             if (item.text == "builtin") {
-                                lexer.nextToken(); // :
+                                lexer.nextToken();
                                 auto b_id = lexer.nextToken().text;
                                 raw_match_pat = expandBuiltin(b_id);
-                                reg_rule.style_id = (b_id.find("STRING") != std::string::npos) ? 2 : 4;
                             } else if (item.text == "match") {
-                                lexer.nextToken(); // :
+                                lexer.nextToken();
                                 auto m_tok = lexer.nextToken();
                                 if (m_tok.text == "keywordsToRegex") {
                                     std::string raw_kw = lexer.extractParenthesizedBlock();
@@ -440,25 +450,19 @@ std::shared_ptr<TshGrammar> TshCompiler::compile(const std::string& source, cons
                                 reg_rule.onig_end = compileOnigurumaUtf16(ed_val);
                                 lexer.nextToken(); // }
                             } else if (item.text == "style") {
-                                lexer.nextToken(); // :
+                                lexer.nextToken();
                                 auto s_name = lexer.nextToken().text;
                                 if (grammar->style_name_to_id.count(s_name)) {
                                     reg_rule.style_id = grammar->style_name_to_id[s_name];
-                                }
-                            } else if (std::isdigit(static_cast<unsigned char>(item.text[0]))) {
-                                int g_num = std::stoi(item.text);
-                                lexer.nextToken(); // :
-                                auto g_sname = lexer.nextToken().text;
-                                if (grammar->style_name_to_id.count(g_sname)) {
-                                    uint16_t mapped_sid = grammar->style_name_to_id[g_sname];
-                                    if (g_num == 0) reg_rule.style_id = mapped_sid;
-                                    else reg_rule.group_style_map[g_num] = mapped_sid;
+                                } else {
+                                    uint16_t sid = global_style_counter++;
+                                    grammar->style_name_to_id[s_name] = sid;
+                                    reg_rule.style_id = sid;
                                 }
                             }
                         }
 
                         if (reg_rule.type == RegexRuleType::MATCH && !raw_match_pat.empty()) {
-                            // 展开可能含有的 include("...") 宏调用
                             for (const auto& kv : defines_map) {
                                 std::string target = "include(\"" + kv.first + "\")";
                                 size_t f_pos = raw_match_pat.find(target);
@@ -478,9 +482,6 @@ std::shared_ptr<TshGrammar> TshCompiler::compile(const std::string& source, cons
         tok = lexer.nextToken();
     }
 
-    // =========================================================================
-    // 如果 .tsh 中定义了动态 SCM query 语句，现场动态编译装配，杜绝内核写死
-    // =========================================================================
     if (ts_lang && !dynamic_query_accumulator.empty()) {
         uint32_t err_offset = 0;
         TSQueryError err_type = TSQueryErrorNone;
@@ -491,9 +492,6 @@ std::shared_ptr<TshGrammar> TshCompiler::compile(const std::string& source, cons
             &err_offset,
             &err_type
         );
-        if (!grammar->dynamic_ts_query) {
-            LOGE("WindbellTSH", "User defined query compile error at offset: %u, err: %d", err_offset, err_type);
-        }
     }
 
     return grammar;
