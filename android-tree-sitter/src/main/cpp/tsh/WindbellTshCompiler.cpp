@@ -1080,6 +1080,17 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
         const bool has_delimiter_captures = !rule.start_group_style_map.empty() ||
             !rule.start_named_group_style_map.empty() || !rule.end_group_style_map.empty() ||
             !rule.end_named_group_style_map.empty();
+        // "captures" is the whole-match rule capture map. A BLOCK has two
+        // independent delimiter expressions, so accepting this map would be
+        // ambiguous and, historically, silently ignored by the block runtime.
+        // Require beginCaptures/startCaptures and endCaptures instead.
+        const bool has_generic_captures = !rule.group_style_map.empty() ||
+            !rule.named_group_style_map.empty();
+        if (rule.type == RegexRuleType::BLOCK && has_generic_captures) {
+            g_tsh_last_error_detail =
+                "captures is only valid on match rules; use beginCaptures/startCaptures or endCaptures on block rules";
+            return false;
+        }
         const bool valid = rule.type == RegexRuleType::BLOCK ?
             ((rule.has_style || rule.has_content_style || has_delimiter_captures) &&
              rule.onig_start && rule.onig_end) :
