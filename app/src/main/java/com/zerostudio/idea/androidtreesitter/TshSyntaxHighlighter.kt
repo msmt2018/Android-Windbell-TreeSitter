@@ -104,7 +104,13 @@ class TshSyntaxHighlighter(
 
     fun createBracketMatcher(): PlainBracketMatcher? {
         val pairs = editorMetadata.brackets.joinToString("") { it.first + it.second }
-        return pairs.takeIf { it.isNotEmpty() }?.let(::PlainBracketMatcher)
+        if (pairs.isEmpty()) return null
+        return object : PlainBracketMatcher(pairs) {
+            override fun isBracket(buffer: EditorBuffer, lineNumber: Int, index: Int): Boolean {
+                val offset = buffer.getOffsetAt(lineNumber, index + 1)
+                return !isInExcludedScope(offset, editorMetadata.bracketNotIn)
+            }
+        }
     }
 
     fun createAutoPairFilter(): AutoPairFilter = AutoPairFilter { pair, offset ->
@@ -112,21 +118,21 @@ class TshSyntaxHighlighter(
             it.open.length == 1 && it.close.length == 1 &&
                 it.open[0] == pair.open && it.close[0] == pair.close
         }
-        val excludedScopes = configured?.notIn.orEmpty()
-        if (excludedScopes.isEmpty()) {
-            true
-        } else {
-            allCaptures.none { span ->
-                val start = span.startByte shr 1
-                val end = span.endByte shr 1
-                if (offset < start || offset >= end) {
-                    false
-                } else {
-                    val style = stylesById[span.styleId]
-                    excludedScopes.any { scope ->
-                        style?.tags?.contains(scope) == true ||
-                            style?.scope?.startsWith(scope) == true
-                    }
+        !isInExcludedScope(offset, configured?.notIn.orEmpty())
+    }
+
+    private fun isInExcludedScope(offset: Int, excludedScopes: List<String>): Boolean {
+        if (excludedScopes.isEmpty()) return false
+        return allCaptures.any { span ->
+            val start = span.startByte shr 1
+            val end = span.endByte shr 1
+            if (offset < start || offset >= end) {
+                false
+            } else {
+                val style = stylesById[span.styleId]
+                excludedScopes.any { scope ->
+                    style?.tags?.contains(scope) == true ||
+                        style?.scope?.startsWith(scope) == true
                 }
             }
         }
