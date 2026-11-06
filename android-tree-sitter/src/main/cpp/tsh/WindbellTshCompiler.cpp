@@ -515,6 +515,14 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
     while (tok.type != TshLexer::TokenType::TOK_EOF) {
         if (tok.type == TshLexer::TokenType::TOK_IDENT) {
 
+            // Legacy shorthand retained with explicit, validated semantics.
+            if (tok.text == "ignoreCase") {
+                if (lexer.nextToken().type != TshLexer::TokenType::TOK_COLON) return nullptr;
+                auto value = lexer.nextToken();
+                if (value.text == "true") grammar->default_regex_options |= ONIG_OPTION_IGNORECASE;
+                else if (value.text != "false") return nullptr;
+            }
+
             // Language-wide regex execution semantics.
             if (tok.text == "matching") {
                 auto open = lexer.nextToken();
@@ -1149,6 +1157,11 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                     if (!parseRegexRule(rule)) return nullptr;
                     grammar->regex_rules.push_back(std::move(rule));
                 }
+            } else {
+                // Root-level typos must never be silently ignored. All accepted
+                // keys are parsed above; vendor extensions belong in an explicit
+                // extension namespace rather than being mistaken for core syntax.
+                return nullptr;
             }
         }
         tok = lexer.nextToken();
