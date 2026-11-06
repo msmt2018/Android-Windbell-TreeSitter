@@ -379,12 +379,14 @@ std::shared_ptr<TshGrammar> TshCompiler::compile(const std::string& source, cons
                             }
                         }
 
-                        if (grammar->style_name_to_id.count(style_bind_name)) {
-                            ast_rule.style_id = grammar->style_name_to_id[style_bind_name];
-                        } else {
-                            uint16_t sid = global_style_counter++;
-                            grammar->style_name_to_id[style_bind_name] = sid;
-                            ast_rule.style_id = sid;
+                        if (!style_bind_name.empty()) {
+                            auto style_it = grammar->style_name_to_id.find(style_bind_name);
+                            if (style_it == grammar->style_name_to_id.end()) {
+                                const uint16_t sid = global_style_counter++;
+                                style_it = grammar->style_name_to_id.emplace(style_bind_name, sid).first;
+                            }
+                            ast_rule.style_id = style_it->second;
+                            ast_rule.has_style = true;
                         }
 
                         if (ts_lang) {
