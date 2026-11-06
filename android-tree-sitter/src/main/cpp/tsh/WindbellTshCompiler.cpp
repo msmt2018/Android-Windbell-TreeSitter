@@ -821,6 +821,38 @@ static bool validateNamedCaptureGroups(
     return true;
 }
 
+static bool validateCaptureStyleMapCollisions(
+    regex_t* regex,
+    const std::unordered_map<int, uint16_t>& numeric_groups,
+    const std::unordered_map<std::string, uint16_t>& named_groups
+) {
+    if (!regex) return numeric_groups.empty() && named_groups.empty();
+    std::unordered_map<int, std::string> declared_groups;
+    for (const auto& entry : numeric_groups) {
+        declared_groups.emplace(entry.first, "#" + std::to_string(entry.first));
+    }
+    for (const auto& entry : named_groups) {
+        std::vector<uint16_t> name;
+        name.reserve(entry.first.size());
+        for (unsigned char ch : entry.first) name.push_back(static_cast<uint16_t>(ch));
+        const int group = onig_name_to_backref_number(
+            regex,
+            reinterpret_cast<const UChar*>(name.data()),
+            reinterpret_cast<const UChar*>(name.data() + name.size()),
+            nullptr
+        );
+        if (group < 0) return false; // The detailed missing-name diagnostic is emitted earlier.
+        auto inserted = declared_groups.emplace(group, entry.first);
+        if (!inserted.second) {
+            g_tsh_last_error_detail =
+                "multiple capture style declarations target the same group: " +
+                inserted.first->second + " and " + entry.first;
+            return false;
+        }
+    }
+    return true;
+}
+
 static regex_t* compileOnigurumaUtf16(const std::string& pattern_str, OnigOptionType options = ONIG_OPTION_DEFAULT) {
     if (pattern_str.empty()) return nullptr;
     std::vector<uint16_t> u16;
@@ -1145,7 +1177,13 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
             !validateNumericCaptureGroups(rule.onig_end, rule.end_group_style_map) ||
             !validateNamedCaptureGroups(rule.onig_start, rule.named_group_style_map) ||
             !validateNamedCaptureGroups(rule.onig_start, rule.start_named_group_style_map) ||
-            !validateNamedCaptureGroups(rule.onig_end, rule.end_named_group_style_map)) return false;
+            !validateNamedCaptureGroups(rule.onig_end, rule.end_named_group_style_map) ||
+            !validateCaptureStyleMapCollisions(
+                rule.onig_start, rule.group_style_map, rule.named_group_style_map) ||
+            !validateCaptureStyleMapCollisions(
+                rule.onig_start, rule.start_group_style_map, rule.start_named_group_style_map) ||
+            !validateCaptureStyleMapCollisions(
+                rule.onig_end, rule.end_group_style_map, rule.end_named_group_style_map)) return false;
 
         const bool has_delimiter_captures = !rule.start_group_style_map.empty() ||
             !rule.start_named_group_style_map.empty() || !rule.end_group_style_map.empty() ||
