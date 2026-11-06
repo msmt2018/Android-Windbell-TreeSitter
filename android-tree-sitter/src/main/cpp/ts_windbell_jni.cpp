@@ -21,6 +21,30 @@
 
 using namespace windbell::tsh;
 
+static size_t utf16LengthModifiedUtf8(const std::string& value) {
+    size_t count = 0;
+    for (size_t i = 0; i < value.size();) {
+        const uint8_t first = static_cast<uint8_t>(value[i]);
+        if (first <= 0x7F) {
+            ++i;
+            ++count;
+        } else if ((first & 0xE0) == 0xC0 && i + 1 < value.size()) {
+            i += 2;
+            ++count;
+        } else if ((first & 0xF0) == 0xE0 && i + 2 < value.size()) {
+            i += 3;
+            ++count;
+        } else if ((first & 0xF8) == 0xF0 && i + 3 < value.size()) {
+            i += 4;
+            count += 2;
+        } else {
+            ++i;
+            ++count;
+        }
+    }
+    return count;
+}
+
 extern "C" {
 
 /**
@@ -342,10 +366,10 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeGetStyleCatalog(
         }
         std::string metadata;
         for (const auto& entry : style.metadata) {
-            metadata += std::to_string(entry.first.size());
+            metadata += std::to_string(utf16LengthModifiedUtf8(entry.first));
             metadata.push_back(':');
             metadata += entry.first;
-            metadata += std::to_string(entry.second.size());
+            metadata += std::to_string(utf16LengthModifiedUtf8(entry.second));
             metadata.push_back(':');
             metadata += entry.second;
         }
