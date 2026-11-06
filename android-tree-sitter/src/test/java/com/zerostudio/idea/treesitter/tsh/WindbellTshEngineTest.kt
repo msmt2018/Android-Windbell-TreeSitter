@@ -157,7 +157,7 @@ class WindbellTshLinkageTest {
                 onEnterRules: [
                     {
                         beforeText: /\{[^}]*$/
-                        afterText: /^\s*\\}/
+                        afterText: /^\s*\}/
                         action: { indent: "indentOutdent", appendText: "" }
                     }
                 ]
