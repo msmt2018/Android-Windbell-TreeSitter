@@ -585,7 +585,7 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
             }
 
             // Language-wide regex execution semantics.
-            if (tok.text == "matching") {
+            else if (tok.text == "matching") {
                 auto open = lexer.nextToken();
                 if (open.type == TshLexer::TokenType::TOK_COLON) open = lexer.nextToken();
                 if (open.type != TshLexer::TokenType::TOK_LBRACE) return nullptr;
@@ -619,7 +619,7 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
             }
 
             // Language identity and editor/file association metadata.
-            if (tok.text == "language") {
+            else if (tok.text == "language") {
                 auto open = lexer.nextToken();
                 if (open.type == TshLexer::TokenType::TOK_COLON) open = lexer.nextToken();
                 if (open.type != TshLexer::TokenType::TOK_LBRACE) return nullptr;
@@ -666,7 +666,7 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
             // =================================================================
             // 1. 解析语法元信息: name: ["Java", ".java"]
             // =================================================================
-            if (tok.text == "name") {
+            else if (tok.text == "name") {
                 lexer.nextToken(); // :
                 lexer.nextToken(); // [
                 while (true) {
