@@ -47,6 +47,7 @@ struct CompiledRegexRule {
     regex_t* onig_start = nullptr;
     regex_t* onig_end = nullptr;
     std::unordered_map<int, uint16_t> group_style_map;
+    std::unordered_map<std::string, uint16_t> named_group_style_map;
     std::vector<CompiledRegexRule> nested_rules;
     std::string id;
     int32_t priority = 0;
