@@ -298,6 +298,7 @@ static bool decodePatternUtf8ToUtf16(const std::string& input, std::vector<uint1
         if (codepoint <= 0xFFFF) {
             if (codepoint < 0x80 && continuation_count != 0) return false;
             if (codepoint < 0x800 && continuation_count == 2) return false;
+            if (codepoint < 0x10000 && continuation_count == 3) return false;
             output.push_back(static_cast<uint16_t>(codepoint));
         } else if (codepoint <= 0x10FFFF) {
             codepoint -= 0x10000;
