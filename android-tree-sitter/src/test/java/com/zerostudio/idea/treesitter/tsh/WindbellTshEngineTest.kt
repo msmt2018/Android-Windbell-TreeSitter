@@ -64,8 +64,14 @@ class WindbellTshLinkageTest {
                     light [ keyword: #112233, string: #223344 ]
                     dark [ keyword: #AABBCC, string: #BBCCDD ]
                     ui {
-                        editor.background: #1E1E1E
-                        editor.foreground: #D4D4D4
+                        light {
+                            editor.background: #FFFFFF
+                            editor.foreground: #202020
+                        }
+                        dark {
+                            editor.background: #1E1E1E
+                            editor.foreground: #D4D4D4
+                        }
                     }
                 }
                 github {
@@ -88,6 +94,7 @@ class WindbellTshLinkageTest {
         assertEquals("github", engine.getSelectedScheme("scheme"))
         engine.setAppearance("scheme", false)
         assertFalse(engine.isDark("scheme"))
+        assertEquals(0xFFFFFFFF.toInt(), engine.getThemeTokens("scheme")["editor.background"])
         engine.clearAppearanceOverride("scheme")
         assertTrue(engine.isDark("scheme"))
     }
