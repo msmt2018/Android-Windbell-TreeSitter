@@ -18,6 +18,18 @@ import com.zerostudio.idea.treesitter.TreeSitter
  */
 class WindbellTshEngine private constructor() {
 
+    data class CompileDiagnostic(
+        val code: String,
+        val message: String,
+        val offset: Int,
+        val line: Int,
+        val column: Int
+    )
+
+    @Volatile
+    var lastCompileDiagnostics: List<CompileDiagnostic> = emptyList()
+        private set
+
     data class HighlightSpan(
         val startByte: Int,
         val endByte: Int,
@@ -87,6 +99,7 @@ class WindbellTshEngine private constructor() {
      */
     fun loadTshSource(extension: String, tshSourceContent: String, language: TSLanguage? = null): Boolean {
         val success = nativeLoadTshSource(extension, tshSourceContent, language?.nativeObject ?: 0L)
+        lastCompileDiagnostics = if (success) emptyList() else getCompileDiagnostics()
         if (success) {
             defaultAppearances[extension] = nativeGetDefaultIsDark(extension)
             val defaultScheme = nativeGetDefaultScheme(extension)
@@ -113,6 +126,20 @@ class WindbellTshEngine private constructor() {
             map[id] = StylePalette(id, light, dark, lightFlags, darkFlags, hasLight, hasDark)
         }
         paletteCache[extension] = map
+    }
+
+    fun getCompileDiagnostics(): List<CompileDiagnostic> {
+        val raw = nativeGetCompileDiagnostics() ?: return emptyList()
+        val result = ArrayList<CompileDiagnostic>(raw.size / 5)
+        var i = 0
+        while (i + 4 < raw.size) {
+            result += CompileDiagnostic(
+                raw[i], raw[i + 1], raw[i + 2].toIntOrNull() ?: 0,
+                raw[i + 3].toIntOrNull() ?: 1, raw[i + 4].toIntOrNull() ?: 1
+            )
+            i += 5
+        }
+        return result
     }
 
     /** Returns editor behaviors and language metadata declared by the .tsh file. */
@@ -310,6 +337,9 @@ class WindbellTshEngine private constructor() {
 
     @FastNative
     private external fun nativeLoadTshSource(extension: String, tshSourceContent: String, languagePtr: Long): Boolean
+
+    @FastNative
+    private external fun nativeGetCompileDiagnostics(): Array<String>?
 
     @FastNative
     private external fun nativeGetEditorMetadata(extension: String): Array<String>?
