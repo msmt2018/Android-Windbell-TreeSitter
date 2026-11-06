@@ -191,15 +191,30 @@ std::string TshCompiler::expandKeywordsToRegex(const std::string& word_list) {
 
 uint32_t TshCompiler::parseColorHex(const std::string& hex_str) {
     std::string clean = hex_str;
-    if (!clean.empty() && clean[0] == '#') clean = clean.substr(1);
-    uint32_t val = 0;
-    std::stringstream ss;
-    ss << std::hex << clean;
-    ss >> val;
-    if (clean.length() <= 6) {
-        val |= 0xFF000000; // 默认不透明 Alpha (0xFF)
+    if (!clean.empty() && clean.front() == '#') clean.erase(clean.begin());
+
+    // Normalize CSS-style RGB/RGBA and Android-style ARGB into AARRGGBB.
+    if (clean.size() == 3 || clean.size() == 4) {
+        std::string expanded;
+        expanded.reserve(clean.size() * 2);
+        for (char ch : clean) {
+            expanded.push_back(ch);
+            expanded.push_back(ch);
+        }
+        clean = std::move(expanded);
+        if (clean.size() == 6) clean.insert(0, "FF");
+    } else if (clean.size() == 6) {
+        clean.insert(0, "FF");
+    } else if (clean.size() != 8) {
+        return 0;
     }
-    return val;
+
+    uint32_t value = 0;
+    std::stringstream stream;
+    stream << std::hex << clean;
+    stream >> value;
+    if (stream.fail() || !stream.eof()) return 0;
+    return value;
 }
 
 static regex_t* compileOnigurumaUtf16(const std::string& pattern_str) {
