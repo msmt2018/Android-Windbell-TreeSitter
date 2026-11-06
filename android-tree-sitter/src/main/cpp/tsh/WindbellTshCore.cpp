@@ -774,8 +774,20 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
             uint32_t match_order = 0;
             while (ts_query_cursor_next_match(q_cursor, &match)) {
                 const uint32_t current_order = match_order++;
+                auto pattern_metadata = native_query.pattern_metadata.find(match.pattern_index);
+                if (pattern_metadata != native_query.pattern_metadata.end() &&
+                    !pattern_metadata->second.enabled) {
+                    continue;
+                }
                 if (!tshEvaluateNativePredicates(native_query, match, text_start, total_bytes))
                     continue;
+                const int32_t pattern_priority =
+                    pattern_metadata != native_query.pattern_metadata.end() &&
+                    pattern_metadata->second.has_priority
+                        ? pattern_metadata->second.priority : native_query.priority;
+                const uint32_t pattern_order =
+                    pattern_metadata != native_query.pattern_metadata.end()
+                        ? pattern_metadata->second.declaration_order : 0;
                 for (uint32_t capture_index = 0; capture_index < match.capture_count; ++capture_index) {
                     const TSQueryCapture& capture = match.captures[capture_index];
                     auto style_binding = native_query.capture_style_ids.find(capture.index);
@@ -785,8 +797,8 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                     span.end_byte = ts_node_end_byte(capture.node);
                     span.style_id = style_binding->second;
                     span.flags = 0;
-                    span.priority = native_query.priority;
-                    span.declaration_order = native_query.declaration_order + current_order + capture_index;
+                    span.priority = pattern_priority;
+                    span.declaration_order = native_query.declaration_order + pattern_order + current_order + capture_index;
                     macro_spans.push_back(span);
                 }
             }
