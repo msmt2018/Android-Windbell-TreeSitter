@@ -12,6 +12,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
 import x.github.module.editor.highlight.SyntaxHighlighter
 import x.github.module.editor.model.EditorBuffer
 import x.github.module.editor.model.EditorDocument
@@ -163,6 +164,7 @@ class TshSyntaxHighlighter(
         parsing = true
 
         parseJob = scope.launch {
+            delay(45)
             var parser: TSParser? = null
             var tree: TSTree? = null
             try {
