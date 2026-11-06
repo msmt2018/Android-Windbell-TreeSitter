@@ -708,6 +708,132 @@ std::shared_ptr<TshGrammar> TshCompiler::compile(const std::string& source, cons
             }
 
             // =================================================================
+            // Declarative editor metadata: comments, pairs, indentation and triggers.
+            // These are data for the host editor; the native core does not hard-code them.
+            // =================================================================
+            else if (tok.text == "editor") {
+                auto editor_open = lexer.nextToken();
+                if (editor_open.type == TshLexer::TokenType::TOK_COLON) editor_open = lexer.nextToken();
+                if (editor_open.type != TshLexer::TokenType::TOK_LBRACE) return nullptr;
+
+                auto read_string_array = [&](std::vector<std::string>& output) -> bool {
+                    if (lexer.nextToken().type != TshLexer::TokenType::TOK_LBRACKET) return false;
+                    while (true) {
+                        auto value = lexer.nextToken();
+                        if (value.type == TshLexer::TokenType::TOK_RBRACKET) return true;
+                        if (value.type == TshLexer::TokenType::TOK_COMMA) continue;
+                        if (value.type != TshLexer::TokenType::TOK_STRING &&
+                            value.type != TshLexer::TokenType::TOK_IDENT) return false;
+                        output.push_back(value.text);
+                    }
+                };
+
+                while (true) {
+                    auto field = lexer.nextToken();
+                    if (field.type == TshLexer::TokenType::TOK_RBRACE) break;
+                    if (field.type == TshLexer::TokenType::TOK_COMMA) continue;
+                    if (field.type == TshLexer::TokenType::TOK_EOF) return nullptr;
+
+                    if (field.text == "comments") {
+                        if (lexer.nextToken().type != TshLexer::TokenType::TOK_LBRACE) return nullptr;
+                        while (true) {
+                            auto comment_kind = lexer.nextToken();
+                            if (comment_kind.type == TshLexer::TokenType::TOK_RBRACE) break;
+                            if (comment_kind.type == TshLexer::TokenType::TOK_COMMA) continue;
+                            if (lexer.nextToken().type != TshLexer::TokenType::TOK_COLON) return nullptr;
+                            if (comment_kind.text == "line") {
+                                if (!read_string_array(grammar->editor_metadata.line_comments)) return nullptr;
+                            } else if (comment_kind.text == "block") {
+                                if (lexer.nextToken().type != TshLexer::TokenType::TOK_LBRACKET) return nullptr;
+                                while (true) {
+                                    auto pair_token = lexer.nextToken();
+                                    if (pair_token.type == TshLexer::TokenType::TOK_RBRACKET) break;
+                                    if (pair_token.type == TshLexer::TokenType::TOK_COMMA) continue;
+                                    if (pair_token.type != TshLexer::TokenType::TOK_LBRACKET) return nullptr;
+                                    std::vector<std::string> pair;
+                                    if (!read_string_array(pair)) return nullptr;
+                                    if (pair.size() != 2) return nullptr;
+                                    grammar->editor_metadata.block_comments.emplace_back(pair[0], pair[1]);
+                                }
+                            } else {
+                                return nullptr;
+                            }
+                        }
+                    } else if (field.text == "brackets" || field.text == "surroundingPairs") {
+                        if (lexer.nextToken().type != TshLexer::TokenType::TOK_COLON) return nullptr;
+                        std::vector<std::string> values;
+                        if (!read_string_array(values)) return nullptr;
+                        auto& target = field.text == "brackets" ?
+                            grammar->editor_metadata.brackets : grammar->editor_metadata.surrounding_pairs;
+                        for (const auto& value : values) {
+                            if (value.size() < 2) return nullptr;
+                            target.emplace_back(value.substr(0, 1), value.substr(value.size() - 1, 1));
+                        }
+                    } else if (field.text == "autoClosingPairs") {
+                        if (lexer.nextToken().type != TshLexer::TokenType::TOK_COLON) return nullptr;
+                        if (lexer.nextToken().type != TshLexer::TokenType::TOK_LBRACKET) return nullptr;
+                        while (true) {
+                            auto pair_token = lexer.nextToken();
+                            if (pair_token.type == TshLexer::TokenType::TOK_RBRACKET) break;
+                            if (pair_token.type == TshLexer::TokenType::TOK_COMMA) continue;
+                            if (pair_token.type != TshLexer::TokenType::TOK_LBRACE) return nullptr;
+                            TshAutoClosingPair pair;
+                            while (true) {
+                                auto key = lexer.nextToken();
+                                if (key.type == TshLexer::TokenType::TOK_RBRACE) break;
+                                if (key.type == TshLexer::TokenType::TOK_COMMA) continue;
+                                if (lexer.nextToken().type != TshLexer::TokenType::TOK_COLON) return nullptr;
+                                if (key.text == "notIn") {
+                                    if (!read_string_array(pair.not_in)) return nullptr;
+                                } else {
+                                    auto value = lexer.nextToken();
+                                    if (key.text == "open") pair.open = value.text;
+                                    else if (key.text == "close") pair.close = value.text;
+                                }
+                            }
+                            if (pair.open.empty() || pair.close.empty()) return nullptr;
+                            grammar->editor_metadata.auto_closing_pairs.push_back(std::move(pair));
+                        }
+                    } else if (field.text == "wordPattern") {
+                        if (lexer.nextToken().type != TshLexer::TokenType::TOK_COLON) return nullptr;
+                        auto value = lexer.nextToken();
+                        if (value.type != TshLexer::TokenType::TOK_REGEX) return nullptr;
+                        grammar->editor_metadata.word_pattern = value.text;
+                    } else if (field.text == "indentation") {
+                        if (lexer.nextToken().type != TshLexer::TokenType::TOK_LBRACE) return nullptr;
+                        while (true) {
+                            auto key = lexer.nextToken();
+                            if (key.type == TshLexer::TokenType::TOK_RBRACE) break;
+                            if (key.type == TshLexer::TokenType::TOK_COMMA) continue;
+                            if (lexer.nextToken().type != TshLexer::TokenType::TOK_COLON) return nullptr;
+                            auto value = lexer.nextToken();
+                            if (value.type != TshLexer::TokenType::TOK_REGEX) return nullptr;
+                            if (key.text == "increaseIndentPattern") grammar->editor_metadata.increase_indent_pattern = value.text;
+                            else if (key.text == "decreaseIndentPattern") grammar->editor_metadata.decrease_indent_pattern = value.text;
+                            else if (key.text == "indentNextLine") grammar->editor_metadata.indent_next_line_pattern = value.text;
+                            else if (key.text == "unIndentedLinePattern") grammar->editor_metadata.unindented_line_pattern = value.text;
+                        }
+                    } else if (field.text == "completion") {
+                        if (lexer.nextToken().type != TshLexer::TokenType::TOK_LBRACE) return nullptr;
+                        while (true) {
+                            auto key = lexer.nextToken();
+                            if (key.type == TshLexer::TokenType::TOK_RBRACE) break;
+                            if (key.type == TshLexer::TokenType::TOK_COMMA) continue;
+                            if (lexer.nextToken().type != TshLexer::TokenType::TOK_COLON) return nullptr;
+                            if (key.text == "triggerCharacters") {
+                                if (!read_string_array(grammar->editor_metadata.completion_trigger_characters)) return nullptr;
+                            } else {
+                                lexer.nextToken();
+                            }
+                        }
+                    } else {
+                        // Unknown editor properties are rejected rather than silently misread.
+                        return nullptr;
+                    }
+                }
+            }
+
+            // =================================================================
             // 4. 解析宏观 Tree-sitter AST 选择器: ast: [ ... ]
             // =================================================================
             else if (tok.text == "ast") {
