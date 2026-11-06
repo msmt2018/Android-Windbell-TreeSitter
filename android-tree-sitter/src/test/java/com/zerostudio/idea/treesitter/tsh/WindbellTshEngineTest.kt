@@ -249,11 +249,12 @@ class WindbellTshLinkageTest {
                     identifier.state { scope: "variable.other", tags: ["identifier"] }
                     string.state { scope: "string.quoted", tags: ["string"] }
                     keyword.state { scope: "keyword.control", tags: ["keyword"] }
+                    text.state { scope: "text.plain", tags: ["text"] }
                 }
                 schemes {
                     plain {
-                        light [ identifier.state: #202020, string.state: #008000, keyword.state: #0000FF ]
-                        dark [ identifier.state: #E0E0E0, string.state: #80FF80, keyword.state: #80A0FF ]
+                        light [ identifier.state: #202020, string.state: #008000, keyword.state: #0000FF, text.state: #404040 ]
+                        dark [ identifier.state: #E0E0E0, string.state: #80FF80, keyword.state: #80A0FF, text.state: #C0C0C0 ]
                     }
                 }
                 monarch {
@@ -276,6 +277,7 @@ class WindbellTshLinkageTest {
                         ]
                     }
                     tokenPostfix: ".state"
+                    defaultToken: "text"
                 }
             }
         """.trimIndent()
@@ -285,7 +287,9 @@ class WindbellTshLinkageTest {
         val identifierId = engine.getStyleCatalog("stateful").first { it.name == "identifier.state" }.styleId
         val stringId = engine.getStyleCatalog("stateful").first { it.name == "string.state" }.styleId
         val keywordId = engine.getStyleCatalog("stateful").first { it.name == "keyword.state" }.styleId
+        val textId = engine.getStyleCatalog("stateful").first { it.name == "text.state" }.styleId
         assertTrue(spans.any { it.styleId == keywordId && it.startByte == 0 && it.endByte == 4 })
+        assertTrue(spans.any { it.styleId == textId && it.startByte == 4 && it.endByte == 6 })
         assertTrue(spans.any { it.styleId == identifierId && it.startByte == 6 && it.endByte == 12 })
         assertTrue(spans.any { it.styleId == stringId && it.startByte == 14 && it.endByte == 16 })
         assertTrue(spans.any { it.styleId == stringId && it.startByte == 16 && it.endByte == 22 })
