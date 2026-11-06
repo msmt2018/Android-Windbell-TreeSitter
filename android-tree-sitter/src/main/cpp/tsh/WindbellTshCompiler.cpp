@@ -1402,7 +1402,7 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                     if (field.type == TshLexer::TokenType::TOK_COMMA) continue;
                     if (field.type == TshLexer::TokenType::TOK_EOF) return nullptr;
                     if (field.text == "variables") {
-                        if (lexer.nextToken().type != TshLexer::TokenType::LBRACE) return nullptr;
+                        if (lexer.nextToken().type != TshLexer::TokenType::TOK_LBRACE) return nullptr;
                         while (true) {
                             auto variable = lexer.nextToken();
                             if (variable.type == TshLexer::TokenType::TOK_RBRACE) break;
