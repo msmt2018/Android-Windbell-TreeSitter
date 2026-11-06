@@ -1307,6 +1307,7 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                                     else if (flag_tok.text == "I" || flag_tok.text == "italic") flags |= 0x02;
                                     else if (flag_tok.text == "U" || flag_tok.text == "underline") flags |= 0x04;
                                     else if (flag_tok.text == "S" || flag_tok.text == "strike" || flag_tok.text == "strikethrough") flags |= 0x08;
+                                    else if (flag_tok.text == "dim") flags |= 0x10;
                                     else return nullptr;
                                     continue;
                                 }
@@ -1480,6 +1481,9 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                             } else if (flag.text == "S" || flag.text == "strike" || flag.text == "strikethrough") {
                                 color.light_font_flags |= 0x08;
                                 color.dark_font_flags |= 0x08;
+                            } else if (flag.text == "dim") {
+                                color.light_font_flags |= 0x10;
+                                color.dark_font_flags |= 0x10;
                             }
                             modifier = lexer.nextToken();
                             if (modifier.type == TshLexer::TokenType::TOK_COMMA) {
