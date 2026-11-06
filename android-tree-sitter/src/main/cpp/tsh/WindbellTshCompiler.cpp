@@ -722,8 +722,8 @@ static regex_t* compileOnigurumaUtf16(const std::string& pattern_str, OnigOption
         onig_error_code_to_str(err, r, &einfo);
         std::string message;
         for (size_t i = 0; i < ONIG_MAX_ERROR_MESSAGE_LEN && err[i] != 0; ++i) {
-            const uint16_t ch = static_cast<uint16_t>(err[i]);
-            message.push_back(ch <= 0x7F ? static_cast<char>(ch) : '?');
+            const uint8_t ch = static_cast<uint8_t>(err[i]);
+            message.push_back(ch < 0x80 ? static_cast<char>(ch) : '?');
         }
         g_tsh_last_error_detail = "Oniguruma regex error: " + message;
         LOGE("WindbellTSH", "Oniguruma UTF-16 Regex Compile Failed: %s, pat: %s",
