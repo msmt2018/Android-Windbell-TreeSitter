@@ -265,9 +265,58 @@ uint32_t TshCompiler::parseColorHex(const std::string& hex_str) {
     return value;
 }
 
+static bool decodePatternUtf8ToUtf16(const std::string& input, std::vector<uint16_t>& output) {
+    output.clear();
+    output.reserve(input.size());
+    for (size_t i = 0; i < input.size();) {
+        const uint8_t first = static_cast<uint8_t>(input[i++]);
+        uint32_t codepoint = 0;
+        size_t continuation_count = 0;
+        if (first <= 0x7F) {
+            codepoint = first;
+        } else if ((first & 0xE0) == 0xC0) {
+            codepoint = first & 0x1F;
+            continuation_count = 1;
+        } else if ((first & 0xF0) == 0xE0) {
+            codepoint = first & 0x0F;
+            continuation_count = 2;
+        } else if ((first & 0xF8) == 0xF0) {
+            codepoint = first & 0x07;
+            continuation_count = 3;
+        } else {
+            return false;
+        }
+        if (i + continuation_count > input.size()) return false;
+        for (size_t n = 0; n < continuation_count; ++n) {
+            const uint8_t next = static_cast<uint8_t>(input[i++]);
+            if ((next & 0xC0) != 0x80) return false;
+            codepoint = (codepoint << 6) | (next & 0x3F);
+        }
+        // JNI GetStringUTFChars uses modified UTF-8 for UTF-16 surrogate
+        // code units. Preserve those code units while also accepting standard
+        // four-byte UTF-8 supplied by source files.
+        if (codepoint <= 0xFFFF) {
+            if (codepoint < 0x80 && continuation_count != 0) return false;
+            if (codepoint < 0x800 && continuation_count == 2) return false;
+            output.push_back(static_cast<uint16_t>(codepoint));
+        } else if (codepoint <= 0x10FFFF) {
+            codepoint -= 0x10000;
+            output.push_back(static_cast<uint16_t>(0xD800 + (codepoint >> 10)));
+            output.push_back(static_cast<uint16_t>(0xDC00 + (codepoint & 0x3FF)));
+        } else {
+            return false;
+        }
+    }
+    return true;
+}
+
 static regex_t* compileOnigurumaUtf16(const std::string& pattern_str, OnigOptionType options = ONIG_OPTION_DEFAULT) {
     if (pattern_str.empty()) return nullptr;
-    std::vector<uint16_t> u16(pattern_str.begin(), pattern_str.end());
+    std::vector<uint16_t> u16;
+    if (!decodePatternUtf8ToUtf16(pattern_str, u16)) {
+        LOGE("WindbellTSH", "Invalid UTF-8 in Oniguruma pattern: %s", pattern_str.c_str());
+        return nullptr;
+    }
     regex_t* reg = nullptr;
     OnigErrorInfo einfo;
     int r = onig_new(
