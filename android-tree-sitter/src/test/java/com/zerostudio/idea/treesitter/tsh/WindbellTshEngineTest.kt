@@ -234,16 +234,20 @@ class WindbellTshLinkageTest {
                     extensions: [".stateful"]
                 }
                 styles {
-                    identifier { scope: "variable.other", tags: ["identifier"] }
-                    string { scope: "string.quoted", tags: ["string"] }
+                    identifier.state { scope: "variable.other", tags: ["identifier"] }
+                    string.state { scope: "string.quoted", tags: ["string"] }
                 }
                 schemes {
                     plain {
-                        light [ identifier: #202020, string: #008000 ]
-                        dark [ identifier: #E0E0E0, string: #80FF80 ]
+                        light [ identifier.state: #202020, string.state: #008000 ]
+                        dark [ identifier.state: #E0E0E0, string.state: #80FF80 ]
                     }
                 }
                 monarch {
+                    variables {
+                        identifier: /[A-Za-z_][A-Za-z0-9_]*/
+                    }
+                    tokenPostfix: ".state"
                     start: "root"
                     tokenizer {
                         root: [
@@ -251,7 +255,7 @@ class WindbellTshLinkageTest {
                             { include: "@identifiers" }
                         ]
                         identifiers: [
-                            { match: /[A-Za-z]+/, token: "identifier" }
+                            { match: /@identifier/, token: "identifier" }
                         ]
                         string: [
                             { match: /"/, token: "string", pop: true }
@@ -264,8 +268,8 @@ class WindbellTshLinkageTest {
         assertTrue(engine.loadTshSource("stateful", source, null))
         val code = "foo \"bar\" baz"
         val spans = engine.computeHighlights(null, code, "stateful")
-        val identifierId = engine.getStyleCatalog("stateful").first { it.name == "identifier" }.styleId
-        val stringId = engine.getStyleCatalog("stateful").first { it.name == "string" }.styleId
+        val identifierId = engine.getStyleCatalog("stateful").first { it.name == "identifier.state" }.styleId
+        val stringId = engine.getStyleCatalog("stateful").first { it.name == "string.state" }.styleId
         assertTrue(spans.any { it.styleId == identifierId && it.startByte == 0 && it.endByte == 6 })
         assertTrue(spans.any { it.styleId == stringId && it.startByte == 8 && it.endByte == 10 })
         assertTrue(spans.any { it.styleId == stringId && it.startByte == 10 && it.endByte == 16 })
