@@ -2277,6 +2277,14 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                         if (entry.type == TshLexer::TokenType::TOK_COMMA) continue;
                         if (entry.type != TshLexer::TokenType::TOK_LBRACE) return nullptr;
                         NativeQueryProgram program;
+                        auto release_predicate_regexes = [&]() {
+                            for (auto& predicate : program.predicate_regexes) {
+                                if (predicate.regex) {
+                                    onig_free(predicate.regex);
+                                    predicate.regex = nullptr;
+                                }
+                            }
+                        };
                         program.declaration_order = native_query_declaration_order++;
                         std::string query_source;
                         while (true) {
@@ -2358,6 +2366,7 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                                     if (predicate.empty() ||
                                         predicate.front().type != TSQueryPredicateStepTypeString) {
                                         g_tsh_last_error_detail = "malformed native query predicate";
+                                        release_predicate_regexes();
                                         ts_query_delete(program.query);
                                         program.query = nullptr;
                                         return nullptr;
@@ -2382,6 +2391,7 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                                         g_tsh_last_error_detail = supported
                                             ? "invalid native query predicate arguments"
                                             : "unsupported native query predicate: " + op;
+                                        release_predicate_regexes();
                                         ts_query_delete(program.query);
                                         program.query = nullptr;
                                         return nullptr;
@@ -2392,6 +2402,7 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                                             program.query, predicate[2].value_id, &pattern_length);
                                         if (!pattern_text) {
                                             g_tsh_last_error_detail = "invalid regex predicate pattern";
+                                            release_predicate_regexes();
                                             ts_query_delete(program.query);
                                             program.query = nullptr;
                                             return nullptr;
@@ -2400,6 +2411,7 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                                             std::string(pattern_text, pattern_length), ONIG_OPTION_NONE);
                                         if (!compiled) {
                                             g_tsh_last_error_detail = "invalid regex in native query predicate";
+                                            release_predicate_regexes();
                                             ts_query_delete(program.query);
                                             program.query = nullptr;
                                             return nullptr;
@@ -2421,6 +2433,7 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                                     program.query, capture_id, &name_length);
                                 if (!capture_name) {
                                     g_tsh_last_error_detail = "native query contains an unnamed capture";
+                                    release_predicate_regexes();
                                     ts_query_delete(program.query);
                                     program.query = nullptr;
                                     return nullptr;
@@ -2433,6 +2446,7 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                                 if (style == grammar->style_name_to_id.end()) {
                                     g_tsh_last_error_detail = "native query capture @" + capture_name_string +
                                         " has no valid style binding (style: " + style_name + ")";
+                                    release_predicate_regexes();
                                     ts_query_delete(program.query);
                                     program.query = nullptr;
                                     return nullptr;
@@ -2455,6 +2469,7 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                                 if (!found) {
                                     g_tsh_last_error_detail = "capture binding references unknown capture @" +
                                         binding.first;
+                                    release_predicate_regexes();
                                     ts_query_delete(program.query);
                                     program.query = nullptr;
                                     return nullptr;
