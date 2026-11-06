@@ -2748,6 +2748,10 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                         }
 
                         if (ast_rule.has_text_regex) {
+                            if (ast_rule.text_regex_pattern.empty()) {
+                                g_tsh_last_error_detail = "ATS textRegex pattern must not be empty";
+                                return nullptr;
+                            }
                             ast_rule.text_regex = compileOnigurumaUtf16(
                                 ast_rule.text_regex_pattern, ONIG_OPTION_DEFAULT);
                             if (!ast_rule.text_regex) return nullptr;
