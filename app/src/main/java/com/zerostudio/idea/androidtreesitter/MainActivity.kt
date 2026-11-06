@@ -283,6 +283,12 @@ class MainActivity : AppCompatActivity() {
                 ))
             }
         }
+        metadata.options["insertSpaces"]?.toBooleanStrictOrNull()?.let { useSpaces ->
+            val tabSize = metadata.options["tabSize"]?.toIntOrNull()?.coerceIn(1, 16) ?: 4
+            view.setIndentUnit(if (useSpaces) " ".repeat(tabSize) else "\t")
+        }
+        metadata.options["autoIndent"]?.toBooleanStrictOrNull()?.let(view::setAutoIndent)
+        metadata.options["lineNumbers"]?.toBooleanStrictOrNull()?.let(view::setLineNumbersVisible)
         val pairs = metadata.autoClosingPairs.mapNotNull { pair ->
             if (pair.open.length == 1 && pair.close.length == 1) {
                 AutoPair(pair.open[0], pair.close[0])
