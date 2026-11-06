@@ -144,9 +144,11 @@ The current implementation has concrete integration defects that must be correct
 - The unified `rules { ats { ... } regex { ... } }` façade remains pending; the currently implemented entry points are `treeSitter.queries`, `ast`, and `contains`.
 - Additional rule attributes such as lookarounds/options, begin/while/end state, named capture groups, content scopes and rule repository includes need implementation.
 - Added validated `onEnterRules` (before/after/previous-line regexes and indent/append/remove actions), `electricCharacters`, and `autoCloseBefore`; exported them through JNI and the Kotlin metadata API, with parser tests and a Java DSL example.
-- Added Monarch `variables` with recursive regex expansion, unknown-reference/cycle validation, `tokenPostfix`, deferred `defaultToken` resolution, and `ignoreCase`; added stateful tokenizer regression tests.
+- Added Monarch `variables` with recursive regex expansion, unknown-reference/cycle validation, `tokenPostfix`, deferred `defaultToken` resolution, `ignoreCase`, and ordered `cases` for exact literals, regex-variable keys, and `@default` token selection; added stateful tokenizer regression tests.
+- Lexer diagnostics now preserve specific invalid-escape, unknown-character, and Oniguruma regex error details; diagnostic columns count UTF-8 leading bytes rather than raw bytes.
 - Reworked quoted-string lexing to support JSON escapes and Unicode surrogate pairs using JNI-compatible modified UTF-8; unknown punctuation and malformed quoted strings now fail lexing instead of being silently skipped.
 - Host-specific execution of on-enter/electric-character behavior and editor comment toggling still needs integration in the concrete editor implementation.
+- Monarch case token selection is implemented; state-transition actions inside individual `cases`, action arrays, embedded-language tokens and bracket actions remain pending.
 - The sample currently loads the Java TSH only; Kotlin and other language-specific TSH packages still need to be added and wired.
 - A full Android/NDK build and device/editor integration run have not yet been performed. Do not treat the current commits as build-verified.
 
