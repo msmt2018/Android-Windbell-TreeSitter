@@ -891,7 +891,7 @@ static regex_t* compileOnigurumaUtf16(const std::string& pattern_str, OnigOption
 std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& source, const TSLanguage* ts_lang) {
     auto grammar = std::make_shared<TshGrammar>();
     std::unordered_map<std::string, std::string> defines_map;
-    std::string dynamic_query_accumulator;
+    std::string native_query_sources;
     std::unordered_map<std::string, bool> tree_sitter_query_ids;
 
     uint32_t global_style_counter = 0;
@@ -2256,8 +2256,9 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                 }
             }
 
-            // Embedded Tree-sitter query sources. Captures are bound by
-            // semantic style name and compiled as one query program.
+            // Explicit native Tree-sitter query programs. The source is authored
+            // verbatim in .tsh and passed directly to ts_query_new. No SCM file
+            // is generated, cached, translated, or loaded from disk.
             else if (tok.text == "treeSitter") {
                 if (!mark_root_section("treeSitter")) return nullptr;
                 auto open = lexer.nextToken();
@@ -2302,7 +2303,7 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                         }
                         if (query_source.empty()) return nullptr;
                         if (!query_id.empty() && !tree_sitter_query_ids.emplace(query_id, true).second) return nullptr;
-                        if (enabled) dynamic_query_accumulator += query_source + "\n";
+                        if (enabled) native_query_sources += query_source + "\n";
                     }
                 }
             }
@@ -2347,9 +2348,13 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                                 else if (field.text == "style") style_bind_name = value.text;
                                 else ast_rule.id = value.text;
                             } else if (field.text == "query") {
-                                auto value = read_ast_value();
-                                if (value.type != TshLexer::TokenType::TOK_STRING) return nullptr;
-                                dynamic_query_accumulator += value.text + "\n";
+                                // AST selectors are native symbol/field predicates.
+                                // Full Tree-sitter query programs belong exclusively
+                                // to treeSitter.queries and are passed unchanged to
+                                // ts_query_new; never synthesize query text from ATS.
+                                g_tsh_last_error_detail =
+                                    "ast selectors cannot contain query source; use treeSitter.queries for native query programs";
+                                return nullptr;
                             } else if (field.text == "priority") {
                                 auto value = read_ast_value();
                                 if (value.type != TshLexer::TokenType::TOK_NUMBER) return nullptr;
@@ -2685,17 +2690,19 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
         }
     }
 
-    if ((!grammar->ast_selector_rules.empty() || !dynamic_query_accumulator.empty()) && !ts_lang) {
+    if ((!grammar->ast_selector_rules.empty() || !native_query_sources.empty()) && !ts_lang) {
         return nullptr;
     }
 
-    if (ts_lang && !dynamic_query_accumulator.empty()) {
+    // Query source is a native Tree-sitter query-language block, not an
+    // intermediate representation generated from ATS selector declarations.
+    if (ts_lang && !native_query_sources.empty()) {
         uint32_t err_offset = 0;
         TSQueryError err_type = TSQueryErrorNone;
         grammar->dynamic_ts_query = ts_query_new(
             ts_lang,
-            dynamic_query_accumulator.c_str(),
-            static_cast<uint32_t>(dynamic_query_accumulator.length()),
+            native_query_sources.c_str(),
+            static_cast<uint32_t>(native_query_sources.length()),
             &err_offset,
             &err_type
         );
