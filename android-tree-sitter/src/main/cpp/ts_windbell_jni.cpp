@@ -251,6 +251,7 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeGetEditorMetadat
     if (!metadata.indent_next_line_pattern.empty()) records.push_back({"indentNextLine", metadata.indent_next_line_pattern, ""});
     if (!metadata.unindented_line_pattern.empty()) records.push_back({"unIndentedLine", metadata.unindented_line_pattern, ""});
     for (const auto& value : metadata.completion_trigger_characters) records.push_back({"completionTrigger", value, ""});
+    for (const auto& option : metadata.options) records.push_back({"editorOption", option.first, option.second});
 
     jobjectArray result = env->NewObjectArray(static_cast<jsize>(records.size() * 3), string_class, nullptr);
     if (!result) { env->DeleteLocalRef(string_class); return nullptr; }
