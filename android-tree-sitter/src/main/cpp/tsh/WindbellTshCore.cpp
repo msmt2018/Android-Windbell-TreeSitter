@@ -87,6 +87,12 @@ TshGrammar::~TshGrammar() {
                 onig_free(rule.pattern);
                 rule.pattern = nullptr;
             }
+            for (auto& entry : rule.cases) {
+                if (entry.matcher) {
+                    onig_free(entry.matcher);
+                    entry.matcher = nullptr;
+                }
+            }
         }
     }
 
