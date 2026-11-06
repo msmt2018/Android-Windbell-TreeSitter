@@ -1166,4 +1166,40 @@ class WindbellTshLinkageTest {
         )
     }
 
+ 
+    @Test
+    fun testSpanResolverClipsOnlyStrictPartialOverlap() {
+        val engine = WindbellTshEngine.instance
+        val source = """
+            tsh 2 {
+                language { id: "partial-span-arbitration" extensions: [".psa"] }
+                styles {
+                    low { scope: "variable.other.low" }
+                    high { scope: "keyword.control.high" }
+                }
+                contains: [
+                    { match: /abcd/, style: "low", priority: 10, overlap: "deny" }
+                    { match: /cdef/, style: "high", priority: 20, overlap: "deny" }
+                ]
+            }
+        """.trimIndent()
+
+        assertTrue(engine.loadTshSource("partial-span-arbitration", source, null))
+        val code = "abcdef"
+        val spans = engine.computeHighlights(null, code, "partial-span-arbitration")
+        val catalog = engine.getStyleCatalog("partial-span-arbitration")
+        val lowId = catalog.first { it.name == "low" }.styleId
+        val highId = catalog.first { it.name == "high" }.styleId
+
+        assertTrue(spans.any {
+            it.styleId == lowId && it.startByte == 0 && it.endByte == 4
+        }, "The non-conflicting prefix of a lower-priority span must be preserved.")
+        assertTrue(spans.any {
+            it.styleId == highId && it.startByte == 4 && it.endByte == 12
+        }, "The higher-priority span must retain its complete range.")
+        assertFalse(spans.any {
+            it.styleId == lowId && it.startByte == 0 && it.endByte == 8
+        }, "The lower-priority span must not retain the conflicting interval.")
+    }
+
 }
