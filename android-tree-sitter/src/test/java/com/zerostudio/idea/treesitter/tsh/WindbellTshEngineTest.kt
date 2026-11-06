@@ -248,16 +248,18 @@ class WindbellTshLinkageTest {
                 styles {
                     identifier.state { scope: "variable.other", tags: ["identifier"] }
                     string.state { scope: "string.quoted", tags: ["string"] }
+                    keyword.state { scope: "keyword.control", tags: ["keyword"] }
                 }
                 schemes {
                     plain {
-                        light [ identifier.state: #202020, string.state: #008000 ]
-                        dark [ identifier.state: #E0E0E0, string.state: #80FF80 ]
+                        light [ identifier.state: #202020, string.state: #008000, keyword.state: #0000FF ]
+                        dark [ identifier.state: #E0E0E0, string.state: #80FF80, keyword.state: #80A0FF ]
                     }
                 }
                 monarch {
                     variables {
                         identifier: /[A-Za-z_][A-Za-z0-9_]*/
+                        keywords: /(?:if|else|return)/
                     }
                     start: "root"
                     tokenizer {
@@ -266,7 +268,7 @@ class WindbellTshLinkageTest {
                             { include: "@identifiers" }
                         ]
                         identifiers: [
-                            { match: /@identifier/, token: "identifier" }
+                            { match: /@identifier/, cases: { "@keywords": "keyword", "@default": "identifier" } }
                         ]
                         string: [
                             { match: /"/, token: "string", pop: true }
@@ -278,15 +280,17 @@ class WindbellTshLinkageTest {
             }
         """.trimIndent()
         assertTrue(engine.loadTshSource("stateful", source, null))
-        val code = "foo \"bar\" baz"
+        val code = "if foo \"bar\" baz"
         val spans = engine.computeHighlights(null, code, "stateful")
         val identifierId = engine.getStyleCatalog("stateful").first { it.name == "identifier.state" }.styleId
         val stringId = engine.getStyleCatalog("stateful").first { it.name == "string.state" }.styleId
-        assertTrue(spans.any { it.styleId == identifierId && it.startByte == 0 && it.endByte == 6 })
-        assertTrue(spans.any { it.styleId == stringId && it.startByte == 8 && it.endByte == 10 })
-        assertTrue(spans.any { it.styleId == stringId && it.startByte == 10 && it.endByte == 16 })
-        assertTrue(spans.any { it.styleId == stringId && it.startByte == 16 && it.endByte == 18 })
-        assertTrue(spans.any { it.styleId == identifierId && it.startByte == 20 && it.endByte == 26 })
+        val keywordId = engine.getStyleCatalog("stateful").first { it.name == "keyword.state" }.styleId
+        assertTrue(spans.any { it.styleId == keywordId && it.startByte == 0 && it.endByte == 4 })
+        assertTrue(spans.any { it.styleId == identifierId && it.startByte == 6 && it.endByte == 12 })
+        assertTrue(spans.any { it.styleId == stringId && it.startByte == 14 && it.endByte == 16 })
+        assertTrue(spans.any { it.styleId == stringId && it.startByte == 16 && it.endByte == 22 })
+        assertTrue(spans.any { it.styleId == stringId && it.startByte == 22 && it.endByte == 24 })
+        assertTrue(spans.any { it.styleId == identifierId && it.startByte == 26 && it.endByte == 32 })
     }
 
     @Test
