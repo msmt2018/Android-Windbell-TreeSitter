@@ -528,6 +528,7 @@ class WindbellTshLinkageTest {
                     declaration { scope: "entity.name.type" }
                     declarationAlias { scope: "entity.name.type.alias" }
                     operator { scope: "keyword.operator" }
+                    methodName { scope: "entity.name.function" }
                 }
                 ast: [
                     {
@@ -557,6 +558,12 @@ class WindbellTshLinkageTest {
                         named: false
                         style: "operator"
                         priority: 20
+                    },
+                    {
+                        node: "identifier"
+                        ancestor: "method_declaration"
+                        style: "methodName"
+                        priority: 45
                     }
                 ]
             }
@@ -581,6 +588,14 @@ class WindbellTshLinkageTest {
         assertTrue(spans.any {
             it.styleId == operatorId && it.startByte == code.indexOf("+") && it.endByte == code.indexOf("+") + 1
         }, "ATS must resolve and match anonymous Tree-sitter symbols.")
+        val methodNameId = engine.getStyleCatalog("java-ast-node-flags")
+            .first { it.name == "methodName" }.styleId
+        assertTrue(spans.any {
+            it.styleId == methodNameId && it.startByte == code.indexOf("run")
+        }, "ATS ancestor constraints must match descendants.")
+        assertFalse(spans.any {
+            it.styleId == methodNameId && it.startByte == code.indexOf("Demo")
+        }, "ATS ancestor constraints must reject nodes outside the selected ancestor.")
         tree?.close()
         parser.close()
     }
