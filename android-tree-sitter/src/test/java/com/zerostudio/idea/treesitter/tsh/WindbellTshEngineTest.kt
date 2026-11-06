@@ -527,6 +527,7 @@ class WindbellTshLinkageTest {
                 styles {
                     declaration { scope: "entity.name.type" }
                     declarationAlias { scope: "entity.name.type.alias" }
+                    operator { scope: "keyword.operator" }
                 }
                 ast: [
                     {
@@ -550,13 +551,19 @@ class WindbellTshLinkageTest {
                         style: "declarationAlias"
                         priority: 34
                         overlap: allow
+                    },
+                    {
+                        node: "+"
+                        named: false
+                        style: "operator"
+                        priority: 20
                     }
                 ]
             }
         """.trimIndent()
         assertTrue(engine.loadTshSource("java-ast-node-flags", source, language))
         val parser = TSParser.create().apply { setLanguage(language) }
-        val code = "class Demo {}"
+        val code = "class Demo { int value = 1 + 2; }"
         val tree = parser.parseString(code)
         val spans = engine.computeHighlights(tree, code, "java-ast-node-flags")
         val styleId = engine.getStyleCatalog("java-ast-node-flags")
@@ -569,6 +576,11 @@ class WindbellTshLinkageTest {
         assertTrue(spans.any {
             it.styleId == aliasId && it.startByte == code.indexOf("Demo") && it.priority == 34
         }, "All matching ATS rules must emit candidates; the resolver handles overlap.")
+        val operatorId = engine.getStyleCatalog("java-ast-node-flags")
+            .first { it.name == "operator" }.styleId
+        assertTrue(spans.any {
+            it.styleId == operatorId && it.startByte == code.indexOf("+") && it.endByte == code.indexOf("+") + 1
+        }, "ATS must resolve and match anonymous Tree-sitter symbols.")
         tree?.close()
         parser.close()
     }
