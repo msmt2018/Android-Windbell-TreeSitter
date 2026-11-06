@@ -24,6 +24,19 @@ struct TshCompileDiagnostic {
     uint32_t column = 1;
 };
 
+/**
+ * Per-invocation compilation output.
+ *
+ * Unlike getLastDiagnostics(), this value belongs to one compile call and is
+ * therefore deterministic when several editor documents compile concurrently.
+ */
+struct TshCompileResult {
+    std::shared_ptr<TshGrammar> grammar;
+    std::vector<TshCompileDiagnostic> diagnostics;
+
+    explicit operator bool() const noexcept { return static_cast<bool>(grammar); }
+};
+
 class TshCompiler {
 public:
     static TshCompiler& getInstance() {
@@ -33,6 +46,13 @@ public:
 
     // 从 .tsh 文件源码直接编译出可执行的高可用语法对象 (若传入 ts_lang 则同时完成符号对齐)
     std::shared_ptr<TshGrammar> compile(const std::string& source, const TSLanguage* ts_lang = nullptr);
+
+    // Preferred API: diagnostics are returned with this invocation, not through
+    // process-wide "last result" state. Safe for concurrent document compilation.
+    TshCompileResult compileDetailed(const std::string& source, const TSLanguage* ts_lang = nullptr);
+
+    // Compatibility API. Under concurrency this is only the most recently
+    // completed compile on this compiler instance; use compileDetailed instead.
     std::vector<TshCompileDiagnostic> getLastDiagnostics() const;
 
 private:
