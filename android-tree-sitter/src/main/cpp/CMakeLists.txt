@@ -37,7 +37,51 @@ include_directories("${TS_DIR}/lib/include")
 set(ONIG_DIR "${CMAKE_CURRENT_SOURCE_DIR}/oniguruma")
 set(ONIG_SRC_DIR "${ONIG_DIR}/src")
 
-# 引入 Oniguruma 源码及配置头文件路径
+# project-sora/oniguruma's regenc.h includes config.h directly. The upstream
+# CMake project generates it from config.h.cmake.in; this project compiles the
+# Oniguruma sources in its own target, so reproduce the required feature checks
+# and generate the same header into our binary directory.
+include(CheckIncludeFiles)
+include(CheckSymbolExists)
+include(CheckTypeSize)
+
+set(PACKAGE onig)
+set(PACKAGE_VERSION 6.9.10)
+set(VERSION ${PACKAGE_VERSION})
+set(USE_CRNL_AS_LINE_TERMINATOR 0)
+
+check_include_files(alloca.h HAVE_ALLOCA_H)
+check_include_files(stdint.h HAVE_STDINT_H)
+check_include_files(sys/times.h HAVE_SYS_TIMES_H)
+check_include_files(sys/time.h HAVE_SYS_TIME_H)
+check_include_files(time.h HAVE_TIME_H)
+check_include_files(sys/types.h HAVE_SYS_TYPES_H)
+check_include_files(unistd.h HAVE_UNISTD_H)
+check_include_files(inttypes.h HAVE_INTTYPES_H)
+check_type_size(int SIZEOF_INT)
+check_type_size(intptr_t SIZEOF_INTPTR_T)
+check_type_size(long SIZEOF_LONG)
+check_type_size("long long" SIZEOF_LONG_LONG)
+check_type_size("void*" SIZEOF_VOIDP)
+if(HAVE_TIME_H)
+    check_type_size(time_t SIZEOF_TIME_T)
+    check_symbol_exists(clock_gettime time.h HAVE_CLOCK_GETTIME)
+endif()
+if(HAVE_ALLOCA_H)
+    check_symbol_exists(alloca "alloca.h" HAVE_ALLOCA)
+else()
+    check_symbol_exists(alloca "stdlib.h;malloc.h" HAVE_ALLOCA)
+endif()
+
+set(ONIG_CONFIG_DIR "${CMAKE_CURRENT_BINARY_DIR}/oniguruma_config")
+file(MAKE_DIRECTORY "${ONIG_CONFIG_DIR}")
+configure_file(
+    "${ONIG_SRC_DIR}/config.h.cmake.in"
+    "${ONIG_CONFIG_DIR}/config.h"
+)
+
+# Search generated configuration before the vendored Oniguruma source tree.
+include_directories(BEFORE "${ONIG_CONFIG_DIR}")
 include_directories("${ONIG_SRC_DIR}")
 
 # 引入 Windbell-TSH 自身头文件
