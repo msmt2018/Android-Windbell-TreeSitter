@@ -378,6 +378,7 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
     auto grammar = std::make_shared<TshGrammar>();
     std::unordered_map<std::string, std::string> defines_map;
     std::string dynamic_query_accumulator;
+    std::unordered_map<std::string, bool> tree_sitter_query_ids;
 
     uint16_t global_style_counter = 0;
     auto ensureStyleId = [&](const std::string& name) -> uint16_t {
@@ -1183,6 +1184,57 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                     } else {
                         // Unknown editor properties are rejected rather than silently misread.
                         return nullptr;
+                    }
+                }
+            }
+
+            // Embedded Tree-sitter query sources. Captures are bound by
+            // semantic style name and compiled as one query program.
+            else if (tok.text == "treeSitter") {
+                if (!mark_root_section("treeSitter")) return nullptr;
+                auto open = lexer.nextToken();
+                if (open.type == TshLexer::TokenType::TOK_COLON) open = lexer.nextToken();
+                if (open.type != TshLexer::TokenType::TOK_LBRACE) return nullptr;
+                while (true) {
+                    auto key = lexer.nextToken();
+                    if (key.type == TshLexer::TokenType::TOK_RBRACE) break;
+                    if (key.type == TshLexer::TokenType::TOK_COMMA) continue;
+                    if (key.type != TshLexer::TokenType::TOK_IDENT || key.text != "queries") return nullptr;
+                    if (lexer.nextToken().type != TshLexer::TokenType::TOK_COLON ||
+                        lexer.nextToken().type != TshLexer::TokenType::TOK_LBRACKET) return nullptr;
+                    while (true) {
+                        auto entry = lexer.nextToken();
+                        if (entry.type == TshLexer::TokenType::TOK_RBRACKET) break;
+                        if (entry.type == TshLexer::TokenType::TOK_COMMA) continue;
+                        if (entry.type != TshLexer::TokenType::TOK_LBRACE) return nullptr;
+                        std::string query_id;
+                        std::string query_source;
+                        bool enabled = true;
+                        while (true) {
+                            auto field = lexer.nextToken();
+                            if (field.type == TshLexer::TokenType::TOK_RBRACE) break;
+                            if (field.type == TshLexer::TokenType::TOK_COMMA) continue;
+                            if (field.type == TshLexer::TokenType::TOK_EOF ||
+                                lexer.nextToken().type != TshLexer::TokenType::TOK_COLON) return nullptr;
+                            auto value = lexer.nextToken();
+                            if (field.text == "id") {
+                                if (value.type != TshLexer::TokenType::TOK_STRING &&
+                                    value.type != TshLexer::TokenType::TOK_IDENT) return nullptr;
+                                query_id = value.text;
+                            } else if (field.text == "source") {
+                                if (value.type != TshLexer::TokenType::TOK_STRING) return nullptr;
+                                query_source = value.text;
+                            } else if (field.text == "enabled") {
+                                if (value.text == "true") enabled = true;
+                                else if (value.text == "false") enabled = false;
+                                else return nullptr;
+                            } else {
+                                return nullptr;
+                            }
+                        }
+                        if (query_source.empty()) return nullptr;
+                        if (!query_id.empty() && !tree_sitter_query_ids.emplace(query_id, true).second) return nullptr;
+                        if (enabled) dynamic_query_accumulator += query_source + "\n";
                     }
                 }
             }
