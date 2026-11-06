@@ -85,14 +85,14 @@ void WindbellEngine::matchBlockRecursive(
             text_start,
             text_end,
             content_start,
-            text_end,
+            range_end,
             end_region,
             ONIG_OPTION_NONE
         );
 
         uint32_t block_end_byte = (hit_end >= 0) ?
             static_cast<uint32_t>(end_region->end[0]) :
-            static_cast<uint32_t>(text_end - text_start);
+            static_cast<uint32_t>(range_end - text_start);
 
         if ((block_start_byte & 1u) == 0 && (block_end_byte & 1u) == 0) {
             HighlightSpan block_span;
@@ -107,7 +107,7 @@ void WindbellEngine::matchBlockRecursive(
 
             if (!rule.nested_rules.empty() && hit_end >= 0) {
                 const UChar* inner_start = content_start;
-                const UChar* inner_end = text_start + end_region->beg[0];
+                const UChar* inner_end = (hit_end >= 0) ? text_start + end_region->beg[0] : range_end;
 
                 for (const auto& nested : rule.nested_rules) {
                     if (!nested.enabled) continue;
