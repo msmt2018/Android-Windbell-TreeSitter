@@ -164,6 +164,7 @@ class WindbellTshLinkageTest {
                     scopeRules: [
                         { selector: "keyword.control", light: #00AA00, dark: #AA0000 }
                         { selector: "source.scheme-test keyword.control", light: #00BB00, dark: #BB0000 }
+                        { selector: "source.scheme-test (keyword.control.selector | keyword.operator)", light: #00CC00, dark: #CC0000 }
                     ]
                 }
             }
@@ -257,8 +258,8 @@ class WindbellTshLinkageTest {
         assertEquals(true, explicitChild?.hasLightColor)
         assertTrue(engine.selectScheme("scheme", "selectorTheme"))
         val selectorPalette = engine.getStylePalette("scheme", "selectorOnly")
-        assertEquals(0xFF00BB00.toInt(), selectorPalette?.lightColor)
-        assertEquals(0xFFBB0000.toInt(), selectorPalette?.darkColor)
+        assertEquals(0xFF00CC00.toInt(), selectorPalette?.lightColor)
+        assertEquals(0xFFCC0000.toInt(), selectorPalette?.darkColor)
         assertEquals("selectorTheme", engine.getSelectedScheme("scheme"))
     }
 
