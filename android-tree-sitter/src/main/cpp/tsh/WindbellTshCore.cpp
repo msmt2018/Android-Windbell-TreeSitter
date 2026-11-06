@@ -12,13 +12,18 @@
 namespace windbell::tsh {
 
 static const UChar* advanceOneUtf16CodePoint(const UChar* current, const UChar* end) {
-    if (current >= end) return end;
-    const uint16_t first = static_cast<uint16_t>(*current++);
-    if (first >= 0xD800 && first <= 0xDBFF && current < end) {
-        const uint16_t second = static_cast<uint16_t>(*current);
-        if (second >= 0xDC00 && second <= 0xDFFF) ++current;
+    const auto* bytes = reinterpret_cast<const uint8_t*>(current);
+    const auto* end_bytes = reinterpret_cast<const uint8_t*>(end);
+    if (bytes + 2 > end_bytes) return end;
+    const uint16_t first = static_cast<uint16_t>(bytes[0]) |
+                           (static_cast<uint16_t>(bytes[1]) << 8);
+    bytes += 2;
+    if (first >= 0xD800 && first <= 0xDBFF && bytes + 2 <= end_bytes) {
+        const uint16_t second = static_cast<uint16_t>(bytes[0]) |
+                                (static_cast<uint16_t>(bytes[1]) << 8);
+        if (second >= 0xDC00 && second <= 0xDFFF) bytes += 2;
     }
-    return current;
+    return reinterpret_cast<const UChar*>(bytes);
 }
 
 TshGrammar::~TshGrammar() {
