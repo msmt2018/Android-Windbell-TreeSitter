@@ -22,7 +22,9 @@ class WindbellTshEngine private constructor() {
         val startByte: Int,
         val endByte: Int,
         val styleId: Int,
-        val fontFlags: Int
+        val fontFlags: Int,
+        val priority: Int,
+        val declarationOrder: Int
     )
 
     data class SemanticStyle(
@@ -206,15 +208,17 @@ class WindbellTshEngine private constructor() {
 
     fun computeHighlights(tree: TSTree?, text: String, extension: String): List<HighlightSpan> {
         val flatData = nativeHighlight(tree?.nativeObject ?: 0L, text, extension) ?: return emptyList()
-        val count = flatData.size / 3
+        val count = flatData.size / 5
         val result = ArrayList<HighlightSpan>(count)
         for (i in 0 until count) {
-            val start = flatData[i * 3 + 0]
-            val end = flatData[i * 3 + 1]
-            val packedMeta = flatData[i * 3 + 2]
+            val start = flatData[i * 5]
+            val end = flatData[i * 5 + 1]
+            val packedMeta = flatData[i * 5 + 2]
             val styleId = packedMeta and 0xFFFF
             val flags = (packedMeta ushr 16) and 0xFFFF
-            result.add(HighlightSpan(start, end, styleId, flags))
+            val priority = flatData[i * 5 + 3]
+            val declarationOrder = flatData[i * 5 + 4]
+            result.add(HighlightSpan(start, end, styleId, flags, priority, declarationOrder))
         }
         return result
     }
