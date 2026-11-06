@@ -62,11 +62,13 @@ class WindbellTshLinkageTest {
             language { id: "bad-escape" name: "bad\q" }
         """.trimIndent()
         assertFalse(engine.loadTshSource("bad-escape", invalidEscape, null))
+        assertTrue(engine.lastCompileDiagnostics.first().message.contains("unsupported string escape"))
 
         val invalidPunctuation = """
             language { id: "bad-punctuation" = name: "invalid" }
         """.trimIndent()
         assertFalse(engine.loadTshSource("bad-punctuation", invalidPunctuation, null))
+        assertTrue(engine.lastCompileDiagnostics.first().message.contains("unexpected character"))
     }
 
     @Test
