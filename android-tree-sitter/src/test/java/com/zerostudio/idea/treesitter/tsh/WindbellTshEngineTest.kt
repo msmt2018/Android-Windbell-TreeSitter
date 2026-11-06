@@ -662,6 +662,27 @@ class WindbellTshLinkageTest {
     }
 
     @Test
+    fun testAstSelectorRejectsDuplicateProperties() {
+        val engine = WindbellTshEngine.instance
+        val source = """
+            tsh 2 {
+                language { id: "duplicate-ast-property" extensions: [".dap"] }
+                styles { token { scope: "variable.other" } }
+                ast: [
+                    {
+                        node: "identifier"
+                        node: "method_declaration"
+                        style: "token"
+                    }
+                ]
+            }
+        """.trimIndent()
+        assertFalse(engine.loadTshSource(
+            "duplicate-ast-property", source, TSLanguageJava.getInstance()
+        ))
+    }
+
+    @Test
     fun testNativeQueryPatternMetadataControlsPatternsIndependently() {
         val engine = WindbellTshEngine.instance
         val language = TSLanguageJava.getInstance()
