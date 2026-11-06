@@ -143,7 +143,8 @@ The current implementation has concrete integration defects that must be correct
 - Monarch state-machine execution (`next`, `switchTo`, push/pop, cases, tokenizer state stacks) remains pending.
 - The unified `rules { ats { ... } regex { ... } }` façade remains pending; the currently implemented entry points are `treeSitter.queries`, `ast`, and `contains`.
 - Additional rule attributes such as lookarounds/options, begin/while/end state, named capture groups, content scopes and rule repository includes need implementation.
-- Advanced editor metadata such as on-enter rules, electric characters, comment toggling behavior, and host-specific application of word/indent/completion metadata remains pending.
+- Added validated `onEnterRules` (before/after/previous-line regexes and indent/append/remove actions), `electricCharacters`, and `autoCloseBefore`; exported them through JNI and the Kotlin metadata API, with parser tests and a Java DSL example.
+- Host-specific execution of on-enter/electric-character behavior and editor comment toggling still needs integration in the concrete editor implementation.
 - The sample currently loads the Java TSH only; Kotlin and other language-specific TSH packages still need to be added and wired.
 - A full Android/NDK build and device/editor integration run have not yet been performed. Do not treat the current commits as build-verified.
 
