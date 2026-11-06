@@ -713,6 +713,45 @@ class WindbellTshLinkageTest {
     }
 
     @Test
+    fun testAstFieldSelectorUsesIndexedOwnerDispatch() {
+        val engine = WindbellTshEngine.instance
+        val language = TSLanguageJava.getInstance()
+        val source = """
+            tsh 2 {
+                language { id: "java-ast-field-index" extensions: [".jafi"] }
+                styles { functionName { scope: "entity.name.function" } }
+                ast: [
+                    {
+                        node: "method_declaration"
+                        field: "name"
+                        style: "functionName"
+                        priority: 75
+                    }
+                ]
+            }
+        """.trimIndent()
+
+        assertTrue(engine.loadTshSource("java-ast-field-index", source, language))
+        val parser = TSParser.create().apply { setLanguage(language) }
+        val code = "class Demo { void run() {} void skip() {} }"
+        val tree = parser.parseString(code)
+        val spans = engine.computeHighlights(tree, code, "java-ast-field-index")
+        val styleId = engine.getStyleCatalog("java-ast-field-index")
+            .first { it.name == "functionName" }.styleId
+
+        assertTrue(spans.any {
+            it.styleId == styleId && it.startByte == code.indexOf("run") * 2 &&
+                it.endByte == (code.indexOf("run") + 3) * 2
+        }, "A field selector must be dispatched from its owner symbol to the selected child.")
+        assertFalse(spans.any {
+            it.styleId == styleId && it.startByte == code.indexOf("Demo") * 2
+        })
+
+        tree?.close()
+        parser.close()
+    }
+
+    @Test
     fun testAstSelectorRejectsDuplicateProperties() {
         val engine = WindbellTshEngine.instance
         val source = """
