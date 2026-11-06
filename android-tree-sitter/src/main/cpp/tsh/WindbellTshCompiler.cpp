@@ -750,6 +750,7 @@ std::shared_ptr<TshGrammar> TshCompiler::compile(const std::string& source, cons
                                     if (pair_token.type == TshLexer::TokenType::TOK_RBRACKET) break;
                                     if (pair_token.type == TshLexer::TokenType::TOK_COMMA) continue;
                                     if (pair_token.type != TshLexer::TokenType::TOK_LBRACKET) return nullptr;
+                                    lexer.putBack(std::move(pair_token));
                                     std::vector<std::string> pair;
                                     if (!read_string_array(pair)) return nullptr;
                                     if (pair.size() != 2) return nullptr;
