@@ -70,7 +70,8 @@ struct SchemeColor {
     // Zero is an absent value, never a fallback color. The DSL owns all visible values.
     uint32_t light_color = 0;
     uint32_t dark_color = 0;
-    uint16_t font_flags = 0;
+    uint16_t light_font_flags = 0;
+    uint16_t dark_font_flags = 0;
     bool has_light_color = false;
     bool has_dark_color = false;
 };
