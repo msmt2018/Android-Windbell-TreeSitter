@@ -7,6 +7,7 @@
 
 #include <jni.h>
 #include <vector>
+#include <array>
 #include <algorithm>
 #include <string>
 #include <cstdint>
@@ -130,6 +131,62 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeGetDefaultIsDark
     env->ReleaseStringUTFChars(extension_jstr, ext);
     auto grammar = WindbellEngine::getInstance().getGrammarByExtension(extension);
     return grammar && grammar->default_is_dark ? JNI_TRUE : JNI_FALSE;
+}
+
+/**
+ * Export editor metadata as triples: [kind, value1, value2] * N.
+ */
+JNIEXPORT jobjectArray JNICALL
+Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeGetEditorMetadata(
+    JNIEnv* env, jobject, jstring extension_jstr
+) {
+    if (!extension_jstr) return nullptr;
+    const char* ext = env->GetStringUTFChars(extension_jstr, nullptr);
+    if (!ext) return nullptr;
+    const std::string extension(ext);
+    env->ReleaseStringUTFChars(extension_jstr, ext);
+    auto grammar = WindbellEngine::getInstance().getGrammarByExtension(extension);
+
+    jclass string_class = env->FindClass("java/lang/String");
+    if (!string_class) return nullptr;
+    if (!grammar) {
+        jobjectArray empty = env->NewObjectArray(0, string_class, nullptr);
+        env->DeleteLocalRef(string_class);
+        return empty;
+    }
+
+    std::vector<std::array<std::string, 3>> records;
+    const auto& metadata = grammar->editor_metadata;
+    for (const auto& value : metadata.line_comments) records.push_back({"lineComment", value, ""});
+    for (const auto& pair : metadata.block_comments) records.push_back({"blockComment", pair.first, pair.second});
+    for (const auto& pair : metadata.brackets) records.push_back({"bracket", pair.first, pair.second});
+    for (const auto& pair : metadata.surrounding_pairs) records.push_back({"surrounding", pair.first, pair.second});
+    for (const auto& pair : metadata.auto_closing_pairs) {
+        std::string not_in;
+        for (size_t i = 0; i < pair.not_in.size(); ++i) {
+            if (i) not_in.push_back('\x1F');
+            not_in += pair.not_in[i];
+        }
+        records.push_back({"autoClosing", pair.open, pair.close + std::string(1, '\x1F') + not_in});
+    }
+    if (!metadata.word_pattern.empty()) records.push_back({"wordPattern", metadata.word_pattern, ""});
+    if (!metadata.increase_indent_pattern.empty()) records.push_back({"indentIncrease", metadata.increase_indent_pattern, ""});
+    if (!metadata.decrease_indent_pattern.empty()) records.push_back({"indentDecrease", metadata.decrease_indent_pattern, ""});
+    if (!metadata.indent_next_line_pattern.empty()) records.push_back({"indentNextLine", metadata.indent_next_line_pattern, ""});
+    if (!metadata.unindented_line_pattern.empty()) records.push_back({"unIndentedLine", metadata.unindented_line_pattern, ""});
+    for (const auto& value : metadata.completion_trigger_characters) records.push_back({"completionTrigger", value, ""});
+
+    jobjectArray result = env->NewObjectArray(static_cast<jsize>(records.size() * 3), string_class, nullptr);
+    if (!result) { env->DeleteLocalRef(string_class); return nullptr; }
+    for (size_t i = 0; i < records.size(); ++i) {
+        for (size_t field = 0; field < 3; ++field) {
+            jstring value = env->NewStringUTF(records[i][field].c_str());
+            env->SetObjectArrayElement(result, static_cast<jsize>(i * 3 + field), value);
+            env->DeleteLocalRef(value);
+        }
+    }
+    env->DeleteLocalRef(string_class);
+    return result;
 }
 
 /**
