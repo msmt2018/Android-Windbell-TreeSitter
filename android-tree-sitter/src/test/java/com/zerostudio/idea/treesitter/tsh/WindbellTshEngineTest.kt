@@ -83,12 +83,37 @@ class WindbellTshLinkageTest {
                     dark [ keyword: #79C0FF, string: #A5D6FF ]
                 }
             }
+            editor {
+                comments {
+                    line: ["//"]
+                    block: [["/*", "*/"]]
+                }
+                brackets: ["{}", "()", "[]"]
+                autoClosingPairs: [
+                    { open: "(", close: ")", notIn: ["string", "comment"] }
+                ]
+                surroundingPairs: ["()", "[]"]
+                wordPattern: /[A-Za-z_][A-Za-z0-9_]*/
+                indentation {
+                    increaseIndentPattern: /\\{[^}]*$/
+                    decreaseIndentPattern: /^\\s*\\}/
+                }
+                completion {
+                    triggerCharacters: [".", ":"]
+                }
+            }
         """.trimIndent()
 
         assertTrue(engine.loadTshSource("scheme", source, null))
         assertEquals(listOf("github", "midnight"), engine.listSchemes("scheme").sorted())
         assertEquals("midnight", engine.getDefaultScheme("scheme"))
         assertTrue(engine.isDark("scheme"))
+        val editorMetadata = engine.getEditorMetadata("scheme")
+        assertEquals(listOf("//"), editorMetadata.lineComments)
+        assertEquals(listOf("/*" to "*/"), editorMetadata.blockComments)
+        assertEquals(3, editorMetadata.brackets.size)
+        assertEquals(listOf("string", "comment"), editorMetadata.autoClosingPairs.single().notIn)
+        assertEquals(listOf(".", ":"), editorMetadata.completionTriggerCharacters)
         val catalog = engine.getStyleCatalog("scheme")
         assertEquals("keyword.control", catalog.first { it.name == "keyword" }.scope)
         assertTrue(catalog.first { it.name == "keyword" }.tags.contains("control"))
