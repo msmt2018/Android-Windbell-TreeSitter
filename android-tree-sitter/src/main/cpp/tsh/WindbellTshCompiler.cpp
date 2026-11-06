@@ -1900,8 +1900,11 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
             child.ui_light_colors = parent.ui_light_colors;
             child.ui_dark_colors = parent.ui_dark_colors;
             child.scope_rules = parent.scope_rules;
-            child.scope_rules.insert(child.scope_rules.end(),
-                child_scope_rules.begin(), child_scope_rules.end());
+            uint32_t next_scope_order = static_cast<uint32_t>(child.scope_rules.size());
+            for (auto& scope_rule : child_scope_rules) {
+                scope_rule.declaration_order = next_scope_order++;
+                child.scope_rules.push_back(std::move(scope_rule));
+            }
             for (const auto& entry : child_colors) {
                 auto& target = child.colors[entry.first];
                 if (entry.second.has_light_color) {
