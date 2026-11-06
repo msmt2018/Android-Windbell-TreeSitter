@@ -196,6 +196,53 @@ class WindbellTshLinkageTest {
     }
 
     @Test
+    fun testMonarchTokenizerStateTransitions() {
+        val engine = WindbellTshEngine.instance
+        val source = """
+            tsh 2 {
+                language {
+                    id: "stateful"
+                    name: "Stateful Test"
+                    extensions: [".stateful"]
+                }
+                styles {
+                    identifier { scope: "variable.other", tags: ["identifier"] }
+                    string { scope: "string.quoted", tags: ["string"] }
+                }
+                schemes {
+                    plain {
+                        light [ identifier: #202020, string: #008000 ]
+                        dark [ identifier: #E0E0E0, string: #80FF80 ]
+                    }
+                }
+                monarch {
+                    start: "root"
+                    tokenizer {
+                        root: [
+                            { match: /"/, token: "string", push: "@string" }
+                            { match: /[A-Za-z]+/, token: "identifier" }
+                        ]
+                        string: [
+                            { match: /"/, token: "string", pop: true }
+                            { match: /[^"]+/, token: "string" }
+                        ]
+                    }
+                }
+            }
+        """.trimIndent()
+        assertTrue(engine.loadTshSource("stateful", source, null))
+        val code = "foo \"bar\" baz"
+        val spans = engine.computeHighlights(null, code, "stateful")
+        val identifierId = engine.getStyleCatalog("stateful").first { it.name == "identifier" }.styleId
+        val stringId = engine.getStyleCatalog("stateful").first { it.name == "string" }.styleId
+        assertTrue(spans.any { it.styleId == identifierId && it.startByte == 0 && it.endByte == 6 })
+        assertTrue(spans.any { it.styleId == stringId && it.startByte == 8 && it.endByte == 10 })
+        assertTrue(spans.any { it.styleId == stringId && it.startByte == 10 && it.endByte == 16 })
+        assertTrue(spans.any { it.styleId == stringId && it.startByte == 16 && it.endByte == 18 })
+        assertTrue(spans.any { it.styleId == identifierId && it.startByte == 20 && it.endByte == 26 })
+    }
+
+    @Test
     fun testEmbeddedTreeSitterQueryAndCaptureBinding() {
         val engine = WindbellTshEngine.instance
         val language = TSLanguageJava.getInstance()
