@@ -23,26 +23,6 @@ class WindbellTshEngine private constructor() {
         val fontFlags: Int
     )
 
-    data class FoldRange(
-        val startByte: Int,
-        val endByte: Int,
-        val kind: Int // 0: Code Block, 1: Comment, 2: Imports
-    )
-
-    data class OutlineItem(
-        val startByte: Int,
-        val endByte: Int,
-        val kind: Int, // 1: Class, 2: Method, 3: Field, 4: Enum
-        val name: String
-    )
-
-    data class HoverResult(
-        val startByte: Int,
-        val endByte: Int,
-        val nodeType: String,
-        val detail: String
-    )
-
     data class StylePalette(
         val styleId: Int,
         val lightColor: Int,
@@ -142,35 +122,6 @@ class WindbellTshEngine private constructor() {
         return result
     }
 
-    fun computeFolds(tree: TSTree, text: String, extension: String): List<FoldRange> {
-        val flatData = nativeComputeFolds(tree.nativeObject, text, extension) ?: return emptyList()
-        val count = flatData.size / 3
-        val result = ArrayList<FoldRange>(count)
-        for (i in 0 until count) {
-            result.add(FoldRange(flatData[i * 3 + 0], flatData[i * 3 + 1], flatData[i * 3 + 2]))
-        }
-        return result
-    }
-
-    fun computeOutline(tree: TSTree, text: String, extension: String): List<OutlineItem> {
-        val raw = nativeGetOutline(tree.nativeObject, text, extension) ?: return emptyList()
-        val count = raw.size / 4
-        val result = ArrayList<OutlineItem>(count)
-        for (i in 0 until count) {
-            val s = raw[i * 4 + 0].toInt()
-            val e = raw[i * 4 + 1].toInt()
-            val k = raw[i * 4 + 2].toInt()
-            val name = raw[i * 4 + 3]
-            result.add(OutlineItem(s, e, k, name))
-        }
-        return result
-    }
-
-    fun getHoverInfo(tree: TSTree, byteOffset: Int): HoverResult? {
-        val raw = nativeGetHoverInfo(tree.nativeObject, byteOffset) ?: return null
-        return HoverResult(raw[0].toInt(), raw[1].toInt(), raw[2], raw[3])
-    }
-
     @FastNative
     private external fun nativeLoadTshSource(extension: String, tshSourceContent: String, languagePtr: Long): Boolean
 
@@ -180,12 +131,5 @@ class WindbellTshEngine private constructor() {
     @FastNative
     private external fun nativeHighlight(treePtr: Long, text: String, extension: String): IntArray?
 
-    @FastNative
-    private external fun nativeComputeFolds(treePtr: Long, text: String, extension: String): IntArray?
 
-    @FastNative
-    private external fun nativeGetOutline(treePtr: Long, text: String, extension: String): Array<String>?
-
-    @FastNative
-    private external fun nativeGetHoverInfo(treePtr: Long, byteOffset: Int): Array<String>?
 }
