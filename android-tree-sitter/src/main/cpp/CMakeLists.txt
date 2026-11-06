@@ -15,55 +15,68 @@
 #  along with android-tree-sitter.  If not, see <https://www.gnu.org/licenses/>.
 #
 
+#
+#  Windbell Treesitter Highlighting Configuration Core (Windbell-TSH)
+#
+
 cmake_minimum_required(VERSION 3.22.1)
 project("android-tree-sitter")
 
 set(PROJECT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../../..)
+
+# 引入项目通用配置
 include(${CMAKE_CURRENT_SOURCE_DIR}/../../../../cmake/common-config.cmake)
 
-# Tree-sitter 内核内部依赖头文件
+# Tree-sitter 核心头文件路径
 include_directories("${TS_DIR}/lib/src")
 include_directories("${TS_DIR}/lib/include")
 
-# Oniguruma 正则库头文件配置
-set(ONIG_DIR "${PROJECT_DIR}/project-sora-oniguruma")
-include_directories("${ONIG_DIR}/src")
+# Oniguruma
+set(ONIG_DIR "${CMAKE_CURRENT_SOURCE_DIR}/oniguruma")
+set(ONIG_SRC_DIR "${ONIG_DIR}/src")
 
-# TSH 自研高亮引擎头文件
+#Oniguruma 源码及配置头文件路径
+include_directories("${ONIG_SRC_DIR}")
+
+# Windbell-TSH 自身头文件
 include_directories("${CMAKE_CURRENT_SOURCE_DIR}")
 include_directories("${CMAKE_CURRENT_SOURCE_DIR}/tsh")
 
-# 编译参数调优：保证 C++20，隐藏缺省符号，开启 ARM64 激进优化
+# 编译参数调优：保证 C++20，隐藏缺省符号，开启 -O3 优化并定义 HAVE_CONFIG_H
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O3 -fvisibility=hidden -DHAVE_CONFIG_H")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 -fvisibility=hidden -DHAVE_CONFIG_H")
 
-# 添加核心复合动态库
+# ==============================================================================
+# 构建主库 android-tree-sitter
+# ==============================================================================
 add_library(android-tree-sitter SHARED
-    # Tree-sitter 核心合集
+    # Tree-sitter 核心内核
     "${TS_DIR}/lib/src/lib.c"
 
-    # Oniguruma 核心合集 (用于微观实时分词流水线)
-    "${ONIG_DIR}/src/regerror.c"
-    "${ONIG_DIR}/src/regparse.c"
-    "${ONIG_DIR}/src/regext.c"
-    "${ONIG_DIR}/src/regcomp.c"
-    "${ONIG_DIR}/src/regexec.c"
-    "${ONIG_DIR}/src/reggnu.c"
-    "${ONIG_DIR}/src/regenc.c"
-    "${ONIG_DIR}/src/regsyntax.c"
-    "${ONIG_DIR}/src/regtrav.c"
-    "${ONIG_DIR}/src/regversion.c"
-    "${ONIG_DIR}/src/st.c"
-    "${ONIG_DIR}/src/onig_init.c"
-    "${ONIG_DIR}/src/unicode.c"
-    "${ONIG_DIR}/src/ascii.c"
-    "${ONIG_DIR}/src/utf16_le.c"
-    "${ONIG_DIR}/src/utf16_be.c"
-    "${ONIG_DIR}/src/utf8.c"
+    # Oniguruma 核心源文件
+    "${ONIG_SRC_DIR}/regerror.c"
+    "${ONIG_SRC_DIR}/regparse.c"
+    "${ONIG_SRC_DIR}/regext.c"
+    "${ONIG_SRC_DIR}/regcomp.c"
+    "${ONIG_SRC_DIR}/regexec.c"
+    "${ONIG_SRC_DIR}/reggnu.c"
+    "${ONIG_SRC_DIR}/regenc.c"
+    "${ONIG_SRC_DIR}/regsyntax.c"
+    "${ONIG_SRC_DIR}/regtrav.c"
+    "${ONIG_SRC_DIR}/regversion.c"
+    "${ONIG_SRC_DIR}/st.c"
+    "${ONIG_SRC_DIR}/onig_init.c"
+    "${ONIG_SRC_DIR}/unicode.c"
+    "${ONIG_SRC_DIR}/ascii.c"
+    "${ONIG_SRC_DIR}/utf16_le.c"
+    "${ONIG_SRC_DIR}/utf16_be.c"
+    "${ONIG_SRC_DIR}/utf8.c"
 
-    # 原生 JNI 与封装
+    # 原生 JNI 适配层
     main.cc
     ts.cc
     ts_cursor.cc
@@ -83,6 +96,7 @@ add_library(android-tree-sitter SHARED
     utils/ts_obj_utils.cpp
 
     # Windbell-TSH 核心实现
+    tsh/WindbellTshCompiler.cpp
     tsh/WindbellTshCore.cpp
     ts_windbell_jni.cpp
 )
