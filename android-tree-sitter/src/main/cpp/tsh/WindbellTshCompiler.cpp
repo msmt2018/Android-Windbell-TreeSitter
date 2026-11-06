@@ -1097,6 +1097,60 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
         grammar->styles[style.style_id] = std::move(style);
     }
 
+    // Validate semantic style inheritance and resolve palette fallback by
+    // declared parent style. Style names remain user-defined; no token taxonomy
+    // or color defaults are embedded in the runtime.
+    std::unordered_map<std::string, uint8_t> style_visit;
+    std::function<bool(const std::string&)> validate_style_parent = [&](const std::string& name) -> bool {
+        uint8_t& state = style_visit[name];
+        if (state == 2) return true;
+        if (state == 1) return false;
+        state = 1;
+        auto definition = grammar->style_definitions.find(name);
+        if (definition != grammar->style_definitions.end() && !definition->second.parent.empty()) {
+            const std::string& parent = definition->second.parent;
+            if (grammar->style_name_to_id.find(parent) == grammar->style_name_to_id.end()) return false;
+            if (!validate_style_parent(parent)) return false;
+        }
+        state = 2;
+        return true;
+    };
+    for (const auto& entry : grammar->style_name_to_id) {
+        if (!validate_style_parent(entry.first)) return nullptr;
+    }
+
+    for (auto& scheme_entry : grammar->schemes) {
+        auto& palette = scheme_entry.second.colors;
+        for (const auto& style_entry : grammar->style_definitions) {
+            const std::string& style_name = style_entry.first;
+            const std::string& parent_name = style_entry.second.parent;
+            if (parent_name.empty()) continue;
+            const uint16_t style_id = grammar->style_name_to_id.at(style_name);
+            auto& own = palette[style_id];
+            std::string ancestor = parent_name;
+            std::unordered_map<std::string, bool> seen;
+            while (!ancestor.empty() && seen.emplace(ancestor, true).second) {
+                const uint16_t parent_id = grammar->style_name_to_id.at(ancestor);
+                auto parent_color = palette.find(parent_id);
+                if (parent_color != palette.end()) {
+                    if (!own.has_light_color && parent_color->second.has_light_color) {
+                        own.light_color = parent_color->second.light_color;
+                        own.has_light_color = true;
+                        own.light_font_flags |= parent_color->second.light_font_flags;
+                    }
+                    if (!own.has_dark_color && parent_color->second.has_dark_color) {
+                        own.dark_color = parent_color->second.dark_color;
+                        own.has_dark_color = true;
+                        own.dark_font_flags |= parent_color->second.dark_font_flags;
+                    }
+                }
+                auto parent_definition = grammar->style_definitions.find(ancestor);
+                ancestor = parent_definition == grammar->style_definitions.end() ?
+                    std::string() : parent_definition->second.parent;
+            }
+        }
+    }
+
     if (ts_lang && !dynamic_query_accumulator.empty()) {
         uint32_t err_offset = 0;
         TSQueryError err_type = TSQueryErrorNone;
