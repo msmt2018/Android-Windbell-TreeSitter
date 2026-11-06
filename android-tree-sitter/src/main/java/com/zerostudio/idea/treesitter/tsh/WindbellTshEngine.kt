@@ -258,10 +258,24 @@ class WindbellTshEngine private constructor() {
         val result = ArrayList<SemanticStyle>(raw.size / 8)
         var index = 0
         while (index + 7 < raw.size) {
-            val metadata = raw[index + 7].split('\u001E').mapNotNull { entry ->
-                val separator = entry.indexOf('\u001F')
-                if (separator < 0) null else entry.substring(0, separator) to entry.substring(separator + 1)
-            }.toMap()
+            val metadata = LinkedHashMap<String, String>()
+            val encodedMetadata = raw[index + 7]
+            var metadataOffset = 0
+            fun readMetadataValue(): String? {
+                val separator = encodedMetadata.indexOf(':', metadataOffset)
+                if (separator < 0) return null
+                val length = encodedMetadata.substring(metadataOffset, separator).toIntOrNull() ?: return null
+                metadataOffset = separator + 1
+                if (length < 0 || metadataOffset + length > encodedMetadata.length) return null
+                val value = encodedMetadata.substring(metadataOffset, metadataOffset + length)
+                metadataOffset += length
+                return value
+            }
+            while (metadataOffset < encodedMetadata.length) {
+                val key = readMetadataValue() ?: break
+                val value = readMetadataValue() ?: break
+                metadata[key] = value
+            }
             result += SemanticStyle(
                 styleId = raw[index].toInt(),
                 name = raw[index + 1],
