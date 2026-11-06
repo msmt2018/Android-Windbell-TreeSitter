@@ -263,6 +263,7 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
             TSSymbol parent_sym = ts_node_is_null(parent) ? 0 : ts_node_symbol(parent);
 
             for (const auto& ast_rule : grammar->ast_selector_rules) {
+                if (!ast_rule.enabled) continue;
                 // A selector with a field names the owner node and styles the
                 // selected child. A selector without a field targets the node itself.
                 if (ast_rule.field_id != 0) {
