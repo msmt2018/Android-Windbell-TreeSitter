@@ -12,7 +12,7 @@ import java.util.concurrent.ConcurrentHashMap
 import com.zerostudio.idea.treesitter.TreeSitter
 /**
  * Windbell Treesitter Highlighting Configuration Engine (Windbell-TSH)
- * 提供双模高亮渲染桥接、代码折叠、符号大纲与悬停提示。
+ * Provides the dual-backend highlighting bridge and DSL-backed style rendering.
  */
 class WindbellTshEngine private constructor() {
 
