@@ -73,7 +73,9 @@ class WindbellTshEngine private constructor() {
         val scope: String,
         val description: String,
         val parent: String,
-        val tags: List<String>
+        val tags: List<String>,
+        val deprecated: Boolean = false,
+        val metadata: Map<String, String> = emptyMap()
     )
 
     data class StylePalette(
@@ -213,18 +215,24 @@ class WindbellTshEngine private constructor() {
     /** Returns all semantic style declarations authored in the .tsh file. */
     fun getStyleCatalog(extension: String): List<SemanticStyle> {
         val raw = nativeGetStyleCatalog(extension) ?: return emptyList()
-        val result = ArrayList<SemanticStyle>(raw.size / 6)
+        val result = ArrayList<SemanticStyle>(raw.size / 8)
         var index = 0
-        while (index + 5 < raw.size) {
+        while (index + 7 < raw.size) {
+            val metadata = raw[index + 7].split('\u001E').mapNotNull { entry ->
+                val separator = entry.indexOf('\u001F')
+                if (separator < 0) null else entry.substring(0, separator) to entry.substring(separator + 1)
+            }.toMap()
             result += SemanticStyle(
                 styleId = raw[index].toInt(),
                 name = raw[index + 1],
                 scope = raw[index + 2],
                 description = raw[index + 3],
                 parent = raw[index + 4],
-                tags = raw[index + 5].split('\u001F').filter { it.isNotEmpty() }
+                tags = raw[index + 5].split('\u001F').filter { it.isNotEmpty() },
+                deprecated = raw[index + 6] == "true",
+                metadata = metadata
             )
-            index += 6
+            index += 8
         }
         return result
     }
