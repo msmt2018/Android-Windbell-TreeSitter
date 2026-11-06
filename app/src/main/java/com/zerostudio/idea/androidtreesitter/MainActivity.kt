@@ -37,6 +37,7 @@ import com.zerostudio.idea.treesitter.xml.TSLanguageXml
 import kotlinx.coroutines.*
 import x.github.module.editor.model.PieceTreeBuffer
 import x.github.module.editor.view.EditorView
+import x.github.module.editor.input.AutoPair
 import java.io.PrintWriter
 import java.io.StringWriter
 import java.util.Locale
@@ -255,11 +256,32 @@ class MainActivity : AppCompatActivity() {
                 )
             }
             view.setSyntaxHighlighter(activeTshHighlighter)
+            applyTshEditorMetadata()
             applyTshThemeTokens()
         } else {
             view.setSyntaxHighlighter(null)
+            view.setAutoPairs(emptyList())
+            view.setAutoPairFilter(null)
+            view.setBracketMatcher(null)
             activeTshHighlighter = null
         }
+    }
+
+    /** Installs bracket and auto-pair behavior declared by the active .tsh file. */
+    private fun applyTshEditorMetadata() {
+        val view = editorView ?: return
+        val highlighter = activeTshHighlighter ?: return
+        val metadata = WindbellTshEngine.instance.getEditorMetadata("java")
+        val pairs = metadata.autoClosingPairs.mapNotNull { pair ->
+            if (pair.open.length == 1 && pair.close.length == 1) {
+                AutoPair(pair.open[0], pair.close[0])
+            } else {
+                null
+            }
+        }
+        view.setAutoPairs(pairs)
+        view.setAutoPairFilter(highlighter.createAutoPairFilter())
+        view.setBracketMatcher(highlighter.createBracketMatcher())
     }
 
     /** Applies only UI colors explicitly declared by the active .tsh scheme. */
