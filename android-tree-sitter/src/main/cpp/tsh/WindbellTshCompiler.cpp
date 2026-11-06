@@ -2336,9 +2336,12 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                                             if (pattern_value.type != TshLexer::TokenType::TOK_NUMBER) return nullptr;
                                             try {
                                                 size_t consumed = 0;
-                                                metadata.declaration_order = static_cast<uint32_t>(
-                                                    std::stoul(pattern_value.text, &consumed));
-                                                if (consumed != pattern_value.text.size()) return nullptr;
+                                                const unsigned long parsed_order =
+                                                    std::stoul(pattern_value.text, &consumed);
+                                                if (consumed != pattern_value.text.size() ||
+                                                    parsed_order > std::numeric_limits<uint32_t>::max()) return nullptr;
+                                                metadata.declaration_order =
+                                                    static_cast<uint32_t>(parsed_order);
                                             } catch (...) { return nullptr; }
                                         } else {
                                             return nullptr;
@@ -2387,6 +2390,11 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                         if (query_source.empty()) return nullptr;
                         if (!program.id.empty() &&
                             !tree_sitter_query_ids.emplace(program.id, true).second) return nullptr;
+                        if (!program.enabled && !program.pattern_metadata.empty()) {
+                            g_tsh_last_error_detail =
+                                "pattern metadata cannot be declared for a disabled query block";
+                            return nullptr;
+                        }
                         if (program.enabled) {
                             if (!ts_lang) return nullptr;
                             uint32_t error_offset = 0;
