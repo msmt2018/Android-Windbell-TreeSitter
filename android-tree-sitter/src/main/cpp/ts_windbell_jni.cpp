@@ -282,6 +282,18 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeGetEditorMetadat
     if (!metadata.indent_next_line_pattern.empty()) records.push_back({"indentNextLine", metadata.indent_next_line_pattern, ""});
     if (!metadata.unindented_line_pattern.empty()) records.push_back({"unIndentedLine", metadata.unindented_line_pattern, ""});
     for (const auto& value : metadata.completion_trigger_characters) records.push_back({"completionTrigger", value, ""});
+    for (const auto& value : metadata.electric_characters) records.push_back({"electricCharacter", value, ""});
+    if (!metadata.auto_close_before_pattern.empty()) records.push_back({"autoCloseBefore", metadata.auto_close_before_pattern, ""});
+    for (size_t i = 0; i < metadata.on_enter_rules.size(); ++i) {
+        const auto& rule = metadata.on_enter_rules[i];
+        const std::string index = std::to_string(i);
+        records.push_back({"onEnterBefore", index, rule.before_text});
+        if (!rule.after_text.empty()) records.push_back({"onEnterAfter", index, rule.after_text});
+        if (!rule.previous_line_text.empty()) records.push_back({"onEnterPrevious", index, rule.previous_line_text});
+        records.push_back({"onEnterIndent", index, rule.indent_action});
+        if (!rule.append_text.empty()) records.push_back({"onEnterAppend", index, rule.append_text});
+        if (rule.remove_text != 0) records.push_back({"onEnterRemove", index, std::to_string(rule.remove_text)});
+    }
     for (const auto& option : metadata.options) records.push_back({"editorOption", option.first, option.second});
 
     jobjectArray result = env->NewObjectArray(static_cast<jsize>(records.size() * 3), string_class, nullptr);
