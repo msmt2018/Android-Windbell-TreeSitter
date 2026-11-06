@@ -89,6 +89,7 @@ class WindbellTshLinkageTest {
                     block: [["/*", "*/"]]
                 }
                 brackets: ["{}", "()", "[]"]
+                bracketNotIn: ["string", "comment"]
                 autoClosingPairs: [
                     { open: "(", close: ")", notIn: ["string", "comment"] }
                 ]
@@ -112,6 +113,7 @@ class WindbellTshLinkageTest {
         assertEquals(listOf("//"), editorMetadata.lineComments)
         assertEquals(listOf("/*" to "*/"), editorMetadata.blockComments)
         assertEquals(3, editorMetadata.brackets.size)
+        assertEquals(listOf("string", "comment"), editorMetadata.bracketNotIn)
         assertEquals(listOf("string", "comment"), editorMetadata.autoClosingPairs.single().notIn)
         assertEquals(listOf(".", ":"), editorMetadata.completionTriggerCharacters)
         val catalog = engine.getStyleCatalog("scheme")
