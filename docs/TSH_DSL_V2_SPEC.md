@@ -217,6 +217,7 @@ editor {
     block: [["/*", "*/"]]
   }
   brackets: ["{}", "[]", "()", "<>"]
+  bracketNotIn: ["string", "comment"]
   autoClosingPairs: [
     { open: "(", close: ")", notIn: ["string", "comment"] }
     { open: "\"", close: "\"", notIn: ["string", "comment"] }
