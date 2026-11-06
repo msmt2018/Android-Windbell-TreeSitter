@@ -1204,8 +1204,10 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
 
                         while (true) {
                             auto field = lexer.nextToken();
-                            if (field.type == TshLexer::TokenType::TOK_RBRACE || field.type == TshLexer::TokenType::TOK_EOF) break;
-                            
+                            if (field.type == TshLexer::TokenType::TOK_RBRACE) break;
+                            if (field.type == TshLexer::TokenType::TOK_EOF) return nullptr;
+                            if (field.type == TshLexer::TokenType::TOK_COMMA) continue;
+
                             if (field.text == "node") {
                                 lexer.nextToken();
                                 node_name = lexer.nextToken().text;
