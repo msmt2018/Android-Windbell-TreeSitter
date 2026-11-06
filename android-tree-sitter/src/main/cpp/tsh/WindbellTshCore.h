@@ -110,6 +110,8 @@ struct SchemeColor {
     uint16_t dark_font_flags = 0;
     bool has_light_color = false;
     bool has_dark_color = false;
+    bool explicit_light_color = false;
+    bool explicit_dark_color = false;
 };
 
 // 多主题方案实体 (Schemes Block)
