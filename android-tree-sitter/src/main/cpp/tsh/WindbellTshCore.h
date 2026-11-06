@@ -89,6 +89,7 @@ public:
     const TSLanguage* ts_language = nullptr;
     
     std::unordered_map<std::string, uint16_t> style_name_to_id;
+    std::unordered_map<std::string, TshStyle> style_definitions;
     std::vector<TshStyle> styles;
     
     // 多主题方案集合 (Key: scheme 名称，如 "darcula", "github_light")
