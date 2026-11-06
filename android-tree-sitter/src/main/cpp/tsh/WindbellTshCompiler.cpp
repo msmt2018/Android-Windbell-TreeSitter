@@ -24,6 +24,7 @@
 #include <sstream>
 #include <algorithm>
 #include <vector>
+#include <functional>
 #include "ts__log.h"
 
 namespace windbell::tsh {
@@ -268,6 +269,128 @@ std::shared_ptr<TshGrammar> TshCompiler::compile(const std::string& source, cons
         return id;
     };
     TshLexer lexer(source);
+    uint32_t regex_declaration_order = 0;
+
+    std::function<bool(CompiledRegexRule&)> parseRegexRule;
+    parseRegexRule = [&](CompiledRegexRule& rule) -> bool {
+        std::string raw_match_pattern;
+        while (true) {
+            auto item = lexer.nextToken();
+            if (item.type == TshLexer::TokenType::TOK_RBRACE) break;
+            if (item.type == TshLexer::TokenType::TOK_EOF) return false;
+            if (item.type == TshLexer::TokenType::TOK_COMMA) continue;
+
+            if (item.type == TshLexer::TokenType::TOK_NUMBER) {
+                const int group_index = std::stoi(item.text);
+                if (lexer.nextToken().type != TshLexer::TokenType::TOK_COLON) return false;
+                auto style_name = lexer.nextToken();
+                rule.group_style_map[group_index] = ensureStyleId(style_name.text);
+                continue;
+            }
+
+            if (item.text == "match") {
+                if (lexer.nextToken().type != TshLexer::TokenType::TOK_COLON) return false;
+                auto pattern = lexer.nextToken();
+                if (pattern.text == "keywordsToRegex") {
+                    raw_match_pattern = expandKeywordsToRegex(lexer.extractParenthesizedBlock());
+                } else if (pattern.type == TshLexer::TokenType::TOK_REGEX ||
+                           pattern.type == TshLexer::TokenType::TOK_STRING) {
+                    raw_match_pattern = pattern.text;
+                } else {
+                    return false;
+                }
+            } else if (item.text == "builtin") {
+                if (lexer.nextToken().type != TshLexer::TokenType::TOK_COLON) return false;
+                auto name = lexer.nextToken();
+                auto definition = defines_map.find(name.text);
+                if (definition == defines_map.end()) return false;
+                raw_match_pattern = definition->second;
+            } else if (item.text == "start" || item.text == "begin" || item.text == "end") {
+                if (lexer.nextToken().type != TshLexer::TokenType::TOK_COLON) return false;
+                if (lexer.nextToken().type != TshLexer::TokenType::TOK_LBRACE) return false;
+                auto match_key = lexer.nextToken();
+                if (match_key.text != "match") return false;
+                if (lexer.nextToken().type != TshLexer::TokenType::TOK_COLON) return false;
+                auto pattern = lexer.nextToken();
+                if (pattern.type != TshLexer::TokenType::TOK_REGEX &&
+                    pattern.type != TshLexer::TokenType::TOK_STRING) return false;
+                if (lexer.nextToken().type != TshLexer::TokenType::TOK_RBRACE) return false;
+
+                rule.type = RegexRuleType::BLOCK;
+                regex_t* compiled = compileOnigurumaUtf16(pattern.text);
+                if (!compiled) return false;
+                if (item.text == "end") rule.onig_end = compiled;
+                else rule.onig_start = compiled;
+            } else if (item.text == "style") {
+                if (lexer.nextToken().type != TshLexer::TokenType::TOK_COLON) return false;
+                auto style_name = lexer.nextToken();
+                rule.style_id = ensureStyleId(style_name.text);
+                rule.has_style = true;
+            } else if (item.text == "id") {
+                if (lexer.nextToken().type != TshLexer::TokenType::TOK_COLON) return false;
+                rule.id = lexer.nextToken().text;
+            } else if (item.text == "priority") {
+                if (lexer.nextToken().type != TshLexer::TokenType::TOK_COLON) return false;
+                auto value = lexer.nextToken();
+                if (value.type != TshLexer::TokenType::TOK_NUMBER) return false;
+                rule.priority = std::stoi(value.text);
+            } else if (item.text == "enabled") {
+                if (lexer.nextToken().type != TshLexer::TokenType::TOK_COLON) return false;
+                rule.enabled = lexer.nextToken().text != "false";
+            } else if (item.text == "overlap") {
+                if (lexer.nextToken().type != TshLexer::TokenType::TOK_COLON) return false;
+                rule.allow_overlap = lexer.nextToken().text == "allow";
+            } else if (item.text == "contains" || item.text == "patterns" || item.text == "captures") {
+                if (lexer.nextToken().type != TshLexer::TokenType::TOK_COLON) return false;
+                auto open = lexer.nextToken();
+                const bool capture_block = item.text == "captures";
+                const auto expected_open = capture_block ?
+                    TshLexer::TokenType::TOK_LBRACE : TshLexer::TokenType::TOK_LBRACKET;
+                const auto expected_close = capture_block ?
+                    TshLexer::TokenType::TOK_RBRACE : TshLexer::TokenType::TOK_RBRACKET;
+                if (open.type != expected_open) return false;
+
+                while (true) {
+                    auto child_token = lexer.nextToken();
+                    if (child_token.type == expected_close) break;
+                    if (child_token.type == TshLexer::TokenType::TOK_COMMA) continue;
+                    if (child_token.type == TshLexer::TokenType::TOK_EOF) return false;
+                    if (capture_block) {
+                        if (child_token.type != TshLexer::TokenType::TOK_NUMBER) return false;
+                        const int group_index = std::stoi(child_token.text);
+                        if (lexer.nextToken().type != TshLexer::TokenType::TOK_COLON) return false;
+                        auto style_name = lexer.nextToken();
+                        rule.group_style_map[group_index] = ensureStyleId(style_name.text);
+                    } else {
+                        if (child_token.type != TshLexer::TokenType::TOK_LBRACE) return false;
+                        CompiledRegexRule nested;
+                        nested.declaration_order = regex_declaration_order++;
+                        if (!parseRegexRule(nested)) return false;
+                        rule.nested_rules.push_back(std::move(nested));
+                    }
+                }
+            }
+        }
+
+        if (!raw_match_pattern.empty()) {
+            for (const auto& definition : defines_map) {
+                const std::string include_call = "include(\"" + definition.first + "\")";
+                size_t position = 0;
+                while ((position = raw_match_pattern.find(include_call, position)) != std::string::npos) {
+                    raw_match_pattern.replace(position, include_call.size(), definition.second);
+                    position += definition.second.size();
+                }
+            }
+            rule.onig_start = compileOnigurumaUtf16(raw_match_pattern);
+            if (!rule.onig_start) return false;
+        }
+
+        if (rule.type == RegexRuleType::BLOCK) {
+            return rule.has_style && rule.onig_start && rule.onig_end;
+        }
+        return rule.onig_start || !rule.group_style_map.empty();
+    };
+
     TshLexer::Token tok = lexer.nextToken();
 
     while (tok.type != TshLexer::TokenType::TOK_EOF) {
@@ -621,102 +744,20 @@ std::shared_ptr<TshGrammar> TshCompiler::compile(const std::string& source, cons
             // 5. 解析微观正则流与 Block 跨行结构: contains: [ ... ]
             // =================================================================
             else if (tok.text == "contains") {
-                lexer.nextToken(); // :
-                lexer.nextToken(); // [
+                auto open = lexer.nextToken();
+                if (open.type == TshLexer::TokenType::TOK_COLON) open = lexer.nextToken();
+                if (open.type != TshLexer::TokenType::TOK_LBRACKET) return nullptr;
                 while (true) {
-                    auto ct = lexer.nextToken();
-                    if (ct.type == TshLexer::TokenType::TOK_RBRACKET || ct.type == TshLexer::TokenType::TOK_EOF) break;
-                    if (ct.type == TshLexer::TokenType::TOK_LBRACE) {
-                        CompiledRegexRule reg_rule;
-                        reg_rule.declaration_order = regex_declaration_order++;
-                        std::string raw_match_pat;
+                    auto rule_token = lexer.nextToken();
+                    if (rule_token.type == TshLexer::TokenType::TOK_RBRACKET) break;
+                    if (rule_token.type == TshLexer::TokenType::TOK_COMMA) continue;
+                    if (rule_token.type == TshLexer::TokenType::TOK_EOF) return nullptr;
+                    if (rule_token.type != TshLexer::TokenType::TOK_LBRACE) return nullptr;
 
-                        while (true) {
-                            auto item = lexer.nextToken();
-                            if (item.type == TshLexer::TokenType::TOK_RBRACE || item.type == TshLexer::TokenType::TOK_EOF) break;
-
-                            if (item.type == TshLexer::TokenType::TOK_NUMBER) {
-                                const int group_index = std::stoi(item.text);
-                                auto separator = lexer.nextToken();
-                                if (separator.type != TshLexer::TokenType::TOK_COLON) return nullptr;
-                                auto style_name = lexer.nextToken();
-                                const uint16_t style_id = ensureStyleId(style_name.text);
-                                reg_rule.group_style_map[group_index] = style_id;
-                            } else if (item.text == "id") {
-                                lexer.nextToken();
-                                reg_rule.id = lexer.nextToken().text;
-                            } else if (item.text == "priority") {
-                                lexer.nextToken();
-                                auto value = lexer.nextToken();
-                                if (value.type != TshLexer::TokenType::TOK_NUMBER) return nullptr;
-                                reg_rule.priority = std::stoi(value.text);
-                            } else if (item.text == "enabled") {
-                                lexer.nextToken();
-                                reg_rule.enabled = lexer.nextToken().text != "false";
-                            } else if (item.text == "overlap") {
-                                lexer.nextToken();
-                                reg_rule.allow_overlap = lexer.nextToken().text == "allow";
-                            } else if (item.text == "builtin") {
-                                lexer.nextToken();
-                                auto b_id = lexer.nextToken().text;
-                                auto definition = defines_map.find(b_id);
-                                if (definition != defines_map.end()) {
-                                    raw_match_pat = definition->second;
-                                }
-                            } else if (item.text == "match") {
-                                lexer.nextToken();
-                                auto m_tok = lexer.nextToken();
-                                if (m_tok.text == "keywordsToRegex") {
-                                    std::string raw_kw = lexer.extractParenthesizedBlock();
-                                    raw_match_pat = expandKeywordsToRegex(raw_kw);
-                                } else if (m_tok.type == TshLexer::TokenType::TOK_REGEX) {
-                                    raw_match_pat = m_tok.text;
-                                }
-                            } else if (item.text == "start") {
-                                reg_rule.type = RegexRuleType::BLOCK;
-                                lexer.nextToken(); // :
-                                lexer.nextToken(); // {
-                                lexer.nextToken(); // match
-                                lexer.nextToken(); // :
-                                auto st_val = lexer.nextToken().text;
-                                reg_rule.onig_start = compileOnigurumaUtf16(st_val);
-                                lexer.nextToken(); // }
-                            } else if (item.text == "end") {
-                                lexer.nextToken(); // :
-                                lexer.nextToken(); // {
-                                lexer.nextToken(); // match
-                                lexer.nextToken(); // :
-                                auto ed_val = lexer.nextToken().text;
-                                reg_rule.onig_end = compileOnigurumaUtf16(ed_val);
-                                lexer.nextToken(); // }
-                            } else if (item.text == "style") {
-                                lexer.nextToken();
-                                auto s_name = lexer.nextToken().text;
-                                if (grammar->style_name_to_id.count(s_name)) {
-                                    reg_rule.style_id = grammar->style_name_to_id[s_name];
-                                } else {
-                                    uint16_t sid = global_style_counter++;
-                                    grammar->style_name_to_id[s_name] = sid;
-                                    reg_rule.style_id = sid;
-                                }
-                                reg_rule.has_style = true;
-                            }
-                        }
-
-                        if (reg_rule.type == RegexRuleType::MATCH && !raw_match_pat.empty()) {
-                            for (const auto& kv : defines_map) {
-                                std::string target = "include(\"" + kv.first + "\")";
-                                size_t f_pos = raw_match_pat.find(target);
-                                if (f_pos != std::string::npos) {
-                                    raw_match_pat.replace(f_pos, target.length(), kv.second);
-                                }
-                            }
-                            reg_rule.onig_start = compileOnigurumaUtf16(raw_match_pat);
-                            grammar->regex_rules.push_back(reg_rule);
-                        } else if (reg_rule.type == RegexRuleType::BLOCK && reg_rule.onig_start && reg_rule.onig_end) {
-                            grammar->regex_rules.push_back(reg_rule);
-                        }
-                    }
+                    CompiledRegexRule rule;
+                    rule.declaration_order = regex_declaration_order++;
+                    if (!parseRegexRule(rule)) return nullptr;
+                    grammar->regex_rules.push_back(std::move(rule));
                 }
             }
         }
