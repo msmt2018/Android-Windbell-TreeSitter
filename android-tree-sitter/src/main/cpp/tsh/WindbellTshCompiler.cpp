@@ -801,16 +801,6 @@ std::shared_ptr<TshGrammar> TshCompiler::compile(const std::string& source, cons
             style.description = definition_it->second.description;
             style.parent = definition_it->second.parent;
         }
-        auto scheme_it = grammar->schemes.find(grammar->default_scheme_name);
-        if (scheme_it != grammar->schemes.end()) {
-            auto color_it = scheme_it->second.colors.find(style.style_id);
-            if (color_it != scheme_it->second.colors.end()) {
-                const SchemeColor& color = color_it->second;
-                if (color.has_light_color) style.light_color = color.light_color;
-                if (color.has_dark_color) style.dark_color = color.dark_color;
-                style.font_flags = color.light_font_flags | color.dark_font_flags;
-            }
-        }
         if (style.style_id >= grammar->styles.size()) {
             grammar->styles.resize(static_cast<size_t>(style.style_id) + 1);
         }
