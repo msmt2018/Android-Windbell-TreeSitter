@@ -90,13 +90,13 @@ class WindbellTshLinkageTest {
         assertTrue(catalog.first { it.name == "keyword" }.tags.contains("control"))
         assertTrue(engine.selectScheme("scheme", "midnight"))
         assertEquals(0xFF1E1E1E.toInt(), engine.getThemeTokens("scheme")["editor.background"])
-        assertTrue(engine.selectScheme("scheme", "github"))
-        assertEquals("github", engine.getSelectedScheme("scheme"))
         engine.setAppearance("scheme", false)
         assertFalse(engine.isDark("scheme"))
         assertEquals(0xFFFFFFFF.toInt(), engine.getThemeTokens("scheme")["editor.background"])
         engine.clearAppearanceOverride("scheme")
         assertTrue(engine.isDark("scheme"))
+        assertTrue(engine.selectScheme("scheme", "github"))
+        assertEquals("github", engine.getSelectedScheme("scheme"))
     }
 
     @Test
