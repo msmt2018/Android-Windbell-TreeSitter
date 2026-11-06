@@ -307,6 +307,23 @@ std::shared_ptr<TshGrammar> TshCompiler::compile(const std::string& source, cons
                         if (mode_tok.type == TshLexer::TokenType::TOK_RBRACE) break;
                         if (mode_tok.type == TshLexer::TokenType::TOK_EOF) return nullptr;
 
+                        if (mode_tok.text == "ui") {
+                            auto ui_open = lexer.nextToken();
+                            if (ui_open.type != TshLexer::TokenType::TOK_LBRACE) return nullptr;
+                            while (true) {
+                                auto token_name = lexer.nextToken();
+                                if (token_name.type == TshLexer::TokenType::TOK_RBRACE) break;
+                                if (token_name.type == TshLexer::TokenType::TOK_COMMA) continue;
+                                if (token_name.type == TshLexer::TokenType::TOK_EOF) return nullptr;
+                                auto separator = lexer.nextToken();
+                                if (separator.type != TshLexer::TokenType::TOK_COLON) return nullptr;
+                                auto value = lexer.nextToken();
+                                if (value.type != TshLexer::TokenType::TOK_IDENT) return nullptr;
+                                scheme.ui_colors[token_name.text] = parseColorHex(value.text);
+                            }
+                            continue;
+                        }
+
                         const bool is_light = mode_tok.text == "light";
                         const bool is_dark = mode_tok.text == "dark";
                         if (!is_light && !is_dark) return nullptr;
