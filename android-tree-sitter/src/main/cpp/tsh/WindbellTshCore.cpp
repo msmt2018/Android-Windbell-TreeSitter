@@ -238,17 +238,22 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
             TSSymbol parent_sym = ts_node_is_null(parent) ? 0 : ts_node_symbol(parent);
 
             for (const auto& ast_rule : grammar->ast_selector_rules) {
-                if (ast_rule.target_symbol != 0 && ast_rule.target_symbol != sym) {
-                    continue;
-                }
-                if (ast_rule.field_id != 0 && ast_rule.field_id != fid) {
+                // A selector with a field names the owner node and styles the
+                // selected child. A selector without a field targets the node itself.
+                if (ast_rule.field_id != 0) {
+                    if (ts_node_is_null(parent) ||
+                        (ast_rule.target_symbol != 0 && ast_rule.target_symbol != parent_sym) ||
+                        ast_rule.field_id != fid) {
+                        continue;
+                    }
+                } else if (ast_rule.target_symbol != 0 && ast_rule.target_symbol != sym) {
                     continue;
                 }
                 if (ast_rule.parent_symbol != 0 && ast_rule.parent_symbol != parent_sym) {
                     continue;
                 }
 
-                if (ast_rule.style_id != 0) {
+                if (ast_rule.has_style) {
                     HighlightSpan span;
                     span.start_byte = ts_node_start_byte(node);
                     span.end_byte = ts_node_end_byte(node);
@@ -313,44 +318,11 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
             return (a.start_byte != b.start_byte) ? a.start_byte < b.start_byte : a.end_byte < b.end_byte;
         });
 
-        std::vector<HighlightSpan> container_spans;
-        std::vector<HighlightSpan> other_micro_spans;
-
-        for (const auto& mic : micro_spans) {
-            if (mic.style_id == 2 || mic.style_id == 3 || mic.style_id == 11 || mic.style_id == 12) {
-                container_spans.push_back(mic);
-            } else {
-                other_micro_spans.push_back(mic);
-            }
-        }
-
-        for (const auto& mac : macro_spans) {
-            bool enclosed = false;
-            for (const auto& cont : container_spans) {
-                if (mac.start_byte >= cont.start_byte && mac.end_byte <= cont.end_byte) {
-                    enclosed = true;
-                    break;
-                }
-            }
-            if (!enclosed) {
-                final_spans.push_back(mac);
-            }
-        }
-
-        final_spans.insert(final_spans.end(), container_spans.begin(), container_spans.end());
-
-        for (const auto& mic : other_micro_spans) {
-            bool overlapped = false;
-            for (const auto& cur : final_spans) {
-                if (!(mic.end_byte <= cur.start_byte || mic.start_byte >= cur.end_byte)) {
-                    overlapped = true;
-                    break;
-                }
-            }
-            if (!overlapped) {
-                final_spans.push_back(mic);
-            }
-        }
+        // Keep overlapping captures. Their precedence is a rule-level concern,
+        // not an accidental consequence of numeric style IDs.
+        final_spans.reserve(macro_spans.size() + micro_spans.size());
+        final_spans.insert(final_spans.end(), macro_spans.begin(), macro_spans.end());
+        final_spans.insert(final_spans.end(), micro_spans.begin(), micro_spans.end());
     }
 
     std::sort(final_spans.begin(), final_spans.end(), [](const HighlightSpan& a, const HighlightSpan& b) {
