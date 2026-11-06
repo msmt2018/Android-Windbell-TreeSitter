@@ -2,6 +2,7 @@ package com.zerostudio.idea.treesitter.tsh
 
 import android.text.Spannable
 import android.text.SpannableStringBuilder
+import android.text.TextPaint
 import android.text.style.CharacterStyle
 import android.text.style.ForegroundColorSpan
 import android.text.style.StyleSpan
@@ -407,6 +408,13 @@ class WindbellTshEngine private constructor() {
             }
             if ((flags and 0x08) != 0) {
                 spannable.setSpan(StrikethroughSpan(), charStart, charEnd, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+            }
+            if ((flags and 0x10) != 0) {
+                spannable.setSpan(object : CharacterStyle() {
+                    override fun updateDrawState(textPaint: TextPaint) {
+                        textPaint.alpha = minOf(textPaint.alpha, 160)
+                    }
+                }, charStart, charEnd, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
             }
         }
     }
