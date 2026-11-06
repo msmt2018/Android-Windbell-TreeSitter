@@ -54,6 +54,15 @@ class WindbellTshEngine private constructor() {
         val notIn: List<String>
     )
 
+    data class OnEnterRule(
+        val beforeText: String,
+        val afterText: String? = null,
+        val previousLineText: String? = null,
+        val indent: String,
+        val appendText: String? = null,
+        val removeText: Int = 0
+    )
+
     data class EditorMetadata(
         val lineComments: List<String> = emptyList(),
         val blockComments: List<Pair<String, String>> = emptyList(),
@@ -64,6 +73,9 @@ class WindbellTshEngine private constructor() {
         val wordPattern: String? = null,
         val indentationPatterns: Map<String, String> = emptyMap(),
         val completionTriggerCharacters: List<String> = emptyList(),
+        val electricCharacters: List<String> = emptyList(),
+        val autoCloseBefore: String? = null,
+        val onEnterRules: List<OnEnterRule> = emptyList(),
         val options: Map<String, String> = emptyMap()
     )
 
@@ -183,6 +195,9 @@ class WindbellTshEngine private constructor() {
         val indentation = LinkedHashMap<String, String>()
         val completionTriggers = ArrayList<String>()
         val options = LinkedHashMap<String, String>()
+        val electricCharacters = ArrayList<String>()
+        val onEnterRecords = java.util.TreeMap<Int, MutableMap<String, String>>()
+        var autoCloseBefore: String? = null
         var wordPattern: String? = null
 
         var index = 0
@@ -205,13 +220,35 @@ class WindbellTshEngine private constructor() {
                 "indentIncrease", "indentDecrease", "indentNextLine", "unIndentedLine" ->
                     indentation[kind] = first
                 "completionTrigger" -> completionTriggers += first
+                "electricCharacter" -> electricCharacters += first
+                "autoCloseBefore" -> autoCloseBefore = first
+                "onEnterBefore", "onEnterAfter", "onEnterPrevious", "onEnterIndent",
+                "onEnterAppend", "onEnterRemove" -> {
+                    val recordIndex = first.toIntOrNull()
+                    if (recordIndex != null && recordIndex >= 0) {
+                        onEnterRecords.getOrPut(recordIndex) { LinkedHashMap() }[kind] = second
+                    }
+                }
                 "editorOption" -> options[first] = second
             }
             index += 3
         }
+        val onEnterRules = onEnterRecords.values.mapNotNull { record ->
+            val before = record["onEnterBefore"] ?: return@mapNotNull null
+            val indent = record["onEnterIndent"] ?: return@mapNotNull null
+            OnEnterRule(
+                beforeText = before,
+                afterText = record["onEnterAfter"],
+                previousLineText = record["onEnterPrevious"],
+                indent = indent,
+                appendText = record["onEnterAppend"],
+                removeText = record["onEnterRemove"]?.toIntOrNull() ?: 0
+            )
+        }
         return EditorMetadata(
             lineComments, blockComments, brackets, bracketNotIn, autoClosingPairs, surroundingPairs,
-            wordPattern, indentation, completionTriggers, options
+            wordPattern, indentation, completionTriggers, electricCharacters, autoCloseBefore,
+            onEnterRules, options
         )
     }
 
