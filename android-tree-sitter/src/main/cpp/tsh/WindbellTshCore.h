@@ -20,6 +20,14 @@
 
 namespace windbell::tsh {
 
+enum class HighlightSource : uint8_t {
+    ONIGURUMA = 0,
+    MONARCH = 1,
+    AST_SELECTOR = 2,
+    NATIVE_QUERY = 3,
+    UNKNOWN = 255
+};
+
 #pragma pack(push, 4)
 struct HighlightSpan {
     uint32_t start_byte;
@@ -29,7 +37,9 @@ struct HighlightSpan {
     int32_t priority = 0;
     uint32_t declaration_order = 0;
     uint8_t allow_overlap = 0;
-    uint8_t reserved[3] = {};
+    // Reuses one byte of the existing reserved ABI tail; struct size stays 24.
+    uint8_t source = static_cast<uint8_t>(HighlightSource::UNKNOWN);
+    uint8_t reserved[2] = {};
 };
 #pragma pack(pop)
 
