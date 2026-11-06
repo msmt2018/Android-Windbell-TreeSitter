@@ -337,7 +337,12 @@ std::shared_ptr<TshGrammar> TshCompiler::compile(const std::string& source, cons
                                     if (flag_tok.text == "B" || flag_tok.text == "bold") flags |= 0x01;
                                     else if (flag_tok.text == "I" || flag_tok.text == "italic") flags |= 0x02;
                                     else if (flag_tok.text == "U" || flag_tok.text == "underline") flags |= 0x04;
+                                    continue;
                                 }
+                                // Commas are optional: the next identifier begins
+                                // another style entry and must remain in the stream.
+                                lexer.putBack(std::move(modifier));
+                                break;
                             }
 
                             auto& color_entry = scheme.colors[sid];
