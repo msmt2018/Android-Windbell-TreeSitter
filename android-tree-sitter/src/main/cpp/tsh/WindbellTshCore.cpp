@@ -76,8 +76,9 @@ static bool tshPredicateCaptureTexts(const TSQueryMatch& match, uint32_t capture
     return !texts.empty();
 }
 
-static bool tshEvaluateNativePredicates(const TSQuery* query, const TSQueryMatch& match,
-    const UChar* input, uint32_t input_bytes) {
+static bool tshEvaluateNativePredicates(const NativeQueryProgram& program,
+    const TSQueryMatch& match, const UChar* input, uint32_t input_bytes) {
+    const TSQuery* query = program.query;
     uint32_t step_count = 0;
     const TSQueryPredicateStep* steps =
         ts_query_predicates_for_pattern(query, match.pattern_index, &step_count);
@@ -122,6 +123,29 @@ static bool tshEvaluateNativePredicates(const TSQuery* query, const TSQueryMatch
                     return std::find(expected.begin(), expected.end(), value) != expected.end();
                 });
             accepted = op == "any-of?" ? any_equal : !any_equal;
+        } else if (op == "match?" || op == "not-match?") {
+            const NativeQueryProgram::PredicateRegex* compiled = nullptr;
+            for (const auto& candidate : program.predicate_regexes) {
+                if (candidate.pattern_index == match.pattern_index &&
+                    candidate.capture_id == predicate[1].value_id) {
+                    compiled = &candidate;
+                    break;
+                }
+            }
+            if (!compiled || !compiled->regex) return false;
+            const bool all_match = std::all_of(actual.begin(), actual.end(),
+                [&](const std::vector<UChar>& value) {
+                    if (value.empty()) return false;
+                    OnigRegion* region = onig_region_new();
+                    if (!region) return false;
+                    const UChar* begin = value.data();
+                    const UChar* end = begin + value.size();
+                    const int result = onig_search(compiled->regex, begin, end, begin, end,
+                        region, ONIG_OPTION_NONE);
+                    onig_region_free(region, 1);
+                    return result >= 0;
+                });
+            accepted = compiled->negate ? !all_match : all_match;
         } else return false;
         if (!accepted) return false;
     }
@@ -205,6 +229,12 @@ TshGrammar::~TshGrammar() {
     }
 
     for (auto& native_query : native_queries) {
+        for (auto& predicate : native_query.predicate_regexes) {
+            if (predicate.regex) {
+                onig_free(predicate.regex);
+                predicate.regex = nullptr;
+            }
+        }
         if (native_query.query) {
             ts_query_delete(native_query.query);
             native_query.query = nullptr;
@@ -744,7 +774,7 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
             uint32_t match_order = 0;
             while (ts_query_cursor_next_match(q_cursor, &match)) {
                 const uint32_t current_order = match_order++;
-                if (!tshEvaluateNativePredicates(native_query.query, match, text_start, total_bytes))
+                if (!tshEvaluateNativePredicates(native_query, match, text_start, total_bytes))
                     continue;
                 for (uint32_t capture_index = 0; capture_index < match.capture_count; ++capture_index) {
                     const TSQueryCapture& capture = match.captures[capture_index];
