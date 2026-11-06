@@ -35,7 +35,9 @@
     // =========================================================================
     defines: [
         "identifier": /[a-zA-Z_$][a-zA-Z0-9_$]*/,
-        "docTags": /@(param|return|throws|exception|see|since|deprecated|author|version|serial)\b/
+        "docTags": /@(param|return|throws|exception|see|since|deprecated|author|version|serial)\b/,
+        "javaQuotedString": /"(?:\\\\.|[^"\\\\])*"|'(?:\\\\.|[^'\\\\])*'/,
+        "javaNumber": /\\b(?:0[xX][0-9a-fA-F_]+|0[bB][01_]+|0[0-7_]+|[0-9_]+(?:\\.[0-9_]+)?(?:[eE][+-]?[0-9_]+)?[fFdDlL]?)\\b/
     ],
 
     // =========================================================================
@@ -43,18 +45,17 @@
     // =========================================================================
     ast: [
         // --- 4.1 符号大纲、代码折叠与类结构声明 ---
-        { node: "class_declaration", field: "name", style: "type", outline: "class", fold: true },
-        { node: "interface_declaration", field: "name", style: "type", outline: "class", fold: true },
-        { node: "record_declaration", field: "name", style: "type", outline: "class", fold: true },
-        { node: "enum_declaration", field: "name", style: "type", outline: "enum", fold: true },
+        { node: "class_declaration", field: "name", style: "type" },
+        { node: "interface_declaration", field: "name", style: "type" },
+        { node: "record_declaration", field: "name", style: "type" },
+        { node: "enum_declaration", field: "name", style: "type" },
 
         // --- 4.2 方法与构造器声明 (绑定大纲与折叠) ---
-        { node: "method_declaration", field: "name", style: "function", outline: "method", fold: true },
-        { node: "constructor_declaration", field: "name", style: "function", outline: "method", fold: true },
+        { node: "method_declaration", field: "name", style: "function" },
+        { node: "constructor_declaration", field: "name", style: "function" },
 
         // --- 4.3 字段、常量与枚举项声明 ---
-        { node: "field_declaration", fold: false },
-        { node: "enum_constant", field: "name", style: "constant", outline: "field" },
+        { node: "enum_constant", field: "name", style: "constant" },
 
         // --- 4.4 函数调用与动态属性绑定 (消除 AST 歧义) ---
         { node: "method_invocation", field: "name", style: "function" },
@@ -93,8 +94,8 @@
         },
 
         // ---------- 5.3 字符串与数值复合内置模式 ----------
-        {builtin: "#JAVA_QUOTED_STRING#"},
-        {builtin: "#JAVA_NUMBER#"},
+        {builtin: "javaQuotedString"},
+        {builtin: "javaNumber"},
 
         // ---------- 5.4 单行与普通多行注释 ----------
         {
