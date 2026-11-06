@@ -872,6 +872,48 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                             continue;
                         }
 
+                        if (mode_tok.text == "scopeRules") {
+                            if (lexer.nextToken().type != TshLexer::TokenType::TOK_COLON ||
+                                lexer.nextToken().type != TshLexer::TokenType::TOK_LBRACKET) return nullptr;
+                            while (true) {
+                                auto entry = lexer.nextToken();
+                                if (entry.type == TshLexer::TokenType::TOK_RBRACKET) break;
+                                if (entry.type == TshLexer::TokenType::TOK_COMMA) continue;
+                                if (entry.type != TshLexer::TokenType::TOK_LBRACE) return nullptr;
+                                TshScopeColorRule scope_rule;
+                                scope_rule.declaration_order = static_cast<uint32_t>(scheme.scope_rules.size());
+                                while (true) {
+                                    auto key = lexer.nextToken();
+                                    if (key.type == TshLexer::TokenType::TOK_RBRACE) break;
+                                    if (key.type == TshLexer::TokenType::TOK_COMMA) continue;
+                                    if (key.type == TshLexer::TokenType::TOK_EOF ||
+                                        lexer.nextToken().type != TshLexer::TokenType::TOK_COLON) return nullptr;
+                                    auto value = lexer.nextToken();
+                                    if (key.text == "selector") {
+                                        if (value.type != TshLexer::TokenType::TOK_STRING &&
+                                            value.type != TshLexer::TokenType::TOK_IDENT) return nullptr;
+                                        scope_rule.selector = value.text;
+                                    } else if (key.text == "light" || key.text == "dark") {
+                                        if (value.type != TshLexer::TokenType::TOK_IDENT ||
+                                            !isValidColorHex(value.text)) return nullptr;
+                                        if (key.text == "light") {
+                                            scope_rule.light_color = parseColorHex(value.text);
+                                            scope_rule.has_light_color = true;
+                                        } else {
+                                            scope_rule.dark_color = parseColorHex(value.text);
+                                            scope_rule.has_dark_color = true;
+                                        }
+                                    } else {
+                                        return nullptr;
+                                    }
+                                }
+                                if (scope_rule.selector.empty() ||
+                                    (!scope_rule.has_light_color && !scope_rule.has_dark_color)) return nullptr;
+                                scheme.scope_rules.push_back(std::move(scope_rule));
+                            }
+                            continue;
+                        }
+
                         if (mode_tok.text == "ui") {
                             auto ui_open = lexer.nextToken();
                             if (ui_open.type != TshLexer::TokenType::TOK_LBRACE) return nullptr;
@@ -950,6 +992,7 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                                     else if (flag_tok.text == "I" || flag_tok.text == "italic") flags |= 0x02;
                                     else if (flag_tok.text == "U" || flag_tok.text == "underline") flags |= 0x04;
                                     else if (flag_tok.text == "S" || flag_tok.text == "strike" || flag_tok.text == "strikethrough") flags |= 0x08;
+                                    else return nullptr;
                                     continue;
                                 }
                                 // Commas are optional: the next identifier begins
