@@ -123,7 +123,7 @@ bool WindbellEngine::registerGrammar(const std::string& extension, std::shared_p
     return true;
 }
 
-std::shared_ptr<TshGrammar> WindbellEngine::getGrammarByExtension(const std::string& extension) {
+std::shared_ptr<const TshGrammar> WindbellEngine::getGrammarByExtension(const std::string& extension) {
     std::lock_guard<std::mutex> lock(registry_lock_);
     auto it = grammar_registry_.find(extension);
     return (it != grammar_registry_.end()) ? it->second : nullptr;
