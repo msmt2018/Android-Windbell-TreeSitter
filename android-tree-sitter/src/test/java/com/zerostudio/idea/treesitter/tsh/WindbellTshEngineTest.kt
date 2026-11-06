@@ -95,8 +95,8 @@ class WindbellTshLinkageTest {
                 surroundingPairs: ["()", "[]"]
                 wordPattern: /[A-Za-z_][A-Za-z0-9_]*/
                 indentation {
-                    increaseIndentPattern: /\\{[^}]*$/
-                    decreaseIndentPattern: /^\\s*\\}/
+                    increaseIndentPattern: /\{[^}]*$/
+                    decreaseIndentPattern: /^\s*\}/
                 }
                 completion {
                     triggerCharacters: [".", ":"]
