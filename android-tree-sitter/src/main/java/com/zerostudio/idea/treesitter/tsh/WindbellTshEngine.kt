@@ -1,6 +1,5 @@
 package com.zerostudio.idea.treesitter.tsh
 
-import android.graphics.Color
 import android.text.Spannable
 import android.text.SpannableStringBuilder
 import android.text.style.CharacterStyle
@@ -111,10 +110,18 @@ class WindbellTshEngine private constructor() {
             val charEnd = (span.endByte shr 1).coerceAtMost(spannable.length)
             if (charStart < charEnd) {
                 val colorDef = palette[span.styleId]
-                val color = if (isDarkTheme) colorDef?.darkColor ?: Color.WHITE else colorDef?.lightColor ?: Color.BLACK
-                spannable.setSpan(ForegroundColorSpan(color), charStart, charEnd, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
-                if ((span.fontFlags and 0x01) != 0) {
+                // A missing DSL color means "leave the editor's foreground alone".
+                // Never inject a platform black/white fallback.
+                val color = if (isDarkTheme) colorDef?.darkColor ?: 0 else colorDef?.lightColor ?: 0
+                if (color != 0) {
+                    spannable.setSpan(ForegroundColorSpan(color), charStart, charEnd, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+                }
+                val flags = span.fontFlags
+                if ((flags and 0x01) != 0) {
                     spannable.setSpan(StyleSpan(android.graphics.Typeface.BOLD), charStart, charEnd, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+                }
+                if ((flags and 0x02) != 0) {
+                    spannable.setSpan(StyleSpan(android.graphics.Typeface.ITALIC), charStart, charEnd, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
                 }
             }
         }
