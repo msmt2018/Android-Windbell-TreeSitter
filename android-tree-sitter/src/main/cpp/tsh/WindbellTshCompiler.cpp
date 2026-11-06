@@ -408,8 +408,8 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                     if (flag.type == TshLexer::TokenType::TOK_RBRACKET) break;
                     if (flag.type == TshLexer::TokenType::TOK_COMMA) continue;
                     if (flag.text == "i" || flag.text == "ignoreCase") rule.regex_options |= ONIG_OPTION_IGNORECASE;
-                    else if (flag.text == "m" || flag.text == "multiline") rule.regex_options |= ONIG_OPTION_MULTILINE;
-                    else if (flag.text == "s" || flag.text == "dotAll" || flag.text == "singleline") rule.regex_options |= ONIG_OPTION_SINGLELINE;
+                    else if (flag.text == "m" || flag.text == "dotAll") rule.regex_options |= ONIG_OPTION_MULTILINE;
+                    else if (flag.text == "s" || flag.text == "singlelineAnchors") rule.regex_options |= ONIG_OPTION_SINGLELINE;
                     else if (flag.text == "x" || flag.text == "extended") rule.regex_options |= ONIG_OPTION_EXTEND;
                     else return false;
                 }
@@ -540,9 +540,11 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                     if (key.text == "caseSensitive") {
                         if (!enabled) grammar->default_regex_options |= ONIG_OPTION_IGNORECASE;
                     } else if (key.text == "multiline") {
-                        if (enabled) grammar->default_regex_options |= ONIG_OPTION_MULTILINE;
+                        if (enabled) grammar->default_regex_options &= ~ONIG_OPTION_SINGLELINE;
+                        else grammar->default_regex_options |= ONIG_OPTION_SINGLELINE;
                     } else if (key.text == "dotAll") {
-                        if (enabled) grammar->default_regex_options |= ONIG_OPTION_SINGLELINE;
+                        if (enabled) grammar->default_regex_options |= ONIG_OPTION_MULTILINE;
+                        else grammar->default_regex_options &= ~ONIG_OPTION_MULTILINE;
                     } else if (key.text == "extended") {
                         if (enabled) grammar->default_regex_options |= ONIG_OPTION_EXTEND;
                     } else if (key.text == "unicode") {
