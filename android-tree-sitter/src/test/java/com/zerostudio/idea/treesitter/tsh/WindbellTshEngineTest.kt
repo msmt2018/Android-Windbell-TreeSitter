@@ -86,7 +86,12 @@ class WindbellTshLinkageTest {
             name: ["Scheme Test", ".scheme"]
             isDark: true
             styles {
-                keyword { scope: "keyword.control", tags: ["keyword", "control"] }
+                keyword {
+                    scope: "keyword.control"
+                    tags: ["keyword", "control"]
+                    deprecated: false
+                    metadata: { standard: "textmate", category: "syntax" }
+                }
                 keywordStrong { scope: "keyword.control.strong", parent: "keyword", tags: ["keyword", "emphasis"] }
                 string { scope: "string.quoted", tags: ["string"] }
             }
@@ -165,6 +170,9 @@ class WindbellTshLinkageTest {
         val catalog = engine.getStyleCatalog("scheme")
         assertEquals("keyword.control", catalog.first { it.name == "keyword" }.scope)
         assertTrue(catalog.first { it.name == "keyword" }.tags.contains("control"))
+        assertFalse(catalog.first { it.name == "keyword" }.deprecated)
+        assertEquals("textmate", catalog.first { it.name == "keyword" }.metadata["standard"])
+        assertEquals("syntax", catalog.first { it.name == "keyword" }.metadata["category"])
         assertTrue(engine.selectScheme("scheme", "midnight"))
         assertEquals(0xFF1E1E1E.toInt(), engine.getThemeTokens("scheme")["editor.background"])
         engine.setAppearance("scheme", false)
