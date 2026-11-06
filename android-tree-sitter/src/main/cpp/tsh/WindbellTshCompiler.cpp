@@ -25,6 +25,7 @@
 #include <algorithm>
 #include <vector>
 #include <functional>
+#include <cmath>
 #include "ts__log.h"
 
 namespace windbell::tsh {
@@ -83,10 +84,34 @@ public:
         if (c == '>') { cursor_++; return {TokenType::TOK_GT, ">"}; }
         if (c == '@') { cursor_++; return {TokenType::TOK_AT, "@"}; }
 
-        if (std::isdigit(static_cast<unsigned char>(c))) {
+        if (std::isdigit(static_cast<unsigned char>(c)) ||
+            ((c == '-' || c == '+') && cursor_ + 1 < src_.size() &&
+             std::isdigit(static_cast<unsigned char>(src_[cursor_ + 1])))) {
             std::string number;
+            if (src_[cursor_] == '-' || src_[cursor_] == '+') number += src_[cursor_++];
             while (cursor_ < src_.size() && std::isdigit(static_cast<unsigned char>(src_[cursor_]))) {
                 number += src_[cursor_++];
+            }
+            if (cursor_ + 1 < src_.size() && src_[cursor_] == '.' &&
+                std::isdigit(static_cast<unsigned char>(src_[cursor_ + 1]))) {
+                number += src_[cursor_++];
+                while (cursor_ < src_.size() && std::isdigit(static_cast<unsigned char>(src_[cursor_]))) {
+                    number += src_[cursor_++];
+                }
+            }
+            if (cursor_ < src_.size() && (src_[cursor_] == 'e' || src_[cursor_] == 'E')) {
+                const size_t exponent_start = cursor_;
+                std::string exponent;
+                exponent += src_[cursor_++];
+                if (cursor_ < src_.size() && (src_[cursor_] == '-' || src_[cursor_] == '+')) {
+                    exponent += src_[cursor_++];
+                }
+                const size_t digits_start = cursor_;
+                while (cursor_ < src_.size() && std::isdigit(static_cast<unsigned char>(src_[cursor_]))) {
+                    exponent += src_[cursor_++];
+                }
+                if (cursor_ == digits_start) cursor_ = exponent_start;
+                else number += exponent;
             }
             return {TokenType::TOK_NUMBER, number};
         }
@@ -1053,12 +1078,29 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                         if (value.type != TshLexer::TokenType::TOK_IDENT &&
                             value.type != TshLexer::TokenType::TOK_NUMBER &&
                             value.type != TshLexer::TokenType::TOK_STRING) return nullptr;
-                        if (field.text == "tabSize" || field.text == "fontSize" ||
-                            field.text == "lineHeight" || field.text == "maxTokenizationLineLength") {
+                        if (field.text == "tabSize" || field.text == "maxTokenizationLineLength") {
+                            if (value.type != TshLexer::TokenType::TOK_NUMBER) return nullptr;
                             try {
-                                const int numeric = std::stoi(value.text);
-                                if (numeric <= 0) return nullptr;
+                                size_t consumed = 0;
+                                const int numeric = std::stoi(value.text, &consumed);
+                                if (consumed != value.text.size() || numeric <= 0) return nullptr;
                             } catch (...) { return nullptr; }
+                        } else if (field.text == "fontSize" || field.text == "lineHeight" ||
+                                   field.text == "letterSpacing") {
+                            if (value.type != TshLexer::TokenType::TOK_NUMBER) return nullptr;
+                            try {
+                                size_t consumed = 0;
+                                const float numeric = std::stof(value.text, &consumed);
+                                if (consumed != value.text.size() || !std::isfinite(numeric) ||
+                                    (field.text != "letterSpacing" && numeric <= 0.0f)) return nullptr;
+                            } catch (...) { return nullptr; }
+                        } else if (field.text == "insertSpaces" || field.text == "autoIndent" ||
+                                   field.text == "trimTrailingWhitespace" || field.text == "formatOnType" ||
+                                   field.text == "formatOnPaste" || field.text == "lineNumbers") {
+                            if (value.text != "true" && value.text != "false") return nullptr;
+                        } else if (field.text == "renderWhitespace") {
+                            if (value.text != "none" && value.text != "boundary" &&
+                                value.text != "selection" && value.text != "all") return nullptr;
                         }
                         grammar->editor_metadata.options[field.text] = value.text;
                     } else if (field.text == "wordPattern") {
