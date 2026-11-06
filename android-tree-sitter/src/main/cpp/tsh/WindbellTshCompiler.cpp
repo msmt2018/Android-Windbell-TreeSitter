@@ -438,6 +438,51 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
     while (tok.type != TshLexer::TokenType::TOK_EOF) {
         if (tok.type == TshLexer::TokenType::TOK_IDENT) {
 
+            // Language identity and editor/file association metadata.
+            if (tok.text == "language") {
+                auto open = lexer.nextToken();
+                if (open.type == TshLexer::TokenType::TOK_COLON) open = lexer.nextToken();
+                if (open.type != TshLexer::TokenType::TOK_LBRACE) return nullptr;
+                auto read_values = [&](std::vector<std::string>& values) -> bool {
+                    if (lexer.nextToken().type != TshLexer::TokenType::TOK_LBRACKET) return false;
+                    while (true) {
+                        auto value = lexer.nextToken();
+                        if (value.type == TshLexer::TokenType::TOK_RBRACKET) return true;
+                        if (value.type == TshLexer::TokenType::TOK_COMMA) continue;
+                        if (value.type != TshLexer::TokenType::TOK_STRING &&
+                            value.type != TshLexer::TokenType::TOK_IDENT) return false;
+                        values.push_back(value.text);
+                    }
+                };
+                while (true) {
+                    auto key = lexer.nextToken();
+                    if (key.type == TshLexer::TokenType::TOK_RBRACE) break;
+                    if (key.type == TshLexer::TokenType::TOK_COMMA) continue;
+                    if (key.type == TshLexer::TokenType::TOK_EOF) return nullptr;
+                    if (lexer.nextToken().type != TshLexer::TokenType::TOK_COLON) return nullptr;
+                    if (key.text == "id" || key.text == "name" || key.text == "firstLine") {
+                        auto value = lexer.nextToken();
+                        if (key.text == "id") grammar->id = value.text;
+                        else if (key.text == "name") grammar->name = value.text;
+                        else if (value.type != TshLexer::TokenType::TOK_REGEX) return nullptr;
+                        else grammar->first_line_pattern = value.text;
+                    } else if (key.text == "extensions") {
+                        std::vector<std::string> values;
+                        if (!read_values(values)) return nullptr;
+                        for (auto value : values) {
+                            if (!value.empty() && value.front() == '.') value.erase(value.begin());
+                            if (!value.empty()) grammar->file_extensions.push_back(std::move(value));
+                        }
+                    } else if (key.text == "aliases") {
+                        if (!read_values(grammar->aliases)) return nullptr;
+                    } else if (key.text == "mimetypes" || key.text == "mimeTypes") {
+                        if (!read_values(grammar->mime_types)) return nullptr;
+                    } else {
+                        return nullptr;
+                    }
+                }
+            }
+
             // =================================================================
             // 1. 解析语法元信息: name: ["Java", ".java"]
             // =================================================================
