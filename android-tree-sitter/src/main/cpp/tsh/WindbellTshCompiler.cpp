@@ -778,6 +778,24 @@ static bool expandMonarchVariables(
     return true;
 }
 
+static bool validateNumericCaptureGroups(
+    regex_t* regex,
+    const std::unordered_map<int, uint16_t>& groups
+) {
+    if (!regex) return groups.empty();
+    const int capture_count = onig_number_of_captures(regex);
+    for (const auto& entry : groups) {
+        // Group zero is the complete match; positive groups must exist.
+        if (entry.first < 0 || entry.first > capture_count) {
+            g_tsh_last_error_detail = "capture group index is out of range: " +
+                std::to_string(entry.first) + " (pattern has " +
+                std::to_string(capture_count) + " capture groups)";
+            return false;
+        }
+    }
+    return true;
+}
+
 static regex_t* compileOnigurumaUtf16(const std::string& pattern_str, OnigOptionType options = ONIG_OPTION_DEFAULT) {
     if (pattern_str.empty()) return nullptr;
     std::vector<uint16_t> u16;
@@ -1052,6 +1070,13 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
         }
 
         if (!rule.id.empty() && !regex_rule_ids.emplace(rule.id, true).second) return false;
+        // Reject invalid numeric capture references at compile time. Previously
+        // these references were silently ignored by the runtime, making a typo in
+        // a .tsh file look like a successful but partially styled grammar.
+        if (!validateNumericCaptureGroups(rule.onig_start, rule.group_style_map) ||
+            !validateNumericCaptureGroups(rule.onig_start, rule.start_group_style_map) ||
+            !validateNumericCaptureGroups(rule.onig_end, rule.end_group_style_map)) return false;
+
         const bool has_delimiter_captures = !rule.start_group_style_map.empty() ||
             !rule.start_named_group_style_map.empty() || !rule.end_group_style_map.empty() ||
             !rule.end_named_group_style_map.empty();
