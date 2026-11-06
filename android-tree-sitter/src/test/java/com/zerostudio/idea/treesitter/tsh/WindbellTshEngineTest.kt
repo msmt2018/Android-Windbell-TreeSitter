@@ -110,8 +110,8 @@ class WindbellTshLinkageTest {
             contains: [
                 {
                     style: "comment"
-                    start: { match: /\\/\\*/ }
-                    end: { match: /\\*\\// }
+                    start: { match: /\/\*/ }
+                    end: { match: /\*\// }
                     contains: [
                         { match: /TODO/, captures: { 0: "todo" }, priority: 100 }
                     ]
