@@ -53,6 +53,7 @@ struct CompiledRegexRule {
     uint32_t declaration_order = 0;
     bool enabled = true;
     bool allow_overlap = false;
+    uint32_t regex_options = 0;
 };
 
 struct AstSelectorRule {
