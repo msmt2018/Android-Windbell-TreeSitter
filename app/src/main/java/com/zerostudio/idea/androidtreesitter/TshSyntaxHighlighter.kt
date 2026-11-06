@@ -220,6 +220,7 @@ class TshSyntaxHighlighter(
                     capturesByLine = indexCapturesByLine(textSnapshot, nextCaptures)
                     parsing = false
                     host?.invalidateStyles()
+                    host?.invalidateStructure()
                 }
             } catch (cancelled: CancellationException) {
                 throw cancelled
@@ -229,6 +230,7 @@ class TshSyntaxHighlighter(
                     allCaptures = emptyList()
                     parsing = false
                     host?.invalidateStyles()
+                    host?.invalidateStructure()
                 }
             } finally {
                 tree?.close()
