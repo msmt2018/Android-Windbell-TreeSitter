@@ -72,6 +72,32 @@ class WindbellTshLinkageTest {
     }
 
     @Test
+    fun testUnimplementedRegexAttributesAreRejectedInsteadOfSilentlyAccepted() {
+        val engine = WindbellTshEngine.instance
+        val unsupportedAttributes = listOf(
+            "while: /continuation/",
+            "applyEndPatternLast: true",
+            "when: { extension: \".sample\" }",
+            "metadata: { owner: \"user\" }"
+        )
+        unsupportedAttributes.forEachIndexed { index, attribute ->
+            val source = """
+                tsh 2 {
+                    language { id: "unsupported-$index" extensions: [".unsupported$index"] }
+                    styles { token { scope: "variable.other" } }
+                    contains: [
+                        { match: /token/, style: "token", $attribute }
+                    ]
+                }
+            """.trimIndent()
+            assertFalse(
+                engine.loadTshSource("unsupported-$index", source, null),
+                "The parser must reject unsupported rule attribute: $attribute"
+            )
+        }
+    }
+
+    @Test
     fun testNativeLoadTshSourceLinkageAndExecution() {
         val engine = WindbellTshEngine.instance
 
