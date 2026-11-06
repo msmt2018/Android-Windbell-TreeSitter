@@ -105,7 +105,7 @@ class WindbellTshEngine private constructor() {
     }
 
     fun isDark(extension: String): Boolean =
-        appearanceOverrides[extension] ?: defaultAppearances[extension] ?: false
+        appearanceOverrides[extension] ?: defaultAppearances[extension] ?: isDarkTheme
 
     /**
      * 直接向 Android 编辑器 Spannable 批量直填着色 (零闪烁、零装箱开销)
