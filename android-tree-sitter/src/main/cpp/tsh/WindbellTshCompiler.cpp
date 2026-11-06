@@ -1260,12 +1260,15 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                         if (ts_lang) {
                             if (!node_name.empty()) {
                                 ast_rule.target_symbol = ts_language_symbol_for_name(ts_lang, node_name.c_str(), static_cast<uint32_t>(node_name.length()), true);
+                                if (ast_rule.target_symbol == 0) return nullptr;
                             }
                             if (!field_name.empty()) {
                                 ast_rule.field_id = ts_language_field_id_for_name(ts_lang, field_name.c_str(), static_cast<uint32_t>(field_name.length()));
+                                if (ast_rule.field_id == 0) return nullptr;
                             }
                             if (!parent_name.empty()) {
                                 ast_rule.parent_symbol = ts_language_symbol_for_name(ts_lang, parent_name.c_str(), static_cast<uint32_t>(parent_name.length()), true);
+                                if (ast_rule.parent_symbol == 0) return nullptr;
                             }
                         }
 
