@@ -541,6 +541,11 @@ std::shared_ptr<TshGrammar> TshCompiler::compile(const std::string& source, cons
                 }
             }
 
+            else if (tok.text == "defaultScheme") {
+                if (lexer.nextToken().type != TshLexer::TokenType::TOK_COLON) return nullptr;
+                grammar->default_scheme_name = lexer.nextToken().text;
+            }
+
             // DSL default rendering mode: false = light/day, true = dark/night.
             else if (tok.text == "isDark") {
                 auto separator = lexer.nextToken();
@@ -787,8 +792,13 @@ std::shared_ptr<TshGrammar> TshCompiler::compile(const std::string& source, cons
         tok = lexer.nextToken();
     }
 
-    // Materialize the symbol catalog in stable ID order. A missing scheme color
-    // remains zero/absent; the renderer must not synthesize black or white.
+    if (!grammar->default_scheme_name.empty() &&
+        grammar->schemes.find(grammar->default_scheme_name) == grammar->schemes.end()) {
+        return nullptr;
+    }
+
+    // Materialize the symbol catalog in stable ID order. Scheme colors remain
+    // exclusively in ColorScheme; the style catalog contains semantic metadata only.
     grammar->styles.resize(grammar->style_name_to_id.size());
     for (const auto& entry : grammar->style_name_to_id) {
         TshStyle style;
