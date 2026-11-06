@@ -117,12 +117,13 @@ public:
         }
 
         // 解析字符串 (支持单双引号)
-        if (c == '"' || c == '\'') {
+        if (c == '"' || c == '\'' || c == '`') {
             char quote = c;
+            const bool raw_string = quote == '`';
             cursor_++;
             std::string content;
             while (cursor_ < src_.size() && src_[cursor_] != quote) {
-                if (src_[cursor_] == '\\' && cursor_ + 1 < src_.size()) {
+                if (!raw_string && src_[cursor_] == '\\' && cursor_ + 1 < src_.size()) {
                     cursor_++;
                 }
                 content += src_[cursor_++];
@@ -1234,6 +1235,8 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                             } else if (field.text == "overlap") {
                                 lexer.nextToken();
                                 ast_rule.allow_overlap = lexer.nextToken().text == "allow";
+                            } else {
+                                return nullptr;
                             }
                         }
 
@@ -1439,6 +1442,10 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
         }
     }
 
+    if ((!grammar->ast_selector_rules.empty() || !dynamic_query_accumulator.empty()) && !ts_lang) {
+        return nullptr;
+    }
+
     if (ts_lang && !dynamic_query_accumulator.empty()) {
         uint32_t err_offset = 0;
         TSQueryError err_type = TSQueryErrorNone;
@@ -1449,6 +1456,17 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
             &err_offset,
             &err_type
         );
+        if (!grammar->dynamic_ts_query) return nullptr;
+        const uint32_t capture_count = ts_query_capture_count(grammar->dynamic_ts_query);
+        for (uint32_t i = 0; i < capture_count; ++i) {
+            uint32_t name_length = 0;
+            const char* capture_name = ts_query_capture_name_for_id(
+                grammar->dynamic_ts_query, static_cast<uint32_t>(i), &name_length);
+            if (!capture_name || grammar->style_name_to_id.find(
+                std::string(capture_name, name_length)) == grammar->style_name_to_id.end()) {
+                return nullptr;
+            }
+        }
     }
 
     return grammar;
