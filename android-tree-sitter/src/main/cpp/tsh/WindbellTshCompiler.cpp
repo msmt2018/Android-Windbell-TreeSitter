@@ -2641,7 +2641,8 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
 
                         if (ts_lang) {
                             if (!node_name.empty()) {
-                                const bool symbol_is_named = ast_rule.named < 0 || ast_rule.named != 0;
+                                const bool symbol_is_named = !field_name.empty() ||
+                                    ast_rule.named < 0 || ast_rule.named != 0;
                                 ast_rule.target_symbol = ts_language_symbol_for_name(
                                     ts_lang, node_name.c_str(),
                                     static_cast<uint32_t>(node_name.length()), symbol_is_named);
