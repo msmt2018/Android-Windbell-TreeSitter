@@ -292,7 +292,7 @@ editor {
 }
 ```
 
-This metadata is declarative and may be exposed to the host editor. The compiler validates all on-enter regexes with Oniguruma before accepting the grammar. An on-enter action supports `none`, `indent`, `indentOutdent`, and `outdent`, plus optional `appendText` and non-negative `removeText`. `electricCharacters` identifies characters that may trigger host-side indentation recalculation; `autoCloseBefore` declares the allowed following-character pattern for auto-closing pairs. TSH does not implement completion providers, language servers, symbol outline, or code folding. It only provides metadata that a host may choose to consume.
+This metadata is declarative and may be exposed to the host editor. The native compiler validates all on-enter regexes with Oniguruma before accepting the grammar. An on-enter action supports `none`, `indent`, `indentOutdent`, and `outdent`, plus optional `appendText` and non-negative `removeText`. `electricCharacters` identifies characters that may trigger host-side indentation recalculation; `autoCloseBefore` declares the allowed following-character pattern for auto-closing pairs. The Kotlin API exposes these rules as structured metadata. The current sample adapter consumes bracket and auto-pair scopes; it does not yet execute on-enter/electric-character rules inside the editor's Enter/type event pipeline. TSH does not implement completion providers, language servers, symbol outline, or code folding. It only provides metadata that a host may choose to consume.
 
 ## 9. Runtime API contract
 
