@@ -1482,7 +1482,7 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                                         if (value.type != TshLexer::TokenType::TOK_STRING &&
                                             value.type != TshLexer::TokenType::TOK_IDENT) return nullptr;
                                         if (!value.text.empty()) {
-                                            rule.style_id = ensureStyleId(value.text + grammar->monarch_token_postfix);
+                                            rule.token_name = value.text;
                                             rule.has_style = true;
                                         }
                                     } else if (key.text == "include") {
@@ -1543,6 +1543,13 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                     }
                 }
                 if (grammar->monarch_states.empty()) return nullptr;
+                for (auto& state : grammar->monarch_states) {
+                    for (auto& rule : state.second) {
+                        if (rule.has_style) {
+                            rule.style_id = ensureStyleId(rule.token_name + grammar->monarch_token_postfix);
+                        }
+                    }
+                }
                 // Validate every declared variable, including unused definitions,
                 // so misspellings and cycles never remain latent in a compiled grammar.
                 for (const auto& variable : grammar->monarch_variables) {
