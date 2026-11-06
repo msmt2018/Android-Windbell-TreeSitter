@@ -1577,6 +1577,29 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
         }
     }
 
+    if (!grammar->monarch_states.empty()) {
+        if (grammar->monarch_states.find(grammar->monarch_start_state) == grammar->monarch_states.end()) return nullptr;
+        auto validate_state_reference = [&](std::string value, bool allow_stack_ops) -> bool {
+            if (value.empty()) return true;
+            if (!value.empty() && value.front() == '@') value.erase(value.begin());
+            if (allow_stack_ops && (value == "pop" || value == "popall" || value == "push")) return true;
+            return grammar->monarch_states.find(value) != grammar->monarch_states.end();
+        };
+        for (const auto& state : grammar->monarch_states) {
+            for (const auto& rule : state.second) {
+                if (!rule.include_state.empty() &&
+                    grammar->monarch_states.find(rule.include_state) == grammar->monarch_states.end()) return nullptr;
+                if (!validate_state_reference(rule.next_state, true) ||
+                    !validate_state_reference(rule.push_state, false) ||
+                    !validate_state_reference(rule.switch_state, false)) return nullptr;
+                const int transitions = (!rule.next_state.empty() ? 1 : 0) +
+                    (!rule.push_state.empty() ? 1 : 0) +
+                    (!rule.switch_state.empty() ? 1 : 0) + (rule.pop ? 1 : 0);
+                if (transitions > 1) return nullptr;
+            }
+        }
+    }
+
     if (!grammar->default_scheme_name.empty() &&
         grammar->schemes.find(grammar->default_scheme_name) == grammar->schemes.end()) {
         return nullptr;
