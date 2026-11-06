@@ -32,6 +32,7 @@
 namespace windbell::tsh {
 
 static thread_local uint32_t g_tsh_last_source_offset = 0;
+static thread_local std::string g_tsh_last_error_detail;
 
 // 内部高性能 DSL 词法分析器（支持 JSON5、嵌套块、注释过滤、正则解析）
 class TshLexer {
@@ -72,7 +73,10 @@ public:
         }
         skipIgnored();
         g_tsh_last_source_offset = static_cast<uint32_t>(cursor_);
-        if (lexical_error_) return {TokenType::TOK_INVALID, "unterminated comment"};
+        if (lexical_error_) {
+            g_tsh_last_error_detail = "unterminated block comment";
+            return {TokenType::TOK_INVALID, g_tsh_last_error_detail};
+        }
         if (cursor_ >= src_.size()) {
             return {TokenType::TOK_EOF, ""};
         }
@@ -240,7 +244,8 @@ public:
         }
 
         ++cursor_;
-        return {TokenType::TOK_INVALID, std::string("unexpected character: ") + c};
+        g_tsh_last_error_detail = std::string("unexpected character: ") + c;
+        return {TokenType::TOK_INVALID, g_tsh_last_error_detail};
     }
 
     // 提取括号内的原始内容（用于 keywordsToRegex("...") 提取）
@@ -299,6 +304,7 @@ private:
 
 std::shared_ptr<TshGrammar> TshCompiler::compile(const std::string& source, const TSLanguage* ts_lang) {
     g_tsh_last_source_offset = 0;
+    g_tsh_last_error_detail.clear();
     auto result = compileInternal(source, ts_lang);
     std::vector<TshCompileDiagnostic> diagnostics;
     if (!result) {
@@ -312,7 +318,9 @@ std::shared_ptr<TshGrammar> TshCompiler::compile(const std::string& source, cons
         }
         diagnostics.push_back({
             "TSH_PARSE_OR_COMPILE_ERROR",
-            "TSH compilation failed near this location. Check the current property value, delimiters, references, regex/query syntax and required fields.",
+            g_tsh_last_error_detail.empty()
+                ? "TSH compilation failed near this location. Check the current property value, delimiters, references, regex/query syntax and required fields."
+                : std::string("TSH compilation failed: ") + g_tsh_last_error_detail,
             offset, line, column
         });
     }
@@ -681,6 +689,7 @@ static regex_t* compileOnigurumaUtf16(const std::string& pattern_str, OnigOption
     if (pattern_str.empty()) return nullptr;
     std::vector<uint16_t> u16;
     if (!decodePatternUtf8ToUtf16(pattern_str, u16)) {
+        g_tsh_last_error_detail = "regex contains invalid UTF-8";
         LOGE("WindbellTSH", "Invalid UTF-8 in Oniguruma pattern: %s", pattern_str.c_str());
         return nullptr;
     }
@@ -698,6 +707,7 @@ static regex_t* compileOnigurumaUtf16(const std::string& pattern_str, OnigOption
     if (r != ONIG_NORMAL) {
         char err[ONIG_MAX_ERROR_MESSAGE_LEN];
         onig_error_code_to_str(reinterpret_cast<UChar*>(err), r, &einfo);
+        g_tsh_last_error_detail = std::string("Oniguruma regex error: ") + reinterpret_cast<const char*>(err);
         LOGE("WindbellTSH", "Oniguruma UTF-16 Regex Compile Failed: %s, pat: %s", err, pattern_str.c_str());
         return nullptr;
     }
