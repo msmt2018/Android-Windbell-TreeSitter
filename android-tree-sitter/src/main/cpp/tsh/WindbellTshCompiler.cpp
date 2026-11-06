@@ -745,13 +745,18 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                 rule.type = RegexRuleType::BLOCK;
                 if (item.text == "end") raw_end_pattern = pattern_text;
                 else raw_start_pattern = pattern_text;
-            } else if (item.text == "style") {
+            } else if (item.text == "style" || item.text == "name" || item.text == "contentName") {
                 if (lexer.nextToken().type != TshLexer::TokenType::TOK_COLON) return false;
                 auto style_name = lexer.nextToken();
                 if (style_name.type != TshLexer::TokenType::TOK_STRING &&
                     style_name.type != TshLexer::TokenType::TOK_IDENT) return false;
-                rule.style_id = ensureStyleId(style_name.text);
-                rule.has_style = true;
+                if (item.text == "contentName") {
+                    rule.content_style_id = ensureStyleId(style_name.text);
+                    rule.has_content_style = true;
+                } else {
+                    rule.style_id = ensureStyleId(style_name.text);
+                    rule.has_style = true;
+                }
             } else if (item.text == "id") {
                 if (lexer.nextToken().type != TshLexer::TokenType::TOK_COLON) return false;
                 auto value = lexer.nextToken();
@@ -863,7 +868,7 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
 
         if (!rule.id.empty() && !regex_rule_ids.emplace(rule.id, true).second) return false;
         const bool valid = rule.type == RegexRuleType::BLOCK ?
-            ((rule.has_style || !rule.start_group_style_map.empty() ||
+            ((rule.has_style || rule.has_content_style || !rule.start_group_style_map.empty() ||
               !rule.start_named_group_style_map.empty() || !rule.end_group_style_map.empty() ||
               !rule.end_named_group_style_map.empty()) && rule.onig_start && rule.onig_end) :
             (rule.onig_start != nullptr);
