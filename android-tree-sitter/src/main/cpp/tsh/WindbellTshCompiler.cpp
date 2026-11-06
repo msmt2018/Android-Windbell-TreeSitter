@@ -1543,6 +1543,14 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                     }
                 }
                 if (grammar->monarch_states.empty()) return nullptr;
+                // Validate every declared variable, including unused definitions,
+                // so misspellings and cycles never remain latent in a compiled grammar.
+                for (const auto& variable : grammar->monarch_variables) {
+                    std::unordered_map<std::string, bool> active_variables;
+                    std::string expanded_variable;
+                    if (!expandMonarchVariables(variable.second, grammar->monarch_variables,
+                            active_variables, expanded_variable)) return nullptr;
+                }
             }
 
             // TextMate-style repository of reusable regular-expression fragments.
