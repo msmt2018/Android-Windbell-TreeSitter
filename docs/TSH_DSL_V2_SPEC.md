@@ -36,7 +36,10 @@ tsh 2 {
 
   styles { /* semantic style declarations */ }
   schemes { /* unlimited named schemes */ }
-  rules { /* ats and regex rules */ }
+  treeSitter { queries: [ /* embedded query sources */ ] }
+  ast: [ /* Tree-sitter node/field selectors */ ]
+  repository { /* reusable Oniguruma fragments */ }
+  contains: [ /* Oniguruma match and begin/end rules */ ]
   editor {
     tabSize: 4
     fontSize: 14
@@ -50,7 +53,7 @@ tsh 2 {
 }
 ```
 
-The compiler accepts the versioned `tsh 2 { ... }` envelope and the legacy root-object form. It rejects unsupported DSL versions, duplicate root sections/style/scheme IDs, malformed blocks, unknown root/style/editor properties, invalid color values, unresolved style references, inheritance cycles, invalid regexes and invalid Tree-sitter queries with source diagnostics (file, line, column, code and message). Unknown keys are errors by default; an explicit `extensions` namespace is reserved for vendor/user metadata.
+The compiler accepts the versioned `tsh 2 { ... }` envelope and the legacy root-object form. The currently implemented root rule sections are `treeSitter.queries`, `ast`, `repository`, and `contains`; the higher-level unified `rules { ats { ... } regex { ... } }` façade remains a planned syntax layer. It rejects unsupported DSL versions, duplicate root sections/style/scheme IDs, malformed blocks, unknown root/style/editor properties, invalid color values, unresolved style references, inheritance cycles, invalid regexes and invalid Tree-sitter queries with source diagnostics (file, line, column, code and message). Unknown keys are errors by default; an explicit `extensions` namespace is reserved for vendor/user metadata.
 
 ## 3. Semantic style catalog
 
@@ -122,9 +125,9 @@ schemes {
 
 Color syntax accepts #RGB, #RGBA, #RRGGBB and #AARRGGBB; canonical runtime representation is AARRGGBB. Theme values are data, never C++ constants. Theme UI tokens are arbitrary dotted names, not a hard-coded enum. A scheme may optionally declare `extends: "otherScheme"`; inheritance is resolved by the compiler and cycles/missing parents are errors. The active appearance is a runtime selection (`light` or `dark`) and does not require reparsing the syntax tree.
 
-TextMate block rules support separate `beginCaptures`/`startCaptures` and `endCaptures` maps, including named Oniguruma capture groups. The begin/end delimiter captures are emitted independently from the enclosing region style and nested patterns.
+TextMate block rules support separate `beginCaptures`/`startCaptures` and `endCaptures` maps, including named Oniguruma capture groups. The begin/end delimiter captures are emitted independently from the enclosing region style and nested patterns. A `repository` block currently supports named reusable regex fragments referenced with `include("#name")`, including recursive references with cycle detection. Full TextMate pattern repositories, external `$self`/scope includes, injections and scope-selector matching remain planned.
 
-Style modifiers are composable: `bold`, `italic`, `underline`, `strikethrough`, `dim`, `italicOff`, `boldOff`, `fontFamily`, `fontSize`, `opacity`, `border`, and `background`. Modifiers are optional and independently specified for light/dark. The renderer only applies properties explicitly present in the selected scheme.
+Implemented scheme modifiers are `@bold`, `@italic`, `@underline`, and `@strikethrough`, independently tracked for light/dark. Additional typography and decoration modifiers (`dim`, reset modifiers, font family/size, opacity, border and background) remain planned and must not be treated as implemented.
 
 ## 5. Rule model and arbitration
 
