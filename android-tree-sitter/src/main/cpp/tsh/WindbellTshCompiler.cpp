@@ -2332,6 +2332,14 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                                                 if (consumed != pattern_value.text.size()) return nullptr;
                                                 metadata.has_priority = true;
                                             } catch (...) { return nullptr; }
+                                        } else if (pattern_field.text == "order") {
+                                            if (pattern_value.type != TshLexer::TokenType::TOK_NUMBER) return nullptr;
+                                            try {
+                                                size_t consumed = 0;
+                                                metadata.declaration_order = static_cast<uint32_t>(
+                                                    std::stoul(pattern_value.text, &consumed));
+                                                if (consumed != pattern_value.text.size()) return nullptr;
+                                            } catch (...) { return nullptr; }
                                         } else {
                                             return nullptr;
                                         }
