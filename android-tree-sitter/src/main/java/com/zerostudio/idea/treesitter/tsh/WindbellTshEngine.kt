@@ -375,13 +375,21 @@ class WindbellTshEngine private constructor() {
         // schedule rendering from several workers; serialize only mutations of the
         // same document buffer, never the native tokenizer or unrelated documents.
         synchronized(spannable) {
-            val oldSpans = spannable.getSpans(0, spannable.length, CharacterStyle::class.java)
-            for (old in oldSpans) spannable.removeSpan(old)
-
             val palette = paletteCache[extension] ?: emptyMap()
             val darkMode = isDark(extension)
             val visibleStart = start.coerceIn(0, spannable.length)
             val visibleEnd = end.coerceIn(visibleStart, spannable.length)
+
+            // Incremental/viewport rendering must not erase styles outside the
+            // requested range. Only spans intersecting this range are invalidated.
+            if (visibleStart < visibleEnd) {
+                val oldSpans = spannable.getSpans(
+                    visibleStart,
+                    visibleEnd,
+                    CharacterStyle::class.java
+                )
+                for (old in oldSpans) spannable.removeSpan(old)
+            }
 
             for (span in spans) {
                 val globalStart = span.startByte shr 1
