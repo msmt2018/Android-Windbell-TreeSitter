@@ -59,6 +59,10 @@ struct TshStyle {
     uint32_t light_color = 0;
     uint32_t dark_color = 0;
     uint16_t font_flags = 0;
+    std::string scope;
+    std::vector<std::string> tags;
+    std::string description;
+    std::string parent;
 };
 
 // 单个 Token 的方案配色定义
