@@ -240,6 +240,13 @@ std::shared_ptr<TshGrammar> TshCompiler::compile(const std::string& source, cons
     std::string dynamic_query_accumulator;
 
     uint16_t global_style_counter = 0;
+    auto ensureStyleId = [&](const std::string& name) -> uint16_t {
+        auto it = grammar->style_name_to_id.find(name);
+        if (it != grammar->style_name_to_id.end()) return it->second;
+        const uint16_t id = global_style_counter++;
+        grammar->style_name_to_id.emplace(name, id);
+        return id;
+    };
     TshLexer lexer(source);
     TshLexer::Token tok = lexer.nextToken();
 
@@ -357,6 +364,111 @@ std::shared_ptr<TshGrammar> TshCompiler::compile(const std::string& source, cons
                         }
                     }
                     grammar->schemes[scheme_name] = std::move(scheme);
+                }
+            }
+
+            // =================================================================
+            // 3. Semantic style declarations. Supports v2 object syntax and the
+            // legacy [name, lightColor, darkColor, @modifier] tuple syntax.
+            // =================================================================
+            else if (tok.text == "styles") {
+                auto styles_open = lexer.nextToken();
+                if (styles_open.type == TshLexer::TokenType::TOK_COLON) styles_open = lexer.nextToken();
+
+                if (styles_open.type == TshLexer::TokenType::TOK_LBRACE) {
+                    while (true) {
+                        auto style_name_tok = lexer.nextToken();
+                        if (style_name_tok.type == TshLexer::TokenType::TOK_RBRACE) break;
+                        if (style_name_tok.type == TshLexer::TokenType::TOK_COMMA) continue;
+                        if (style_name_tok.type == TshLexer::TokenType::TOK_EOF) return nullptr;
+
+                        const std::string style_name = style_name_tok.text;
+                        const uint16_t style_id = ensureStyleId(style_name);
+                        auto style_open = lexer.nextToken();
+                        if (style_open.type != TshLexer::TokenType::TOK_LBRACE) return nullptr;
+
+                        TshStyle definition;
+                        definition.name = style_name;
+                        definition.style_id = style_id;
+                        while (true) {
+                            auto field = lexer.nextToken();
+                            if (field.type == TshLexer::TokenType::TOK_RBRACE) break;
+                            if (field.type == TshLexer::TokenType::TOK_COMMA) continue;
+                            if (field.type == TshLexer::TokenType::TOK_EOF) return nullptr;
+
+                            auto separator = lexer.nextToken();
+                            if (separator.type != TshLexer::TokenType::TOK_COLON) return nullptr;
+                            if (field.text == "tags") {
+                                auto array_open = lexer.nextToken();
+                                if (array_open.type != TshLexer::TokenType::TOK_LBRACKET) return nullptr;
+                                while (true) {
+                                    auto tag = lexer.nextToken();
+                                    if (tag.type == TshLexer::TokenType::TOK_RBRACKET) break;
+                                    if (tag.type == TshLexer::TokenType::TOK_EOF) return nullptr;
+                                    if (tag.type != TshLexer::TokenType::TOK_COMMA) {
+                                        definition.tags.push_back(tag.text);
+                                    }
+                                }
+                            } else {
+                                auto value = lexer.nextToken();
+                                if (field.text == "scope") definition.scope = value.text;
+                                else if (field.text == "description") definition.description = value.text;
+                                else if (field.text == "parent") definition.parent = value.text;
+                            }
+                        }
+                        grammar->style_definitions[style_name] = std::move(definition);
+                    }
+                } else if (styles_open.type == TshLexer::TokenType::TOK_LBRACKET) {
+                    ColorScheme legacy_scheme;
+                    legacy_scheme.name = "default";
+                    if (grammar->default_scheme_name.empty()) grammar->default_scheme_name = "default";
+
+                    while (true) {
+                        auto style_name_tok = lexer.nextToken();
+                        if (style_name_tok.type == TshLexer::TokenType::TOK_RBRACKET) break;
+                        if (style_name_tok.type == TshLexer::TokenType::TOK_COMMA) continue;
+                        if (style_name_tok.type == TshLexer::TokenType::TOK_EOF) return nullptr;
+
+                        const std::string style_name = style_name_tok.text;
+                        const uint16_t style_id = ensureStyleId(style_name);
+                        auto light_sep = lexer.nextToken();
+                        if (light_sep.type != TshLexer::TokenType::TOK_COMMA) return nullptr;
+                        auto light_tok = lexer.nextToken();
+                        if (light_tok.type != TshLexer::TokenType::TOK_IDENT) return nullptr;
+                        auto dark_sep = lexer.nextToken();
+                        if (dark_sep.type != TshLexer::TokenType::TOK_COMMA) return nullptr;
+                        auto dark_tok = lexer.nextToken();
+                        if (dark_tok.type != TshLexer::TokenType::TOK_IDENT) return nullptr;
+
+                        SchemeColor color;
+                        color.light_color = parseColorHex(light_tok.text);
+                        color.dark_color = parseColorHex(dark_tok.text);
+                        color.has_light_color = true;
+                        color.has_dark_color = true;
+
+                        while (true) {
+                            auto modifier = lexer.nextToken();
+                            if (modifier.type == TshLexer::TokenType::TOK_COMMA) break;
+                            if (modifier.type == TshLexer::TokenType::TOK_RBRACKET) {
+                                lexer.putBack(std::move(modifier));
+                                break;
+                            }
+                            if (modifier.type == TshLexer::TokenType::TOK_EOF) return nullptr;
+                            if (modifier.type == TshLexer::TokenType::TOK_AT) {
+                                auto flag = lexer.nextToken();
+                                if (flag.text == "B" || flag.text == "bold") color.font_flags |= 0x01;
+                                else if (flag.text == "I" || flag.text == "italic") color.font_flags |= 0x02;
+                                else if (flag.text == "U" || flag.text == "underline") color.font_flags |= 0x04;
+                                continue;
+                            }
+                            lexer.putBack(std::move(modifier));
+                            break;
+                        }
+                        legacy_scheme.colors[style_id] = color;
+                    }
+                    grammar->schemes[legacy_scheme.name] = std::move(legacy_scheme);
+                } else {
+                    return nullptr;
                 }
             }
 
@@ -529,6 +641,13 @@ std::shared_ptr<TshGrammar> TshCompiler::compile(const std::string& source, cons
         TshStyle style;
         style.name = entry.first;
         style.style_id = entry.second;
+        auto definition_it = grammar->style_definitions.find(entry.first);
+        if (definition_it != grammar->style_definitions.end()) {
+            style.scope = definition_it->second.scope;
+            style.tags = definition_it->second.tags;
+            style.description = definition_it->second.description;
+            style.parent = definition_it->second.parent;
+        }
         auto scheme_it = grammar->schemes.find(grammar->default_scheme_name);
         if (scheme_it != grammar->schemes.end()) {
             auto color_it = scheme_it->second.colors.find(style.style_id);
