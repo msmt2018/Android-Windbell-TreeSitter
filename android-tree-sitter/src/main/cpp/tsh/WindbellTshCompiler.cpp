@@ -1196,6 +1196,7 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                                     if (key.type == TshLexer::TokenType::TOK_RBRACE) break;
                                     if (key.type == TshLexer::TokenType::TOK_COMMA) continue;
                                     if (key.type == TshLexer::TokenType::TOK_EOF ||
+                                        !seen_rule_fields.emplace(key.text, true).second ||
                                         lexer.nextToken().type != TshLexer::TokenType::TOK_COLON) return nullptr;
                                     auto value = lexer.nextToken();
                                     if (key.text == "selector") {
@@ -1521,13 +1522,17 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                 auto open = lexer.nextToken();
                 if (open.type == TshLexer::TokenType::TOK_COLON) open = lexer.nextToken();
                 if (open.type != TshLexer::TokenType::TOK_LBRACE) return nullptr;
+                std::unordered_map<std::string, bool> seen_monarch_fields;
+                bool monarch_tokenizer_seen = false;
                 while (true) {
                     auto field = lexer.nextToken();
                     if (field.type == TshLexer::TokenType::TOK_RBRACE) break;
                     if (field.type == TshLexer::TokenType::TOK_COMMA) continue;
-                    if (field.type == TshLexer::TokenType::TOK_EOF) return nullptr;
+                    if (field.type == TshLexer::TokenType::TOK_EOF ||
+                        !seen_monarch_fields.emplace(field.text, true).second) return nullptr;
                     if (field.text == "variables") {
-                        if (lexer.nextToken().type != TshLexer::TokenType::TOK_LBRACE) return nullptr;
+                        if (monarch_tokenizer_seen ||
+                            lexer.nextToken().type != TshLexer::TokenType::TOK_LBRACE) return nullptr;
                         while (true) {
                             auto variable = lexer.nextToken();
                             if (variable.type == TshLexer::TokenType::TOK_RBRACE) break;
@@ -1546,7 +1551,8 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                         if (value.type != TshLexer::TokenType::TOK_STRING) return nullptr;
                         grammar->monarch_token_postfix = value.text;
                     } else if (field.text == "ignoreCase") {
-                        if (lexer.nextToken().type != TshLexer::TokenType::TOK_COLON) return nullptr;
+                        if (monarch_tokenizer_seen ||
+                            lexer.nextToken().type != TshLexer::TokenType::TOK_COLON) return nullptr;
                         auto value = lexer.nextToken();
                         if (value.text == "true") grammar->default_regex_options |= ONIG_OPTION_IGNORECASE;
                         else if (value.text != "false") return nullptr;
@@ -1564,6 +1570,7 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                             grammar->monarch_has_default_style = true;
                         }
                     } else if (field.text == "tokenizer") {
+                        monarch_tokenizer_seen = true;
                         if (lexer.nextToken().type != TshLexer::TokenType::TOK_LBRACE) return nullptr;
                         while (true) {
                             auto state_name = lexer.nextToken();
@@ -1585,6 +1592,7 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                                 rule.declaration_order = regex_declaration_order++;
                                 uint32_t options = grammar->default_regex_options;
                                 std::string pattern;
+                                std::unordered_map<std::string, bool> seen_rule_fields;
                                 while (true) {
                                     auto key = lexer.nextToken();
                                     if (key.type == TshLexer::TokenType::TOK_RBRACE) break;
