@@ -535,6 +535,15 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                         if (mode_tok.type == TshLexer::TokenType::TOK_RBRACE) break;
                         if (mode_tok.type == TshLexer::TokenType::TOK_EOF) return nullptr;
 
+                        if (mode_tok.text == "extends") {
+                            if (lexer.nextToken().type != TshLexer::TokenType::TOK_COLON) return nullptr;
+                            auto parent = lexer.nextToken();
+                            if (parent.type != TshLexer::TokenType::TOK_STRING &&
+                                parent.type != TshLexer::TokenType::TOK_IDENT) return nullptr;
+                            scheme.extends = parent.text;
+                            continue;
+                        }
+
                         if (mode_tok.text == "ui") {
                             auto ui_open = lexer.nextToken();
                             if (ui_open.type != TshLexer::TokenType::TOK_LBRACE) return nullptr;
@@ -1020,6 +1029,52 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
     if (!grammar->default_scheme_name.empty() &&
         grammar->schemes.find(grammar->default_scheme_name) == grammar->schemes.end()) {
         return nullptr;
+    }
+
+    // Resolve scheme inheritance only after every declaration is parsed, so
+    // a child scheme may extend a scheme declared later in the file.
+    std::unordered_map<std::string, uint8_t> scheme_visit;
+    std::function<bool(const std::string&)> resolve_scheme = [&](const std::string& name) -> bool {
+        auto found = grammar->schemes.find(name);
+        if (found == grammar->schemes.end()) return false;
+        uint8_t& state = scheme_visit[name];
+        if (state == 2) return true;
+        if (state == 1) return false; // inheritance cycle
+        state = 1;
+        ColorScheme& child = found->second;
+        if (!child.extends.empty()) {
+            if (!resolve_scheme(child.extends)) return false;
+            const ColorScheme parent = grammar->schemes.at(child.extends);
+            auto child_colors = std::move(child.colors);
+            auto child_ui = std::move(child.ui_colors);
+            auto child_light_ui = std::move(child.ui_light_colors);
+            auto child_dark_ui = std::move(child.ui_dark_colors);
+            child.colors = parent.colors;
+            child.ui_colors = parent.ui_colors;
+            child.ui_light_colors = parent.ui_light_colors;
+            child.ui_dark_colors = parent.ui_dark_colors;
+            for (const auto& entry : child_colors) {
+                auto& target = child.colors[entry.first];
+                if (entry.second.has_light_color) {
+                    target.light_color = entry.second.light_color;
+                    target.has_light_color = true;
+                }
+                if (entry.second.has_dark_color) {
+                    target.dark_color = entry.second.dark_color;
+                    target.has_dark_color = true;
+                }
+                target.light_font_flags |= entry.second.light_font_flags;
+                target.dark_font_flags |= entry.second.dark_font_flags;
+            }
+            for (const auto& entry : child_ui) child.ui_colors[entry.first] = entry.second;
+            for (const auto& entry : child_light_ui) child.ui_light_colors[entry.first] = entry.second;
+            for (const auto& entry : child_dark_ui) child.ui_dark_colors[entry.first] = entry.second;
+        }
+        state = 2;
+        return true;
+    };
+    for (const auto& entry : grammar->schemes) {
+        if (!resolve_scheme(entry.first)) return nullptr;
     }
 
     // Materialize the symbol catalog in stable ID order. Scheme colors remain
