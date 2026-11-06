@@ -529,6 +529,7 @@ class WindbellTshLinkageTest {
                     declarationAlias { scope: "entity.name.type.alias" }
                     operator { scope: "keyword.operator" }
                     methodName { scope: "entity.name.function" }
+                    methodWithBody { scope: "meta.function.body" }
                 }
                 ast: [
                     {
@@ -564,6 +565,12 @@ class WindbellTshLinkageTest {
                         ancestor: "method_declaration"
                         style: "methodName"
                         priority: 45
+                    },
+                    {
+                        node: "method_declaration"
+                        child: "block"
+                        style: "methodWithBody"
+                        priority: 55
                     }
                 ]
             }
@@ -596,6 +603,10 @@ class WindbellTshLinkageTest {
         assertFalse(spans.any {
             it.styleId == methodNameId && it.startByte == code.indexOf("Demo")
         }, "ATS ancestor constraints must reject nodes outside the selected ancestor.")
+        val methodBodyId = engine.getStyleCatalog("java-ast-node-flags")
+            .first { it.name == "methodWithBody" }.styleId
+        assertTrue(spans.any { it.styleId == methodBodyId && it.priority == 55 },
+            "ATS child constraints must match direct child node types.")
         tree?.close()
         parser.close()
     }
