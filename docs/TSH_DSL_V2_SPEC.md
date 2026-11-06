@@ -211,36 +211,45 @@ Regex rules support `match`, `begin/end`, `while`, `include`, `captures`, named 
 
 ## 6. TextMate-inspired features
 
-The runtime should support nested begin/end regions, content scopes, capture maps, repository/include references, injection selectors, scope inheritance, and rule precedence. Includes are resolved within the same .tsh document; there is no external .scm or sidecar grammar file. TextMate scope selectors are matched by a generic selector engine, not by language-specific C++ branches.
+Implemented today:
+- Nested Oniguruma match and begin/end block rules.
+- Numeric and named capture-to-style bindings.
+- Separate `beginCaptures`/`startCaptures` and `endCaptures`.
+- A `repository` block for reusable regex fragments, referenced with `include("#name")`.
+- Recursive repository fragment expansion with cycle detection.
+
+Still planned:
+- Full TextMate scope selector parsing and specificity matching.
+- Pattern-object repositories and external `$self`/`$base` scope includes.
+- Injection selectors, scope inheritance across nested patterns, `while` continuation and complete begin/end precedence semantics.
+- Full `contentName`, `applyEndPatternLast`, and rule metadata behavior.
+
+Includes are resolved within the same .tsh document; there is no external .scm or sidecar grammar file.
 
 ## 7. Monarch-inspired tokenizer features
 
-A tokenizer state machine is optional and may coexist with ATS/regex. It is useful for languages where lexical context changes tokenization.
+The currently executable Monarch subset is optional and may coexist with ATS and Oniguruma rules. It supports ordered state-local regex rules, token styles, state includes, persistent state stacks, and `next`, `push`, `switchTo`, `pop`, `rematch`, `enabled`, `priority`, and per-rule Oniguruma flags.
 
 ```tsh
-rules {
-  monarch {
-    defaultState: "root"
-    tokenizer {
-      root: [
-        { regex: /\\s+/, action: "whitespace" }
-        { regex: /\\b(class|interface)\\b/, action: { token: "keyword", next: "@declaration" } }
-        { regex: /"/, action: { token: "string", next: "@string" } }
-      ]
-      declaration: [
-        { regex: /[A-Za-z_$][\\w$]*/, action: { token: "type", next: "@pop" } }
-      ]
-      string: [
-        { regex: /\\\\./, action: "string.escape" }
-        { regex: /"/, action: { token: "string", next: "@pop" } }
-        { regex: /[^"\\\\]+/, action: "string" }
-      ]
-    }
+monarch {
+  start: "root"
+  tokenizer {
+    root: [
+      { match: /"/, token: "string", push: "@string" }
+      { include: "@identifiers" }
+    ]
+    identifiers: [
+      { match: /[A-Za-z_$][A-Za-z0-9_$]*/, token: "identifier" }
+    ]
+    string: [
+      { match: /"/, token: "string", pop: true }
+      { match: /[^"]+/, token: "string" }
+    ]
   }
 }
 ```
 
-Actions include token assignment, `next`, `switchTo`, `@push`, `@pop`, `goBack`, `cases`, `@rematch`, and `log`. State transitions are validated for unknown state names. This is a tokenizer state machine, not an implicit language definition inside the core.
+The runtime tokenizes the complete UTF-16 document with a persistent state stack and emits normalized spans into the shared arbitration pipeline. State references and include cycles are validated. Not yet implemented: `cases`, action arrays, `@keywords`/character-class variables, embedded-language tokens, `tokenPostfix`, `goBack`, `@rematch` action syntax and bracket actions.
 
 ## 8. Editor/language metadata
 
