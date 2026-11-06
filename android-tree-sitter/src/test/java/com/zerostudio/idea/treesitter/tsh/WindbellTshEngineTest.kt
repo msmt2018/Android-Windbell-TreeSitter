@@ -157,6 +157,8 @@ class WindbellTshLinkageTest {
         assertEquals(listOf("Scheme", "Test Scheme"), language.aliases)
         assertEquals(listOf("text/x-scheme-test"), language.mimeTypes)
         assertEquals("^#!.*scheme-test", language.firstLinePattern)
+        assertTrue(engine.matchesFirstLine("scheme", "#!/usr/bin/env scheme-test"))
+        assertFalse(engine.matchesFirstLine("scheme", "ordinary source file"))
         assertEquals(listOf("derived", "github", "midnight"), engine.listSchemes("scheme").sorted())
         assertEquals("midnight", engine.getDefaultScheme("scheme"))
         assertTrue(engine.isDark("scheme"))
