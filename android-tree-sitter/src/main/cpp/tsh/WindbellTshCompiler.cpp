@@ -135,10 +135,16 @@ public:
                     content.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F)));
                     content.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
                 } else {
-                    content.push_back(static_cast<char>(0xF0 | (cp >> 18)));
-                    content.push_back(static_cast<char>(0x80 | ((cp >> 12) & 0x3F)));
-                    content.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F)));
-                    content.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+                    // JNI uses modified UTF-8: non-BMP scalars are encoded
+                    // as their two UTF-16 surrogate code units.
+                    const uint32_t scalar = cp - 0x10000;
+                    const uint32_t high = 0xD800 + (scalar >> 10);
+                    const uint32_t low = 0xDC00 + (scalar & 0x3FF);
+                    for (uint32_t unit : {high, low}) {
+                        content.push_back(static_cast<char>(0xE0 | (unit >> 12)));
+                        content.push_back(static_cast<char>(0x80 | ((unit >> 6) & 0x3F)));
+                        content.push_back(static_cast<char>(0x80 | (unit & 0x3F)));
+                    }
                 }
             };
             auto read_hex4 = [&](uint32_t& value) -> bool {
