@@ -40,6 +40,7 @@ enum class RegexRuleType : uint8_t {
 struct CompiledRegexRule {
     RegexRuleType type = RegexRuleType::MATCH;
     uint16_t style_id = 0;
+    bool has_style = false;
     regex_t* onig_start = nullptr;
     regex_t* onig_end = nullptr;
     std::unordered_map<int, uint16_t> group_style_map;
