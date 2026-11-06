@@ -292,6 +292,14 @@ std::shared_ptr<TshGrammar> TshCompiler::compile(const std::string& source, cons
                 auto pattern = lexer.nextToken();
                 if (pattern.text == "keywordsToRegex") {
                     raw_match_pattern = expandKeywordsToRegex(lexer.extractParenthesizedBlock());
+                } else if (pattern.text == "include") {
+                    std::string include_name = lexer.extractParenthesizedBlock();
+                    include_name.erase(std::remove_if(include_name.begin(), include_name.end(),
+                        [](unsigned char ch) { return std::isspace(ch) || ch == '"' || ch == '\''; }),
+                        include_name.end());
+                    auto definition = defines_map.find(include_name);
+                    if (definition == defines_map.end()) return false;
+                    raw_match_pattern = definition->second;
                 } else if (pattern.type == TshLexer::TokenType::TOK_REGEX ||
                            pattern.type == TshLexer::TokenType::TOK_STRING) {
                     raw_match_pattern = pattern.text;
