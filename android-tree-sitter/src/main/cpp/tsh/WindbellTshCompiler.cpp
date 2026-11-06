@@ -481,10 +481,14 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
             } else if (item.text == "overlap") {
                 if (lexer.nextToken().type != TshLexer::TokenType::TOK_COLON) return false;
                 rule.allow_overlap = lexer.nextToken().text == "allow";
-            } else if (item.text == "contains" || item.text == "patterns" || item.text == "captures") {
+            } else if (item.text == "contains" || item.text == "patterns" ||
+                       item.text == "captures" || item.text == "beginCaptures" ||
+                       item.text == "startCaptures" || item.text == "endCaptures") {
                 if (lexer.nextToken().type != TshLexer::TokenType::TOK_COLON) return false;
                 auto open = lexer.nextToken();
-                const bool capture_block = item.text == "captures";
+                const bool capture_block = item.text == "captures" ||
+                    item.text == "beginCaptures" || item.text == "startCaptures" ||
+                    item.text == "endCaptures";
                 const auto expected_open = capture_block ?
                     TshLexer::TokenType::TOK_LBRACE : TshLexer::TokenType::TOK_LBRACKET;
                 const auto expected_close = capture_block ?
@@ -502,10 +506,19 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                             child_token.type != TshLexer::TokenType::TOK_STRING) return false;
                         if (lexer.nextToken().type != TshLexer::TokenType::TOK_COLON) return false;
                         auto style_name = lexer.nextToken();
+                        auto* numeric_map = &rule.group_style_map;
+                        auto* named_map = &rule.named_group_style_map;
+                        if (item.text == "beginCaptures" || item.text == "startCaptures") {
+                            numeric_map = &rule.start_group_style_map;
+                            named_map = &rule.start_named_group_style_map;
+                        } else if (item.text == "endCaptures") {
+                            numeric_map = &rule.end_group_style_map;
+                            named_map = &rule.end_named_group_style_map;
+                        }
                         if (child_token.type == TshLexer::TokenType::TOK_NUMBER) {
-                            rule.group_style_map[std::stoi(child_token.text)] = ensureStyleId(style_name.text);
+                            (*numeric_map)[std::stoi(child_token.text)] = ensureStyleId(style_name.text);
                         } else {
-                            rule.named_group_style_map[child_token.text] = ensureStyleId(style_name.text);
+                            (*named_map)[child_token.text] = ensureStyleId(style_name.text);
                         }
                     } else {
                         if (child_token.type != TshLexer::TokenType::TOK_LBRACE) return false;
@@ -540,7 +553,9 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
         }
 
         if (rule.type == RegexRuleType::BLOCK) {
-            return rule.has_style && rule.onig_start && rule.onig_end;
+            return (rule.has_style || !rule.start_group_style_map.empty() ||
+                    !rule.start_named_group_style_map.empty() || !rule.end_group_style_map.empty() ||
+                    !rule.end_named_group_style_map.empty()) && rule.onig_start && rule.onig_end;
         }
         return rule.onig_start != nullptr;
     };
