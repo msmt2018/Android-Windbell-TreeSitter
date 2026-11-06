@@ -1392,7 +1392,31 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                     if (field.type == TshLexer::TokenType::TOK_RBRACE) break;
                     if (field.type == TshLexer::TokenType::TOK_COMMA) continue;
                     if (field.type == TshLexer::TokenType::TOK_EOF) return nullptr;
-                    if (field.text == "start" || field.text == "defaultToken") {
+                    if (field.text == "variables") {
+                        if (lexer.nextToken().type != TshLexer::TokenType::LBRACE) return nullptr;
+                        while (true) {
+                            auto variable = lexer.nextToken();
+                            if (variable.type == TshLexer::TokenType::TOK_RBRACE) break;
+                            if (variable.type == TshLexer::TokenType::TOK_COMMA) continue;
+                            if (variable.type != TshLexer::TokenType::TOK_IDENT ||
+                                lexer.nextToken().type != TshLexer::TokenType::TOK_COLON) return nullptr;
+                            auto value = lexer.nextToken();
+                            if ((value.type != TshLexer::TokenType::TOK_REGEX &&
+                                 value.type != TshLexer::TokenType::TOK_STRING) ||
+                                value.text.empty() ||
+                                !grammar->monarch_variables.emplace(variable.text, value.text).second) return nullptr;
+                        }
+                    } else if (field.text == "tokenPostfix") {
+                        if (lexer.nextToken().type != TshLexer::TokenType::TOK_COLON) return nullptr;
+                        auto value = lexer.nextToken();
+                        if (value.type != TshLexer::TokenType::TOK_STRING) return nullptr;
+                        grammar->monarch_token_postfix = value.text;
+                    } else if (field.text == "ignoreCase") {
+                        if (lexer.nextToken().type != TshLexer::TokenType::TOK_COLON) return nullptr;
+                        auto value = lexer.nextToken();
+                        if (value.text == "true") grammar->default_regex_options |= ONIG_OPTION_IGNORECASE;
+                        else if (value.text != "false") return nullptr;
+                    } else if (field.text == "start" || field.text == "defaultToken") {
                         if (lexer.nextToken().type != TshLexer::TokenType::TOK_COLON) return nullptr;
                         auto value = lexer.nextToken();
                         if (value.type != TshLexer::TokenType::TOK_STRING &&
@@ -1402,7 +1426,7 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                             if (!grammar->monarch_start_state.empty() && grammar->monarch_start_state.front() == '@')
                                 grammar->monarch_start_state.erase(grammar->monarch_start_state.begin());
                         } else {
-                            grammar->monarch_default_style_id = ensureStyleId(value.text);
+                            grammar->monarch_default_style_id = ensureStyleId(value.text + grammar->monarch_token_postfix);
                             grammar->monarch_has_default_style = true;
                         }
                     } else if (field.text == "tokenizer") {
@@ -1442,7 +1466,7 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                                         if (value.type != TshLexer::TokenType::TOK_STRING &&
                                             value.type != TshLexer::TokenType::TOK_IDENT) return nullptr;
                                         if (!value.text.empty()) {
-                                            rule.style_id = ensureStyleId(value.text);
+                                            rule.style_id = ensureStyleId(value.text + grammar->monarch_token_postfix);
                                             rule.has_style = true;
                                         }
                                     } else if (key.text == "include") {
@@ -1486,7 +1510,11 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                                     }
                                 }
                                 if (!pattern.empty()) {
-                                    rule.pattern = compileOnigurumaUtf16(pattern, options);
+                                    std::unordered_map<std::string, bool> active_variables;
+                                    std::string expanded_pattern;
+                                    if (!expandMonarchVariables(pattern, grammar->monarch_variables,
+                                            active_variables, expanded_pattern)) return nullptr;
+                                    rule.pattern = compileOnigurumaUtf16(expanded_pattern, options);
                                     if (!rule.pattern) return nullptr;
                                 }
                                 if (rule.include_state.empty() && !rule.pattern) return nullptr;
