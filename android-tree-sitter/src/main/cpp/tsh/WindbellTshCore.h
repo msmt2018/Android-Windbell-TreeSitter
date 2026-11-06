@@ -90,11 +90,20 @@ struct MonarchRule {
 // One independently compiled native Tree-sitter query block. The source text is
 // consumed directly by ts_query_new; no generated SCM artifact exists.
 struct NativeQueryProgram {
+    struct PatternMetadata {
+        uint32_t pattern_index = 0;
+        int32_t priority = 0;
+        uint32_t declaration_order = 0;
+        bool has_priority = false;
+        bool enabled = true;
+    };
+
     std::string id;
     TSQuery* query = nullptr;
     int32_t priority = 0;
     uint32_t declaration_order = 0;
     bool enabled = true;
+    std::unordered_map<uint32_t, PatternMetadata> pattern_metadata;
     // Capture names are query-local identifiers; bindings resolve them to
     // independent style IDs during compilation.
     std::unordered_map<std::string, std::string> capture_bindings;
