@@ -789,7 +789,8 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
             } else if (item.text == "start" || item.text == "begin" || item.text == "end") {
                 if (lexer.nextToken().type != TshLexer::TokenType::TOK_COLON) return false;
                 auto pattern = lexer.nextToken();
-                if (pattern.type == TshLexer::TokenType::TOK_LBRACE) {
+                const bool nested_pattern_block = pattern.type == TshLexer::TokenType::TOK_LBRACE;
+                if (nested_pattern_block) {
                     auto match_key = lexer.nextToken();
                     if (match_key.text != "match" ||
                         lexer.nextToken().type != TshLexer::TokenType::TOK_COLON) return false;
@@ -806,6 +807,8 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                 } else {
                     return false;
                 }
+                if (nested_pattern_block &&
+                    lexer.nextToken().type != TshLexer::TokenType::TOK_RBRACE) return false;
                 rule.type = RegexRuleType::BLOCK;
                 if (item.text == "end") raw_end_pattern = pattern_text;
                 else raw_start_pattern = pattern_text;
