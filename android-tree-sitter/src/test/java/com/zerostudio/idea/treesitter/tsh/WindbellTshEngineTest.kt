@@ -87,6 +87,7 @@ class WindbellTshLinkageTest {
             isDark: true
             styles {
                 keyword { scope: "keyword.control", tags: ["keyword", "control"] }
+                keywordStrong { scope: "keyword.control.strong", parent: "keyword", tags: ["keyword", "emphasis"] }
                 string { scope: "string.quoted", tags: ["string"] }
             }
             schemes {
@@ -107,6 +108,10 @@ class WindbellTshLinkageTest {
                 github {
                     light [ keyword: #0550AE, string: #0A3069 ]
                     dark [ keyword: #79C0FF, string: #A5D6FF ]
+                }
+                derived {
+                    extends: "midnight"
+                    dark [ keywordStrong: #FF00AA ]
                 }
             }
             editor {
@@ -139,7 +144,7 @@ class WindbellTshLinkageTest {
         assertEquals(listOf("Scheme", "Test Scheme"), language.aliases)
         assertEquals(listOf("text/x-scheme-test"), language.mimeTypes)
         assertEquals("^#!.*scheme-test", language.firstLinePattern)
-        assertEquals(listOf("github", "midnight"), engine.listSchemes("scheme").sorted())
+        assertEquals(listOf("derived", "github", "midnight"), engine.listSchemes("scheme").sorted())
         assertEquals("midnight", engine.getDefaultScheme("scheme"))
         assertTrue(engine.isDark("scheme"))
         val editorMetadata = engine.getEditorMetadata("scheme")
@@ -159,8 +164,15 @@ class WindbellTshLinkageTest {
         assertEquals(0xFFFFFFFF.toInt(), engine.getThemeTokens("scheme")["editor.background"])
         engine.clearAppearanceOverride("scheme")
         assertTrue(engine.isDark("scheme"))
-        assertTrue(engine.selectScheme("scheme", "github"))
-        assertEquals("github", engine.getSelectedScheme("scheme"))
+        assertTrue(engine.selectScheme("scheme", "derived"))
+        assertEquals("derived", engine.getSelectedScheme("scheme"))
+        assertEquals(0xFF1E1E1E.toInt(), engine.getThemeTokens("scheme")["editor.background"])
+        val inheritedKeyword = engine.getStylePalette("scheme", "keyword")
+        val explicitChild = engine.getStylePalette("scheme", "keywordStrong")
+        assertEquals(0xFF112233.toInt(), inheritedKeyword?.lightColor)
+        assertEquals(0xFFFF00AA.toInt(), explicitChild?.darkColor)
+        assertEquals(true, explicitChild?.hasLightColor)
+        assertEquals("derived", engine.getSelectedScheme("scheme"))
     }
 
     @Test
