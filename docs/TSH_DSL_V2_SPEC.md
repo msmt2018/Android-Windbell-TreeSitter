@@ -240,6 +240,7 @@ monarch {
   variables {
     identifier: /[A-Za-z_$][A-Za-z0-9_$]*/
     digits: /[0-9]+/
+    keywords: /(?:if|else|return)/
   }
   defaultToken: "invalid"
   tokenizer {
@@ -248,7 +249,11 @@ monarch {
       { include: "@identifiers" }
     ]
     identifiers: [
-      { match: /@identifier/, token: "identifier" }
+      { match: /@identifier/, cases: {
+          "@keywords": "keyword"
+          "@default": "identifier"
+        }
+      }
       { match: /@digits/, token: "number" }
     ]
     string: [
@@ -259,7 +264,7 @@ monarch {
 }
 ```
 
-The runtime tokenizes the complete UTF-16 document with a persistent state stack and emits normalized spans into the shared arbitration pipeline. State references and include cycles are validated. Regex variables declared in `variables` before `tokenizer` are recursively expanded (with unknown references and cycles rejected, including unused cyclic definitions); escaped references and character classes are not rewritten. `tokenPostfix` is appended to token names and `defaultToken` after parsing, so the postfix declaration itself may appear in any position. `ignoreCase` must be declared before `tokenizer` and sets the tokenizer's default Oniguruma option. Remaining planned Monarch features include `cases`, action arrays, embedded-language tokens, `goBack`, `@rematch` action syntax, and bracket actions.
+The runtime tokenizes the complete UTF-16 document with a persistent state stack and emits normalized spans into the shared arbitration pipeline. State references and include cycles are validated. Regex variables declared in `variables` before `tokenizer` are recursively expanded (with unknown references and cycles rejected, including unused cyclic definitions); escaped references and character classes are not rewritten. `tokenPostfix` is appended to token names and `defaultToken` after parsing, so the postfix declaration itself may appear in any position. `ignoreCase` must be declared before `tokenizer` and sets the tokenizer's default Oniguruma option. The currently implemented `cases` map supports ordered exact-literal keys, regex-variable keys such as `"@keywords"`, and a final `"@default"` token fallback. Case entries select token styles; state-transition actions inside cases are not yet implemented. Remaining planned Monarch features include action arrays, embedded-language tokens, `goBack`, `@rematch` action syntax, and bracket actions.
 
 ## 8. Editor/language metadata
 
