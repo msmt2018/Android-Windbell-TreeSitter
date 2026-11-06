@@ -713,6 +713,62 @@ class WindbellTshLinkageTest {
     }
 
     @Test
+    fun testAstAndNativeQueryCandidatesShareResolver() {
+        val engine = WindbellTshEngine.instance
+        val language = TSLanguageJava.getInstance()
+        val source = """
+            tsh 2 {
+                language { id: "java-unified-span-sources" extensions: [".juss"] }
+                styles {
+                    astName { scope: "entity.name.function.ast" }
+                    queryName { scope: "entity.name.function.query" }
+                }
+                ast: [
+                    {
+                        node: "method_declaration"
+                        field: "name"
+                        style: "astName"
+                        priority: 40
+                        overlap: allow
+                    }
+                ]
+                treeSitter {
+                    queries: [
+                        {
+                            id: "method-name-query"
+                            priority: 50
+                            source: `(method_declaration name: (identifier) @queryName)`
+                        }
+                    ]
+                }
+            }
+        """.trimIndent()
+
+        assertTrue(engine.loadTshSource("java-unified-span-sources", source, language))
+        val parser = TSParser.create().apply { setLanguage(language) }
+        val code = "class Demo { void run() {} }"
+        val tree = parser.parseString(code)
+        val spans = engine.computeHighlights(tree, code, "java-unified-span-sources")
+        val catalog = engine.getStyleCatalog("java-unified-span-sources")
+        val astId = catalog.first { it.name == "astName" }.styleId
+        val queryId = catalog.first { it.name == "queryName" }.styleId
+        val runStart = code.indexOf("run") * 2
+        val sameRange = spans.filter {
+            it.startByte == runStart && it.endByte == runStart + 6
+        }
+
+        assertTrue(sameRange.any { it.styleId == astId && it.priority == 40 },
+            "ATS candidates must survive the shared resolver when overlap is explicitly allowed.")
+        assertTrue(sameRange.any { it.styleId == queryId && it.priority == 50 },
+            "Native query candidates must join the same resolved output.")
+        assertEquals(queryId, sameRange.first().styleId,
+            "Higher-priority spans must be ordered first for identical ranges.")
+
+        tree?.close()
+        parser.close()
+    }
+
+    @Test
     fun testAstFieldSelectorUsesIndexedOwnerDispatch() {
         val engine = WindbellTshEngine.instance
         val language = TSLanguageJava.getInstance()
