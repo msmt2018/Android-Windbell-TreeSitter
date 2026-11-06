@@ -22,10 +22,7 @@ class WindbellTshEngine private constructor() {
         val startByte: Int,
         val endByte: Int,
         val styleId: Int,
-        val lightFontFlags: Int,
-        val darkFontFlags: Int,
-        val hasLightColor: Boolean,
-        val hasDarkColor: Boolean
+        val fontFlags: Int
     )
 
     data class SemanticStyle(
