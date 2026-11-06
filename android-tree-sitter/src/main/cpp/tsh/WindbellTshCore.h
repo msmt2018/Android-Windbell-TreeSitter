@@ -120,6 +120,12 @@ struct AstSelectorRule {
     TSSymbol child_symbol = 0;
     TSSymbol previous_sibling_symbol = 0;
     TSSymbol next_sibling_symbol = 0;
+    std::string text_equals;
+    std::string text_prefix;
+    std::string text_suffix;
+    bool has_text_equals = false;
+    bool has_text_prefix = false;
+    bool has_text_suffix = false;
     uint32_t child_index = UINT32_MAX;
     uint32_t named_child_index = UINT32_MAX;
     int8_t first_child = -1;
