@@ -105,9 +105,9 @@ void WindbellEngine::matchBlockRecursive(
             block_span.allow_overlap = rule.allow_overlap ? 1 : 0;
             out_spans.push_back(block_span);
 
-            if (!rule.nested_rules.empty() && hit_end >= 0) {
+            if (!rule.nested_rules.empty()) {
                 const UChar* inner_start = content_start;
-                const UChar* inner_end = (hit_end >= 0) ? text_start + end_region->beg[0] : range_end;
+                const UChar* inner_end = hit_end >= 0 ? text_start + end_region->beg[0] : range_end;
 
                 for (const auto& nested : rule.nested_rules) {
                     if (!nested.enabled) continue;
