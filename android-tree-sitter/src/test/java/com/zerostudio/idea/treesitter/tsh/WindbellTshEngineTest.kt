@@ -518,6 +518,70 @@ class WindbellTshLinkageTest {
     }
 
     @Test
+    fun testNativeQueryPatternMetadataControlsPatternsIndependently() {
+        val engine = WindbellTshEngine.instance
+        val language = TSLanguageJava.getInstance()
+        val source = """
+            tsh 2 {
+                language { id: "java-pattern-metadata" name: "Java Pattern Metadata" extensions: [".jpm"] }
+                styles { token { scope: "variable.other" } }
+                treeSitter {
+                    queries: [
+                        {
+                            id: "mixed-patterns"
+                            priority: 10
+                            source: `(class_declaration name: (identifier) @token) (method_declaration name: (identifier) @token)`
+                            patterns: [
+                                { index: 0 enabled: false },
+                                { index: 1 priority: 90 }
+                            ]
+                        }
+                    ]
+                }
+            }
+        """.trimIndent()
+        assertTrue(engine.loadTshSource("java-pattern-metadata", source, language))
+
+        val parser = TSParser.create().apply { setLanguage(language) }
+        val code = "class Demo { void run() {} }"
+        val tree = parser.parseString(code)
+        val spans = engine.computeHighlights(tree, code, "java-pattern-metadata")
+        val tokenId = engine.getStyleCatalog("java-pattern-metadata").first { it.name == "token" }.styleId
+
+        assertFalse(spans.any {
+            it.styleId == tokenId && it.startByte == code.indexOf("Demo")
+        })
+        assertTrue(spans.any {
+            it.styleId == tokenId && it.startByte == code.indexOf("run") && it.priority == 90
+        })
+        tree?.close()
+        parser.close()
+    }
+
+    @Test
+    fun testNativeQueryRejectsOutOfRangePatternMetadata() {
+        val engine = WindbellTshEngine.instance
+        val source = """
+            tsh 2 {
+                language { id: "query-pattern-out-of-range" extensions: [".qpo"] }
+                styles { token { scope: "variable.other" } }
+                treeSitter {
+                    queries: [
+                        {
+                            id: "invalid-pattern-index"
+                            source: `(identifier) @token`
+                            patterns: [{ index: 4 enabled: false }]
+                        }
+                    ]
+                }
+            }
+        """.trimIndent()
+        assertFalse(engine.loadTshSource(
+            "query-pattern-out-of-range", source, TSLanguageJava.getInstance()
+        ))
+    }
+
+    @Test
     fun testNativeQueryRegexPredicates() {
         val engine = WindbellTshEngine.instance
         val language = TSLanguageJava.getInstance()
