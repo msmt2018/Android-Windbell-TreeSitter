@@ -197,6 +197,7 @@ public:
     std::string monarch_token_postfix;
     std::string monarch_start_state = "root";
     uint16_t monarch_default_style_id = 0;
+    std::string monarch_default_style_name;
     bool monarch_has_default_style = false;
     std::vector<AstSelectorRule> ast_selector_rules;
     TSQuery* dynamic_ts_query = nullptr;
