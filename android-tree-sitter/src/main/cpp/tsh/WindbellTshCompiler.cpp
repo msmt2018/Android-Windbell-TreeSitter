@@ -1523,6 +1523,7 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                 if (open.type != TshLexer::TokenType::TOK_LBRACE) return nullptr;
                 std::unordered_map<std::string, bool> seen_monarch_fields;
                 bool monarch_tokenizer_seen = false;
+                uint32_t monarch_default_options = grammar->default_regex_options;
                 while (true) {
                     auto field = lexer.nextToken();
                     if (field.type == TshLexer::TokenType::TOK_RBRACE) break;
@@ -1553,8 +1554,9 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                         if (monarch_tokenizer_seen ||
                             lexer.nextToken().type != TshLexer::TokenType::TOK_COLON) return nullptr;
                         auto value = lexer.nextToken();
-                        if (value.text == "true") grammar->default_regex_options |= ONIG_OPTION_IGNORECASE;
-                        else if (value.text != "false") return nullptr;
+                        if (value.text == "true") monarch_default_options |= ONIG_OPTION_IGNORECASE;
+                        else if (value.text == "false") monarch_default_options &= ~ONIG_OPTION_IGNORECASE;
+                        else return nullptr;
                     } else if (field.text == "start" || field.text == "defaultToken") {
                         if (lexer.nextToken().type != TshLexer::TokenType::TOK_COLON) return nullptr;
                         auto value = lexer.nextToken();
@@ -1591,7 +1593,7 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                                 MonarchRule rule;
                                 MonarchRuleGuard rule_guard(rule);
                                 rule.declaration_order = regex_declaration_order++;
-                                uint32_t options = grammar->default_regex_options;
+                                uint32_t options = monarch_default_options;
                                 std::string pattern;
                                 std::unordered_map<std::string, bool> seen_rule_fields;
                                 while (true) {
