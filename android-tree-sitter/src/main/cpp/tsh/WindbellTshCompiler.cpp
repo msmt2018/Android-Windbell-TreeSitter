@@ -162,6 +162,9 @@ public:
             };
             while (cursor_ < src_.size() && src_[cursor_] != quote) {
                 const char current = src_[cursor_++];
+                if (!raw_string && (current == '\n' || current == '\r')) {
+                    return {TokenType::TOK_INVALID, "unescaped newline in quoted string"};
+                }
                 if (raw_string || current != '\\') {
                     content.push_back(current);
                     continue;
@@ -236,8 +239,8 @@ public:
             return {TokenType::TOK_IDENT, ident};
         }
 
-        cursor_++;
-        return nextToken();
+        ++cursor_;
+        return {TokenType::TOK_INVALID, std::string("unexpected character: ") + c};
     }
 
     // 提取括号内的原始内容（用于 keywordsToRegex("...") 提取）
