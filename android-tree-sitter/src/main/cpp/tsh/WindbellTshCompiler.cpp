@@ -371,6 +371,7 @@ std::shared_ptr<TshGrammar> TshCompiler::compile(const std::string& source, cons
                                     if (flag_tok.text == "B" || flag_tok.text == "bold") flags |= 0x01;
                                     else if (flag_tok.text == "I" || flag_tok.text == "italic") flags |= 0x02;
                                     else if (flag_tok.text == "U" || flag_tok.text == "underline") flags |= 0x04;
+                                    else if (flag_tok.text == "S" || flag_tok.text == "strike" || flag_tok.text == "strikethrough") flags |= 0x08;
                                     continue;
                                 }
                                 // Commas are optional: the next identifier begins
@@ -495,13 +496,15 @@ std::shared_ptr<TshGrammar> TshCompiler::compile(const std::string& source, cons
                                 color.dark_font_flags |= 0x01;
                             }
                             else if (flag.text == "I" || flag.text == "italic") {
-                            color.light_font_flags |= 0x02;
-                            color.dark_font_flags |= 0x02;
-                        }
-                            else if (flag.text == "U" || flag.text == "underline") {
-                            color.light_font_flags |= 0x04;
-                            color.dark_font_flags |= 0x04;
-                        }
+                                color.light_font_flags |= 0x02;
+                                color.dark_font_flags |= 0x02;
+                            } else if (flag.text == "U" || flag.text == "underline") {
+                                color.light_font_flags |= 0x04;
+                                color.dark_font_flags |= 0x04;
+                            } else if (flag.text == "S" || flag.text == "strike" || flag.text == "strikethrough") {
+                                color.light_font_flags |= 0x08;
+                                color.dark_font_flags |= 0x08;
+                            }
                             modifier = lexer.nextToken();
                             if (modifier.type == TshLexer::TokenType::TOK_COMMA) {
                                 modifier = lexer.nextToken();
