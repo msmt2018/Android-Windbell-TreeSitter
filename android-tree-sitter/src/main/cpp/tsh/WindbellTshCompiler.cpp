@@ -429,6 +429,7 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                     include_name.erase(std::remove_if(include_name.begin(), include_name.end(),
                         [](unsigned char ch) { return std::isspace(ch) || ch == '"' || ch == '\''; }),
                         include_name.end());
+                    if (!include_name.empty() && include_name.front() == '#') include_name.erase(include_name.begin());
                     auto definition = defines_map.find(include_name);
                     if (definition == defines_map.end()) return false;
                     raw_match_pattern = definition->second;
@@ -1049,6 +1050,27 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                             defines_map[d_name] = d_val.text;
                         }
                     }
+                }
+            }
+
+            // TextMate-style repository of reusable regular-expression fragments.
+            // A rule may reference an entry as include("#repositoryName").
+            else if (tok.text == "repository") {
+                if (!mark_root_section("repository")) return nullptr;
+                auto open = lexer.nextToken();
+                if (open.type == TshLexer::TokenType::TOK_COLON) open = lexer.nextToken();
+                if (open.type != TshLexer::TokenType::TOK_LBRACE) return nullptr;
+                while (true) {
+                    auto key = lexer.nextToken();
+                    if (key.type == TshLexer::TokenType::TOK_RBRACE) break;
+                    if (key.type == TshLexer::TokenType::TOK_COMMA) continue;
+                    if (key.type != TshLexer::TokenType::TOK_IDENT &&
+                        key.type != TshLexer::TokenType::TOK_STRING) return nullptr;
+                    if (lexer.nextToken().type != TshLexer::TokenType::TOK_COLON) return nullptr;
+                    auto pattern = lexer.nextToken();
+                    if (pattern.type != TshLexer::TokenType::TOK_REGEX &&
+                        pattern.type != TshLexer::TokenType::TOK_STRING) return nullptr;
+                    if (!defines_map.emplace(key.text, pattern.text).second) return nullptr;
                 }
             }
 
