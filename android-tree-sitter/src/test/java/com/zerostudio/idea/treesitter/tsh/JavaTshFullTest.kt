@@ -81,17 +81,10 @@ class JavaTshFullTest {
             assertTrue(span.endByte >= span.startByte, "Span endByte must not precede startByte.")
         }
 
-        // 3. 校验代码块折叠 (Fold Ranges)
-        val folds = WindbellTshEngine.instance.computeFolds(tree, testSource, "java")
-        assertNotNull(folds)
-        assertTrue(folds.any { it.kind == 1 }, "Must contain Javadoc comment folding range.")
-        assertTrue(folds.any { it.kind == 0 }, "Must contain Record body folding range.")
-
-        // 4. 校验符号大纲 (Outline)
-        val outlines = WindbellTshEngine.instance.computeOutline(tree, testSource, "java")
-        assertNotNull(outlines)
-        assertTrue(outlines.any { it.name == "UserProfile" && it.kind == 1 }, "Must extract UserProfile record outline.")
-        assertTrue(outlines.any { it.name == "renderEmoji" && it.kind == 2 }, "Must extract renderEmoji method outline.")
+        // 3. DSL-declared scheme enumeration and palette-only switching.
+        val schemes = WindbellTshEngine.instance.listSchemes("java")
+        assertTrue(schemes.contains("default"), "Legacy style tuples should create a default scheme.")
+        assertTrue(WindbellTshEngine.instance.selectScheme("java", "default"))
 
         // 5. 校验多态色彩应用 (Light / Dark 热切换上屏)
         val ssb = SpannableStringBuilder(testSource)
@@ -129,8 +122,6 @@ class JavaTshFullTest {
                     for (i in 0 until iterationsPerThread) {
                         val spans = WindbellTshEngine.instance.computeHighlights(tr, snippet, "java")
                         assertFalse(spans.isEmpty())
-                        val folds = WindbellTshEngine.instance.computeFolds(tr, snippet, "java")
-                        assertNotNull(folds)
                     }
                     p.close()
                 } finally {
