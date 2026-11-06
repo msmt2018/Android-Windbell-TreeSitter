@@ -11,6 +11,16 @@
 
 namespace windbell::tsh {
 
+static const UChar* advanceOneUtf16CodePoint(const UChar* current, const UChar* end) {
+    if (current >= end) return end;
+    const uint16_t first = static_cast<uint16_t>(*current++);
+    if (first >= 0xD800 && first <= 0xDBFF && current < end) {
+        const uint16_t second = static_cast<uint16_t>(*current);
+        if (second >= 0xDC00 && second <= 0xDFFF) ++current;
+    }
+    return current;
+}
+
 TshGrammar::~TshGrammar() {
     std::function<void(CompiledRegexRule&)> release_rule;
     release_rule = [&](CompiledRegexRule& rule) {
@@ -168,7 +178,9 @@ void WindbellEngine::matchBlockRecursive(
         }
 
         if (hit_end >= 0 && end_region->end[0] > start_region->beg[0]) {
-            curr = text_start + end_region->end[0];
+            const UChar* next = text_start + end_region->end[0];
+            if (next <= curr) next = advanceOneUtf16CodePoint(curr, range_end);
+            curr = next;
         } else {
             curr = text_start + start_region->end[0] + sizeof(uint16_t);
         }
@@ -254,7 +266,8 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                 }
 
                 current = (region->end[0] <= region->beg[0]) ?
-                    current + sizeof(uint16_t) : text_start + region->end[0];
+                    advanceOneUtf16CodePoint(text_start + region->beg[0], text_end) :
+                    text_start + region->end[0];
             } else {
                 break;
             }
