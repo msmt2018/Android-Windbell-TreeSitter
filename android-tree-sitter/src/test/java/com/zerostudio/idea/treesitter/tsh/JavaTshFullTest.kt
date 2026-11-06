@@ -83,8 +83,10 @@ class JavaTshFullTest {
 
         // 3. DSL-declared scheme enumeration and palette-only switching.
         val schemes = WindbellTshEngine.instance.listSchemes("java")
-        assertTrue(schemes.contains("default"), "Legacy style tuples should create a default scheme.")
-        assertTrue(WindbellTshEngine.instance.selectScheme("java", "default"))
+        assertTrue(schemes.contains("darcula"))
+        assertTrue(schemes.contains("github"))
+        assertEquals("darcula", WindbellTshEngine.instance.getDefaultScheme("java"))
+        assertTrue(WindbellTshEngine.instance.selectScheme("java", "darcula"))
 
         // 5. 校验多态色彩应用 (Light / Dark 热切换上屏)
         val ssb = SpannableStringBuilder(testSource)
