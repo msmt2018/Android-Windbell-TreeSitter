@@ -175,6 +175,23 @@ void WindbellEngine::matchBlockRecursive(
                 block_span.allow_overlap = rule.allow_overlap ? 1 : 0;
                 out_spans.push_back(block_span);
             }
+            if (rule.has_content_style) {
+                const uint32_t content_start = static_cast<uint32_t>(start_region->end[0]);
+                const uint32_t content_end = hit_end >= 0 ?
+                    static_cast<uint32_t>(end_region->beg[0]) :
+                    static_cast<uint32_t>(range_end - text_start);
+                if (content_start < content_end &&
+                    (content_start & 1u) == 0 && (content_end & 1u) == 0) {
+                    HighlightSpan content_span;
+                    content_span.start_byte = content_start;
+                    content_span.end_byte = content_end;
+                    content_span.style_id = rule.content_style_id;
+                    content_span.priority = rule.priority;
+                    content_span.declaration_order = rule.declaration_order;
+                    content_span.allow_overlap = rule.allow_overlap ? 1 : 0;
+                    out_spans.push_back(content_span);
+                }
+            }
             appendRegexCaptureSpans(
                 rule.onig_start, start_region, rule.start_group_style_map,
                 rule.start_named_group_style_map, rule.priority, rule.declaration_order,
