@@ -160,6 +160,7 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeGetEditorMetadat
     for (const auto& value : metadata.line_comments) records.push_back({"lineComment", value, ""});
     for (const auto& pair : metadata.block_comments) records.push_back({"blockComment", pair.first, pair.second});
     for (const auto& pair : metadata.brackets) records.push_back({"bracket", pair.first, pair.second});
+    for (const auto& scope : metadata.bracket_not_in) records.push_back({"bracketNotIn", scope, ""});
     for (const auto& pair : metadata.surrounding_pairs) records.push_back({"surrounding", pair.first, pair.second});
     for (const auto& pair : metadata.auto_closing_pairs) {
         std::string not_in;
