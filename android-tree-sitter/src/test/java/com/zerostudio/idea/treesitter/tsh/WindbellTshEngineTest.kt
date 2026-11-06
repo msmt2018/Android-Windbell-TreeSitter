@@ -93,7 +93,7 @@ class WindbellTshLinkageTest {
                     scope: "keyword.control"
                     tags: ["keyword", "control"]
                     deprecated: false
-                    metadata: { standard: "textmate", category: "syntax" }
+                    metadata: { standard: "textmate", category: "syntax", localized: "类型" }
                 }
                 keywordStrong { scope: "keyword.control.strong", parent: "keyword", tags: ["keyword", "emphasis"] }
                 selectorOnly { scope: "keyword.control.selector", tags: ["keyword", "selector"] }
@@ -200,6 +200,7 @@ class WindbellTshLinkageTest {
         assertFalse(catalog.first { it.name == "keyword" }.deprecated)
         assertEquals("textmate", catalog.first { it.name == "keyword" }.metadata["standard"])
         assertEquals("syntax", catalog.first { it.name == "keyword" }.metadata["category"])
+        assertEquals("类型", catalog.first { it.name == "keyword" }.metadata["localized"])
         assertTrue(engine.selectScheme("scheme", "midnight"))
         assertEquals(0xFF1E1E1E.toInt(), engine.getThemeTokens("scheme")["editor.background"])
         engine.setAppearance("scheme", false)
