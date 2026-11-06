@@ -140,6 +140,9 @@ class WindbellTshEngine private constructor() {
         paletteCache[extension] = map
     }
 
+    fun matchesFirstLine(extension: String, line: String): Boolean =
+        nativeMatchesFirstLine(extension, line)
+
     fun getLanguageMetadata(extension: String): LanguageMetadata {
         val raw = nativeGetLanguageMetadata(extension) ?: return LanguageMetadata()
         val values = raw.toList().chunked(2).filter { it.size == 2 }.associate { it[0] to it[1] }
@@ -376,6 +379,9 @@ class WindbellTshEngine private constructor() {
 
     @FastNative
     private external fun nativeLoadTshSource(extension: String, tshSourceContent: String, languagePtr: Long): Boolean
+
+    @FastNative
+    private external fun nativeMatchesFirstLine(extension: String, line: String): Boolean
 
     @FastNative
     private external fun nativeGetLanguageMetadata(extension: String): Array<String>?
