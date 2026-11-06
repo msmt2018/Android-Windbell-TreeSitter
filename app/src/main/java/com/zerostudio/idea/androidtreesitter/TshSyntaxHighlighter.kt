@@ -14,6 +14,9 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
 import x.github.module.editor.highlight.SyntaxHighlighter
+import x.github.module.editor.input.AutoPair
+import x.github.module.editor.input.AutoPairFilter
+import x.github.module.editor.structure.PlainBracketMatcher
 import x.github.module.editor.model.EditorBuffer
 import x.github.module.editor.model.EditorDocument
 import java.util.concurrent.atomic.AtomicLong
@@ -34,6 +37,9 @@ class TshSyntaxHighlighter(
     private val generation = AtomicLong()
     @Volatile private var host: SyntaxHighlighter.Host? = null
     @Volatile private var capturesByLine: Map<Int, List<WindbellTshEngine.HighlightSpan>> = emptyMap()
+    @Volatile private var allCaptures: List<WindbellTshEngine.HighlightSpan> = emptyList()
+    private val editorMetadata by lazy { engine.getEditorMetadata(extension) }
+    private val stylesById by lazy { engine.getStyleCatalog(extension).associateBy { it.styleId } }
     @Volatile private var parsing = false
     private var parseJob: Job? = null
 
@@ -47,12 +53,14 @@ class TshSyntaxHighlighter(
         parseJob?.cancel(CancellationException("TSH highlighter detached"))
         parseJob = null
         capturesByLine = emptyMap()
+        allCaptures = emptyList()
         parsing = false
         host = null
     }
 
     override fun onTextReplaced(buffer: EditorBuffer) {
         capturesByLine = emptyMap()
+        allCaptures = emptyList()
         scheduleParse(buffer)
     }
 
@@ -93,6 +101,36 @@ class TshSyntaxHighlighter(
         start: Int,
         end: Int
     ): Boolean = !parsing
+
+    fun createBracketMatcher(): PlainBracketMatcher? {
+        val pairs = editorMetadata.brackets.joinToString("") { it.first + it.second }
+        return pairs.takeIf { it.isNotEmpty() }?.let(::PlainBracketMatcher)
+    }
+
+    fun createAutoPairFilter(): AutoPairFilter = AutoPairFilter { pair, offset ->
+        val configured = editorMetadata.autoClosingPairs.firstOrNull {
+            it.open.length == 1 && it.close.length == 1 &&
+                it.open[0] == pair.open && it.close[0] == pair.close
+        }
+        val excludedScopes = configured?.notIn.orEmpty()
+        if (excludedScopes.isEmpty()) {
+            true
+        } else {
+            allCaptures.none { span ->
+                val start = span.startByte shr 1
+                val end = span.endByte shr 1
+                if (offset < start || offset >= end) {
+                    false
+                } else {
+                    val style = stylesById[span.styleId]
+                    excludedScopes.any { scope ->
+                        style?.tags?.contains(scope) == true ||
+                            style?.scope?.startsWith(scope) == true
+                    }
+                }
+            }
+        }
+    }
 
     /** Call after selecting another scheme or appearance to repaint without reparsing. */
     fun refreshTheme() {
@@ -172,6 +210,7 @@ class TshSyntaxHighlighter(
                 tree = parser.parseString(textSnapshot)
                 val nextCaptures = engine.computeHighlights(tree, textSnapshot, extension)
                 if (generation.get() == ticket) {
+                    allCaptures = nextCaptures
                     capturesByLine = indexCapturesByLine(textSnapshot, nextCaptures)
                     parsing = false
                     host?.invalidateStyles()
@@ -181,6 +220,7 @@ class TshSyntaxHighlighter(
             } catch (_: Throwable) {
                 if (generation.get() == ticket) {
                     capturesByLine = emptyMap()
+                    allCaptures = emptyList()
                     parsing = false
                     host?.invalidateStyles()
                 }
