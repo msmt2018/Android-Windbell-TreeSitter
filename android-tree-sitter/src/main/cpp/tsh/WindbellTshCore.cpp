@@ -390,6 +390,7 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
     if (!grammar->monarch_states.empty()) {
         std::vector<std::string> state_stack{grammar->monarch_start_state};
         OnigRegion* monarch_region = onig_region_new();
+        OnigRegion* monarch_case_region = onig_region_new();
         uint32_t position = 0;
         uint32_t zero_width_steps = 0;
         while (position < total_bytes) {
@@ -453,12 +454,48 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                 static_cast<uint32_t>(monarch_region->beg[0]) : position;
             const uint32_t match_end = monarch_region->end[0] >= 0 ?
                 static_cast<uint32_t>(monarch_region->end[0]) : position;
-            if (matched_rule->has_style && match_end > match_start &&
+            uint16_t resolved_style_id = matched_rule->style_id;
+            bool has_resolved_style = matched_rule->has_style;
+            if (!matched_rule->cases.empty()) {
+                const MonarchCase* default_case = nullptr;
+                bool case_matched = false;
+                for (const auto& case_entry : matched_rule->cases) {
+                    if (case_entry.is_default) {
+                        default_case = &case_entry;
+                        continue;
+                    }
+                    if (!case_entry.matcher) continue;
+                    const int case_length = onig_match(
+                        case_entry.matcher,
+                        text_start,
+                        text_end,
+                        text_start + match_start,
+                        monarch_case_region,
+                        ONIG_OPTION_NONE
+                    );
+                    if (case_length >= 0 &&
+                        match_start + static_cast<uint32_t>(case_length) == match_end) {
+                        resolved_style_id = case_entry.style_id;
+                        has_resolved_style = true;
+                        case_matched = true;
+                        break;
+                    }
+                }
+                if (!case_matched) {
+                    if (default_case) {
+                        resolved_style_id = default_case->style_id;
+                        has_resolved_style = true;
+                    } else {
+                        has_resolved_style = false;
+                    }
+                }
+            }
+            if (has_resolved_style && match_end > match_start &&
                 (match_start & 1u) == 0 && (match_end & 1u) == 0) {
                 HighlightSpan span;
                 span.start_byte = match_start;
                 span.end_byte = match_end;
-                span.style_id = matched_rule->style_id;
+                span.style_id = resolved_style_id;
                 span.priority = matched_rule->priority;
                 span.declaration_order = matched_rule->declaration_order;
                 micro_spans.push_back(span);
@@ -498,6 +535,7 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                 if (++zero_width_steps > 64) zero_width_steps = 0;
             }
         }
+        onig_region_free(monarch_case_region, 1);
         onig_region_free(monarch_region, 1);
     }
 
