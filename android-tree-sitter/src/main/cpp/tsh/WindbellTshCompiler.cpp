@@ -651,6 +651,17 @@ static bool decodePatternUtf8ToUtf16(const std::string& input, std::vector<uint1
     return true;
 }
 
+static std::string escapeOnigurumaLiteral(const std::string& value) {
+    static const std::string metacharacters = R"(\\.^$|()[]{}*+?)";
+    std::string escaped;
+    escaped.reserve(value.size() * 2);
+    for (char ch : value) {
+        if (metacharacters.find(ch) != std::string::npos) escaped.push_back('\\');
+        escaped.push_back(ch);
+    }
+    return escaped;
+}
+
 static bool expandMonarchVariables(
     const std::string& input,
     const std::unordered_map<std::string, std::string>& variables,
@@ -1592,6 +1603,40 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                                             rule.token_name = value.text;
                                             rule.has_style = true;
                                         }
+                                    } else if (key.text == "cases") {
+                                        if (value.type != TshLexer::TokenType::TOK_LBRACE) return nullptr;
+                                        bool saw_default_case = false;
+                                        while (true) {
+                                            auto case_key = lexer.nextToken();
+                                            if (case_key.type == TshLexer::TokenType::TOK_RBRACE) break;
+                                            if (case_key.type == TshLexer::TokenType::TOK_COMMA) continue;
+                                            if (saw_default_case ||
+                                                (case_key.type != TshLexer::TokenType::TOK_STRING &&
+                                                 case_key.type != TshLexer::TokenType::TOK_IDENT) ||
+                                                lexer.nextToken().type != TshLexer::TokenType::TOK_COLON) return nullptr;
+                                            auto case_token = lexer.nextToken();
+                                            if (case_token.type != TshLexer::TokenType::TOK_STRING &&
+                                                case_token.type != TshLexer::TokenType::TOK_IDENT) return nullptr;
+                                            MonarchCase case_entry;
+                                            case_entry.token_name = case_token.text;
+                                            if (case_key.text == "@default") {
+                                                case_entry.is_default = true;
+                                                saw_default_case = true;
+                                            } else {
+                                                std::string case_pattern;
+                                                if (!case_key.text.empty() && case_key.text.front() == '@') {
+                                                    std::unordered_map<std::string, bool> active_variables;
+                                                    if (!expandMonarchVariables(case_key.text,
+                                                            grammar->monarch_variables,
+                                                            active_variables, case_pattern)) return nullptr;
+                                                } else {
+                                                    case_pattern = escapeOnigurumaLiteral(case_key.text);
+                                                }
+                                                case_entry.matcher = compileOnigurumaUtf16(case_pattern, options);
+                                                if (!case_entry.matcher) return nullptr;
+                                            }
+                                            rule.cases.push_back(std::move(case_entry));
+                                        }
                                     } else if (key.text == "include") {
                                         if (value.type != TshLexer::TokenType::TOK_STRING &&
                                             value.type != TshLexer::TokenType::TOK_IDENT) return nullptr;
@@ -1654,6 +1699,9 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                     for (auto& rule : state.second) {
                         if (rule.has_style) {
                             rule.style_id = ensureStyleId(rule.token_name + grammar->monarch_token_postfix);
+                        }
+                        for (auto& case_entry : rule.cases) {
+                            case_entry.style_id = ensureStyleId(case_entry.token_name + grammar->monarch_token_postfix);
                         }
                     }
                 }
