@@ -263,6 +263,7 @@ class WindbellTshLinkageTest {
                         keywords: /(?:if|else|return)/
                     }
                     start: "root"
+                    ignoreCase: true
                     tokenizer {
                         root: [
                             { match: /"/, token: "string", push: "@string" }
@@ -282,7 +283,7 @@ class WindbellTshLinkageTest {
             }
         """.trimIndent()
         assertTrue(engine.loadTshSource("stateful", source, null))
-        val code = "if foo \"bar\" baz"
+        val code = "IF foo \"bar\" baz"
         val spans = engine.computeHighlights(null, code, "stateful")
         val identifierId = engine.getStyleCatalog("stateful").first { it.name == "identifier.state" }.styleId
         val stringId = engine.getStyleCatalog("stateful").first { it.name == "string.state" }.styleId
