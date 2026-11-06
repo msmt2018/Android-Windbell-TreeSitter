@@ -297,7 +297,11 @@ std::shared_ptr<TshGrammar> TshCompiler::compile(const std::string& source, cons
                         scheme_name_tok.type != TshLexer::TokenType::TOK_STRING) return nullptr;
 
                     const std::string scheme_name = scheme_name_tok.text;
-                    if (grammar->default_scheme_name.empty()) {
+                    // A real schemes block takes precedence over the legacy
+                    // compatibility palette named "default".
+                    if (grammar->default_scheme_name.empty() ||
+                        (grammar->default_scheme_name == "default" &&
+                         grammar->schemes.find("default") != grammar->schemes.end())) {
                         grammar->default_scheme_name = scheme_name;
                     }
 
