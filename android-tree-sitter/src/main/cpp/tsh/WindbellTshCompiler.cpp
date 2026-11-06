@@ -490,7 +490,10 @@ std::shared_ptr<TshGrammar> TshCompiler::compile(const std::string& source, cons
                         }
                         while (modifier.type == TshLexer::TokenType::TOK_AT) {
                             auto flag = lexer.nextToken();
-                            if (flag.text == "B" || flag.text == "bold") color.font_flags |= 0x01;
+                            if (flag.text == "B" || flag.text == "bold") {
+                                color.light_font_flags |= 0x01;
+                                color.dark_font_flags |= 0x01;
+                            }
                             else if (flag.text == "I" || flag.text == "italic") {
                             color.light_font_flags |= 0x02;
                             color.dark_font_flags |= 0x02;
