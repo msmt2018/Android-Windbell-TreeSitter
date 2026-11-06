@@ -13,6 +13,7 @@
 #include <memory>
 #include <unordered_map>
 #include <mutex>
+#include <utility>
 
 #include "tree_sitter/api.h"
 #include "oniguruma.h"
@@ -98,6 +99,26 @@ struct ColorScheme {
     std::unordered_map<std::string, uint32_t> ui_dark_colors;
 };
 
+struct TshAutoClosingPair {
+    std::string open;
+    std::string close;
+    std::vector<std::string> not_in;
+};
+
+struct TshEditorMetadata {
+    std::vector<std::string> line_comments;
+    std::vector<std::pair<std::string, std::string>> block_comments;
+    std::vector<std::pair<std::string, std::string>> brackets;
+    std::vector<TshAutoClosingPair> auto_closing_pairs;
+    std::vector<std::pair<std::string, std::string>> surrounding_pairs;
+    std::string word_pattern;
+    std::string increase_indent_pattern;
+    std::string decrease_indent_pattern;
+    std::string indent_next_line_pattern;
+    std::string unindented_line_pattern;
+    std::vector<std::string> completion_trigger_characters;
+};
+
 class TshGrammar {
 public:
     std::string name;
@@ -112,6 +133,7 @@ public:
     std::unordered_map<std::string, ColorScheme> schemes;
     std::string default_scheme_name;
     bool default_is_dark = false;
+    TshEditorMetadata editor_metadata;
 
     std::vector<CompiledRegexRule> regex_rules;
     std::vector<AstSelectorRule> ast_selector_rules;
