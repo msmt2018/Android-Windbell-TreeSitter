@@ -2294,7 +2294,53 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                             if (field.type == TshLexer::TokenType::TOK_EOF ||
                                 lexer.nextToken().type != TshLexer::TokenType::TOK_COLON) return nullptr;
                             auto value = lexer.nextToken();
-                            if (field.text == "captures") {
+                            if (field.text == "patterns") {
+                                if (value.type != TshLexer::TokenType::TOK_LBRACKET) return nullptr;
+                                while (true) {
+                                    auto pattern_entry = lexer.nextToken();
+                                    if (pattern_entry.type == TshLexer::TokenType::TOK_RBRACKET) break;
+                                    if (pattern_entry.type == TshLexer::TokenType::TOK_COMMA) continue;
+                                    if (pattern_entry.type != TshLexer::TokenType::TOK_LBRACE) return nullptr;
+                                    NativeQueryProgram::PatternMetadata metadata;
+                                    bool has_index = false;
+                                    while (true) {
+                                        auto pattern_field = lexer.nextToken();
+                                        if (pattern_field.type == TshLexer::TokenType::TOK_RBRACE) break;
+                                        if (pattern_field.type == TshLexer::TokenType::TOK_COMMA) continue;
+                                        if (pattern_field.type != TshLexer::TokenType::TOK_IDENT ||
+                                            lexer.nextToken().type != TshLexer::TokenType::TOK_COLON) return nullptr;
+                                        auto pattern_value = lexer.nextToken();
+                                        if (pattern_field.text == "index") {
+                                            if (pattern_value.type != TshLexer::TokenType::TOK_NUMBER) return nullptr;
+                                            try {
+                                                size_t consumed = 0;
+                                                const unsigned long parsed = std::stoul(pattern_value.text, &consumed);
+                                                if (consumed != pattern_value.text.size() ||
+                                                    parsed > std::numeric_limits<uint32_t>::max()) return nullptr;
+                                                metadata.pattern_index = static_cast<uint32_t>(parsed);
+                                                has_index = true;
+                                            } catch (...) { return nullptr; }
+                                        } else if (pattern_field.text == "enabled") {
+                                            if (pattern_value.text == "true") metadata.enabled = true;
+                                            else if (pattern_value.text == "false") metadata.enabled = false;
+                                            else return nullptr;
+                                        } else if (pattern_field.text == "priority") {
+                                            if (pattern_value.type != TshLexer::TokenType::TOK_NUMBER) return nullptr;
+                                            try {
+                                                size_t consumed = 0;
+                                                metadata.priority = std::stoi(pattern_value.text, &consumed);
+                                                if (consumed != pattern_value.text.size()) return nullptr;
+                                                metadata.has_priority = true;
+                                            } catch (...) { return nullptr; }
+                                        } else {
+                                            return nullptr;
+                                        }
+                                    }
+                                    if (!has_index ||
+                                        !program.pattern_metadata.emplace(metadata.pattern_index, metadata).second)
+                                        return nullptr;
+                                }
+                            } else if (field.text == "captures") {
                                 if (value.type != TshLexer::TokenType::TOK_LBRACE) return nullptr;
                                 while (true) {
                                     auto capture = lexer.nextToken();
@@ -2423,6 +2469,17 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                                         entry.negate = op == "not-match?";
                                         program.predicate_regexes.push_back(entry);
                                     }
+                                }
+                            }
+
+                            const uint32_t pattern_count = ts_query_pattern_count(program.query);
+                            for (const auto& item : program.pattern_metadata) {
+                                if (item.first >= pattern_count) {
+                                    g_tsh_last_error_detail = "native query pattern metadata index is out of range";
+                                    release_predicate_regexes();
+                                    ts_query_delete(program.query);
+                                    program.query = nullptr;
+                                    return nullptr;
                                 }
                             }
 
