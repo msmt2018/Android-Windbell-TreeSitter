@@ -19,7 +19,13 @@ A v2 file is a brace-delimited document. Commas after entries are optional. Stri
 ```tsh
 tsh 2 {
   language { id: "java", name: "Java", extensions: [".java", ".jav"] }
-  matching { caseSensitive: true, unicode: true }
+  matching {
+    caseSensitive: true
+    multiline: false
+    dotAll: false
+    extended: false
+    unicode: true
+  }
 
   styles { /* semantic style declarations */ }
   schemes { /* unlimited named schemes */ }
@@ -51,7 +57,7 @@ styles {
 }
 ```
 
-A style may declare `scope`, `tags`, `description`, `deprecated`, `parent`, and `metadata`. Scope names follow TextMate-style dotted scope conventions. Tags are open strings; the runtime must not reserve a closed list of token categories. `parent` allows semantic inheritance for theme matching; cycles are compile errors.
+A style may declare `scope`, `tags`, `description`, `deprecated`, `parent`, and `metadata`. A child style inherits missing light/dark palette values from its parent style; explicit child values override the inherited values. Parent cycles and unknown parents are compile errors. Scope names follow TextMate-style dotted scope conventions. Tags are open strings; the runtime must not reserve a closed list of token categories. `parent` allows semantic inheritance for theme matching; cycles are compile errors.
 
 ## 4. Unlimited named schemes and appearance
 
@@ -91,6 +97,7 @@ schemes {
   }
 
   github {
+    extends: "darcula"
     light [ keyword: #0550AE, string: #0A3069, comment: #6E7781 ]
     dark  [ keyword: #79C0FF, string: #A5D6FF, comment: #8B949E ]
   }
@@ -102,6 +109,8 @@ Color syntax accepts #RGB, #RGBA, #RRGGBB and #AARRGGBB; canonical runtime repre
 Style modifiers are composable: `bold`, `italic`, `underline`, `strikethrough`, `dim`, `italicOff`, `boldOff`, `fontFamily`, `fontSize`, `opacity`, `border`, and `background`. Modifiers are optional and independently specified for light/dark. The renderer only applies properties explicitly present in the selected scheme.
 
 ## 5. Rule model and arbitration
+
+Language-wide regex behavior is declared in `matching`: `caseSensitive`, `multiline`, `dotAll`, `extended`, and `unicode`. Individual regex rules may override/add flags with `flags: ["i", "m", "s", "x"]`. Named capture groups and numeric capture groups can both bind semantic styles. Unicode source patterns are decoded to UTF-16 before Oniguruma compilation.
 
 Every rule has a stable `id`, a backend, optional `name`, `enabled`, `priority`, `when`, `scope`, `captures`, and metadata. Higher priority wins on overlapping spans; ties are resolved by declaration order unless a rule explicitly sets `overlap: "allow"`. A rule never infers priority from its style name.
 
