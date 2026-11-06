@@ -109,6 +109,7 @@ struct TshEditorMetadata {
     std::vector<std::string> line_comments;
     std::vector<std::pair<std::string, std::string>> block_comments;
     std::vector<std::pair<std::string, std::string>> brackets;
+    std::vector<std::string> bracket_not_in;
     std::vector<TshAutoClosingPair> auto_closing_pairs;
     std::vector<std::pair<std::string, std::string>> surrounding_pairs;
     std::string word_pattern;
