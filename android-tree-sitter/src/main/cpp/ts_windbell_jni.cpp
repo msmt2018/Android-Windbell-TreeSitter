@@ -342,9 +342,11 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeGetStyleCatalog(
         }
         std::string metadata;
         for (const auto& entry : style.metadata) {
-            if (!metadata.empty()) metadata.push_back('\x1E');
+            metadata += std::to_string(entry.first.size());
+            metadata.push_back(':');
             metadata += entry.first;
-            metadata.push_back('\x1F');
+            metadata += std::to_string(entry.second.size());
+            metadata.push_back(':');
             metadata += entry.second;
         }
         const std::string values[] = {
