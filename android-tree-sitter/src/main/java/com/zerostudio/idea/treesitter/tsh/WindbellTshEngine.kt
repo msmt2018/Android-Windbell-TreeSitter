@@ -32,6 +32,8 @@ class WindbellTshEngine private constructor() {
 
     private val paletteCache = ConcurrentHashMap<String, Map<Int, StylePalette>>()
     private val selectedSchemes = ConcurrentHashMap<String, String>()
+    private val defaultAppearances = ConcurrentHashMap<String, Boolean>()
+    private val appearanceOverrides = ConcurrentHashMap<String, Boolean>()
     
     // 主题切换开关：切换时无需重新走分词运算，仅刷新颜色绘制
     var isDarkTheme: Boolean = false
@@ -52,6 +54,7 @@ class WindbellTshEngine private constructor() {
     fun loadTshSource(extension: String, tshSourceContent: String, language: TSLanguage? = null): Boolean {
         val success = nativeLoadTshSource(extension, tshSourceContent, language?.nativeObject ?: 0L)
         if (success) {
+            defaultAppearances[extension] = nativeGetDefaultIsDark(extension)
             val defaultScheme = nativeGetDefaultScheme(extension)
             if (defaultScheme != null) {
                 selectedSchemes[extension] = defaultScheme
@@ -92,6 +95,18 @@ class WindbellTshEngine private constructor() {
 
     fun getSelectedScheme(extension: String): String? = selectedSchemes[extension]
 
+    /** Explicitly overrides the DSL's default appearance for this extension. */
+    fun setAppearance(extension: String, isDark: Boolean) {
+        appearanceOverrides[extension] = isDark
+    }
+
+    fun clearAppearanceOverride(extension: String) {
+        appearanceOverrides.remove(extension)
+    }
+
+    fun isDark(extension: String): Boolean =
+        appearanceOverrides[extension] ?: defaultAppearances[extension] ?: false
+
     /**
      * 直接向 Android 编辑器 Spannable 批量直填着色 (零闪烁、零装箱开销)
      */
@@ -116,7 +131,8 @@ class WindbellTshEngine private constructor() {
                 val colorDef = palette[span.styleId]
                 // A missing DSL color means "leave the editor's foreground alone".
                 // Never inject a platform black/white fallback.
-                val color = if (isDarkTheme) colorDef?.darkColor ?: 0 else colorDef?.lightColor ?: 0
+                val darkMode = appearanceOverrides[extension] ?: defaultAppearances[extension] ?: isDarkTheme
+                val color = if (darkMode) colorDef?.darkColor ?: 0 else colorDef?.lightColor ?: 0
                 if (color != 0) {
                     spannable.setSpan(ForegroundColorSpan(color), charStart, charEnd, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
                 }
@@ -154,6 +170,9 @@ class WindbellTshEngine private constructor() {
 
     @FastNative
     private external fun nativeGetDefaultScheme(extension: String): String?
+
+    @FastNative
+    private external fun nativeGetDefaultIsDark(extension: String): Boolean
 
     @FastNative
     private external fun nativeGetPalette(extension: String, schemeName: String): IntArray?
