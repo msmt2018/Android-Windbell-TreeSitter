@@ -114,7 +114,7 @@ class WindbellTshLinkageTest {
             schemes {
                 midnight {
                     light [ keyword: #112233, string: #223344 ]
-                    dark [ keyword: #AABBCC, string: #BBCCDD ]
+                    dark [ keyword: #AABBCC @dim, string: #BBCCDD ]
                     ui {
                         light {
                             editor.background: #FFFFFF
@@ -224,6 +224,7 @@ class WindbellTshLinkageTest {
         assertEquals("derived", engine.getSelectedScheme("scheme"))
         assertEquals(0xFF1E1E1E.toInt(), engine.getThemeTokens("scheme")["editor.background"])
         val inheritedKeyword = engine.getStylePalette("scheme", "keyword")
+        assertEquals(0x10, inheritedKeyword?.darkFontFlags)
         val explicitChild = engine.getStylePalette("scheme", "keywordStrong")
         assertEquals(0xFF112233.toInt(), inheritedKeyword?.lightColor)
         assertEquals(0xFFFF00AA.toInt(), explicitChild?.darkColor)
