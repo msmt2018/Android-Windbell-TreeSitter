@@ -420,18 +420,25 @@ class WindbellTshLinkageTest {
                 }
                 styles {
                     type { scope: "entity.name.type", tags: ["type"] }
+                    method { scope: "entity.name.function", tags: ["function"] }
                 }
                 schemes {
                     plain {
-                        light [ type: #0000FF ]
-                        dark [ type: #79C0FF ]
+                        light [ type: #0000FF, method: #008000 ]
+                        dark [ type: #79C0FF, method: #4EC9B0 ]
                     }
                 }
                 treeSitter {
                     queries: [
                         {
                             id: "type-declarations"
+                            priority: 10
                             source: `(class_declaration name: (identifier) @type)`
+                        },
+                        {
+                            id: "method-declarations"
+                            priority: 30
+                            source: `(method_declaration name: (identifier) @method)`
                         }
                     ]
                 }
@@ -439,11 +446,13 @@ class WindbellTshLinkageTest {
         """.trimIndent()
         assertTrue(engine.loadTshSource("java-query", source, language))
         val parser = TSParser.create().apply { setLanguage(language) }
-        val code = "class Demo {}"
+        val code = "class Demo { void run() {} }"
         val tree = parser.parseString(code)
         val spans = engine.computeHighlights(tree, code, "java-query")
         val typeId = engine.getStyleCatalog("java-query").first { it.name == "type" }.styleId
-        assertTrue(spans.any { it.styleId == typeId && it.startByte == 12 && it.endByte == 20 })
+        val methodId = engine.getStyleCatalog("java-query").first { it.name == "method" }.styleId
+        assertTrue(spans.any { it.styleId == typeId && it.priority == 10 })
+        assertTrue(spans.any { it.styleId == methodId && it.priority == 30 })
         tree?.close()
         parser.close()
 
