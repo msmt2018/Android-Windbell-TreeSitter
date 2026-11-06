@@ -411,11 +411,16 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                     if (child_token.type == TshLexer::TokenType::TOK_COMMA) continue;
                     if (child_token.type == TshLexer::TokenType::TOK_EOF) return false;
                     if (capture_block) {
-                        if (child_token.type != TshLexer::TokenType::TOK_NUMBER) return false;
-                        const int group_index = std::stoi(child_token.text);
+                        if (child_token.type != TshLexer::TokenType::TOK_NUMBER &&
+                            child_token.type != TshLexer::TokenType::TOK_IDENT &&
+                            child_token.type != TshLexer::TokenType::TOK_STRING) return false;
                         if (lexer.nextToken().type != TshLexer::TokenType::TOK_COLON) return false;
                         auto style_name = lexer.nextToken();
-                        rule.group_style_map[group_index] = ensureStyleId(style_name.text);
+                        if (child_token.type == TshLexer::TokenType::TOK_NUMBER) {
+                            rule.group_style_map[std::stoi(child_token.text)] = ensureStyleId(style_name.text);
+                        } else {
+                            rule.named_group_style_map[child_token.text] = ensureStyleId(style_name.text);
+                        }
                     } else {
                         if (child_token.type != TshLexer::TokenType::TOK_LBRACE) return false;
                         CompiledRegexRule nested;
