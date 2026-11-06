@@ -2636,6 +2636,7 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                                     return nullptr;
                                 }
                                 ast_rule.text_regex_pattern = value.text;
+                                ast_rule.has_text_regex = true;
                             } else if (field.text == "firstChild" || field.text == "lastChild") {
                                 auto value = read_ast_value();
                                 int8_t flag = -1;
@@ -2746,7 +2747,7 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                             }
                         }
 
-                        if (!ast_rule.text_regex_pattern.empty()) {
+                        if (ast_rule.has_text_regex) {
                             ast_rule.text_regex = compileOnigurumaUtf16(
                                 ast_rule.text_regex_pattern, ONIG_OPTION_DEFAULT);
                             if (!ast_rule.text_regex) return nullptr;
