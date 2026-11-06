@@ -171,7 +171,7 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
 
     for (const auto& rule : grammar->regex_rules) {
         if (!rule.enabled) continue;
-        if (rule.type == RegexRuleType::BLOCK && rule.onig_start && rule.onig_end) {
+        if (rule.type == RegexRuleType::BLOCK && rule.has_style && rule.onig_start && rule.onig_end) {
             matchBlockRecursive(rule, text_start, text_end, text_start, text_end, micro_spans);
             continue;
         }
@@ -210,7 +210,7 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                     };
 
                     if (rule.group_style_map.empty()) {
-                        append_capture(0, rule.style_id);
+                        if (rule.has_style) append_capture(0, rule.style_id);
                     } else {
                         auto whole_match = rule.group_style_map.find(0);
                         if (whole_match != rule.group_style_map.end()) {
