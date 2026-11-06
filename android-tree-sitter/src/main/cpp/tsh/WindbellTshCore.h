@@ -71,6 +71,7 @@ struct MonarchRule {
     std::string switch_state;
     bool pop = false;
     bool rematch = false;
+    bool enabled = true;
     int32_t priority = 0;
     uint32_t declaration_order = 0;
 };
