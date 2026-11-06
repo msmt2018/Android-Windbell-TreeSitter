@@ -2286,7 +2286,21 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                             if (field.type == TshLexer::TokenType::TOK_EOF ||
                                 lexer.nextToken().type != TshLexer::TokenType::TOK_COLON) return nullptr;
                             auto value = lexer.nextToken();
-                            if (field.text == "id") {
+                            if (field.text == "captures") {
+                                if (value.type != TshLexer::TokenType::TOK_LBRACE) return nullptr;
+                                while (true) {
+                                    auto capture = lexer.nextToken();
+                                    if (capture.type == TshLexer::TokenType::TOK_RBRACE) break;
+                                    if (capture.type == TshLexer::TokenType::TOK_COMMA) continue;
+                                    if (capture.type != TshLexer::TokenType::TOK_IDENT ||
+                                        lexer.nextToken().type != TshLexer::TokenType::TOK_COLON) return nullptr;
+                                    auto style = lexer.nextToken();
+                                    if (style.type != TshLexer::TokenType::TOK_IDENT &&
+                                        style.type != TshLexer::TokenType::TOK_STRING) return nullptr;
+                                    if (!program.capture_bindings.emplace(capture.text, style.text).second)
+                                        return nullptr;
+                                }
+                            } else if (field.text == "id") {
                                 if (value.type != TshLexer::TokenType::TOK_STRING &&
                                     value.type != TshLexer::TokenType::TOK_IDENT) return nullptr;
                                 program.id = value.text;
@@ -2379,8 +2393,42 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                                 uint32_t name_length = 0;
                                 const char* capture_name = ts_query_capture_name_for_id(
                                     program.query, capture_id, &name_length);
-                                if (!capture_name || grammar->style_name_to_id.find(
-                                    std::string(capture_name, name_length)) == grammar->style_name_to_id.end()) {
+                                if (!capture_name) {
+                                    g_tsh_last_error_detail = "native query contains an unnamed capture";
+                                    ts_query_delete(program.query);
+                                    program.query = nullptr;
+                                    return nullptr;
+                                }
+                                const std::string capture_name_string(capture_name, name_length);
+                                auto explicit_binding = program.capture_bindings.find(capture_name_string);
+                                const std::string& style_name = explicit_binding != program.capture_bindings.end()
+                                    ? explicit_binding->second : capture_name_string;
+                                auto style = grammar->style_name_to_id.find(style_name);
+                                if (style == grammar->style_name_to_id.end()) {
+                                    g_tsh_last_error_detail = "native query capture @" + capture_name_string +
+                                        " has no valid style binding (style: " + style_name + ")";
+                                    ts_query_delete(program.query);
+                                    program.query = nullptr;
+                                    return nullptr;
+                                }
+                                program.capture_style_ids.emplace(
+                                    static_cast<uint16_t>(capture_id), style->second);
+                            }
+                            for (const auto& binding : program.capture_bindings) {
+                                bool found = false;
+                                for (uint32_t capture_id = 0; capture_id < capture_count; ++capture_id) {
+                                    uint32_t name_length = 0;
+                                    const char* capture_name = ts_query_capture_name_for_id(
+                                        program.query, capture_id, &name_length);
+                                    if (capture_name && binding.first ==
+                                        std::string(capture_name, name_length)) {
+                                        found = true;
+                                        break;
+                                    }
+                                }
+                                if (!found) {
+                                    g_tsh_last_error_detail = "capture binding references unknown capture @" +
+                                        binding.first;
                                     ts_query_delete(program.query);
                                     program.query = nullptr;
                                     return nullptr;
