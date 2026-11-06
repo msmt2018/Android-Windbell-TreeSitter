@@ -787,7 +787,8 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                         else {
                             regex_t* validation = compileOnigurumaUtf16(value.text);
                             if (!validation) return nullptr;
-                            onig_free(validation);
+                            if (grammar->first_line_regex) onig_free(grammar->first_line_regex);
+                            grammar->first_line_regex = validation;
                             grammar->first_line_pattern = value.text;
                         }
                     } else if (key.text == "extensions") {
