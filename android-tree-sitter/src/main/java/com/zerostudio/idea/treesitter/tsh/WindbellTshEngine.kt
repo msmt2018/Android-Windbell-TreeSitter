@@ -5,6 +5,8 @@ import android.text.SpannableStringBuilder
 import android.text.style.CharacterStyle
 import android.text.style.ForegroundColorSpan
 import android.text.style.StyleSpan
+import android.text.style.UnderlineSpan
+import android.text.style.StrikethroughSpan
 import com.zerostudio.idea.treesitter.TSLanguage
 import com.zerostudio.idea.treesitter.TSTree
 import dalvik.annotation.optimization.FastNative
@@ -194,6 +196,12 @@ class WindbellTshEngine private constructor() {
                 }
                 if ((flags and 0x02) != 0) {
                     spannable.setSpan(StyleSpan(android.graphics.Typeface.ITALIC), charStart, charEnd, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+                }
+                if ((flags and 0x04) != 0) {
+                    spannable.setSpan(UnderlineSpan(), charStart, charEnd, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+                }
+                if ((flags and 0x08) != 0) {
+                    spannable.setSpan(StrikethroughSpan(), charStart, charEnd, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
                 }
             }
         }
