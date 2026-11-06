@@ -424,7 +424,6 @@ class MainActivity : AppCompatActivity() {
         engine.setAppearance("java", nextDark)
         val currentThemeName = if (nextDark) "黑夜深色 (Dark)" else "白天浅色 (Light)"
         activeTshHighlighter?.refreshTheme()
-        triggerEditorFullHighlight()
         MaterialAlertDialogBuilder(this)
             .setTitle("🎨 TSH 多态调色板热切换")
             .setMessage("当前调色板已瞬间切换为: $currentThemeName\n（验证：零重新分词开销，仅依赖 Native StyleID 调色板重新投射绘制）")
