@@ -28,7 +28,6 @@ private:
     TshCompiler() = default;
 
     std::string expandKeywordsToRegex(const std::string& word_list);
-    std::string expandBuiltin(const std::string& builtin_name);
     uint32_t parseColorHex(const std::string& hex_str);
 };
 
