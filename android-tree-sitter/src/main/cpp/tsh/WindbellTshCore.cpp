@@ -714,6 +714,16 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
 
             for (const auto& ast_rule : grammar->ast_selector_rules) {
                 if (!ast_rule.enabled) continue;
+                if (ast_rule.named >= 0 &&
+                    ts_node_is_named(node) != (ast_rule.named != 0)) continue;
+                if (ast_rule.missing >= 0 &&
+                    ts_node_is_missing(node) != (ast_rule.missing != 0)) continue;
+                if (ast_rule.extra >= 0 &&
+                    ts_node_is_extra(node) != (ast_rule.extra != 0)) continue;
+                if (ast_rule.error >= 0 &&
+                    ts_node_is_error(node) != (ast_rule.error != 0)) continue;
+                if (ast_rule.has_error >= 0 &&
+                    ts_node_has_error(node) != (ast_rule.has_error != 0)) continue;
                 // A selector with a field names the owner node and styles the
                 // selected child. A selector without a field targets the node itself.
                 if (ast_rule.field_id != 0) {
