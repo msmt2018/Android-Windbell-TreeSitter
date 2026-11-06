@@ -87,6 +87,16 @@ struct MonarchRule {
     uint32_t declaration_order = 0;
 };
 
+// One independently compiled native Tree-sitter query block. The source text is
+// consumed directly by ts_query_new; no generated SCM artifact exists.
+struct NativeQueryProgram {
+    std::string id;
+    TSQuery* query = nullptr;
+    int32_t priority = 0;
+    uint32_t declaration_order = 0;
+    bool enabled = true;
+};
+
 struct AstSelectorRule {
     TSSymbol target_symbol = 0;
     TSFieldId field_id = 0;
@@ -211,7 +221,7 @@ public:
     std::string monarch_default_style_name;
     bool monarch_has_default_style = false;
     std::vector<AstSelectorRule> ast_selector_rules;
-    TSQuery* dynamic_ts_query = nullptr;
+    std::vector<NativeQueryProgram> native_queries;
 
     ~TshGrammar();
 };
