@@ -265,7 +265,7 @@ uint32_t TshCompiler::parseColorHex(const std::string& hex_str) {
     return value;
 }
 
-static regex_t* compileOnigurumaUtf16(const std::string& pattern_str) {
+static regex_t* compileOnigurumaUtf16(const std::string& pattern_str, OnigOptionType options = ONIG_OPTION_DEFAULT) {
     if (pattern_str.empty()) return nullptr;
     std::vector<uint16_t> u16(pattern_str.begin(), pattern_str.end());
     regex_t* reg = nullptr;
@@ -274,7 +274,7 @@ static regex_t* compileOnigurumaUtf16(const std::string& pattern_str) {
         &reg,
         reinterpret_cast<const UChar*>(u16.data()),
         reinterpret_cast<const UChar*>(u16.data() + u16.size()),
-        ONIG_OPTION_DEFAULT,
+        options,
         ONIG_ENCODING_UTF16_LE,
         ONIG_SYNTAX_DEFAULT,
         &einfo
@@ -308,6 +308,8 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
     std::function<bool(CompiledRegexRule&)> parseRegexRule;
     parseRegexRule = [&](CompiledRegexRule& rule) -> bool {
         std::string raw_match_pattern;
+        std::string raw_start_pattern;
+        std::string raw_end_pattern;
         while (true) {
             auto item = lexer.nextToken();
             if (item.type == TshLexer::TokenType::TOK_RBRACE) break;
@@ -347,6 +349,19 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                 auto definition = defines_map.find(name.text);
                 if (definition == defines_map.end()) return false;
                 raw_match_pattern = definition->second;
+            } else if (item.text == "flags") {
+                if (lexer.nextToken().type != TshLexer::TokenType::TOK_COLON) return false;
+                if (lexer.nextToken().type != TshLexer::TokenType::TOK_LBRACKET) return false;
+                while (true) {
+                    auto flag = lexer.nextToken();
+                    if (flag.type == TshLexer::TokenType::TOK_RBRACKET) break;
+                    if (flag.type == TshLexer::TokenType::TOK_COMMA) continue;
+                    if (flag.text == "i" || flag.text == "ignoreCase") rule.regex_options |= ONIG_OPTION_IGNORECASE;
+                    else if (flag.text == "m" || flag.text == "multiline") rule.regex_options |= ONIG_OPTION_MULTILINE;
+                    else if (flag.text == "s" || flag.text == "dotAll" || flag.text == "singleline") rule.regex_options |= ONIG_OPTION_SINGLELINE;
+                    else if (flag.text == "x" || flag.text == "extended") rule.regex_options |= ONIG_OPTION_EXTEND;
+                    else return false;
+                }
             } else if (item.text == "start" || item.text == "begin" || item.text == "end") {
                 if (lexer.nextToken().type != TshLexer::TokenType::TOK_COLON) return false;
                 if (lexer.nextToken().type != TshLexer::TokenType::TOK_LBRACE) return false;
@@ -359,10 +374,8 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                 if (lexer.nextToken().type != TshLexer::TokenType::TOK_RBRACE) return false;
 
                 rule.type = RegexRuleType::BLOCK;
-                regex_t* compiled = compileOnigurumaUtf16(pattern.text);
-                if (!compiled) return false;
-                if (item.text == "end") rule.onig_end = compiled;
-                else rule.onig_start = compiled;
+                if (item.text == "end") raw_end_pattern = pattern.text;
+                else raw_start_pattern = pattern.text;
             } else if (item.text == "style") {
                 if (lexer.nextToken().type != TshLexer::TokenType::TOK_COLON) return false;
                 auto style_name = lexer.nextToken();
@@ -423,8 +436,16 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                     position += definition.second.size();
                 }
             }
-            rule.onig_start = compileOnigurumaUtf16(raw_match_pattern);
+            rule.onig_start = compileOnigurumaUtf16(raw_match_pattern, rule.regex_options);
             if (!rule.onig_start) return false;
+        }
+        if (!raw_start_pattern.empty()) {
+            rule.onig_start = compileOnigurumaUtf16(raw_start_pattern, rule.regex_options);
+            if (!rule.onig_start) return false;
+        }
+        if (!raw_end_pattern.empty()) {
+            rule.onig_end = compileOnigurumaUtf16(raw_end_pattern, rule.regex_options);
+            if (!rule.onig_end) return false;
         }
 
         if (rule.type == RegexRuleType::BLOCK) {
