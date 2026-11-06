@@ -419,8 +419,11 @@ class MainActivity : AppCompatActivity() {
      * 切换 TSH 白天/黑夜多态调色板
      */
     private fun toggleTshTheme() {
-        WindbellTshEngine.instance.isDarkTheme = !WindbellTshEngine.instance.isDarkTheme
-        val currentThemeName = if (WindbellTshEngine.instance.isDarkTheme) "黑夜深色 (Dark)" else "白天浅色 (Light)"
+        val engine = WindbellTshEngine.instance
+        val nextDark = !engine.isDark("java")
+        engine.setAppearance("java", nextDark)
+        val currentThemeName = if (nextDark) "黑夜深色 (Dark)" else "白天浅色 (Light)"
+        activeTshHighlighter?.refreshTheme()
         triggerEditorFullHighlight()
         MaterialAlertDialogBuilder(this)
             .setTitle("🎨 TSH 多态调色板热切换")
@@ -434,12 +437,9 @@ class MainActivity : AppCompatActivity() {
      */
     private fun showTshCoreTestSuiteDialog() {
         val testOptions = arrayOf(
-            "1. 🎨 多态调色板 (Palette) 映射完整性测试",
-            "2. ⚡ 原生 AST 选择器 vs 正则微观流覆盖测试",
-            "3. 📂 语法代码折叠 (Fold Ranges) 自动化提取测试",
-            "4. 🏷️ 符号大纲导航 (Outline Tags) 深度提取测试",
-            "5. 💡 光标位置悬停感知 (Hover Info) 测试",
-            "6. 🚀 32 线程高并发重入 Fuzzing 压测"
+            "1. 🎨 多主题与 UI Token 映射测试",
+            "2. ⚡ 原生 AST 选择器 vs Oniguruma 正则覆盖测试",
+            "3. 🚀 32 线程高并发重入压测"
         )
 
         MaterialAlertDialogBuilder(this)
@@ -448,10 +448,7 @@ class MainActivity : AppCompatActivity() {
                 when (which) {
                     0 -> runTshPaletteTest()
                     1 -> runTshHybridCoverageTest()
-                    2 -> runTshFoldRangesTest()
-                    3 -> runTshOutlineTagsTest()
-                    4 -> runTshHoverInfoTest()
-                    5 -> runTshConcurrencyTest()
+                    2 -> runTshConcurrencyTest()
                 }
             }
             .setNegativeButton("关闭", null)
@@ -522,116 +519,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun runTshFoldRangesTest() {
-        val text = """
-            package com.demo;
-            import java.util.*;
-            
-            /**
-             * Class Documentation
-             */
-            public class FoldDemo {
-                public void methodOne() {
-                    System.out.println("Line 1");
-                    System.out.println("Line 2");
-                }
-            }
-        """.trimIndent()
-
-        activityScope.launch(Dispatchers.IO) {
-            val parser = TSParser.create().apply { setLanguage(TSLanguageJava.getInstance()) }
-            val tree = parser.parseString(text)
-            parser.close()
-
-            val folds = tree?.let { WindbellTshEngine.instance.computeFolds(it, text, "java") } ?: emptyList()
-            tree?.close()
-
-            val report = StringBuilder()
-            report.append("=== 📂 代码折叠 (Fold Ranges) 自动化测试 ===\n\n")
-            report.append("检测到可折叠块数量: ${folds.size}\n\n")
-
-            for (fold in folds) {
-                val kindStr = when (fold.kind) {
-                    0 -> "代码块 (Code Block)"
-                    1 -> "注释段 (Comment)"
-                    2 -> "导入区域 (Imports)"
-                    else -> "其他"
-                }
-                report.append("  🔹 [字节: ${fold.startByte}..${fold.endByte}] 类别: $kindStr\n")
-            }
-
-            withContext(Dispatchers.Main) {
-                showResultDialog("代码折叠测试结果", report.toString())
-            }
-        }
-    }
-
-    private fun runTshOutlineTagsTest() {
-        val text = """
-            public class OuterClass {
-                int fieldAlpha = 1;
-                public void testMethod() {}
-                enum Status { OK, FAIL }
-            }
-        """.trimIndent()
-
-        activityScope.launch(Dispatchers.IO) {
-            val parser = TSParser.create().apply { setLanguage(TSLanguageJava.getInstance()) }
-            val tree = parser.parseString(text)
-            parser.close()
-
-            val outlines = tree?.let { WindbellTshEngine.instance.computeOutline(it, text, "java") } ?: emptyList()
-            tree?.close()
-
-            val report = StringBuilder()
-            report.append("=== 🏷️ 符号大纲提取 (Outline Tags) 测试 ===\n\n")
-            report.append("提取到的全局符号数: ${outlines.size}\n\n")
-
-            for (tag in outlines) {
-                val kindStr = when (tag.kind) {
-                    1 -> "Class/Interface"
-                    2 -> "Method"
-                    3 -> "Field"
-                    4 -> "Enum"
-                    else -> "Symbol"
-                }
-                report.append("  📌 [${kindStr}] 名称: \"${tag.name}\" (字节: ${tag.startByte}..${tag.endByte})\n")
-            }
-
-            withContext(Dispatchers.Main) {
-                showResultDialog("符号大纲测试结果", report.toString())
-            }
-        }
-    }
-
-    private fun runTshHoverInfoTest() {
-        val text = "public class HoverDemo { int targetVariable = 42; }"
-        activityScope.launch(Dispatchers.IO) {
-            val parser = TSParser.create().apply { setLanguage(TSLanguageJava.getInstance()) }
-            val tree = parser.parseString(text)
-            parser.close()
-
-            val offset = text.indexOf("targetVariable") * 2
-            val hover = tree?.let { WindbellTshEngine.instance.getHoverInfo(it, offset) }
-            tree?.close()
-
-            val report = StringBuilder()
-            report.append("=== 💡 悬停感知信息提取测试 ===\n\n")
-            if (hover != null) {
-                report.append("目标位置: 字符索引 ${offset / 2} ('targetVariable')\n")
-                report.append("AST 节点类型: ${hover.nodeType}\n")
-                report.append("作用域详情: ${hover.detail}\n")
-                report.append("物理字节范围: [${hover.startByte}..${hover.endByte}]\n")
-            } else {
-                report.append("未命中指定位置的 AST 节点。")
-            }
-
-            withContext(Dispatchers.Main) {
-                showResultDialog("悬停提示测试结果", report.toString())
-            }
-        }
-    }
-
     private fun runTshConcurrencyTest() {
         val pd = ProgressDialog(this).apply {
             setTitle("🚀 TSH 32 线程并发 Fuzzing 压测")
@@ -657,8 +544,7 @@ class MainActivity : AppCompatActivity() {
                         val tree = p.parseString(codeSnippet)
                         repeat(iterations) {
                             val spans = WindbellTshEngine.instance.computeHighlights(tree, codeSnippet, "java")
-                            val folds = tree?.let { WindbellTshEngine.instance.computeFolds(it, codeSnippet, "java") }
-                            if (spans.isEmpty() || folds == null) {
+                            if (spans.isEmpty()) {
                                 errorCount++
                             }
                         }
