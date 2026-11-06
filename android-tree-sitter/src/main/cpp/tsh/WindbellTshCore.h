@@ -92,6 +92,7 @@ struct SchemeColor {
 // 多主题方案实体 (Schemes Block)
 struct ColorScheme {
     std::string name;
+    std::string extends;
     // Style ID -> Color mapping
     std::unordered_map<uint16_t, SchemeColor> colors;
     std::unordered_map<std::string, uint32_t> ui_colors;
