@@ -125,9 +125,9 @@ schemes {
 
 Color syntax accepts #RGB, #RGBA, #RRGGBB and #AARRGGBB; canonical runtime representation is AARRGGBB. Theme values are data, never C++ constants. Theme UI tokens are arbitrary dotted names, not a hard-coded enum. A scheme may optionally declare `extends: "otherScheme"`; inheritance is resolved by the compiler and cycles/missing parents are errors. The active appearance is a runtime selection (`light` or `dark`) and does not require reparsing the syntax tree.
 
-TextMate block rules support separate `beginCaptures`/`startCaptures` and `endCaptures` maps, including named Oniguruma capture groups. The begin/end delimiter captures are emitted independently from the enclosing region style and nested patterns. A `repository` block currently supports named reusable regex fragments referenced with `include("#name")`, including recursive references with cycle detection. Full TextMate pattern repositories, external `$self`/scope includes, injections and scope-selector matching remain planned.
+TextMate block rules support separate `beginCaptures`/`startCaptures` and `endCaptures` maps, including named Oniguruma capture groups. The begin/end delimiter captures are emitted independently from the enclosing region style and nested patterns. A `repository` block currently supports named reusable regex fragments referenced with `include("#name")`, including recursive references with cycle detection. Pattern-object repositories, external `$self`/`$base` includes and injection selectors remain planned. Scope-based theme selectors are implemented separately through `scopeRules`.
 
-Implemented scheme modifiers are `@bold`, `@italic`, `@underline`, and `@strikethrough`, independently tracked for light/dark. Additional typography and decoration modifiers (`dim`, reset modifiers, font family/size, opacity, border and background) remain planned and must not be treated as implemented.
+Implemented scheme modifiers are `@bold`, `@italic`, `@underline`, `@strikethrough`, and `@dim`, independently tracked for light/dark. `@dim` applies a reduced text alpha in the Android renderer. Reset modifiers, font family/size, independent opacity, border and background decorations remain planned and must not be treated as implemented.
 
 ## 5. Rule model and arbitration
 
@@ -196,20 +196,20 @@ rules {
 }
 ```
 
-Regex rules support `match`, `begin/end`, `while`, `include`, `captures`, named captures, numeric captures, `flags`, `priority`, `enabled`, `when`, `lookbehind/lookahead` (subject to Oniguruma support), `maxIterations`, `applyEndPatternLast`, and nested `patterns/contains`. Empty matches must advance by one Unicode code point to prevent infinite loops. A failed regex compilation invalidates the document instead of silently dropping the rule.
+The implemented regex rule parser accepts `match` or `start/end`, `style`/`name`, `contentName`, `flags`, `enabled`, `priority`, `overlap`, numeric/named `captures`, `beginCaptures`/`startCaptures`, `endCaptures`, and nested `contains`/`patterns`. `while`, `include` on rule objects, `when`, lookbehind/lookahead convenience properties, `maxIterations`, and `applyEndPatternLast` are not implemented by the current regex runtime. Empty matches in active scanners advance by one Unicode code point to prevent infinite loops. A failed regex compilation invalidates the document instead of silently dropping the rule.
 
 ### 5.3 Common rule attributes
 
 - `id`: unique rule identity.
 - `priority`: explicit integer precedence.
 - `enabled`: runtime-toggleable rule.
-- `when`: declarative conditions such as file extension, language version, feature flag, or parent scope.
-- `scope`: TextMate-like scope path assigned to captures.
-- `captures`: numeric or named capture to style/scope mapping.
-- `overlap`: `exclusive`, `allow`, or `contained`.
-- `contentName`: scope for the interior of a begin/end region.
-- `applyEndPatternLast`: ordering behavior for nested regions.
-- `metadata`: arbitrary user-defined key/value data.
+- `when`: planned conditional rule activation; not accepted by the current regex rule parser.
+- `scope`: semantic style scope is declared under `styles`; per-capture scope assignment is not implemented.
+- `captures`: numeric or named capture-to-style mapping is implemented.
+- `overlap`: currently accepts `allow` or `deny`; `exclusive` and `contained` aliases are not accepted.
+- `contentName`: style name for the interior of a begin/end region.
+- `applyEndPatternLast`: planned ordering behavior; not currently accepted.
+- `metadata`: arbitrary string metadata is supported on style declarations, not on regex rule declarations.
 
 ## 6. TextMate-inspired features
 
@@ -217,22 +217,22 @@ Implemented today:
 - Nested Oniguruma match and begin/end block rules.
 - Numeric and named capture-to-style bindings.
 - Separate `beginCaptures`/`startCaptures` and `endCaptures`.
-- Region-wide `name` and interior-only `contentName` style spans.
+- Region-wide `style` and interior-only `contentName` style spans.
 - A `repository` block for reusable regex fragments, referenced with `include("#name")`.
 - Recursive repository fragment expansion with cycle detection.
 
-Scope theme rules use `scopeRules: [{ selector, light, dark }]`. The current selector evaluator supports comma alternatives, descendant selectors, direct-child `>`, exclusion terms with `-`, exact/prefix scope matching, `*` and `.*` wildcards, and `L:`/`R:` selector prefixes. Specificity is resolved before palette assignment. Matching stacks are built from `source.<language.id>` and the semantic style's parent-scope chain. Explicit per-style colors take precedence over scope rules.
+Scope theme rules use `scopeRules: [{ selector, light, dark }]`. The current selector evaluator supports comma alternatives, descendant selectors, direct-child `>`, exclusion terms with `-`, exact/prefix scope matching, `*` and `.*` wildcards, and strips the `L:`/`R:` priority prefixes. Full TextMate selector grouping/precedence and injection-selector semantics are not implemented. Specificity is resolved before palette assignment. Matching stacks are built from `source.<language.id>` and the semantic style's parent-scope chain. Explicit per-style colors take precedence over scope rules.
 
 Still planned:
 - Pattern-object repositories and external `$self`/`$base` scope includes.
 - Injection selectors, scope inheritance across nested patterns, `while` continuation and complete begin/end precedence semantics.
-- Full `contentName`, `applyEndPatternLast`, and rule metadata behavior.
+- Per-rule metadata, full TextMate begin/end precedence, `while` continuation and per-capture scope assignment.
 
 Includes are resolved within the same .tsh document; there is no external .scm or sidecar grammar file.
 
 ## 7. Monarch-inspired tokenizer features
 
-The currently executable Monarch subset is optional and may coexist with ATS and Oniguruma rules. It supports ordered state-local regex rules, token styles, state includes, persistent state stacks, and `next`, `push`, `switchTo`, `pop`, `rematch`, `enabled`, `priority`, and per-rule Oniguruma flags.
+The currently executable Monarch subset is optional and may coexist with ATS and Oniguruma rules. It supports ordered state-local regex rules, token styles, state includes, persistent state stacks, `variables`, `cases` with literal/variable matchers and `@default`, `next`, `push`, `switchTo`, `pop`, `rematch`, `enabled`, `priority`, `ignoreCase`, `tokenPostfix`, and per-rule Oniguruma flags. The full Monarch action object model (for example `goBack`, `log`, `bracket`, `nextEmbedded`) is not implemented.
 
 ```tsh
 monarch {
