@@ -340,7 +340,7 @@ class WindbellTshLinkageTest {
         """.trimIndent()
 
         assertTrue(engine.loadTshSource("regex", sourceDsl, null))
-        val text = "/* TODO: verify named capture */"
+        val text = "/* TODO FIXME: verify named capture */"
         val spans = engine.computeHighlights(null, text, "regex")
         assertTrue(spans.isNotEmpty())
         val todoId = engine.getStyleCatalog("regex").first { it.name == "todo" }.styleId
