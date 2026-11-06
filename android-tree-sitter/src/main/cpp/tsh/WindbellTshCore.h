@@ -139,6 +139,15 @@ struct TshAutoClosingPair {
     std::vector<std::string> not_in;
 };
 
+struct TshOnEnterRule {
+    std::string before_text;
+    std::string after_text;
+    std::string previous_line_text;
+    std::string indent_action;
+    std::string append_text;
+    uint32_t remove_text = 0;
+};
+
 struct TshEditorMetadata {
     std::vector<std::string> line_comments;
     std::vector<std::pair<std::string, std::string>> block_comments;
@@ -152,6 +161,9 @@ struct TshEditorMetadata {
     std::string indent_next_line_pattern;
     std::string unindented_line_pattern;
     std::vector<std::string> completion_trigger_characters;
+    std::vector<std::string> electric_characters;
+    std::vector<TshOnEnterRule> on_enter_rules;
+    std::string auto_close_before_pattern;
     std::unordered_map<std::string, std::string> options;
 };
 
