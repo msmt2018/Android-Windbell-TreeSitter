@@ -518,6 +518,54 @@ class WindbellTshLinkageTest {
     }
 
     @Test
+    fun testNativeQueryCaptureBindingsSeparateNamesFromStyles() {
+        val engine = WindbellTshEngine.instance
+        val language = TSLanguageJava.getInstance()
+        val source = """
+            tsh 2 {
+                language { id: "java-capture-binding" name: "Java Capture Binding" extensions: [".jcb"] }
+                styles {
+                    declaration { scope: "entity.name.type" }
+                    callable { scope: "entity.name.function" }
+                }
+                treeSitter {
+                    queries: [
+                        {
+                            id: "types"
+                            priority: 15
+                            source: `(class_declaration name: (identifier) @declType)`
+                            captures: { declType: declaration }
+                        },
+                        {
+                            id: "methods"
+                            priority: 25
+                            source: `(method_declaration name: (identifier) @callableName)`
+                            captures: { callableName: callable }
+                        }
+                    ]
+                }
+            }
+        """.trimIndent()
+        assertTrue(engine.loadTshSource("java-capture-binding", source, language))
+
+        val parser = TSParser.create().apply { setLanguage(language) }
+        val code = "class Demo { void run() {} }"
+        val tree = parser.parseString(code)
+        val spans = engine.computeHighlights(tree, code, "java-capture-binding")
+        val catalog = engine.getStyleCatalog("java-capture-binding")
+        val declarationId = catalog.first { it.name == "declaration" }.styleId
+        val callableId = catalog.first { it.name == "callable" }.styleId
+
+        assertTrue(spans.any { it.styleId == declarationId && it.priority == 15 })
+        assertTrue(spans.any { it.styleId == callableId && it.priority == 25 })
+        tree?.close()
+        parser.close()
+
+        val invalidBinding = source.replace("callableName: callable", "missingName: callable")
+        assertFalse(engine.loadTshSource("java-capture-binding-invalid", invalidBinding, language))
+    }
+
+    @Test
     fun testNativeQueryRejectsUnsupportedPredicates() {
         val engine = WindbellTshEngine.instance
         val source = """
