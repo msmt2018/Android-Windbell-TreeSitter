@@ -96,6 +96,7 @@ class WindbellTshLinkageTest {
                     metadata: { standard: "textmate", category: "syntax" }
                 }
                 keywordStrong { scope: "keyword.control.strong", parent: "keyword", tags: ["keyword", "emphasis"] }
+                selectorOnly { scope: "keyword.control.selector", tags: ["keyword", "selector"] }
                 string { scope: "string.quoted", tags: ["string"] }
             }
             schemes {
@@ -120,6 +121,12 @@ class WindbellTshLinkageTest {
                 derived {
                     extends: "midnight"
                     dark [ keywordStrong: #FF00AA ]
+                }
+                selectorTheme {
+                    scopeRules: [
+                        { selector: "keyword.control", light: #00AA00, dark: #AA0000 }
+                        { selector: "source.scheme-test keyword.control", light: #00BB00, dark: #BB0000 }
+                    ]
                 }
             }
             editor {
@@ -159,7 +166,7 @@ class WindbellTshLinkageTest {
         assertEquals("^#!.*scheme-test", language.firstLinePattern)
         assertTrue(engine.matchesFirstLine("scheme", "#!/usr/bin/env scheme-test"))
         assertFalse(engine.matchesFirstLine("scheme", "ordinary source file"))
-        assertEquals(listOf("derived", "github", "midnight"), engine.listSchemes("scheme").sorted())
+        assertEquals(listOf("derived", "github", "midnight", "selectorTheme"), engine.listSchemes("scheme").sorted())
         assertEquals("midnight", engine.getDefaultScheme("scheme"))
         assertTrue(engine.isDark("scheme"))
         val editorMetadata = engine.getEditorMetadata("scheme")
@@ -194,7 +201,11 @@ class WindbellTshLinkageTest {
         assertEquals(0xFF112233.toInt(), inheritedKeyword?.lightColor)
         assertEquals(0xFFFF00AA.toInt(), explicitChild?.darkColor)
         assertEquals(true, explicitChild?.hasLightColor)
-        assertEquals("derived", engine.getSelectedScheme("scheme"))
+        assertTrue(engine.selectScheme("scheme", "selectorTheme"))
+        val selectorPalette = engine.getStylePalette("scheme", "selectorOnly")
+        assertEquals(0xFF00BB00.toInt(), selectorPalette?.lightColor)
+        assertEquals(0xFFBB0000.toInt(), selectorPalette?.darkColor)
+        assertEquals("selectorTheme", engine.getSelectedScheme("scheme"))
     }
 
     @Test
