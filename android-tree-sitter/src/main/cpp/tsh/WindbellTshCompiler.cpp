@@ -1834,17 +1834,25 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                             if (pair_token.type == TshLexer::TokenType::TOK_COMMA) continue;
                             if (pair_token.type != TshLexer::TokenType::TOK_LBRACE) return nullptr;
                             TshAutoClosingPair pair;
+                            std::unordered_map<std::string, bool> seen_pair_fields;
                             while (true) {
                                 auto key = lexer.nextToken();
                                 if (key.type == TshLexer::TokenType::TOK_RBRACE) break;
                                 if (key.type == TshLexer::TokenType::TOK_COMMA) continue;
-                                if (lexer.nextToken().type != TshLexer::TokenType::TOK_COLON) return nullptr;
+                                if (key.type == TshLexer::TokenType::TOK_EOF ||
+                                    !seen_pair_fields.emplace(key.text, true).second ||
+                                    lexer.nextToken().type != TshLexer::TokenType::TOK_COLON) return nullptr;
                                 if (key.text == "notIn") {
                                     if (!read_string_array(pair.not_in)) return nullptr;
-                                } else {
+                                } else if (key.text == "open" || key.text == "close") {
                                     auto value = lexer.nextToken();
+                                    if ((value.type != TshLexer::TokenType::TOK_STRING &&
+                                         value.type != TshLexer::TokenType::TOK_IDENT) ||
+                                        value.text.empty()) return nullptr;
                                     if (key.text == "open") pair.open = value.text;
-                                    else if (key.text == "close") pair.close = value.text;
+                                    else pair.close = value.text;
+                                } else {
+                                    return nullptr;
                                 }
                             }
                             if (pair.open.empty() || pair.close.empty()) return nullptr;
