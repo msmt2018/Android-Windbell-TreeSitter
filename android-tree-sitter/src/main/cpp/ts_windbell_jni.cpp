@@ -136,6 +136,10 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeMatchesFirstLine
     const UChar* start = reinterpret_cast<const UChar*>(chars);
     const UChar* end = start + static_cast<size_t>(length) * sizeof(jchar);
     OnigRegion* region = onig_region_new();
+    if (!region) {
+        env->ReleaseStringChars(line_jstr, chars);
+        return JNI_FALSE;
+    }
     const int matched = onig_match(grammar->first_line_regex, start, end, start, region, ONIG_OPTION_NONE);
     onig_region_free(region, 1);
     env->ReleaseStringChars(line_jstr, chars);
