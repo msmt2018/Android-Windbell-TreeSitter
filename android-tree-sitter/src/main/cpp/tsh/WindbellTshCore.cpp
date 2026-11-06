@@ -80,6 +80,14 @@ TshGrammar::~TshGrammar() {
         }
     };
     for (auto& rule : regex_rules) release_rule(rule);
+    for (auto& state : monarch_states) {
+        for (auto& rule : state.second) {
+            if (rule.pattern) {
+                onig_free(rule.pattern);
+                rule.pattern = nullptr;
+            }
+        }
+    }
 
     if (dynamic_ts_query) {
         ts_query_delete(dynamic_ts_query);
