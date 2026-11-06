@@ -119,17 +119,32 @@ void WindbellEngine::matchBlockRecursive(
                             );
                             if (inner_hit < 0) break;
 
-                            uint32_t in_s = static_cast<uint32_t>(inner_region->beg[0]);
-                            uint32_t in_e = static_cast<uint32_t>(inner_region->end[0]);
-                            if ((in_s & 1u) == 0 && (in_e & 1u) == 0) {
+                            auto append_nested_capture = [&](int group, uint16_t style_id) {
+                                if (group < 0 || group >= inner_region->num_regs ||
+                                    inner_region->beg[group] < 0 || inner_region->end[group] < 0) return;
+                                const uint32_t in_s = static_cast<uint32_t>(inner_region->beg[group]);
+                                const uint32_t in_e = static_cast<uint32_t>(inner_region->end[group]);
+                                if ((in_s & 1u) != 0 || (in_e & 1u) != 0) return;
                                 HighlightSpan in_span;
                                 in_span.start_byte = in_s;
                                 in_span.end_byte = in_e;
-                                in_span.style_id = nested.style_id;
+                                in_span.style_id = style_id;
                                 in_span.flags = 0;
                                 in_span.priority = nested.priority;
                                 in_span.declaration_order = nested.declaration_order;
                                 out_spans.push_back(in_span);
+                            };
+                            if (nested.group_style_map.empty()) {
+                                if (nested.has_style) append_nested_capture(0, nested.style_id);
+                            } else {
+                                auto whole = nested.group_style_map.find(0);
+                                if (whole != nested.group_style_map.end()) append_nested_capture(0, whole->second);
+                                for (int group = 1; group < inner_region->num_regs; ++group) {
+                                    auto style = nested.group_style_map.find(group);
+                                    if (style != nested.group_style_map.end()) {
+                                        append_nested_capture(group, style->second);
+                                    }
+                                }
                             }
                             inner_curr = (inner_region->end[0] <= inner_region->beg[0]) ?
                                 inner_curr + sizeof(uint16_t) : text_start + inner_region->end[0];
