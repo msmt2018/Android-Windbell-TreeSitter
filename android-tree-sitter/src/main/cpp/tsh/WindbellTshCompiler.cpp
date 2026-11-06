@@ -34,6 +34,7 @@ public:
     enum class TokenType {
         TOK_EOF,
         TOK_IDENT,
+        TOK_NUMBER,
         TOK_STRING,
         TOK_REGEX,
         TOK_LBRACE,   // {
@@ -77,6 +78,14 @@ public:
         if (c == ',') { cursor_++; return {TokenType::TOK_COMMA, ","}; }
         if (c == '>') { cursor_++; return {TokenType::TOK_GT, ">"}; }
         if (c == '@') { cursor_++; return {TokenType::TOK_AT, "@"}; }
+
+        if (std::isdigit(static_cast<unsigned char>(c))) {
+            std::string number;
+            while (cursor_ < src_.size() && std::isdigit(static_cast<unsigned char>(src_[cursor_]))) {
+                number += src_[cursor_++];
+            }
+            return {TokenType::TOK_NUMBER, number};
+        }
 
         // 解析字符串 (支持单双引号)
         if (c == '"' || c == '\'') {
@@ -250,6 +259,7 @@ std::shared_ptr<TshGrammar> TshCompiler::compile(const std::string& source, cons
     std::string dynamic_query_accumulator;
 
     uint16_t global_style_counter = 0;
+    uint32_t regex_declaration_order = 0;
     auto ensureStyleId = [&](const std::string& name) -> uint16_t {
         auto it = grammar->style_name_to_id.find(name);
         if (it != grammar->style_name_to_id.end()) return it->second;
@@ -618,13 +628,21 @@ std::shared_ptr<TshGrammar> TshCompiler::compile(const std::string& source, cons
                     if (ct.type == TshLexer::TokenType::TOK_RBRACKET || ct.type == TshLexer::TokenType::TOK_EOF) break;
                     if (ct.type == TshLexer::TokenType::TOK_LBRACE) {
                         CompiledRegexRule reg_rule;
+                        reg_rule.declaration_order = regex_declaration_order++;
                         std::string raw_match_pat;
 
                         while (true) {
                             auto item = lexer.nextToken();
                             if (item.type == TshLexer::TokenType::TOK_RBRACE || item.type == TshLexer::TokenType::TOK_EOF) break;
 
-                            if (item.text == "builtin") {
+                            if (item.type == TshLexer::TokenType::TOK_NUMBER) {
+                                const int group_index = std::stoi(item.text);
+                                auto separator = lexer.nextToken();
+                                if (separator.type != TshLexer::TokenType::TOK_COLON) return nullptr;
+                                auto style_name = lexer.nextToken();
+                                const uint16_t style_id = ensureStyleId(style_name.text);
+                                reg_rule.group_style_map[group_index] = style_id;
+                            } else if (item.text == "builtin") {
                                 lexer.nextToken();
                                 auto b_id = lexer.nextToken().text;
                                 auto definition = defines_map.find(b_id);
