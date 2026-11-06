@@ -42,6 +42,10 @@ struct CompiledRegexRule {
     regex_t* onig_end = nullptr;
     std::unordered_map<int, uint16_t> group_style_map;
     std::vector<CompiledRegexRule> nested_rules;
+    std::string id;
+    int32_t priority = 0;
+    uint32_t declaration_order = 0;
+    bool enabled = true;
 };
 
 struct AstSelectorRule {
