@@ -102,6 +102,7 @@ void WindbellEngine::matchBlockRecursive(
             block_span.flags = 0;
             block_span.priority = rule.priority;
             block_span.declaration_order = rule.declaration_order;
+            block_span.allow_overlap = rule.allow_overlap ? 1 : 0;
             out_spans.push_back(block_span);
 
             if (!rule.nested_rules.empty() && hit_end >= 0) {
@@ -142,6 +143,7 @@ void WindbellEngine::matchBlockRecursive(
                                 in_span.flags = 0;
                                 in_span.priority = nested.priority;
                                 in_span.declaration_order = nested.declaration_order;
+                                in_span.allow_overlap = nested.allow_overlap ? 1 : 0;
                                 out_spans.push_back(in_span);
                             };
                             if (nested.group_style_map.empty()) {
@@ -231,6 +233,7 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                         capture.flags = 0;
                         capture.priority = rule.priority;
                         capture.declaration_order = rule.declaration_order;
+                        capture.allow_overlap = rule.allow_overlap ? 1 : 0;
                         micro_spans.push_back(capture);
                     };
 
@@ -297,6 +300,7 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                     span.flags = 0;
                     span.priority = ast_rule.priority;
                     span.declaration_order = ast_rule.declaration_order;
+                    span.allow_overlap = ast_rule.allow_overlap ? 1 : 0;
                     macro_spans.push_back(span);
                     break;
                 }
@@ -364,6 +368,38 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
         final_spans.insert(final_spans.end(), macro_spans.begin(), macro_spans.end());
         final_spans.insert(final_spans.end(), micro_spans.begin(), micro_spans.end());
     }
+
+    // Resolve partial overlaps using explicit rule priority. Nested regions are
+    // retained automatically; unrelated partial overlaps require @overlap: allow.
+    std::stable_sort(final_spans.begin(), final_spans.end(),
+        [](const HighlightSpan& a, const HighlightSpan& b) {
+            if (a.priority != b.priority) return a.priority > b.priority;
+            return a.declaration_order < b.declaration_order;
+        });
+    std::vector<HighlightSpan> resolved_spans;
+    resolved_spans.reserve(final_spans.size());
+    for (const auto& candidate : final_spans) {
+        bool rejected = false;
+        for (auto& accepted : resolved_spans) {
+            if (candidate.end_byte <= accepted.start_byte ||
+                candidate.start_byte >= accepted.end_byte) continue;
+
+            const bool same_range = candidate.start_byte == accepted.start_byte &&
+                                    candidate.end_byte == accepted.end_byte;
+            const bool candidate_contains = candidate.start_byte <= accepted.start_byte &&
+                                            candidate.end_byte >= accepted.end_byte;
+            const bool accepted_contains = accepted.start_byte <= candidate.start_byte &&
+                                           accepted.end_byte >= candidate.end_byte;
+            const bool nested = !same_range && (candidate_contains || accepted_contains);
+            if (nested || candidate.allow_overlap || accepted.allow_overlap) continue;
+
+            // Candidates arrive in descending priority, so the accepted span wins.
+            rejected = true;
+            break;
+        }
+        if (!rejected) resolved_spans.push_back(candidate);
+    }
+    final_spans = std::move(resolved_spans);
 
     std::stable_sort(final_spans.begin(), final_spans.end(), [](const HighlightSpan& a, const HighlightSpan& b) {
         if (a.start_byte != b.start_byte) return a.start_byte < b.start_byte;
