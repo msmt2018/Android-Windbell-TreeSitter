@@ -1196,7 +1196,6 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                                     if (key.type == TshLexer::TokenType::TOK_RBRACE) break;
                                     if (key.type == TshLexer::TokenType::TOK_COMMA) continue;
                                     if (key.type == TshLexer::TokenType::TOK_EOF ||
-                                        !seen_rule_fields.emplace(key.text, true).second ||
                                         lexer.nextToken().type != TshLexer::TokenType::TOK_COLON) return nullptr;
                                     auto value = lexer.nextToken();
                                     if (key.text == "selector") {
@@ -1598,6 +1597,7 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                                     if (key.type == TshLexer::TokenType::TOK_RBRACE) break;
                                     if (key.type == TshLexer::TokenType::TOK_COMMA) continue;
                                     if (key.type == TshLexer::TokenType::TOK_EOF ||
+                                        !seen_rule_fields.emplace(key.text, true).second ||
                                         lexer.nextToken().type != TshLexer::TokenType::TOK_COLON) return nullptr;
                                     auto value = lexer.nextToken();
                                     if (key.text == "match" || key.text == "regex") {
