@@ -563,6 +563,10 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
     TshLexer::Token tok = lexer.nextToken();
     bool versioned_document = false;
     bool versioned_document_closed = false;
+    std::unordered_map<std::string, bool> seen_root_sections;
+    auto mark_root_section = [&](const std::string& name) {
+        return seen_root_sections.emplace(name, true).second;
+    };
     if (tok.type == TshLexer::TokenType::TOK_IDENT && tok.text == "tsh") {
         const auto version = lexer.nextToken();
         if (version.type != TshLexer::TokenType::TOK_NUMBER || version.text != "2") return nullptr;
@@ -578,6 +582,7 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
 
             // Legacy shorthand retained with explicit, validated semantics.
             if (tok.text == "ignoreCase") {
+                if (!mark_root_section("ignoreCase")) return nullptr;
                 if (lexer.nextToken().type != TshLexer::TokenType::TOK_COLON) return nullptr;
                 auto value = lexer.nextToken();
                 if (value.text == "true") grammar->default_regex_options |= ONIG_OPTION_IGNORECASE;
@@ -586,6 +591,7 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
 
             // Language-wide regex execution semantics.
             else if (tok.text == "matching") {
+                if (!mark_root_section("matching")) return nullptr;
                 auto open = lexer.nextToken();
                 if (open.type == TshLexer::TokenType::TOK_COLON) open = lexer.nextToken();
                 if (open.type != TshLexer::TokenType::TOK_LBRACE) return nullptr;
@@ -620,6 +626,7 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
 
             // Language identity and editor/file association metadata.
             else if (tok.text == "language") {
+                if (!mark_root_section("language")) return nullptr;
                 auto open = lexer.nextToken();
                 if (open.type == TshLexer::TokenType::TOK_COLON) open = lexer.nextToken();
                 if (open.type != TshLexer::TokenType::TOK_LBRACE) return nullptr;
@@ -667,6 +674,7 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
             // 1. 解析语法元信息: name: ["Java", ".java"]
             // =================================================================
             else if (tok.text == "name") {
+                if (!mark_root_section("name")) return nullptr;
                 lexer.nextToken(); // :
                 lexer.nextToken(); // [
                 while (true) {
@@ -685,6 +693,7 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
             // 2. 解析多主题方案: schemes { name { light [...], dark [...] } }
             // =================================================================
             else if (tok.text == "schemes") {
+                if (!mark_root_section("schemes")) return nullptr;
                 auto open = lexer.nextToken();
                 if (open.type == TshLexer::TokenType::TOK_COLON) open = lexer.nextToken();
                 if (open.type != TshLexer::TokenType::TOK_LBRACE) return nullptr;
@@ -697,6 +706,7 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                         scheme_name_tok.type != TshLexer::TokenType::TOK_STRING) return nullptr;
 
                     const std::string scheme_name = scheme_name_tok.text;
+                    if (grammar->schemes.find(scheme_name) != grammar->schemes.end()) return nullptr;
                     // A real schemes block takes precedence over the legacy
                     // compatibility palette named "default".
                     if (grammar->default_scheme_name.empty() ||
@@ -828,12 +838,14 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
             }
 
             else if (tok.text == "defaultScheme") {
+                if (!mark_root_section("defaultScheme")) return nullptr;
                 if (lexer.nextToken().type != TshLexer::TokenType::TOK_COLON) return nullptr;
                 grammar->default_scheme_name = lexer.nextToken().text;
             }
 
             // DSL default rendering mode: false = light/day, true = dark/night.
             else if (tok.text == "isDark") {
+                if (!mark_root_section("isDark")) return nullptr;
                 auto separator = lexer.nextToken();
                 if (separator.type != TshLexer::TokenType::TOK_COLON) return nullptr;
                 auto value = lexer.nextToken();
@@ -847,6 +859,7 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
             // legacy [name, lightColor, darkColor, @modifier] tuple syntax.
             // =================================================================
             else if (tok.text == "styles") {
+                if (!mark_root_section("styles")) return nullptr;
                 auto styles_open = lexer.nextToken();
                 if (styles_open.type == TshLexer::TokenType::TOK_COLON) styles_open = lexer.nextToken();
 
@@ -858,6 +871,7 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                         if (style_name_tok.type == TshLexer::TokenType::TOK_EOF) return nullptr;
 
                         const std::string style_name = style_name_tok.text;
+                        if (grammar->style_definitions.find(style_name) != grammar->style_definitions.end()) return nullptr;
                         const uint16_t style_id = ensureStyleId(style_name);
                         auto style_open = lexer.nextToken();
                         if (style_open.type != TshLexer::TokenType::TOK_LBRACE) return nullptr;
@@ -986,6 +1000,7 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
             // 3. 解析宏复用: defines: [ "ident": /[a-zA-Z_$].../ ]
             // =================================================================
             else if (tok.text == "defines") {
+                if (!mark_root_section("defines")) return nullptr;
                 lexer.nextToken(); // :
                 lexer.nextToken(); // [
                 while (true) {
@@ -1007,6 +1022,7 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
             // These are data for the host editor; the native core does not hard-code them.
             // =================================================================
             else if (tok.text == "editor") {
+                if (!mark_root_section("editor")) return nullptr;
                 auto editor_open = lexer.nextToken();
                 if (editor_open.type == TshLexer::TokenType::TOK_COLON) editor_open = lexer.nextToken();
                 if (editor_open.type != TshLexer::TokenType::TOK_LBRACE) return nullptr;
@@ -1172,6 +1188,7 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
             // 4. 解析宏观 Tree-sitter AST 选择器: ast: [ ... ]
             // =================================================================
             else if (tok.text == "ast") {
+                if (!mark_root_section("ast")) return nullptr;
                 lexer.nextToken(); // :
                 lexer.nextToken(); // [
                 while (true) {
@@ -1249,6 +1266,7 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
             // 5. 解析微观正则流与 Block 跨行结构: contains: [ ... ]
             // =================================================================
             else if (tok.text == "contains") {
+                if (!mark_root_section("contains")) return nullptr;
                 auto open = lexer.nextToken();
                 if (open.type == TshLexer::TokenType::TOK_COLON) open = lexer.nextToken();
                 if (open.type != TshLexer::TokenType::TOK_LBRACKET) return nullptr;
