@@ -1206,6 +1206,7 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                         return nullptr;
                     }
                 }
+                if (grammar->monarch_states.empty()) return nullptr;
             }
 
             // TextMate-style repository of reusable regular-expression fragments.
