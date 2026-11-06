@@ -71,9 +71,6 @@ struct AstSelectorRule {
 struct TshStyle {
     std::string name;
     uint16_t style_id = 0;
-    uint32_t light_color = 0;
-    uint32_t dark_color = 0;
-    uint16_t font_flags = 0;
     std::string scope;
     std::vector<std::string> tags;
     std::string description;
