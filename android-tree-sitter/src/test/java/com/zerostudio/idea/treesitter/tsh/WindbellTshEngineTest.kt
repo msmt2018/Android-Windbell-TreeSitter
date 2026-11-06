@@ -101,6 +101,13 @@ class WindbellTshLinkageTest {
     }
 
     @Test
+    fun testEmptyDocumentHighlightIsSafe() {
+        val engine = WindbellTshEngine.instance
+        assertTrue(engine.loadTshSource("empty-document", javaTestDsl(), null))
+        assertTrue(engine.computeHighlights(null, "", "empty-document").isEmpty())
+    }
+
+    @Test
     fun testNativeLoadTshSourceLinkageAndExecution() {
         val engine = WindbellTshEngine.instance
 
