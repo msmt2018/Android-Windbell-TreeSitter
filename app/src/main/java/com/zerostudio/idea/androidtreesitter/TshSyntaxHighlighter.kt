@@ -51,7 +51,7 @@ class TshSyntaxHighlighter(
     }
 
     override fun onTextReplaced(buffer: EditorBuffer) {
-        captures = emptyList()
+        capturesByLine = emptyMap()
         scheduleParse(buffer)
     }
 
