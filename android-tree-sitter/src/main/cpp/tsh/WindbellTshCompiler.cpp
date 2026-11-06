@@ -2369,10 +2369,11 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                                         ? std::string(op_text, op_length) : std::string();
                                     const bool equality = op == "eq?" || op == "not-eq?";
                                     const bool membership = op == "any-of?" || op == "not-any-of?";
-                                    const bool supported = equality || membership;
+                                    const bool regex_match = op == "match?" || op == "not-match?";
+                                    const bool supported = equality || membership || regex_match;
                                     bool valid = predicate.size() >= 3 &&
                                         predicate[1].type == TSQueryPredicateStepTypeCapture &&
-                                        (!equality || predicate.size() == 3);
+                                        ((equality || regex_match) ? predicate.size() == 3 : true);
                                     for (size_t arg = 2; arg < predicate.size(); ++arg) {
                                         valid = valid &&
                                             predicate[arg].type == TSQueryPredicateStepTypeString;
@@ -2384,6 +2385,31 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                                         ts_query_delete(program.query);
                                         program.query = nullptr;
                                         return nullptr;
+                                    }
+                                    if (regex_match) {
+                                        uint32_t pattern_length = 0;
+                                        const char* pattern_text = ts_query_string_value_for_id(
+                                            program.query, predicate[2].value_id, &pattern_length);
+                                        if (!pattern_text) {
+                                            g_tsh_last_error_detail = "invalid regex predicate pattern";
+                                            ts_query_delete(program.query);
+                                            program.query = nullptr;
+                                            return nullptr;
+                                        }
+                                        regex_t* compiled = compileOnigurumaUtf16(
+                                            std::string(pattern_text, pattern_length), ONIG_OPTION_NONE);
+                                        if (!compiled) {
+                                            g_tsh_last_error_detail = "invalid regex in native query predicate";
+                                            ts_query_delete(program.query);
+                                            program.query = nullptr;
+                                            return nullptr;
+                                        }
+                                        NativeQueryProgram::PredicateRegex entry;
+                                        entry.pattern_index = pattern;
+                                        entry.capture_id = predicate[1].value_id;
+                                        entry.regex = compiled;
+                                        entry.negate = op == "not-match?";
+                                        program.predicate_regexes.push_back(entry);
                                     }
                                 }
                             }
