@@ -1205,6 +1205,18 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
         grammar->styles[style.style_id] = std::move(style);
     }
 
+    // Keep extension aliases deterministic while avoiding duplicates when a
+    // legacy name tuple and the explicit language block both declare one.
+    {
+        std::vector<std::string> unique_extensions;
+        for (const auto& extension : grammar->file_extensions) {
+            if (std::find(unique_extensions.begin(), unique_extensions.end(), extension) == unique_extensions.end()) {
+                unique_extensions.push_back(extension);
+            }
+        }
+        grammar->file_extensions = std::move(unique_extensions);
+    }
+
     // Validate semantic style inheritance and resolve palette fallback by
     // declared parent style. Style names remain user-defined; no token taxonomy
     // or color defaults are embedded in the runtime.
