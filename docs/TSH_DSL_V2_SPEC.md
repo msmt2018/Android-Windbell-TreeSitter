@@ -215,6 +215,7 @@ Implemented today:
 - Nested Oniguruma match and begin/end block rules.
 - Numeric and named capture-to-style bindings.
 - Separate `beginCaptures`/`startCaptures` and `endCaptures`.
+- Region-wide `name` and interior-only `contentName` style spans.
 - A `repository` block for reusable regex fragments, referenced with `include("#name")`.
 - Recursive repository fragment expansion with cycle detection.
 
