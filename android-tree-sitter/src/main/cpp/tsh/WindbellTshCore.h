@@ -95,6 +95,7 @@ public:
     // 多主题方案集合 (Key: scheme 名称，如 "darcula", "github_light")
     std::unordered_map<std::string, ColorScheme> schemes;
     std::string default_scheme_name;
+    bool default_is_dark = false;
 
     std::vector<CompiledRegexRule> regex_rules;
     std::vector<AstSelectorRule> ast_selector_rules;
