@@ -196,14 +196,19 @@ class WindbellTshLinkageTest {
                     start: { match: /\/\*/ }
                     end: { match: /\*\// }
                     contains: [
-                        { match: /TODO/, captures: { 0: "todo" }, priority: 100 }
+                        {
+                        match: /todo/
+                        flags: ["i"]
+                        captures: { todo: "todo" }
+                        priority: 100
+                    }
                     ]
                 }
             ]
         """.trimIndent()
 
         assertTrue(engine.loadTshSource("regex", sourceDsl, null))
-        val text = "/* TODO: verify nested capture */"
+        val text = "/* TODO: verify named capture */"
         val spans = engine.computeHighlights(null, text, "regex")
         assertTrue(spans.isNotEmpty())
         val todoId = engine.getStyleCatalog("regex").first { it.name == "todo" }.styleId
