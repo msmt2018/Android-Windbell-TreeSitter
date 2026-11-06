@@ -133,6 +133,51 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeGetDefaultIsDark
 }
 
 /**
+ * Export semantic style catalog entries as six strings each:
+ * id, name, scope, description, parent, tags joined with U+001F.
+ */
+JNIEXPORT jobjectArray JNICALL
+Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeGetStyleCatalog(
+    JNIEnv* env, jobject, jstring extension_jstr
+) {
+    if (!extension_jstr) return nullptr;
+    const char* ext = env->GetStringUTFChars(extension_jstr, nullptr);
+    if (!ext) return nullptr;
+    const std::string extension(ext);
+    env->ReleaseStringUTFChars(extension_jstr, ext);
+    auto grammar = WindbellEngine::getInstance().getGrammarByExtension(extension);
+    jclass string_class = env->FindClass("java/lang/String");
+    if (!string_class) return nullptr;
+    if (!grammar) {
+        jobjectArray empty = env->NewObjectArray(0, string_class, nullptr);
+        env->DeleteLocalRef(string_class);
+        return empty;
+    }
+
+    jobjectArray result = env->NewObjectArray(static_cast<jsize>(grammar->styles.size() * 6), string_class, nullptr);
+    if (!result) { env->DeleteLocalRef(string_class); return nullptr; }
+    for (size_t i = 0; i < grammar->styles.size(); ++i) {
+        const auto& style = grammar->styles[i];
+        std::string tags;
+        for (size_t tag_index = 0; tag_index < style.tags.size(); ++tag_index) {
+            if (tag_index) tags.push_back('\x1F');
+            tags += style.tags[tag_index];
+        }
+        const std::string values[] = {
+            std::to_string(style.style_id), style.name, style.scope,
+            style.description, style.parent, tags
+        };
+        for (size_t field = 0; field < 6; ++field) {
+            jstring value = env->NewStringUTF(values[field].c_str());
+            env->SetObjectArrayElement(result, static_cast<jsize>(i * 6 + field), value);
+            env->DeleteLocalRef(value);
+        }
+    }
+    env->DeleteLocalRef(string_class);
+    return result;
+}
+
+/**
  * Return arbitrary UI theme token pairs as [name, decimalARGB, ...].
  */
 JNIEXPORT jobjectArray JNICALL
