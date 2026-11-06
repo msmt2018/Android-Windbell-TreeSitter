@@ -57,6 +57,16 @@ class WindbellTshLinkageTest {
         assertTrue((diagnostic?.line ?: 0) >= 1)
         assertTrue((diagnostic?.column ?: 0) >= 1)
         assertTrue(diagnostic?.message?.isNotBlank() == true)
+
+        val invalidEscape = """
+            language { id: "bad-escape" name: "bad\\q" }
+        """.trimIndent()
+        assertFalse(engine.loadTshSource("bad-escape", invalidEscape, null))
+
+        val invalidPunctuation = """
+            language { id: "bad-punctuation" = name: "invalid" }
+        """.trimIndent()
+        assertFalse(engine.loadTshSource("bad-punctuation", invalidPunctuation, null))
     }
 
     @Test
