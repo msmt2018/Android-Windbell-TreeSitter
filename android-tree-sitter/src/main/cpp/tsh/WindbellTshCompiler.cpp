@@ -568,19 +568,75 @@ static int matchOneTextMateSelector(const std::string& selector, const std::vect
     return specificity;
 }
 
-static int textMateSelectorSpecificity(const std::string& selector, const std::vector<std::string>& scopes) {
-    int best = -1;
+static void splitSelectorAlternatives(
+    const std::string& input,
+    std::vector<std::string>& output
+) {
     size_t start = 0;
-    while (start <= selector.size()) {
-        const size_t comma = selector.find(',', start);
-        std::string alternative = trimScopeToken(selector.substr(
-            start, comma == std::string::npos ? std::string::npos : comma - start));
-        if (alternative.rfind("L:", 0) == 0 || alternative.rfind("R:", 0) == 0) {
-            alternative.erase(0, 2);
+    int depth = 0;
+    for (size_t i = 0; i <= input.size(); ++i) {
+        const char ch = i < input.size() ? input[i] : ',';
+        if (ch == '(') ++depth;
+        else if (ch == ')' && depth > 0) --depth;
+        else if ((ch == ',' || ch == '|') && depth == 0) {
+            const std::string part = trimScopeToken(input.substr(start, i - start));
+            if (!part.empty()) output.push_back(part);
+            start = i + 1;
         }
-        best = std::max(best, matchOneTextMateSelector(alternative, scopes));
-        if (comma == std::string::npos) break;
-        start = comma + 1;
+    }
+}
+
+static bool expandSelectorGroups(
+    const std::string& input,
+    std::vector<std::string>& output,
+    size_t depth = 0
+) {
+    if (depth > 32) return false;
+    size_t open = std::string::npos;
+    int nesting = 0;
+    size_t close = std::string::npos;
+    for (size_t i = 0; i < input.size(); ++i) {
+        if (input[i] == '(') {
+            if (nesting++ == 0) open = i;
+        } else if (input[i] == ')') {
+            if (nesting == 0) return false;
+            if (--nesting == 0) { close = i; break; }
+        }
+    }
+    if (nesting != 0) return false;
+    if (open == std::string::npos) {
+        output.push_back(trimScopeToken(input));
+        return true;
+    }
+
+    std::vector<std::string> alternatives;
+    splitSelectorAlternatives(input.substr(open + 1, close - open - 1), alternatives);
+    if (alternatives.empty()) return false;
+    const std::string prefix = input.substr(0, open);
+    const std::string suffix = input.substr(close + 1);
+    for (const auto& alternative : alternatives) {
+        std::vector<std::string> expanded;
+        if (!expandSelectorGroups(prefix + alternative + suffix, expanded, depth + 1)) return false;
+        output.insert(output.end(), expanded.begin(), expanded.end());
+        if (output.size() > 256) return false;
+    }
+    return true;
+}
+
+static int textMateSelectorSpecificity(const std::string& selector, const std::vector<std::string>& scopes) {
+    std::vector<std::string> top_level;
+    splitSelectorAlternatives(selector, top_level);
+    int best = -1;
+    for (const auto& alternative : top_level) {
+        std::vector<std::string> expanded;
+        if (!expandSelectorGroups(alternative, expanded)) continue;
+        for (std::string candidate : expanded) {
+            candidate = trimScopeToken(candidate);
+            if (candidate.rfind("L:", 0) == 0 || candidate.rfind("R:", 0) == 0) {
+                candidate.erase(0, 2);
+            }
+            best = std::max(best, matchOneTextMateSelector(candidate, scopes));
+        }
     }
     return best;
 }
