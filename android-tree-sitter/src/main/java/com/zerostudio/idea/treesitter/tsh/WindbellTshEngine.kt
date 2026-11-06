@@ -25,6 +25,15 @@ class WindbellTshEngine private constructor() {
         val hasDarkColor: Boolean
     )
 
+    data class SemanticStyle(
+        val styleId: Int,
+        val name: String,
+        val scope: String,
+        val description: String,
+        val parent: String,
+        val tags: List<String>
+    )
+
     data class StylePalette(
         val styleId: Int,
         val lightColor: Int,
@@ -80,6 +89,25 @@ class WindbellTshEngine private constructor() {
             map[id] = StylePalette(id, light, dark, flags, hasLight, hasDark)
         }
         paletteCache[extension] = map
+    }
+
+    /** Returns all semantic style declarations authored in the .tsh file. */
+    fun getStyleCatalog(extension: String): List<SemanticStyle> {
+        val raw = nativeGetStyleCatalog(extension) ?: return emptyList()
+        val result = ArrayList<SemanticStyle>(raw.size / 6)
+        var index = 0
+        while (index + 5 < raw.size) {
+            result += SemanticStyle(
+                styleId = raw[index].toInt(),
+                name = raw[index + 1],
+                scope = raw[index + 2],
+                description = raw[index + 3],
+                parent = raw[index + 4],
+                tags = raw[index + 5].split('\u001F').filter { it.isNotEmpty() }
+            )
+            index += 6
+        }
+        return result
     }
 
     /** Returns every scheme declared by the loaded .tsh document. */
@@ -182,6 +210,9 @@ class WindbellTshEngine private constructor() {
 
     @FastNative
     private external fun nativeLoadTshSource(extension: String, tshSourceContent: String, languagePtr: Long): Boolean
+
+    @FastNative
+    private external fun nativeGetStyleCatalog(extension: String): Array<String>?
 
     @FastNative
     private external fun nativeGetSchemeNames(extension: String): Array<String>?
