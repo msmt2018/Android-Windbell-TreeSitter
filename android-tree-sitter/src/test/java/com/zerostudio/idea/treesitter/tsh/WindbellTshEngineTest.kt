@@ -524,7 +524,10 @@ class WindbellTshLinkageTest {
         val source = """
             tsh 2 {
                 language { id: "java-ast-node-flags" name: "Java AST Node Flags" extensions: [".janf"] }
-                styles { declaration { scope: "entity.name.type" } }
+                styles {
+                    declaration { scope: "entity.name.type" }
+                    declarationAlias { scope: "entity.name.type.alias" }
+                }
                 ast: [
                     {
                         node: "identifier"
@@ -535,6 +538,18 @@ class WindbellTshLinkageTest {
                         hasError: false
                         style: "declaration"
                         priority: 35
+                        overlap: allow
+                    },
+                    {
+                        node: "identifier"
+                        named: true
+                        missing: false
+                        extra: false
+                        error: false
+                        hasError: false
+                        style: "declarationAlias"
+                        priority: 34
+                        overlap: allow
                     }
                 ]
             }
@@ -549,6 +564,11 @@ class WindbellTshLinkageTest {
         assertTrue(spans.any {
             it.styleId == styleId && it.startByte == code.indexOf("Demo") && it.priority == 35
         })
+        val aliasId = engine.getStyleCatalog("java-ast-node-flags")
+            .first { it.name == "declarationAlias" }.styleId
+        assertTrue(spans.any {
+            it.styleId == aliasId && it.startByte == code.indexOf("Demo") && it.priority == 34
+        }, "All matching ATS rules must emit candidates; the resolver handles overlap.")
         tree?.close()
         parser.close()
     }
