@@ -133,6 +133,53 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeGetDefaultIsDark
 }
 
 /**
+ * Return arbitrary UI theme token pairs as [name, decimalARGB, ...].
+ */
+JNIEXPORT jobjectArray JNICALL
+Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeGetThemeTokens(
+    JNIEnv* env, jobject, jstring extension_jstr, jstring scheme_jstr
+) {
+    if (!extension_jstr || !scheme_jstr) return nullptr;
+    const char* ext = env->GetStringUTFChars(extension_jstr, nullptr);
+    const char* scheme_name = env->GetStringUTFChars(scheme_jstr, nullptr);
+    if (!ext || !scheme_name) {
+        if (ext) env->ReleaseStringUTFChars(extension_jstr, ext);
+        if (scheme_name) env->ReleaseStringUTFChars(scheme_jstr, scheme_name);
+        return nullptr;
+    }
+    const std::string extension(ext);
+    const std::string selected_scheme(scheme_name);
+    env->ReleaseStringUTFChars(extension_jstr, ext);
+    env->ReleaseStringUTFChars(scheme_jstr, scheme_name);
+
+    auto grammar = WindbellEngine::getInstance().getGrammarByExtension(extension);
+    if (!grammar) return nullptr;
+    auto scheme_it = grammar->schemes.find(selected_scheme);
+    if (scheme_it == grammar->schemes.end()) return nullptr;
+
+    std::vector<std::string> keys;
+    keys.reserve(scheme_it->second.ui_colors.size());
+    for (const auto& entry : scheme_it->second.ui_colors) keys.push_back(entry.first);
+    std::sort(keys.begin(), keys.end());
+
+    jclass string_class = env->FindClass("java/lang/String");
+    if (!string_class) return nullptr;
+    jobjectArray result = env->NewObjectArray(static_cast<jsize>(keys.size() * 2), string_class, nullptr);
+    if (!result) { env->DeleteLocalRef(string_class); return nullptr; }
+    for (size_t i = 0; i < keys.size(); ++i) {
+        const auto color = scheme_it->second.ui_colors.at(keys[i]);
+        jstring key = env->NewStringUTF(keys[i].c_str());
+        jstring value = env->NewStringUTF(std::to_string(color).c_str());
+        env->SetObjectArrayElement(result, static_cast<jsize>(i * 2), key);
+        env->SetObjectArrayElement(result, static_cast<jsize>(i * 2 + 1), value);
+        env->DeleteLocalRef(key);
+        env->DeleteLocalRef(value);
+    }
+    env->DeleteLocalRef(string_class);
+    return result;
+}
+
+/**
  * Export palette for the explicitly selected scheme.
  * Layout: [styleId, lightColor, darkColor, fontFlags, hasLight, hasDark] * N.
  * A zero color means that the DSL did not define a value for that appearance.
