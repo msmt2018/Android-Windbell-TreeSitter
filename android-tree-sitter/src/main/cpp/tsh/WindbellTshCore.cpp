@@ -1037,11 +1037,40 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
 
     // Resolve partial overlaps using explicit rule priority. Nested regions are
     // retained automatically; unrelated partial overlaps require @overlap: allow.
+    // Discard malformed/empty ranges before conflict analysis. All coordinates
+    // are UTF-16 byte offsets, so a valid span must be non-empty and even-aligned.
+    final_spans.erase(std::remove_if(final_spans.begin(), final_spans.end(),
+        [](const HighlightSpan& span) {
+            return span.start_byte >= span.end_byte ||
+                   (span.start_byte & 1u) != 0 || (span.end_byte & 1u) != 0;
+        }), final_spans.end());
+
+    // Establish a total, reproducible precedence order. The final tie-breakers
+    // deliberately use range and style identity rather than unordered-map
+    // iteration/insertion order from capture-group maps.
     std::stable_sort(final_spans.begin(), final_spans.end(),
         [](const HighlightSpan& a, const HighlightSpan& b) {
             if (a.priority != b.priority) return a.priority > b.priority;
-            return a.declaration_order < b.declaration_order;
+            if (a.declaration_order != b.declaration_order)
+                return a.declaration_order < b.declaration_order;
+            if (a.start_byte != b.start_byte) return a.start_byte < b.start_byte;
+            if (a.end_byte != b.end_byte) return a.end_byte > b.end_byte;
+            if (a.style_id != b.style_id) return a.style_id < b.style_id;
+            if (a.allow_overlap != b.allow_overlap) return a.allow_overlap < b.allow_overlap;
+            return a.flags < b.flags;
         });
+
+    // Collapse exact duplicate emissions (for example, the same whole-match
+    // capture declared through both group 0 and a named alias). Distinct styles
+    // and distinct priorities are never merged.
+    final_spans.erase(std::unique(final_spans.begin(), final_spans.end(),
+        [](const HighlightSpan& a, const HighlightSpan& b) {
+            return a.start_byte == b.start_byte && a.end_byte == b.end_byte &&
+                   a.style_id == b.style_id && a.priority == b.priority &&
+                   a.declaration_order == b.declaration_order &&
+                   a.allow_overlap == b.allow_overlap && a.flags == b.flags;
+        }), final_spans.end());
+
     std::vector<HighlightSpan> resolved_spans;
     resolved_spans.reserve(final_spans.size());
     for (const auto& candidate : final_spans) {
@@ -1071,8 +1100,11 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
         if (a.start_byte != b.start_byte) return a.start_byte < b.start_byte;
         // Apply outer captures first, then inner/high-priority captures.
         if (a.end_byte != b.end_byte) return a.end_byte > b.end_byte;
-        if (a.priority != b.priority) return a.priority < b.priority;
-        return a.declaration_order < b.declaration_order;
+        if (a.priority != b.priority) return a.priority > b.priority;
+        if (a.declaration_order != b.declaration_order)
+            return a.declaration_order < b.declaration_order;
+        if (a.style_id != b.style_id) return a.style_id < b.style_id;
+        return a.flags < b.flags;
     });
 
     return final_spans;
