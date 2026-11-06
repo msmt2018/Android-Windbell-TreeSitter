@@ -2,6 +2,7 @@ package com.zerostudio.idea.treesitter
 
 import com.zerostudio.idea.treesitter.tsh.WindbellTshEngine
 import org.junit.jupiter.api.Assertions.assertDoesNotThrow
+import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -46,6 +47,40 @@ class WindbellTshLinkageTest {
             val loaded = engine.loadTshSource("java", tshDsl, null)
             assertTrue(loaded, "TSH DSL source parsing and compilation should succeed.")
         }
+    }
+
+    @Test
+    fun testNamedSchemesAndDslAppearance() {
+        val engine = WindbellTshEngine.instance
+        val source = """
+            name: ["Scheme Test", ".scheme"]
+            isDark: true
+            styles {
+                keyword { scope: "keyword.control", tags: ["keyword", "control"] }
+                string { scope: "string.quoted", tags: ["string"] }
+            }
+            schemes {
+                midnight {
+                    light [ keyword: #112233, string: #223344 ]
+                    dark [ keyword: #AABBCC, string: #BBCCDD ]
+                }
+                github {
+                    light [ keyword: #0550AE, string: #0A3069 ]
+                    dark [ keyword: #79C0FF, string: #A5D6FF ]
+                }
+            }
+        """.trimIndent()
+
+        assertTrue(engine.loadTshSource("scheme", source, null))
+        assertEquals(listOf("github", "midnight"), engine.listSchemes("scheme").sorted())
+        assertEquals("midnight", engine.getDefaultScheme("scheme"))
+        assertTrue(engine.isDark("scheme"))
+        assertTrue(engine.selectScheme("scheme", "github"))
+        assertEquals("github", engine.getSelectedScheme("scheme"))
+        engine.setAppearance("scheme", false)
+        assertFalse(engine.isDark("scheme"))
+        engine.clearAppearanceOverride("scheme")
+        assertTrue(engine.isDark("scheme"))
     }
 
     @Test
