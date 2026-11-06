@@ -729,13 +729,22 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                 if (match_key.text != "match") return false;
                 if (lexer.nextToken().type != TshLexer::TokenType::TOK_COLON) return false;
                 auto pattern = lexer.nextToken();
-                if (pattern.type != TshLexer::TokenType::TOK_REGEX &&
-                    pattern.type != TshLexer::TokenType::TOK_STRING) return false;
+                std::string pattern_text;
+                if (pattern.type == TshLexer::TokenType::TOK_IDENT && pattern.text == "include") {
+                    const std::string include_argument = lexer.extractParenthesizedBlock();
+                    if (include_argument.empty()) return false;
+                    pattern_text = "include(" + include_argument + ")";
+                } else if (pattern.type == TshLexer::TokenType::TOK_REGEX ||
+                           pattern.type == TshLexer::TokenType::TOK_STRING) {
+                    pattern_text = pattern.text;
+                } else {
+                    return false;
+                }
                 if (lexer.nextToken().type != TshLexer::TokenType::TOK_RBRACE) return false;
 
                 rule.type = RegexRuleType::BLOCK;
-                if (item.text == "end") raw_end_pattern = pattern.text;
-                else raw_start_pattern = pattern.text;
+                if (item.text == "end") raw_end_pattern = pattern_text;
+                else raw_start_pattern = pattern_text;
             } else if (item.text == "style") {
                 if (lexer.nextToken().type != TshLexer::TokenType::TOK_COLON) return false;
                 auto style_name = lexer.nextToken();
