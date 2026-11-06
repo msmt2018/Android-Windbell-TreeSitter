@@ -50,7 +50,7 @@ tsh 2 {
 }
 ```
 
-The compiler must reject duplicate IDs, malformed blocks, invalid color values, unresolved style references, invalid regexes and invalid Tree-sitter queries with source diagnostics (file, line, column, code and message). Unknown keys are errors by default; an explicit `extensions` namespace is reserved for vendor/user metadata.
+The compiler accepts the versioned `tsh 2 { ... }` envelope and the legacy root-object form. It rejects unsupported DSL versions, duplicate root sections/style/scheme IDs, malformed blocks, unknown root/style/editor properties, invalid color values, unresolved style references, inheritance cycles, invalid regexes and invalid Tree-sitter queries with source diagnostics (file, line, column, code and message). Unknown keys are errors by default; an explicit `extensions` namespace is reserved for vendor/user metadata.
 
 ## 3. Semantic style catalog
 
@@ -122,6 +122,8 @@ schemes {
 
 Color syntax accepts #RGB, #RGBA, #RRGGBB and #AARRGGBB; canonical runtime representation is AARRGGBB. Theme values are data, never C++ constants. Theme UI tokens are arbitrary dotted names, not a hard-coded enum. A scheme may optionally declare `extends: "otherScheme"`; inheritance is resolved by the compiler and cycles/missing parents are errors. The active appearance is a runtime selection (`light` or `dark`) and does not require reparsing the syntax tree.
 
+TextMate block rules support separate `beginCaptures`/`startCaptures` and `endCaptures` maps, including named Oniguruma capture groups. The begin/end delimiter captures are emitted independently from the enclosing region style and nested patterns.
+
 Style modifiers are composable: `bold`, `italic`, `underline`, `strikethrough`, `dim`, `italicOff`, `boldOff`, `fontFamily`, `fontSize`, `opacity`, `border`, and `background`. Modifiers are optional and independently specified for light/dark. The renderer only applies properties explicitly present in the selected scheme.
 
 ## 5. Rule model and arbitration
@@ -130,7 +132,7 @@ The `language` block defines `id`, `name`, `extensions`, `aliases`, `mimeTypes`,
 
 The `editor` block includes host-consumable editing options such as `tabSize`, `fontSize`, `lineHeight`, `letterSpacing`, `insertSpaces`, `autoIndent`, `trimTrailingWhitespace`, `formatOnType`, `formatOnPaste`, `renderWhitespace`, `lineNumbers`, and `maxTokenizationLineLength`. Options are exported as typed-at-source values for host adapters; a host only applies options supported by its editor API.
 
-Language-wide regex behavior is declared in `matching`: `caseSensitive`, `multiline`, `dotAll`, `extended`, and `unicode`. Individual regex rules may override/add flags with `flags: ["i", "m", "s", "x"]`. Named capture groups and numeric capture groups can both bind semantic styles. Unicode source patterns are decoded to UTF-16 before Oniguruma compilation.
+Language-wide regex behavior is declared in `matching`: `caseSensitive`, `multiline` (line-anchor behavior), `dotAll` (dot matches newline), `extended`, and `unicode`. Individual regex rules may add Oniguruma flags with `flags: ["i", "m", "s", "x"]`: `i` ignores case, Oniguruma `m` enables dot-newline matching, `s` makes anchors match only the whole input, and `x` enables extended syntax. Named capture groups and numeric capture groups can both bind semantic styles. UTF-8/modified-UTF-8 source patterns are decoded to UTF-16 before Oniguruma compilation.
 
 Every rule has a stable `id`, a backend, optional `name`, `enabled`, `priority`, `when`, `scope`, `captures`, and metadata. Higher priority wins on overlapping spans; ties are resolved by declaration order unless a rule explicitly sets `overlap: "allow"`. A rule never infers priority from its style name.
 
