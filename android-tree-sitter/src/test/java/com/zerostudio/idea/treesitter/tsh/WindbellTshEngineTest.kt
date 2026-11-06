@@ -115,6 +115,10 @@ class WindbellTshLinkageTest {
                 }
             }
             editor {
+                tabSize: 2
+                fontSize: 16
+                insertSpaces: false
+                autoIndent: true
                 comments {
                     line: ["//"]
                     block: [["/*", "*/"]]
@@ -154,6 +158,10 @@ class WindbellTshLinkageTest {
         assertEquals(listOf("string", "comment"), editorMetadata.bracketNotIn)
         assertEquals(listOf("string", "comment"), editorMetadata.autoClosingPairs.single().notIn)
         assertEquals(listOf(".", ":"), editorMetadata.completionTriggerCharacters)
+        assertEquals("2", editorMetadata.options["tabSize"])
+        assertEquals("16", editorMetadata.options["fontSize"])
+        assertEquals("false", editorMetadata.options["insertSpaces"])
+        assertEquals("true", editorMetadata.options["autoIndent"])
         val catalog = engine.getStyleCatalog("scheme")
         assertEquals("keyword.control", catalog.first { it.name == "keyword" }.scope)
         assertTrue(catalog.first { it.name == "keyword" }.tags.contains("control"))
