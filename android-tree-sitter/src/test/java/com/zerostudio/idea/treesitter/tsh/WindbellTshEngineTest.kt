@@ -180,6 +180,13 @@ class WindbellTshLinkageTest {
         val engine = WindbellTshEngine.instance
         val sourceDsl = """
             name: ["Regex Test", ".regex"]
+            matching {
+                caseSensitive: false
+                multiline: true
+                dotAll: false
+                extended: false
+                unicode: true
+            }
             styles {
                 comment { scope: "comment.block", tags: ["comment"] }
                 todo { scope: "keyword.other.todo", tags: ["todo"] }
@@ -213,6 +220,7 @@ class WindbellTshLinkageTest {
         assertTrue(spans.isNotEmpty())
         val todoId = engine.getStyleCatalog("regex").first { it.name == "todo" }.styleId
         assertTrue(spans.any { it.styleId == todoId && it.priority == 100 })
+        assertTrue(spans.any { it.styleId == todoId && it.priority == 90 })
     }
 
     @Test
