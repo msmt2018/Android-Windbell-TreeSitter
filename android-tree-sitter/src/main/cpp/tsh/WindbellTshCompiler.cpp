@@ -317,8 +317,17 @@ std::shared_ptr<TshGrammar> TshCompiler::compile(const std::string& source, cons
         uint32_t line = 1;
         uint32_t column = 1;
         for (uint32_t i = 0; i < offset; ++i) {
-            if (source[i] == '\n') { ++line; column = 1; }
-            else { ++column; }
+            const uint8_t byte = static_cast<uint8_t>(source[i]);
+            if (byte == '\n') {
+                ++line;
+                column = 1;
+            } else if (byte == '\r') {
+                // CR is part of CRLF and does not create a second visual column.
+            } else if ((byte & 0xC0) != 0x80) {
+                // Count UTF-8 leading bytes, not continuation bytes. This matches
+                // UTF-16 editor columns for modified-UTF-8 surrogate code units.
+                ++column;
+            }
         }
         diagnostics.push_back({
             "TSH_PARSE_OR_COMPILE_ERROR",
