@@ -348,6 +348,8 @@ class WindbellTshLinkageTest {
                 {
                     start: { match: /(?<open>\/\*)/ }
                     end: { match: /(?<close>\*\/)/ }
+                    name: "comment"
+                    contentName: "commentContent"
                     beginCaptures: { open: "comment" }
                     endCaptures: { close: "comment" }
                     contains: [
@@ -375,6 +377,8 @@ class WindbellTshLinkageTest {
         assertTrue(spans.any { it.styleId == todoId && it.priority == 100 })
         assertTrue(spans.any { it.styleId == engine.getStyleCatalog("regex").first { it.name == "comment" }.styleId && it.startByte == 0 && it.endByte == 4 })
         assertTrue(spans.any { it.styleId == engine.getStyleCatalog("regex").first { it.name == "comment" }.styleId && it.endByte == text.length * 2 })
+        val contentId = engine.getStyleCatalog("regex").first { it.name == "commentContent" }.styleId
+        assertTrue(spans.any { it.styleId == contentId && it.startByte == 4 && it.endByte == text.length * 2 - 4 })
         assertTrue(spans.any { it.styleId == todoId && it.priority == 90 })
     }
 
