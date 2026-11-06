@@ -259,6 +259,11 @@ public:
     std::string monarch_default_style_name;
     bool monarch_has_default_style = false;
     std::vector<AstSelectorRule> ast_selector_rules;
+    // Immutable dispatch tables built once at compile time. Field selectors
+    // are indexed by their owner symbol; ordinary selectors by target symbol.
+    std::unordered_map<TSSymbol, std::vector<uint32_t>> ast_rules_by_node_symbol;
+    std::unordered_map<TSSymbol, std::vector<uint32_t>> ast_field_rules_by_parent_symbol;
+    std::vector<uint32_t> ast_wildcard_rules;
     std::vector<NativeQueryProgram> native_queries;
 
     ~TshGrammar();
