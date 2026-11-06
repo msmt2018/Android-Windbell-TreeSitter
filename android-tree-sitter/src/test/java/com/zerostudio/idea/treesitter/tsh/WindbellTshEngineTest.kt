@@ -533,6 +533,7 @@ class WindbellTshLinkageTest {
                     operatorWithOperands { scope: "keyword.operator.arithmetic" }
                     classKeyword { scope: "keyword.declaration.class" }
                     firstClassName { scope: "entity.name.type.first" }
+                    methodRunText { scope: "entity.name.function.run" }
                 }
                 ast: [
                     {
@@ -587,6 +588,15 @@ class WindbellTshLinkageTest {
                         priority: 45
                     },
                     {
+                        node: "identifier"
+                        ancestor: "method_declaration"
+                        text: "run"
+                        textPrefix: "r"
+                        textSuffix: "n"
+                        style: "methodRunText"
+                        priority: 60
+                    },
+                    {
                         node: "method_declaration"
                         child: "block"
                         style: "methodWithBody"
@@ -638,6 +648,11 @@ class WindbellTshLinkageTest {
         assertTrue(spans.any {
             it.styleId == operatorWithOperandsId && it.startByte == code.indexOf("+") * 2
         }, "ATS previousSibling and nextSibling constraints must both match.")
+        val methodRunTextId = engine.getStyleCatalog("java-ast-node-flags")
+            .first { it.name == "methodRunText" }.styleId
+        assertTrue(spans.any {
+            it.styleId == methodRunTextId && it.startByte == code.indexOf("run") * 2
+        }, "ATS exact text, prefix and suffix constraints must be applied.")
         val methodBodyId = engine.getStyleCatalog("java-ast-node-flags")
             .first { it.name == "methodWithBody" }.styleId
         assertTrue(spans.any { it.styleId == methodBodyId && it.priority == 55 },
