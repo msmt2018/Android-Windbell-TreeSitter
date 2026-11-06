@@ -45,6 +45,15 @@
         completion {
             triggerCharacters: [".", "@", ":"]
         }
+        electricCharacters: ["}", ";"]
+        autoCloseBefore: /[\\s)\\]};,]/
+        onEnterRules: [
+            {
+                beforeText: /\\{[^}]*$/
+                afterText: /^\\s*\\}/
+                action: { indent: "indentOutdent" }
+            }
+        ]
     },
 
     // =========================================================================
