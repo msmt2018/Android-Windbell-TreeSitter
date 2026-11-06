@@ -530,6 +530,9 @@ class WindbellTshLinkageTest {
                     operator { scope: "keyword.operator" }
                     methodName { scope: "entity.name.function" }
                     methodWithBody { scope: "meta.function.body" }
+                    operatorWithOperands { scope: "keyword.operator.arithmetic" }
+                    classKeyword { scope: "keyword.declaration.class" }
+                    firstClassName { scope: "entity.name.type.first" }
                 }
                 ast: [
                     {
@@ -557,8 +560,25 @@ class WindbellTshLinkageTest {
                     {
                         node: "+"
                         named: false
+                        previousSibling: "decimal_integer_literal"
+                        nextSibling: "decimal_integer_literal"
                         style: "operator"
                         priority: 20
+                    },
+                    {
+                        node: "class"
+                        named: false
+                        firstChild: true
+                        childIndex: 0
+                        style: "classKeyword"
+                        priority: 25
+                    },
+                    {
+                        node: "identifier"
+                        ancestor: "class_declaration"
+                        namedChildIndex: 0
+                        style: "firstClassName"
+                        priority: 26
                     },
                     {
                         node: "identifier"
@@ -603,6 +623,21 @@ class WindbellTshLinkageTest {
         assertFalse(spans.any {
             it.styleId == methodNameId && it.startByte == code.indexOf("Demo") * 2
         }, "ATS ancestor constraints must reject nodes outside the selected ancestor.")
+        val classKeywordId = engine.getStyleCatalog("java-ast-node-flags")
+            .first { it.name == "classKeyword" }.styleId
+        assertTrue(spans.any {
+            it.styleId == classKeywordId && it.startByte == code.indexOf("class") * 2
+        }, "ATS firstChild and childIndex constraints must select the first syntax child.")
+        val firstClassNameId = engine.getStyleCatalog("java-ast-node-flags")
+            .first { it.name == "firstClassName" }.styleId
+        assertTrue(spans.any {
+            it.styleId == firstClassNameId && it.startByte == code.indexOf("Demo") * 2
+        }, "ATS namedChildIndex must count named siblings only.")
+        val operatorWithOperandsId = engine.getStyleCatalog("java-ast-node-flags")
+            .first { it.name == "operatorWithOperands" }.styleId
+        assertTrue(spans.any {
+            it.styleId == operatorWithOperandsId && it.startByte == code.indexOf("+") * 2
+        }, "ATS previousSibling and nextSibling constraints must both match.")
         val methodBodyId = engine.getStyleCatalog("java-ast-node-flags")
             .first { it.name == "methodWithBody" }.styleId
         assertTrue(spans.any { it.styleId == methodBodyId && it.priority == 55 },
