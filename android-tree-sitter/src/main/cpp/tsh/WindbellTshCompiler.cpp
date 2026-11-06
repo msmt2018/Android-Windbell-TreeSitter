@@ -201,8 +201,12 @@ uint32_t TshCompiler::parseColorHex(const std::string& hex_str) {
             expanded.push_back(ch);
             expanded.push_back(ch);
         }
-        clean = std::move(expanded);
-        if (clean.size() == 6) clean.insert(0, "FF");
+        if (expanded.size() == 6) {
+            clean = "FF" + expanded;
+        } else {
+            // CSS #RGBA becomes canonical AARRGGBB.
+            clean = expanded.substr(6, 2) + expanded.substr(0, 6);
+        }
     } else if (clean.size() == 6) {
         clean.insert(0, "FF");
     } else if (clean.size() != 8) {
