@@ -1092,30 +1092,98 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                    a.flags == b.flags;
         }), final_spans.end());
 
+    // Resolve strict partial intersections by subtracting only the conflicting
+    // interval. This preserves the non-conflicting portions of lower-priority
+    // candidates instead of dropping their entire highlighting range.
     std::vector<HighlightSpan> resolved_spans;
     resolved_spans.reserve(final_spans.size());
     for (const auto& candidate : final_spans) {
-        bool rejected = false;
-        for (auto& accepted : resolved_spans) {
-            if (candidate.end_byte <= accepted.start_byte ||
-                candidate.start_byte >= accepted.end_byte) continue;
+        std::vector<HighlightSpan> fragments{candidate};
+        for (const auto& accepted : resolved_spans) {
+            if (fragments.empty()) break;
+            std::vector<HighlightSpan> remaining;
+            remaining.reserve(fragments.size() + 1);
+            for (const auto& fragment : fragments) {
+                if (fragment.end_byte <= accepted.start_byte ||
+                    fragment.start_byte >= accepted.end_byte) {
+                    remaining.push_back(fragment);
+                    continue;
+                }
 
-            const bool same_range = candidate.start_byte == accepted.start_byte &&
-                                    candidate.end_byte == accepted.end_byte;
-            const bool candidate_contains = candidate.start_byte <= accepted.start_byte &&
-                                            candidate.end_byte >= accepted.end_byte;
-            const bool accepted_contains = accepted.start_byte <= candidate.start_byte &&
-                                           accepted.end_byte >= candidate.end_byte;
-            const bool nested = !same_range && (candidate_contains || accepted_contains);
-            if (nested || candidate.allow_overlap || accepted.allow_overlap) continue;
+                const bool same_range = fragment.start_byte == accepted.start_byte &&
+                                        fragment.end_byte == accepted.end_byte;
+                const bool fragment_contains =
+                    fragment.start_byte <= accepted.start_byte &&
+                    fragment.end_byte >= accepted.end_byte;
+                const bool accepted_contains =
+                    accepted.start_byte <= fragment.start_byte &&
+                    accepted.end_byte >= fragment.end_byte;
+                const bool nested = !same_range &&
+                    (fragment_contains || accepted_contains);
 
-            // Candidates arrive in descending priority, so the accepted span wins.
-            rejected = true;
-            break;
+                // Preserve explicit overlap and proper nesting. Only crossing
+                // intervals are exclusive; the already accepted candidate wins.
+                if (nested || fragment.allow_overlap || accepted.allow_overlap) {
+                    remaining.push_back(fragment);
+                    continue;
+                }
+
+                const uint32_t overlap_start =
+                    std::max(fragment.start_byte, accepted.start_byte);
+                const uint32_t overlap_end =
+                    std::min(fragment.end_byte, accepted.end_byte);
+                if (fragment.start_byte < overlap_start) {
+                    HighlightSpan left = fragment;
+                    left.end_byte = overlap_start;
+                    remaining.push_back(left);
+                }
+                if (overlap_end < fragment.end_byte) {
+                    HighlightSpan right = fragment;
+                    right.start_byte = overlap_end;
+                    remaining.push_back(right);
+                }
+            }
+            fragments = std::move(remaining);
         }
-        if (!rejected) resolved_spans.push_back(candidate);
+        resolved_spans.insert(
+            resolved_spans.end(), fragments.begin(), fragments.end());
     }
-    final_spans = std::move(resolved_spans);
+
+    // Rejoin adjacent fragments when every semantic attribute is identical.
+    std::stable_sort(resolved_spans.begin(), resolved_spans.end(),
+        [](const HighlightSpan& a, const HighlightSpan& b) {
+            if (a.start_byte != b.start_byte) return a.start_byte < b.start_byte;
+            if (a.end_byte != b.end_byte) return a.end_byte < b.end_byte;
+            if (a.priority != b.priority) return a.priority > b.priority;
+            if (a.declaration_order != b.declaration_order)
+                return a.declaration_order < b.declaration_order;
+            if (a.source != b.source) return a.source < b.source;
+            if (a.style_id != b.style_id) return a.style_id < b.style_id;
+            if (a.allow_overlap != b.allow_overlap)
+                return a.allow_overlap < b.allow_overlap;
+            return a.flags < b.flags;
+        });
+    std::vector<HighlightSpan> merged_spans;
+    merged_spans.reserve(resolved_spans.size());
+    for (const auto& span : resolved_spans) {
+        if (!merged_spans.empty()) {
+            auto& previous = merged_spans.back();
+            const bool same_semantics =
+                previous.end_byte == span.start_byte &&
+                previous.style_id == span.style_id &&
+                previous.flags == span.flags &&
+                previous.priority == span.priority &&
+                previous.declaration_order == span.declaration_order &&
+                previous.allow_overlap == span.allow_overlap &&
+                previous.source == span.source;
+            if (same_semantics) {
+                previous.end_byte = span.end_byte;
+                continue;
+            }
+        }
+        merged_spans.push_back(span);
+    }
+    final_spans = std::move(merged_spans);
 
     std::stable_sort(final_spans.begin(), final_spans.end(), [](const HighlightSpan& a, const HighlightSpan& b) {
         if (a.start_byte != b.start_byte) return a.start_byte < b.start_byte;
