@@ -28,6 +28,102 @@ static const UChar* advanceOneUtf16CodePoint(const UChar* current, const UChar* 
     return reinterpret_cast<const UChar*>(bytes);
 }
 
+
+static bool tshUtf8ToUtf16(const std::string& input, std::vector<UChar>& output) {
+    output.clear();
+    for (size_t i = 0; i < input.size();) {
+        const uint8_t first = static_cast<uint8_t>(input[i++]);
+        uint32_t cp = 0;
+        size_t continuation = 0;
+        if (first <= 0x7F) cp = first;
+        else if ((first & 0xE0) == 0xC0) { cp = first & 0x1F; continuation = 1; }
+        else if ((first & 0xF0) == 0xE0) { cp = first & 0x0F; continuation = 2; }
+        else if ((first & 0xF8) == 0xF0) { cp = first & 0x07; continuation = 3; }
+        else return false;
+        if (i + continuation > input.size()) return false;
+        for (size_t j = 0; j < continuation; ++j) {
+            const uint8_t next = static_cast<uint8_t>(input[i++]);
+            if ((next & 0xC0) != 0x80) return false;
+            cp = (cp << 6) | (next & 0x3F);
+        }
+        if ((continuation == 1 && cp < 0x80) || (continuation == 2 && cp < 0x800) ||
+            (continuation == 3 && cp < 0x10000) || cp > 0x10FFFF ||
+            (cp >= 0xD800 && cp <= 0xDFFF)) return false;
+        if (cp <= 0xFFFF) output.push_back(static_cast<UChar>(cp));
+        else {
+            cp -= 0x10000;
+            output.push_back(static_cast<UChar>(0xD800 + (cp >> 10)));
+            output.push_back(static_cast<UChar>(0xDC00 + (cp & 0x3FF)));
+        }
+    }
+    return true;
+}
+
+static bool tshPredicateCaptureTexts(const TSQueryMatch& match, uint32_t capture_id,
+    const UChar* input, uint32_t input_bytes, std::vector<std::vector<UChar>>& texts) {
+    texts.clear();
+    for (uint32_t i = 0; i < match.capture_count; ++i) {
+        if (match.captures[i].index != capture_id) continue;
+        const uint32_t start = ts_node_start_byte(match.captures[i].node);
+        const uint32_t end = ts_node_end_byte(match.captures[i].node);
+        if (start > end || end > input_bytes || (start & 1u) || (end & 1u)) return false;
+        texts.emplace_back(input + start, input + end);
+    }
+    return !texts.empty();
+}
+
+static bool tshEvaluateNativePredicates(const TSQuery* query, const TSQueryMatch& match,
+    const UChar* input, uint32_t input_bytes) {
+    uint32_t step_count = 0;
+    const TSQueryPredicateStep* steps =
+        ts_query_predicates_for_pattern(query, match.pattern_index, &step_count);
+    if (!steps || step_count == 0) return true;
+    uint32_t cursor = 0;
+    while (cursor < step_count) {
+        std::vector<TSQueryPredicateStep> predicate;
+        while (cursor < step_count && steps[cursor].type != TSQueryPredicateStepTypeDone)
+            predicate.push_back(steps[cursor++]);
+        if (cursor < step_count) ++cursor;
+        if (predicate.empty() || predicate[0].type != TSQueryPredicateStepTypeString) return false;
+
+        uint32_t op_length = 0;
+        const char* op_text = ts_query_string_value_for_id(query, predicate[0].value_id, &op_length);
+        if (!op_text || predicate.size() < 3 ||
+            predicate[1].type != TSQueryPredicateStepTypeCapture) return false;
+        std::string op(op_text, op_length);
+        if (!op.empty() && op.front() == '#') op.erase(op.begin());
+
+        std::vector<std::vector<UChar>> actual;
+        if (!tshPredicateCaptureTexts(match, predicate[1].value_id, input, input_bytes, actual))
+            return false;
+        std::vector<std::vector<UChar>> expected;
+        for (size_t i = 2; i < predicate.size(); ++i) {
+            if (predicate[i].type != TSQueryPredicateStepTypeString) return false;
+            uint32_t length = 0;
+            const char* value = ts_query_string_value_for_id(query, predicate[i].value_id, &length);
+            std::vector<UChar> converted;
+            if (!value || !tshUtf8ToUtf16(std::string(value, length), converted)) return false;
+            expected.push_back(std::move(converted));
+        }
+        if (expected.empty()) return false;
+        bool accepted = false;
+        if (op == "eq?" || op == "not-eq?") {
+            if (expected.size() != 1) return false;
+            const bool all_equal = std::all_of(actual.begin(), actual.end(),
+                [&](const std::vector<UChar>& value) { return value == expected.front(); });
+            accepted = op == "eq?" ? all_equal : !all_equal;
+        } else if (op == "any-of?" || op == "not-any-of?") {
+            const bool any_equal = std::any_of(actual.begin(), actual.end(),
+                [&](const std::vector<UChar>& value) {
+                    return std::find(expected.begin(), expected.end(), value) != expected.end();
+                });
+            accepted = op == "any-of?" ? any_equal : !any_equal;
+        } else return false;
+        if (!accepted) return false;
+    }
+    return true;
+}
+
 static void appendRegexCaptureSpans(
     regex_t* regex,
     OnigRegion* region,
@@ -641,26 +737,29 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
             ts_query_cursor_exec(q_cursor, native_query.query, ts_tree_root_node(tree));
 
             TSQueryMatch match;
-            uint32_t capture_index = 0;
-            while (ts_query_cursor_next_capture(q_cursor, &match, &capture_index)) {
-                const TSQueryCapture& capture = match.captures[capture_index];
-                uint32_t name_len = 0;
-                const char* cap_name = ts_query_capture_name_for_id(
-                    native_query.query, capture.index, &name_len);
-                if (!cap_name) continue;
-
-                const std::string cap_str(cap_name, name_len);
-                auto it = grammar->style_name_to_id.find(cap_str);
-                if (it == grammar->style_name_to_id.end()) continue;
-
-                HighlightSpan span;
-                span.start_byte = ts_node_start_byte(capture.node);
-                span.end_byte = ts_node_end_byte(capture.node);
-                span.style_id = it->second;
-                span.flags = 0;
-                span.priority = native_query.priority;
-                span.declaration_order = native_query.declaration_order + capture_index;
-                macro_spans.push_back(span);
+            uint32_t match_order = 0;
+            while (ts_query_cursor_next_match(q_cursor, &match)) {
+                const uint32_t current_order = match_order++;
+                if (!tshEvaluateNativePredicates(native_query.query, match, text_start, total_bytes))
+                    continue;
+                for (uint32_t capture_index = 0; capture_index < match.capture_count; ++capture_index) {
+                    const TSQueryCapture& capture = match.captures[capture_index];
+                    uint32_t name_len = 0;
+                    const char* cap_name = ts_query_capture_name_for_id(
+                        native_query.query, capture.index, &name_len);
+                    if (!cap_name) continue;
+                    const std::string cap_str(cap_name, name_len);
+                    auto it = grammar->style_name_to_id.find(cap_str);
+                    if (it == grammar->style_name_to_id.end()) continue;
+                    HighlightSpan span;
+                    span.start_byte = ts_node_start_byte(capture.node);
+                    span.end_byte = ts_node_end_byte(capture.node);
+                    span.style_id = it->second;
+                    span.flags = 0;
+                    span.priority = native_query.priority;
+                    span.declaration_order = native_query.declaration_order + current_order + capture_index;
+                    macro_spans.push_back(span);
+                }
             }
             ts_query_cursor_delete(q_cursor);
         }
