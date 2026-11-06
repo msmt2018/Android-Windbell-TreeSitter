@@ -1586,6 +1586,22 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
             if (allow_stack_ops && (value == "pop" || value == "popall" || value == "push")) return true;
             return grammar->monarch_states.find(value) != grammar->monarch_states.end();
         };
+        std::unordered_map<std::string, uint8_t> include_visit;
+        std::function<bool(const std::string&)> validate_includes = [&](const std::string& state_name) -> bool {
+            uint8_t& state = include_visit[state_name];
+            if (state == 2) return true;
+            if (state == 1) return false;
+            state = 1;
+            const auto& rules = grammar->monarch_states.at(state_name);
+            for (const auto& rule : rules) {
+                if (!rule.include_state.empty() && !validate_includes(rule.include_state)) return false;
+            }
+            state = 2;
+            return true;
+        };
+        for (const auto& state : grammar->monarch_states) {
+            if (!validate_includes(state.first)) return nullptr;
+        }
         for (const auto& state : grammar->monarch_states) {
             for (const auto& rule : state.second) {
                 if (!rule.include_state.empty() &&
