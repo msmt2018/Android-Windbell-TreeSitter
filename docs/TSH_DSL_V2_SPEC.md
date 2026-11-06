@@ -18,7 +18,14 @@ A v2 file is a brace-delimited document. Commas after entries are optional. Stri
 
 ```tsh
 tsh 2 {
-  language { id: "java", name: "Java", extensions: [".java", ".jav"] }
+  language {
+    id: "java"
+    name: "Java"
+    extensions: [".java", ".jav"]
+    aliases: ["Java"]
+    mimeTypes: ["text/x-java"]
+    firstLine: /^#!.*\\bjava\\b/
+  }
   matching {
     caseSensitive: true
     multiline: false
@@ -30,7 +37,16 @@ tsh 2 {
   styles { /* semantic style declarations */ }
   schemes { /* unlimited named schemes */ }
   rules { /* ats and regex rules */ }
-  editor { /* language/editor metadata */ }
+  editor {
+    tabSize: 4
+    fontSize: 14
+    insertSpaces: true
+    autoIndent: true
+    trimTrailingWhitespace: true
+    formatOnType: false
+    renderWhitespace: "selection"
+    lineNumbers: true
+  }
 }
 ```
 
@@ -57,7 +73,7 @@ styles {
 }
 ```
 
-A style may declare `scope`, `tags`, `description`, `deprecated`, `parent`, and `metadata`. A child style inherits missing light/dark palette values from its parent style; explicit child values override the inherited values. Parent cycles and unknown parents are compile errors. Scope names follow TextMate-style dotted scope conventions. Tags are open strings; the runtime must not reserve a closed list of token categories. `parent` allows semantic inheritance for theme matching; cycles are compile errors.
+A style may declare `scope`, `tags`, `description`, `deprecated`, `parent`, and arbitrary string-valued `metadata`. Unknown style properties are compile errors. A child style inherits missing light/dark palette values from its parent style; explicit child values override the inherited values. Parent cycles and unknown parents are compile errors. Scope names follow TextMate-style dotted scope conventions. Tags are open strings; the runtime must not reserve a closed list of token categories. `parent` allows semantic inheritance for theme matching; cycles are compile errors.
 
 ## 4. Unlimited named schemes and appearance
 
@@ -109,6 +125,10 @@ Color syntax accepts #RGB, #RGBA, #RRGGBB and #AARRGGBB; canonical runtime repre
 Style modifiers are composable: `bold`, `italic`, `underline`, `strikethrough`, `dim`, `italicOff`, `boldOff`, `fontFamily`, `fontSize`, `opacity`, `border`, and `background`. Modifiers are optional and independently specified for light/dark. The renderer only applies properties explicitly present in the selected scheme.
 
 ## 5. Rule model and arbitration
+
+The `language` block defines `id`, `name`, `extensions`, `aliases`, `mimeTypes`, and a first-line detection regex. Extensions are normalized by removing a leading dot and deduplicated while preserving declaration order.
+
+The `editor` block includes host-consumable editing options such as `tabSize`, `fontSize`, `lineHeight`, `letterSpacing`, `insertSpaces`, `autoIndent`, `trimTrailingWhitespace`, `formatOnType`, `formatOnPaste`, `renderWhitespace`, `lineNumbers`, and `maxTokenizationLineLength`. Options are exported as typed-at-source values for host adapters; a host only applies options supported by its editor API.
 
 Language-wide regex behavior is declared in `matching`: `caseSensitive`, `multiline`, `dotAll`, `extended`, and `unicode`. Individual regex rules may override/add flags with `flags: ["i", "m", "s", "x"]`. Named capture groups and numeric capture groups can both bind semantic styles. Unicode source patterns are decoded to UTF-16 before Oniguruma compilation.
 
