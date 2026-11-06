@@ -1952,39 +1952,43 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
     // have an explicit per-style color in the selected scheme.
     for (auto& scheme_entry : grammar->schemes) {
         auto& scheme = scheme_entry.second;
-        std::unordered_map<uint16_t, int> best_light;
-        std::unordered_map<uint16_t, int> best_dark;
-        std::unordered_map<uint16_t, uint32_t> best_light_order;
-        std::unordered_map<uint16_t, uint32_t> best_dark_order;
         for (const auto& style : grammar->styles) {
             const auto scope_stack = buildStyleScopeStack(*grammar, style);
             if (scope_stack.empty()) continue;
             auto& palette = scheme.colors[style.style_id];
+            const bool explicit_light = palette.has_light_color;
+            const bool explicit_dark = palette.has_dark_color;
+            int best_light_specificity = -1;
+            int best_dark_specificity = -1;
+            uint32_t best_light_order = 0;
+            uint32_t best_dark_order = 0;
+            uint32_t best_light_color = 0;
+            uint32_t best_dark_color = 0;
             for (const auto& scope_rule : scheme.scope_rules) {
                 const int specificity = textMateSelectorSpecificity(scope_rule.selector, scope_stack);
                 if (specificity < 0) continue;
-                if (scope_rule.has_light_color && !palette.has_light_color) {
-                    const int previous = best_light.count(style.style_id) ? best_light[style.style_id] : -1;
-                    const uint32_t previous_order = best_light_order[style.style_id];
-                    if (specificity > previous ||
-                        (specificity == previous && scope_rule.declaration_order >= previous_order)) {
-                        palette.light_color = scope_rule.light_color;
-                        palette.has_light_color = true;
-                        best_light[style.style_id] = specificity;
-                        best_light_order[style.style_id] = scope_rule.declaration_order;
-                    }
+                if (scope_rule.has_light_color && !explicit_light &&
+                    (specificity > best_light_specificity ||
+                     (specificity == best_light_specificity && scope_rule.declaration_order >= best_light_order))) {
+                    best_light_specificity = specificity;
+                    best_light_order = scope_rule.declaration_order;
+                    best_light_color = scope_rule.light_color;
                 }
-                if (scope_rule.has_dark_color && !palette.has_dark_color) {
-                    const int previous = best_dark.count(style.style_id) ? best_dark[style.style_id] : -1;
-                    const uint32_t previous_order = best_dark_order[style.style_id];
-                    if (specificity > previous ||
-                        (specificity == previous && scope_rule.declaration_order >= previous_order)) {
-                        palette.dark_color = scope_rule.dark_color;
-                        palette.has_dark_color = true;
-                        best_dark[style.style_id] = specificity;
-                        best_dark_order[style.style_id] = scope_rule.declaration_order;
-                    }
+                if (scope_rule.has_dark_color && !explicit_dark &&
+                    (specificity > best_dark_specificity ||
+                     (specificity == best_dark_specificity && scope_rule.declaration_order >= best_dark_order))) {
+                    best_dark_specificity = specificity;
+                    best_dark_order = scope_rule.declaration_order;
+                    best_dark_color = scope_rule.dark_color;
                 }
+            }
+            if (!explicit_light && best_light_specificity >= 0) {
+                palette.light_color = best_light_color;
+                palette.has_light_color = true;
+            }
+            if (!explicit_dark && best_dark_specificity >= 0) {
+                palette.dark_color = best_dark_color;
+                palette.has_dark_color = true;
             }
         }
     }
