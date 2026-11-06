@@ -217,9 +217,10 @@ class WindbellTshLinkageTest {
             }
             contains: [
                 {
-                    style: "comment"
-                    start: { match: /\/\*/ }
-                    end: { match: /\*\// }
+                    start: { match: /(?<open>\/\*)/ }
+                    end: { match: /(?<close>\*\/)/ }
+                    beginCaptures: { open: "comment" }
+                    endCaptures: { close: "comment" }
                     contains: [
                         {
                         match: /(?<todo>todo)/
@@ -243,6 +244,8 @@ class WindbellTshLinkageTest {
         assertTrue(spans.isNotEmpty())
         val todoId = engine.getStyleCatalog("regex").first { it.name == "todo" }.styleId
         assertTrue(spans.any { it.styleId == todoId && it.priority == 100 })
+        assertTrue(spans.any { it.styleId == engine.getStyleCatalog("regex").first { it.name == "comment" }.styleId && it.startByte == 0 && it.endByte == 4 })
+        assertTrue(spans.any { it.styleId == engine.getStyleCatalog("regex").first { it.name == "comment" }.styleId && it.endByte == text.length * 2 })
         assertTrue(spans.any { it.styleId == todoId && it.priority == 90 })
     }
 
