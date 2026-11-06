@@ -113,9 +113,19 @@ struct SchemeColor {
 };
 
 // 多主题方案实体 (Schemes Block)
+struct TshScopeColorRule {
+    std::string selector;
+    uint32_t light_color = 0;
+    uint32_t dark_color = 0;
+    bool has_light_color = false;
+    bool has_dark_color = false;
+    uint32_t declaration_order = 0;
+};
+
 struct ColorScheme {
     std::string name;
     std::string extends;
+    std::vector<TshScopeColorRule> scope_rules;
     // Style ID -> Color mapping
     std::unordered_map<uint16_t, SchemeColor> colors;
     std::unordered_map<std::string, uint32_t> ui_colors;
