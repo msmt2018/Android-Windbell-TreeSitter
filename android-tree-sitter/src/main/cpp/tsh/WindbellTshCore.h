@@ -118,6 +118,12 @@ struct AstSelectorRule {
     TSSymbol parent_symbol = 0;
     TSSymbol ancestor_symbol = 0;
     TSSymbol child_symbol = 0;
+    TSSymbol previous_sibling_symbol = 0;
+    TSSymbol next_sibling_symbol = 0;
+    uint32_t child_index = UINT32_MAX;
+    uint32_t named_child_index = UINT32_MAX;
+    int8_t first_child = -1;
+    int8_t last_child = -1;
     // -1 means unconstrained; 0/1 require the corresponding Tree-sitter node flag.
     int8_t named = -1;
     int8_t missing = -1;
