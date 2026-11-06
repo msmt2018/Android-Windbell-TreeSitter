@@ -770,6 +770,9 @@ std::shared_ptr<TshGrammar> TshCompiler::compile(const std::string& source, cons
                             if (value.size() < 2) return nullptr;
                             target.emplace_back(value.substr(0, 1), value.substr(value.size() - 1, 1));
                         }
+                    } else if (field.text == "bracketNotIn") {
+                        if (lexer.nextToken().type != TshLexer::TokenType::TOK_COLON) return nullptr;
+                        if (!read_string_array(grammar->editor_metadata.bracket_not_in)) return nullptr;
                     } else if (field.text == "autoClosingPairs") {
                         if (lexer.nextToken().type != TshLexer::TokenType::TOK_COLON) return nullptr;
                         if (lexer.nextToken().type != TshLexer::TokenType::TOK_LBRACKET) return nullptr;
