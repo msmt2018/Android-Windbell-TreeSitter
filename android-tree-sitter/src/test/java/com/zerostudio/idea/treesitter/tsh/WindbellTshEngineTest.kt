@@ -215,11 +215,14 @@ class WindbellTshLinkageTest {
                         dark [ type: #79C0FF ]
                     }
                 }
-                ast: [
-                    {
-                        query: `(class_declaration name: (identifier) @type)`
-                    }
-                ]
+                treeSitter {
+                    queries: [
+                        {
+                            id: "type-declarations"
+                            source: `(class_declaration name: (identifier) @type)`
+                        }
+                    ]
+                }
             }
         """.trimIndent()
         assertTrue(engine.loadTshSource("java-query", source, language))
