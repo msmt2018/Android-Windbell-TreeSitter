@@ -6,12 +6,15 @@
 #include "WindbellTshCore.h"
 #include <algorithm>
 #include <cstring>
+#include <functional>
 #include "ts__log.h"
 
 namespace windbell::tsh {
 
 TshGrammar::~TshGrammar() {
-    for (auto& rule : regex_rules) {
+    std::function<void(CompiledRegexRule&)> release_rule;
+    release_rule = [&](CompiledRegexRule& rule) {
+        for (auto& nested : rule.nested_rules) release_rule(nested);
         if (rule.onig_start) {
             onig_free(rule.onig_start);
             rule.onig_start = nullptr;
@@ -20,7 +23,9 @@ TshGrammar::~TshGrammar() {
             onig_free(rule.onig_end);
             rule.onig_end = nullptr;
         }
-    }
+    };
+    for (auto& rule : regex_rules) release_rule(rule);
+
     if (dynamic_ts_query) {
         ts_query_delete(dynamic_ts_query);
         dynamic_ts_query = nullptr;
@@ -104,7 +109,7 @@ void WindbellEngine::matchBlockRecursive(
                 const UChar* inner_end = text_start + end_region->beg[0];
 
                 for (const auto& nested : rule.nested_rules) {
-                    if (nested.type == RegexRuleType::MATCH && nested.onig_start) {
+                    if (nested.enabled && nested.type == RegexRuleType::MATCH && nested.onig_start) {
                         OnigRegion* inner_region = onig_region_new();
                         const UChar* inner_curr = inner_start;
                         while (inner_curr < inner_end) {
