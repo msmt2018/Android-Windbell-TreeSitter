@@ -20,7 +20,9 @@ class WindbellTshEngine private constructor() {
         val startByte: Int,
         val endByte: Int,
         val styleId: Int,
-        val fontFlags: Int
+        val fontFlags: Int,
+        val hasLightColor: Boolean,
+        val hasDarkColor: Boolean
     )
 
     data class StylePalette(
@@ -67,13 +69,15 @@ class WindbellTshEngine private constructor() {
     private fun reloadPalette(extension: String, schemeName: String) {
         val flatPalette = nativeGetPalette(extension, schemeName) ?: return
         val map = HashMap<Int, StylePalette>()
-        val count = flatPalette.size / 4
+        val count = flatPalette.size / 6
         for (i in 0 until count) {
-            val id = flatPalette[i * 4]
-            val light = flatPalette[i * 4 + 1]
-            val dark = flatPalette[i * 4 + 2]
-            val flags = flatPalette[i * 4 + 3]
-            map[id] = StylePalette(id, light, dark, flags)
+            val id = flatPalette[i * 6]
+            val light = flatPalette[i * 6 + 1]
+            val dark = flatPalette[i * 6 + 2]
+            val flags = flatPalette[i * 6 + 3]
+            val hasLight = flatPalette[i * 6 + 4] != 0
+            val hasDark = flatPalette[i * 6 + 5] != 0
+            map[id] = StylePalette(id, light, dark, flags, hasLight, hasDark)
         }
         paletteCache[extension] = map
     }
@@ -132,8 +136,9 @@ class WindbellTshEngine private constructor() {
                 // A missing DSL color means "leave the editor's foreground alone".
                 // Never inject a platform black/white fallback.
                 val darkMode = appearanceOverrides[extension] ?: defaultAppearances[extension] ?: isDarkTheme
+                val hasColor = if (darkMode) colorDef?.hasDarkColor == true else colorDef?.hasLightColor == true
                 val color = if (darkMode) colorDef?.darkColor ?: 0 else colorDef?.lightColor ?: 0
-                if (color != 0) {
+                if (hasColor) {
                     spannable.setSpan(ForegroundColorSpan(color), charStart, charEnd, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
                 }
                 val flags = span.fontFlags or (colorDef?.fontFlags ?: 0)
