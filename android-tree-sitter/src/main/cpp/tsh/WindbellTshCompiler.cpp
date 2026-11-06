@@ -29,6 +29,8 @@
 
 namespace windbell::tsh {
 
+static thread_local uint32_t g_tsh_last_source_offset = 0;
+
 // 内部高性能 DSL 词法分析器（支持 JSON5、嵌套块、注释过滤、正则解析）
 class TshLexer {
 public:
@@ -66,6 +68,7 @@ public:
             return std::move(pending_);
         }
         skipIgnored();
+        g_tsh_last_source_offset = static_cast<uint32_t>(cursor_);
         if (cursor_ >= src_.size()) {
             return {TokenType::TOK_EOF, ""};
         }
@@ -179,6 +182,37 @@ private:
     bool has_pending_ = false;
 };
 
+std::shared_ptr<TshGrammar> TshCompiler::compile(const std::string& source, const TSLanguage* ts_lang) {
+    g_tsh_last_source_offset = 0;
+    auto result = compileInternal(source, ts_lang);
+    std::vector<TshCompileDiagnostic> diagnostics;
+    if (!result) {
+        const uint32_t offset = std::min<uint32_t>(
+            g_tsh_last_source_offset, static_cast<uint32_t>(source.size()));
+        uint32_t line = 1;
+        uint32_t column = 1;
+        for (uint32_t i = 0; i < offset; ++i) {
+            if (source[i] == '\n') { ++line; column = 1; }
+            else { ++column; }
+        }
+        diagnostics.push_back({
+            "TSH_PARSE_OR_COMPILE_ERROR",
+            "TSH compilation failed near this location. Check the current property value, delimiters, references, regex/query syntax and required fields.",
+            offset, line, column
+        });
+    }
+    {
+        std::lock_guard<std::mutex> lock(diagnostic_mutex_);
+        last_diagnostics_ = std::move(diagnostics);
+    }
+    return result;
+}
+
+std::vector<TshCompileDiagnostic> TshCompiler::getLastDiagnostics() const {
+    std::lock_guard<std::mutex> lock(diagnostic_mutex_);
+    return last_diagnostics_;
+}
+
 std::string TshCompiler::expandKeywordsToRegex(const std::string& word_list) {
     std::istringstream iss(word_list);
     std::string item;
@@ -254,7 +288,7 @@ static regex_t* compileOnigurumaUtf16(const std::string& pattern_str) {
     return reg;
 }
 
-std::shared_ptr<TshGrammar> TshCompiler::compile(const std::string& source, const TSLanguage* ts_lang) {
+std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& source, const TSLanguage* ts_lang) {
     auto grammar = std::make_shared<TshGrammar>();
     std::unordered_map<std::string, std::string> defines_map;
     std::string dynamic_query_accumulator;
