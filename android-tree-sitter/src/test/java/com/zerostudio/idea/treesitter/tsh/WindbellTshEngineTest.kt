@@ -1,5 +1,7 @@
 package com.zerostudio.idea.treesitter
 
+import com.zerostudio.idea.treesitter.TSParser
+import com.zerostudio.idea.treesitter.java.TSLanguageJava
 import com.zerostudio.idea.treesitter.tsh.WindbellTshEngine
 import org.junit.jupiter.api.Assertions.assertDoesNotThrow
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -191,6 +193,48 @@ class WindbellTshLinkageTest {
         assertEquals(0xFFFF00AA.toInt(), explicitChild?.darkColor)
         assertEquals(true, explicitChild?.hasLightColor)
         assertEquals("derived", engine.getSelectedScheme("scheme"))
+    }
+
+    @Test
+    fun testEmbeddedTreeSitterQueryAndCaptureBinding() {
+        val engine = WindbellTshEngine.instance
+        val language = TSLanguageJava.getInstance()
+        val source = """
+            tsh 2 {
+                language {
+                    id: "java-query"
+                    name: "Java Query"
+                    extensions: [".java"]
+                }
+                styles {
+                    type { scope: "entity.name.type", tags: ["type"] }
+                }
+                schemes {
+                    plain {
+                        light [ type: #0000FF ]
+                        dark [ type: #79C0FF ]
+                    }
+                }
+                ast: [
+                    {
+                        query: `(class_declaration name: (identifier) @type)`
+                    }
+                ]
+            }
+        """.trimIndent()
+        assertTrue(engine.loadTshSource("java-query", source, language))
+        val parser = TSParser.create().apply { setLanguage(language) }
+        val code = "class Demo {}"
+        val tree = parser.parseString(code)
+        val spans = engine.computeHighlights(tree, code, "java-query")
+        val typeId = engine.getStyleCatalog("java-query").first { it.name == "type" }.styleId
+        assertTrue(spans.any { it.styleId == typeId && it.startByte == 12 && it.endByte == 20 })
+        tree?.close()
+        parser.close()
+
+        val invalidCapture = source.replace("@type", "@unknown")
+        assertFalse(engine.loadTshSource("java-query-invalid", invalidCapture, language))
+        assertTrue(engine.lastCompileDiagnostics.isNotEmpty())
     }
 
     @Test
