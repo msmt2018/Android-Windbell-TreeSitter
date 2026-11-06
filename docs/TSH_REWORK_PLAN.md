@@ -121,7 +121,11 @@ The current implementation has concrete integration defects that must be correct
 - Added semantic style catalog parsing (`scope`, `tags`, `description`, `parent`) and Kotlin catalog access.
 - Added `schemes { name { light [...] dark [...] ui {...} } }` parsing, arbitrary scheme enumeration, explicit `defaultScheme`, `isDark` default appearance, named scheme selection and runtime appearance overrides.
 - Added arbitrary shared/light/dark UI color-token export and a sample-app bridge for editor background, foreground, selection, current-line and gutter colors.
-- Added DSL editor metadata for line/block comments, brackets and exclusions, auto-closing/surrounding pairs, word patterns, indentation regexes and completion trigger characters; exposed it through Kotlin and wired bracket matching plus scope-aware auto-pair filtering into the sample editor.
+- Added DSL editor metadata for line/block comments, brackets and exclusions, auto-closing/surrounding pairs, word patterns, indentation regexes, completion triggers, typography and editing options; exposed it through Kotlin and applied tab size/font size plus bracket matching and scope-aware auto-pair filtering in the sample editor.
+- Added language identity/file association metadata (id, name, extensions, aliases, MIME types, first-line matcher) and a Kotlin metadata API.
+- Added scheme inheritance, semantic style parent inheritance, cycle/unknown-parent checks, strict duplicate/unknown declaration validation, typed editor option validation, and the versioned `tsh 2 { ... }` envelope.
+- Added structured compile diagnostics through JNI/Kotlin (error code/message, source offset, line and column).
+- Added Oniguruma global/per-rule flags, UTF-8 to UTF-16 pattern decoding, named capture groups, and TextMate begin/end delimiter capture maps.
 - Added per-appearance bold/italic/underline/strikethrough modifiers, correct style-ID-zero handling, explicit color-presence transport (including transparent colors), and RGB/RGBA/ARGB normalization.
 - Fixed ATS field selectors so `node + field` styles the selected child node; removed numeric style-ID assumptions from span arbitration.
 - Added recursive Oniguruma block/contains parsing, numeric capture maps, `captures { ... }`, named rule IDs, priority, enablement and overlap declarations. Capture results carry priority and declaration order; nested regions are range-constrained and recursively released.
@@ -133,7 +137,7 @@ The current implementation has concrete integration defects that must be correct
 
 - The compiler still needs structured source diagnostics (line/column, error code, precise source range) and transactional preservation of the last valid grammar.
 - Embedded Tree-sitter query parsing/capture maps need full validation and dedicated tests.
-- TextMate selector inheritance/injections and Monarch state-machine execution remain target features, not implemented runtime features yet.
+- TextMate scope-selector parsing/matching, repository/include/injection rules, begin/while/end continuation semantics, and Monarch state-machine execution remain target features, not implemented runtime features yet.
 - Additional rule attributes such as lookarounds/options, begin/while/end state, named capture groups, content scopes and rule repository includes need implementation.
 - Advanced editor metadata such as on-enter rules, electric characters, comment toggling behavior, and host-specific application of word/indent/completion metadata remains pending.
 - The sample currently loads the Java TSH only; Kotlin and other language-specific TSH packages still need to be added and wired.
