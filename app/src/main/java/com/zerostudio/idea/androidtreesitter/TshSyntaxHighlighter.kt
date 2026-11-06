@@ -32,7 +32,7 @@ class TshSyntaxHighlighter(
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val generation = AtomicLong()
     @Volatile private var host: SyntaxHighlighter.Host? = null
-    @Volatile private var captures: List<WindbellTshEngine.HighlightSpan> = emptyList()
+    @Volatile private var capturesByLine: Map<Int, List<WindbellTshEngine.HighlightSpan>> = emptyMap()
     @Volatile private var parsing = false
     private var parseJob: Job? = null
 
@@ -45,7 +45,7 @@ class TshSyntaxHighlighter(
         generation.incrementAndGet()
         parseJob?.cancel(CancellationException("TSH highlighter detached"))
         parseJob = null
-        captures = emptyList()
+        capturesByLine = emptyMap()
         parsing = false
         host = null
     }
@@ -70,7 +70,7 @@ class TshSyntaxHighlighter(
         start: Int,
         end: Int
     ): Spanned? {
-        val snapshot = captures
+        val snapshot = capturesByLine[bufferLine].orEmpty()
         if (snapshot.isEmpty() || start >= end) return null
 
         val styled = SpannableStringBuilder(text)
@@ -114,6 +114,48 @@ class TshSyntaxHighlighter(
         refreshTheme()
     }
 
+    private fun indexCapturesByLine(
+        text: String,
+        spans: List<WindbellTshEngine.HighlightSpan>
+    ): Map<Int, List<WindbellTshEngine.HighlightSpan>> {
+        if (text.isEmpty() || spans.isEmpty()) return emptyMap()
+
+        val lineStarts = ArrayList<Int>()
+        lineStarts.add(0)
+        for (index in text.indices) {
+            if (text[index] == '\n') lineStarts.add(index + 1)
+        }
+
+        fun lineAt(offset: Int): Int {
+            var low = 0
+            var high = lineStarts.lastIndex
+            var result = 0
+            while (low <= high) {
+                val middle = (low + high) ushr 1
+                if (lineStarts[middle] <= offset) {
+                    result = middle
+                    low = middle + 1
+                } else {
+                    high = middle - 1
+                }
+            }
+            return result
+        }
+
+        val mutable = HashMap<Int, MutableList<WindbellTshEngine.HighlightSpan>>()
+        for (span in spans) {
+            val start = (span.startByte shr 1).coerceIn(0, text.length)
+            val end = (span.endByte shr 1).coerceIn(start, text.length)
+            if (start == end) continue
+            val firstLine = lineAt(start)
+            val lastLine = lineAt((end - 1).coerceAtLeast(start))
+            for (lineIndex in firstLine..lastLine) {
+                mutable.getOrPut(lineIndex + 1) { ArrayList() }.add(span)
+            }
+        }
+        return mutable.mapValues { (_, value) -> value.toList() }
+    }
+
     private fun scheduleParse(buffer: EditorBuffer) {
         val textSnapshot = buffer.getText()
         val ticket = generation.incrementAndGet()
@@ -128,7 +170,7 @@ class TshSyntaxHighlighter(
                 tree = parser.parseString(textSnapshot)
                 val nextCaptures = engine.computeHighlights(tree, textSnapshot, extension)
                 if (generation.get() == ticket) {
-                    captures = nextCaptures
+                    capturesByLine = indexCapturesByLine(textSnapshot, nextCaptures)
                     parsing = false
                     host?.invalidateStyles()
                 }
@@ -136,7 +178,7 @@ class TshSyntaxHighlighter(
                 throw cancelled
             } catch (_: Throwable) {
                 if (generation.get() == ticket) {
-                    captures = emptyList()
+                    capturesByLine = emptyMap()
                     parsing = false
                     host?.invalidateStyles()
                 }
