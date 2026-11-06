@@ -730,6 +730,9 @@ std::shared_ptr<TshGrammar> TshCompiler::compile(const std::string& source, cons
                             } else if (field.text == "enabled") {
                                 lexer.nextToken();
                                 ast_rule.enabled = lexer.nextToken().text != "false";
+                            } else if (field.text == "overlap") {
+                                lexer.nextToken();
+                                ast_rule.allow_overlap = lexer.nextToken().text == "allow";
                             }
                         }
 
