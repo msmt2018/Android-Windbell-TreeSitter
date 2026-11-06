@@ -2452,7 +2452,7 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                                     return nullptr;
                                 }
                                 program.capture_style_ids.emplace(
-                                    static_cast<uint16_t>(capture_id), style->second);
+                                    static_cast<uint32_t>(capture_id), style->second);
                             }
                             for (const auto& binding : program.capture_bindings) {
                                 bool found = false;
