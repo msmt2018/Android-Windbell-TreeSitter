@@ -1131,9 +1131,11 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                             if (is_light) {
                                 color_entry.light_color = color_val;
                                 color_entry.has_light_color = true;
+                                color_entry.explicit_light_color = true;
                             } else {
                                 color_entry.dark_color = color_val;
                                 color_entry.has_dark_color = true;
+                                color_entry.explicit_dark_color = true;
                             }
                             if (is_light) color_entry.light_font_flags |= flags;
                             else color_entry.dark_font_flags |= flags;
@@ -1980,10 +1982,12 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                 if (entry.second.has_light_color) {
                     target.light_color = entry.second.light_color;
                     target.has_light_color = true;
+                    target.explicit_light_color = true;
                 }
                 if (entry.second.has_dark_color) {
                     target.dark_color = entry.second.dark_color;
                     target.has_dark_color = true;
+                    target.explicit_dark_color = true;
                 }
                 target.light_font_flags |= entry.second.light_font_flags;
                 target.dark_font_flags |= entry.second.dark_font_flags;
@@ -2029,8 +2033,8 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
             const auto scope_stack = buildStyleScopeStack(*grammar, style);
             if (scope_stack.empty()) continue;
             auto& palette = scheme.colors[style.style_id];
-            const bool explicit_light = palette.has_light_color;
-            const bool explicit_dark = palette.has_dark_color;
+            const bool explicit_light = palette.explicit_light_color;
+            const bool explicit_dark = palette.explicit_dark_color;
             int best_light_specificity = -1;
             int best_dark_specificity = -1;
             uint32_t best_light_order = 0;
