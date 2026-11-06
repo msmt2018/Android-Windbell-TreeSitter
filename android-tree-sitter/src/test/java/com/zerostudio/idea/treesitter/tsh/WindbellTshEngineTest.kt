@@ -63,6 +63,10 @@ class WindbellTshLinkageTest {
                 midnight {
                     light [ keyword: #112233, string: #223344 ]
                     dark [ keyword: #AABBCC, string: #BBCCDD ]
+                    ui {
+                        editor.background: #1E1E1E
+                        editor.foreground: #D4D4D4
+                    }
                 }
                 github {
                     light [ keyword: #0550AE, string: #0A3069 ]
@@ -75,6 +79,11 @@ class WindbellTshLinkageTest {
         assertEquals(listOf("github", "midnight"), engine.listSchemes("scheme").sorted())
         assertEquals("midnight", engine.getDefaultScheme("scheme"))
         assertTrue(engine.isDark("scheme"))
+        val catalog = engine.getStyleCatalog("scheme")
+        assertEquals("keyword.control", catalog.first { it.name == "keyword" }.scope)
+        assertTrue(catalog.first { it.name == "keyword" }.tags.contains("control"))
+        assertTrue(engine.selectScheme("scheme", "midnight"))
+        assertEquals(0xFF1E1E1E.toInt(), engine.getThemeTokens("scheme")["editor.background"])
         assertTrue(engine.selectScheme("scheme", "github"))
         assertEquals("github", engine.getSelectedScheme("scheme"))
         engine.setAppearance("scheme", false)
