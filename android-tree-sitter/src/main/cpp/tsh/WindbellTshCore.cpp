@@ -287,6 +287,13 @@ TshGrammar::~TshGrammar() {
         }
     }
 
+    for (auto& ast_rule : ast_selector_rules) {
+        if (ast_rule.text_regex) {
+            onig_free(ast_rule.text_regex);
+            ast_rule.text_regex = nullptr;
+        }
+    }
+
     for (auto& native_query : native_queries) {
         for (auto& predicate : native_query.predicate_regexes) {
             if (predicate.regex) {
@@ -830,7 +837,7 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                 }
 
                 if (ast_rule.has_text_equals || ast_rule.has_text_prefix ||
-                    ast_rule.has_text_suffix) {
+                    ast_rule.has_text_suffix || ast_rule.text_regex) {
                     const uint32_t text_start = ts_node_start_byte(node);
                     const uint32_t text_end = ts_node_end_byte(node);
                     if (text_start > text_end || text_end > tree_source_utf8.size()) continue;
@@ -843,6 +850,22 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                     if (ast_rule.has_text_suffix &&
                         (node_text.size() < ast_rule.text_suffix.size() ||
                          node_text.substr(node_text.size() - ast_rule.text_suffix.size()) != ast_rule.text_suffix)) continue;
+                    if (ast_rule.text_regex) {
+                        if (text_start >= utf8_to_utf16_byte.size() ||
+                            text_end >= utf8_to_utf16_byte.size()) continue;
+                        const uint32_t start_u16 = utf8_to_utf16_byte[text_start];
+                        const uint32_t end_u16 = utf8_to_utf16_byte[text_end];
+                        if ((start_u16 & 1u) || (end_u16 & 1u) || end_u16 < start_u16) continue;
+                        const UChar* regex_begin = text_start + start_u16 / 2;
+                        const UChar* regex_end = text_start + end_u16 / 2;
+                        OnigRegion* regex_region = onig_region_new();
+                        if (!regex_region) continue;
+                        const int regex_result = onig_search(
+                            ast_rule.text_regex, regex_begin, regex_end,
+                            regex_begin, regex_end, regex_region, ONIG_OPTION_NONE);
+                        onig_region_free(regex_region, 1);
+                        if (regex_result < 0) continue;
+                    }
                 }
 
                 if (ast_rule.child_index != UINT32_MAX ||
