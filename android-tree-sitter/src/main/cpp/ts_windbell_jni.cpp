@@ -68,49 +68,99 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeLoadTshSource(
 }
 
 /**
- * 2. 导出指定语法的高效多态调色板表
- * 签名: (Ljava/lang/String;)[I
- * 返回结构: [StyleID, LightColor(0xAARRGGBB), DarkColor(0xAARRGGBB)] * N
+ * Enumerate DSL-declared color schemes for an extension.
+ */
+JNIEXPORT jobjectArray JNICALL
+Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeGetSchemeNames(
+    JNIEnv* env, jobject, jstring extension_jstr
+) {
+    if (!extension_jstr) return nullptr;
+    const char* ext = env->GetStringUTFChars(extension_jstr, nullptr);
+    if (!ext) return nullptr;
+    const std::string extension(ext);
+    env->ReleaseStringUTFChars(extension_jstr, ext);
+
+    auto grammar = WindbellEngine::getInstance().getGrammarByExtension(extension);
+    if (!grammar) return env->NewObjectArray(0, env->FindClass("java/lang/String"), nullptr);
+
+    std::vector<std::string> names;
+    names.reserve(grammar->schemes.size());
+    for (const auto& entry : grammar->schemes) names.push_back(entry.first);
+    std::sort(names.begin(), names.end());
+
+    jclass string_class = env->FindClass("java/lang/String");
+    if (!string_class) return nullptr;
+    jobjectArray result = env->NewObjectArray(static_cast<jsize>(names.size()), string_class, nullptr);
+    if (!result) { env->DeleteLocalRef(string_class); return nullptr; }
+    for (size_t i = 0; i < names.size(); ++i) {
+        jstring value = env->NewStringUTF(names[i].c_str());
+        env->SetObjectArrayElement(result, static_cast<jsize>(i), value);
+        env->DeleteLocalRef(value);
+    }
+    env->DeleteLocalRef(string_class);
+    return result;
+}
+
+/**
+ * Return the first declared scheme, or null when the DSL declares none.
+ */
+JNIEXPORT jstring JNICALL
+Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeGetDefaultScheme(
+    JNIEnv* env, jobject, jstring extension_jstr
+) {
+    if (!extension_jstr) return nullptr;
+    const char* ext = env->GetStringUTFChars(extension_jstr, nullptr);
+    if (!ext) return nullptr;
+    const std::string extension(ext);
+    env->ReleaseStringUTFChars(extension_jstr, ext);
+    auto grammar = WindbellEngine::getInstance().getGrammarByExtension(extension);
+    if (!grammar || grammar->default_scheme_name.empty()) return nullptr;
+    return env->NewStringUTF(grammar->default_scheme_name.c_str());
+}
+
+/**
+ * Export palette for the explicitly selected scheme.
+ * Layout: [styleId, lightColor, darkColor, fontFlags] * N.
+ * A zero color means that the DSL did not define a value for that appearance.
  */
 JNIEXPORT jintArray JNICALL
 Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeGetPalette(
-    JNIEnv* env,
-    jobject /* thiz */,
-    jstring extension_jstr
+    JNIEnv* env, jobject, jstring extension_jstr, jstring scheme_jstr
 ) {
-    if (!extension_jstr) {
-        throw_npe(env, "extension cannot be null");
-        return nullptr;
-    }
-
+    if (!extension_jstr || !scheme_jstr) return nullptr;
     const char* ext = env->GetStringUTFChars(extension_jstr, nullptr);
-    if (!ext) {
-        throw_npe(env, "Failed to extract extension string");
+    const char* scheme_name = env->GetStringUTFChars(scheme_jstr, nullptr);
+    if (!ext || !scheme_name) {
+        if (ext) env->ReleaseStringUTFChars(extension_jstr, ext);
+        if (scheme_name) env->ReleaseStringUTFChars(scheme_jstr, scheme_name);
         return nullptr;
     }
-    std::string ext_str(ext);
+    const std::string extension(ext);
+    const std::string selected_scheme(scheme_name);
     env->ReleaseStringUTFChars(extension_jstr, ext);
+    env->ReleaseStringUTFChars(scheme_jstr, scheme_name);
 
-    auto grammar = WindbellEngine::getInstance().getGrammarByExtension(ext_str);
-    if (!grammar) {
-        return env->NewIntArray(0);
-    }
+    auto grammar = WindbellEngine::getInstance().getGrammarByExtension(extension);
+    if (!grammar) return env->NewIntArray(0);
+    auto scheme_it = grammar->schemes.find(selected_scheme);
+    if (scheme_it == grammar->schemes.end()) return env->NewIntArray(0);
 
     const jsize count = static_cast<jsize>(grammar->styles.size());
-    jintArray result = env->NewIntArray(count * 3);
-    if (!result) {
-        throw_npe(env, "Out of memory allocating palette int array");
-        return nullptr;
-    }
-
-    std::vector<jint> flat_palette(count * 3);
+    jintArray result = env->NewIntArray(count * 4);
+    if (!result) return nullptr;
+    std::vector<jint> values(static_cast<size_t>(count) * 4, 0);
     for (jsize i = 0; i < count; ++i) {
-        flat_palette[i * 3 + 0] = static_cast<jint>(grammar->styles[i].style_id);
-        flat_palette[i * 3 + 1] = static_cast<jint>(grammar->styles[i].light_color);
-        flat_palette[i * 3 + 2] = static_cast<jint>(grammar->styles[i].dark_color);
+        const auto& style = grammar->styles[static_cast<size_t>(i)];
+        values[i * 4] = static_cast<jint>(style.style_id);
+        auto color_it = scheme_it->second.colors.find(style.style_id);
+        if (color_it != scheme_it->second.colors.end()) {
+            const SchemeColor& color = color_it->second;
+            values[i * 4 + 1] = color.has_light_color ? static_cast<jint>(color.light_color) : 0;
+            values[i * 4 + 2] = color.has_dark_color ? static_cast<jint>(color.dark_color) : 0;
+            values[i * 4 + 3] = static_cast<jint>(color.font_flags);
+        }
     }
-
-    env->SetIntArrayRegion(result, 0, count * 3, flat_palette.data());
+    env->SetIntArrayRegion(result, 0, count * 4, values.data());
     return result;
 }
 
