@@ -352,6 +352,37 @@ uint32_t TshCompiler::parseColorHex(const std::string& hex_str) {
     return value;
 }
 
+static void releaseCompiledRegexRule(CompiledRegexRule& rule) {
+    for (auto& nested : rule.nested_rules) releaseCompiledRegexRule(nested);
+    if (rule.onig_start) { onig_free(rule.onig_start); rule.onig_start = nullptr; }
+    if (rule.onig_end) { onig_free(rule.onig_end); rule.onig_end = nullptr; }
+}
+
+class CompiledRegexRuleGuard {
+public:
+    explicit CompiledRegexRuleGuard(CompiledRegexRule& rule) : rule_(rule) {}
+    ~CompiledRegexRuleGuard() { if (active_) releaseCompiledRegexRule(rule_); }
+    void release() { active_ = false; }
+private:
+    CompiledRegexRule& rule_;
+    bool active_ = true;
+};
+
+class MonarchRuleGuard {
+public:
+    explicit MonarchRuleGuard(MonarchRule& rule) : rule_(rule) {}
+    ~MonarchRuleGuard() {
+        if (active_ && rule_.pattern) {
+            onig_free(rule_.pattern);
+            rule_.pattern = nullptr;
+        }
+    }
+    void release() { active_ = false; }
+private:
+    MonarchRule& rule_;
+    bool active_ = true;
+};
+
 static bool decodePatternUtf8ToUtf16(const std::string& input, std::vector<uint16_t>& output) {
     output.clear();
     output.reserve(input.size());
@@ -451,6 +482,7 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
 
     std::function<bool(CompiledRegexRule&)> parseRegexRule;
     parseRegexRule = [&](CompiledRegexRule& rule) -> bool {
+        CompiledRegexRuleGuard rule_guard(rule);
         rule.regex_options = grammar->default_regex_options;
         std::string raw_match_pattern;
         std::string raw_start_pattern;
@@ -646,12 +678,13 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
         }
 
         if (!rule.id.empty() && !regex_rule_ids.emplace(rule.id, true).second) return false;
-        if (rule.type == RegexRuleType::BLOCK) {
-            return (rule.has_style || !rule.start_group_style_map.empty() ||
-                    !rule.start_named_group_style_map.empty() || !rule.end_group_style_map.empty() ||
-                    !rule.end_named_group_style_map.empty()) && rule.onig_start && rule.onig_end;
-        }
-        return rule.onig_start != nullptr;
+        const bool valid = rule.type == RegexRuleType::BLOCK ?
+            ((rule.has_style || !rule.start_group_style_map.empty() ||
+              !rule.start_named_group_style_map.empty() || !rule.end_group_style_map.empty() ||
+              !rule.end_named_group_style_map.empty()) && rule.onig_start && rule.onig_end) :
+            (rule.onig_start != nullptr);
+        if (valid) rule_guard.release();
+        return valid;
     };
 
     TshLexer::Token tok = lexer.nextToken();
@@ -1169,6 +1202,7 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                                 if (entry.type == TshLexer::TokenType::TOK_COMMA) continue;
                                 if (entry.type != TshLexer::TokenType::TOK_LBRACE) return nullptr;
                                 MonarchRule rule;
+                                MonarchRuleGuard rule_guard(rule);
                                 rule.declaration_order = regex_declaration_order++;
                                 uint32_t options = grammar->default_regex_options;
                                 std::string pattern;
@@ -1236,6 +1270,7 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                                 }
                                 if (rule.include_state.empty() && !rule.pattern) return nullptr;
                                 state_rules.push_back(std::move(rule));
+                                rule_guard.release();
                             }
                         }
                     } else {
