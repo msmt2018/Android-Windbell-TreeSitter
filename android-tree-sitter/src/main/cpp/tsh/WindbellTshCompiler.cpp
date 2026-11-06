@@ -189,15 +189,6 @@ std::string TshCompiler::expandKeywordsToRegex(const std::string& word_list) {
     return out;
 }
 
-std::string TshCompiler::expandBuiltin(const std::string& builtin_name) {
-    if (builtin_name == "#JAVA_QUOTED_STRING#" || builtin_name == "#C_QUOTED_STRING#") {
-        return "(?:\"(?:\\\\.|[^\"\\\\])*\"|'(\\\\.|[^'\\\\])*')";
-    } else if (builtin_name == "#JAVA_NUMBER#" || builtin_name == "#C_NUMBER#") {
-        return "\\b(?:0[xX][0-9a-fA-F_]+|0[bB][01_]+|0[0-7_]+|[0-9_]+(?:\\.[0-9_]+)?(?:[eE][+-]?[0-9_]+)?[fFdDlL]?)\\b";
-    }
-    return "";
-}
-
 uint32_t TshCompiler::parseColorHex(const std::string& hex_str) {
     std::string clean = hex_str;
     if (!clean.empty() && clean[0] == '#') clean = clean.substr(1);
@@ -583,7 +574,10 @@ std::shared_ptr<TshGrammar> TshCompiler::compile(const std::string& source, cons
                             if (item.text == "builtin") {
                                 lexer.nextToken();
                                 auto b_id = lexer.nextToken().text;
-                                raw_match_pat = expandBuiltin(b_id);
+                                auto definition = defines_map.find(b_id);
+                                if (definition != defines_map.end()) {
+                                    raw_match_pat = definition->second;
+                                }
                             } else if (item.text == "match") {
                                 lexer.nextToken();
                                 auto m_tok = lexer.nextToken();
