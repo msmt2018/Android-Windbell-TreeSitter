@@ -2326,6 +2326,54 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                                     std::to_string(static_cast<int>(error_type)) + ")";
                                 return nullptr;
                             }
+                            // Predicate steps are evaluated by TSH at complete-match
+                            // granularity. Reject unsupported or malformed forms at compile time.
+                            for (uint32_t pattern = 0;
+                                 pattern < ts_query_pattern_count(program.query); ++pattern) {
+                                uint32_t step_count = 0;
+                                const TSQueryPredicateStep* steps =
+                                    ts_query_predicates_for_pattern(program.query, pattern, &step_count);
+                                uint32_t step = 0;
+                                while (steps && step < step_count) {
+                                    std::vector<TSQueryPredicateStep> predicate;
+                                    while (step < step_count &&
+                                           steps[step].type != TSQueryPredicateStepTypeDone) {
+                                        predicate.push_back(steps[step++]);
+                                    }
+                                    if (step < step_count) ++step;
+                                    if (predicate.empty() ||
+                                        predicate.front().type != TSQueryPredicateStepTypeString) {
+                                        g_tsh_last_error_detail = "malformed native query predicate";
+                                        ts_query_delete(program.query);
+                                        program.query = nullptr;
+                                        return nullptr;
+                                    }
+                                    uint32_t op_length = 0;
+                                    const char* op_text = ts_query_string_value_for_id(
+                                        program.query, predicate.front().value_id, &op_length);
+                                    const std::string op = op_text
+                                        ? std::string(op_text, op_length) : std::string();
+                                    const bool equality = op == "eq?" || op == "not-eq?";
+                                    const bool membership = op == "any-of?" || op == "not-any-of?";
+                                    const bool supported = equality || membership;
+                                    bool valid = predicate.size() >= 3 &&
+                                        predicate[1].type == TSQueryPredicateStepTypeCapture &&
+                                        (!equality || predicate.size() == 3);
+                                    for (size_t arg = 2; arg < predicate.size(); ++arg) {
+                                        valid = valid &&
+                                            predicate[arg].type == TSQueryPredicateStepTypeString;
+                                    }
+                                    if (!supported || !valid) {
+                                        g_tsh_last_error_detail = supported
+                                            ? "invalid native query predicate arguments"
+                                            : "unsupported native query predicate: " + op;
+                                        ts_query_delete(program.query);
+                                        program.query = nullptr;
+                                        return nullptr;
+                                    }
+                                }
+                            }
+
                             const uint32_t capture_count = ts_query_capture_count(program.query);
                             for (uint32_t capture_id = 0; capture_id < capture_count; ++capture_id) {
                                 uint32_t name_length = 0;
