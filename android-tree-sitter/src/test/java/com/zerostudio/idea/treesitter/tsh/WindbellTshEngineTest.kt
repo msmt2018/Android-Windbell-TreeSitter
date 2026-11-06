@@ -152,6 +152,15 @@ class WindbellTshLinkageTest {
                 completion {
                     triggerCharacters: [".", ":"]
                 }
+                electricCharacters: ["}", ";"]
+                autoCloseBefore: /[\\s)\\]};,]/
+                onEnterRules: [
+                    {
+                        beforeText: /\\{[^}]*$/
+                        afterText: /^\\s*\\}/
+                        action: { indent: "indentOutdent", appendText: "" }
+                    }
+                ]
             }
 
             }        """.trimIndent()
@@ -176,6 +185,11 @@ class WindbellTshLinkageTest {
         assertEquals(listOf("string", "comment"), editorMetadata.bracketNotIn)
         assertEquals(listOf("string", "comment"), editorMetadata.autoClosingPairs.single().notIn)
         assertEquals(listOf(".", ":"), editorMetadata.completionTriggerCharacters)
+        assertEquals(listOf("}", ";"), editorMetadata.electricCharacters)
+        assertEquals(1, editorMetadata.onEnterRules.size)
+        assertEquals("indentOutdent", editorMetadata.onEnterRules.single().indent)
+        assertEquals("", editorMetadata.onEnterRules.single().appendText)
+        assertNotNull(editorMetadata.autoCloseBefore)
         assertEquals("2", editorMetadata.options["tabSize"])
         assertEquals("16", editorMetadata.options["fontSize"])
         assertEquals("false", editorMetadata.options["insertSpaces"])
