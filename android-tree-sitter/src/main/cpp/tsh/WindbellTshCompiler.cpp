@@ -464,11 +464,27 @@ std::shared_ptr<TshGrammar> TshCompiler::compile(const std::string& source, cons
                                 if (token_name.type == TshLexer::TokenType::TOK_RBRACE) break;
                                 if (token_name.type == TshLexer::TokenType::TOK_COMMA) continue;
                                 if (token_name.type == TshLexer::TokenType::TOK_EOF) return nullptr;
-                                auto separator = lexer.nextToken();
-                                if (separator.type != TshLexer::TokenType::TOK_COLON) return nullptr;
-                                auto value = lexer.nextToken();
-                                if (value.type != TshLexer::TokenType::TOK_IDENT) return nullptr;
-                                scheme.ui_colors[token_name.text] = parseColorHex(value.text);
+
+                                if (token_name.text == "light" || token_name.text == "dark") {
+                                    const bool light_mode = token_name.text == "light";
+                                    if (lexer.nextToken().type != TshLexer::TokenType::TOK_LBRACE) return nullptr;
+                                    while (true) {
+                                        auto key = lexer.nextToken();
+                                        if (key.type == TshLexer::TokenType::TOK_RBRACE) break;
+                                        if (key.type == TshLexer::TokenType::TOK_COMMA) continue;
+                                        if (key.type == TshLexer::TokenType::TOK_EOF) return nullptr;
+                                        if (lexer.nextToken().type != TshLexer::TokenType::TOK_COLON) return nullptr;
+                                        auto value = lexer.nextToken();
+                                        if (value.type != TshLexer::TokenType::TOK_IDENT) return nullptr;
+                                        auto& target = light_mode ? scheme.ui_light_colors : scheme.ui_dark_colors;
+                                        target[key.text] = parseColorHex(value.text);
+                                    }
+                                } else {
+                                    if (lexer.nextToken().type != TshLexer::TokenType::TOK_COLON) return nullptr;
+                                    auto value = lexer.nextToken();
+                                    if (value.type != TshLexer::TokenType::TOK_IDENT) return nullptr;
+                                    scheme.ui_colors[token_name.text] = parseColorHex(value.text);
+                                }
                             }
                             continue;
                         }
