@@ -193,6 +193,8 @@ public:
 
     std::vector<CompiledRegexRule> regex_rules;
     std::unordered_map<std::string, std::vector<MonarchRule>> monarch_states;
+    std::unordered_map<std::string, std::string> monarch_variables;
+    std::string monarch_token_postfix;
     std::string monarch_start_state = "root";
     uint16_t monarch_default_style_id = 0;
     bool monarch_has_default_style = false;
