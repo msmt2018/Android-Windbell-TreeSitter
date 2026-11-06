@@ -70,6 +70,35 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeLoadTshSource(
 }
 
 /**
+ * Return structured compiler diagnostics as [code, message, offset, line, column] tuples.
+ */
+JNIEXPORT jobjectArray JNICALL
+Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeGetCompileDiagnostics(
+    JNIEnv* env, jobject
+) {
+    const auto diagnostics = TshCompiler::getInstance().getLastDiagnostics();
+    jclass string_class = env->FindClass("java/lang/String");
+    if (!string_class) return nullptr;
+    jobjectArray result = env->NewObjectArray(
+        static_cast<jsize>(diagnostics.size() * 5), string_class, nullptr);
+    if (!result) { env->DeleteLocalRef(string_class); return nullptr; }
+    for (size_t i = 0; i < diagnostics.size(); ++i) {
+        const auto& d = diagnostics[i];
+        const std::array<std::string, 5> values = {
+            d.code, d.message, std::to_string(d.offset),
+            std::to_string(d.line), std::to_string(d.column)
+        };
+        for (size_t k = 0; k < values.size(); ++k) {
+            jstring value = env->NewStringUTF(values[k].c_str());
+            env->SetObjectArrayElement(result, static_cast<jsize>(i * 5 + k), value);
+            env->DeleteLocalRef(value);
+        }
+    }
+    env->DeleteLocalRef(string_class);
+    return result;
+}
+
+/**
  * Enumerate DSL-declared color schemes for an extension.
  */
 JNIEXPORT jobjectArray JNICALL
