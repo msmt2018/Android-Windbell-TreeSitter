@@ -101,6 +101,26 @@ class WindbellTshLinkageTest {
     }
 
     @Test
+    fun testOutOfRangeNumericCaptureIsRejectedAtCompileTime() {
+        val engine = WindbellTshEngine.instance
+        val source = """
+            tsh 2 {
+                language { id: "bad-capture" extensions: [".badcapture"] }
+                styles { token { scope: "variable.other" } }
+                contains: [
+                    { match: /(token)/, captures: { 2: "token" } }
+                ]
+            }
+        """.trimIndent()
+
+        assertFalse(engine.loadTshSource("bad-capture", source, null))
+        assertTrue(
+            engine.lastCompileDiagnostics.firstOrNull()?.message
+                ?.contains("capture group index is out of range") == true
+        )
+    }
+
+    @Test
     fun testEmptyDocumentHighlightIsSafe() {
         val engine = WindbellTshEngine.instance
         assertTrue(engine.loadTshSource("empty-document", javaTestDsl(), null))
