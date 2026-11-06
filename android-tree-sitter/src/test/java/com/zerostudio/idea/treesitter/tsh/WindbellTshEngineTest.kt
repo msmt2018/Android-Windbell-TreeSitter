@@ -59,7 +59,7 @@ class WindbellTshLinkageTest {
         assertTrue(diagnostic?.message?.isNotBlank() == true)
 
         val invalidEscape = """
-            language { id: "bad-escape" name: "bad\\q" }
+            language { id: "bad-escape" name: "bad\q" }
         """.trimIndent()
         assertFalse(engine.loadTshSource("bad-escape", invalidEscape, null))
 
