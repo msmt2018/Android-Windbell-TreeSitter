@@ -183,6 +183,11 @@ public:
                 if (depth > 0) block += src_[cursor_];
                 cursor_++;
             }
+            if (depth != 0) {
+                lexical_error_ = true;
+                g_tsh_last_source_offset = static_cast<uint32_t>(cursor_);
+                return "";
+            }
             return block;
         }
         return "";
