@@ -13,6 +13,7 @@
     // 2. Semantic style catalog and unlimited named schemes
     // =========================================================================
     isDark: false,
+    defaultScheme: "darcula",
     styles {
         keyword       { scope: "keyword.control", tags: ["keyword", "control"] }
         keyword2      { scope: "keyword.context", tags: ["keyword", "contextual"] }
