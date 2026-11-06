@@ -27,6 +27,7 @@
 #include <functional>
 #include <cmath>
 #include <limits>
+#include <unordered_set>
 #include "ts__log.h"
 
 namespace windbell::tsh {
@@ -2569,6 +2570,7 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                     if (at.type == TshLexer::TokenType::TOK_LBRACE) {
                         AstSelectorRule ast_rule;
                         ast_rule.declaration_order = ast_declaration_order++;
+                        std::unordered_set<std::string> ast_fields;
                         std::string node_name, field_name, parent_name, ancestor_name, child_name, previous_sibling_name, next_sibling_name, style_bind_name;
                         auto read_ast_value = [&]() -> TshLexer::Token {
                             if (lexer.nextToken().type != TshLexer::TokenType::TOK_COLON) {
@@ -2582,6 +2584,11 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                             if (field.type == TshLexer::TokenType::TOK_RBRACE) break;
                             if (field.type == TshLexer::TokenType::TOK_EOF) return nullptr;
                             if (field.type == TshLexer::TokenType::TOK_COMMA) continue;
+                            if (!ast_fields.insert(field.text).second) {
+                                g_tsh_last_error_detail =
+                                    "duplicate ATS selector property: " + field.text;
+                                return nullptr;
+                            }
 
                             if (field.text == "node" || field.text == "field" || field.text == "parent" ||
                                 field.text == "ancestor" || field.text == "child" ||
