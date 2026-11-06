@@ -1090,6 +1090,124 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                 }
             }
 
+            // Monarch-compatible tokenizer states. Rules are compiled to the
+            // same Oniguruma UTF-16 engine used by TextMate-style regex patterns.
+            else if (tok.text == "monarch") {
+                if (!mark_root_section("monarch")) return nullptr;
+                auto open = lexer.nextToken();
+                if (open.type == TshLexer::TokenType::TOK_COLON) open = lexer.nextToken();
+                if (open.type != TshLexer::TokenType::TOK_LBRACE) return nullptr;
+                while (true) {
+                    auto field = lexer.nextToken();
+                    if (field.type == TshLexer::TokenType::TOK_RBRACE) break;
+                    if (field.type == TshLexer::TokenType::TOK_COMMA) continue;
+                    if (field.type == TshLexer::TokenType::TOK_EOF) return nullptr;
+                    if (field.text == "start" || field.text == "defaultToken") {
+                        if (lexer.nextToken().type != TshLexer::TokenType::TOK_COLON) return nullptr;
+                        auto value = lexer.nextToken();
+                        if (value.type != TshLexer::TokenType::TOK_STRING &&
+                            value.type != TshLexer::TokenType::TOK_IDENT) return nullptr;
+                        if (field.text == "start") {
+                            grammar->monarch_start_state = value.text;
+                            if (!grammar->monarch_start_state.empty() && grammar->monarch_start_state.front() == '@')
+                                grammar->monarch_start_state.erase(grammar->monarch_start_state.begin());
+                        } else {
+                            grammar->monarch_default_style_id = ensureStyleId(value.text);
+                            grammar->monarch_has_default_style = true;
+                        }
+                    } else if (field.text == "tokenizer") {
+                        if (lexer.nextToken().type != TshLexer::TokenType::TOK_LBRACE) return nullptr;
+                        while (true) {
+                            auto state_name = lexer.nextToken();
+                            if (state_name.type == TshLexer::TokenType::TOK_RBRACE) break;
+                            if (state_name.type == TshLexer::TokenType::TOK_COMMA) continue;
+                            if (state_name.type != TshLexer::TokenType::TOK_IDENT &&
+                                state_name.type != TshLexer::TokenType::TOK_STRING) return nullptr;
+                            if (grammar->monarch_states.find(state_name.text) != grammar->monarch_states.end()) return nullptr;
+                            if (lexer.nextToken().type != TshLexer::TokenType::TOK_COLON ||
+                                lexer.nextToken().type != TshLexer::TokenType::TOK_LBRACKET) return nullptr;
+                            auto& state_rules = grammar->monarch_states[state_name.text];
+                            while (true) {
+                                auto entry = lexer.nextToken();
+                                if (entry.type == TshLexer::TokenType::TOK_RBRACKET) break;
+                                if (entry.type == TshLexer::TokenType::TOK_COMMA) continue;
+                                if (entry.type != TshLexer::TokenType::TOK_LBRACE) return nullptr;
+                                MonarchRule rule;
+                                rule.declaration_order = regex_declaration_order++;
+                                uint32_t options = grammar->default_regex_options;
+                                std::string pattern;
+                                while (true) {
+                                    auto key = lexer.nextToken();
+                                    if (key.type == TshLexer::TokenType::TOK_RBRACE) break;
+                                    if (key.type == TshLexer::TokenType::TOK_COMMA) continue;
+                                    if (key.type == TshLexer::TokenType::TOK_EOF ||
+                                        lexer.nextToken().type != TshLexer::TokenType::TOK_COLON) return nullptr;
+                                    auto value = lexer.nextToken();
+                                    if (key.text == "match" || key.text == "regex") {
+                                        if (value.type != TshLexer::TokenType::TOK_REGEX &&
+                                            value.type != TshLexer::TokenType::TOK_STRING) return nullptr;
+                                        pattern = value.text;
+                                    } else if (key.text == "token" || key.text == "style") {
+                                        if (value.type != TshLexer::TokenType::TOK_STRING &&
+                                            value.type != TshLexer::TokenType::TOK_IDENT) return nullptr;
+                                        if (!value.text.empty()) {
+                                            rule.style_id = ensureStyleId(value.text);
+                                            rule.has_style = true;
+                                        }
+                                    } else if (key.text == "include") {
+                                        if (value.type != TshLexer::TokenType::TOK_STRING &&
+                                            value.type != TshLexer::TokenType::TOK_IDENT) return nullptr;
+                                        rule.include_state = value.text;
+                                        if (!rule.include_state.empty() && rule.include_state.front() == '@')
+                                            rule.include_state.erase(rule.include_state.begin());
+                                    } else if (key.text == "next" || key.text == "push" || key.text == "switchTo") {
+                                        if (value.type != TshLexer::TokenType::TOK_STRING &&
+                                            value.type != TshLexer::TokenType::TOK_IDENT) return nullptr;
+                                        if (key.text == "next") rule.next_state = value.text;
+                                        else if (key.text == "push") rule.push_state = value.text;
+                                        else rule.switch_state = value.text;
+                                    } else if (key.text == "pop" || key.text == "rematch" || key.text == "enabled") {
+                                        if (value.text != "true" && value.text != "false") return nullptr;
+                                        if (key.text == "pop") rule.pop = value.text == "true";
+                                        else if (key.text == "rematch") rule.rematch = value.text == "true";
+                                        else if (value.text == "false") continue;
+                                    } else if (key.text == "priority") {
+                                        if (value.type != TshLexer::TokenType::TOK_NUMBER) return nullptr;
+                                        try {
+                                            size_t consumed = 0;
+                                            rule.priority = std::stoi(value.text, &consumed);
+                                            if (consumed != value.text.size()) return nullptr;
+                                        } catch (...) { return nullptr; }
+                                    } else if (key.text == "flags") {
+                                        if (value.type != TshLexer::TokenType::TOK_LBRACKET) return nullptr;
+                                        while (true) {
+                                            auto flag = lexer.nextToken();
+                                            if (flag.type == TshLexer::TokenType::TOK_RBRACKET) break;
+                                            if (flag.type == TshLexer::TokenType::TOK_COMMA) continue;
+                                            if (flag.text == "i") options |= ONIG_OPTION_IGNORECASE;
+                                            else if (flag.text == "m") options |= ONIG_OPTION_MULTILINE;
+                                            else if (flag.text == "s") options |= ONIG_OPTION_SINGLELINE;
+                                            else if (flag.text == "x") options |= ONIG_OPTION_EXTEND;
+                                            else return nullptr;
+                                        }
+                                    } else {
+                                        return nullptr;
+                                    }
+                                }
+                                if (!pattern.empty()) {
+                                    rule.pattern = compileOnigurumaUtf16(pattern, options);
+                                    if (!rule.pattern) return nullptr;
+                                }
+                                if (rule.include_state.empty() && !rule.pattern) return nullptr;
+                                state_rules.push_back(std::move(rule));
+                            }
+                        }
+                    } else {
+                        return nullptr;
+                    }
+                }
+            }
+
             // TextMate-style repository of reusable regular-expression fragments.
             // A rule may reference an entry as include("#repositoryName").
             else if (tok.text == "repository") {
