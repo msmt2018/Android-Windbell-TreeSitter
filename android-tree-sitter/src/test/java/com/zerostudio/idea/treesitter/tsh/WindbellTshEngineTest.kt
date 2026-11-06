@@ -662,6 +662,57 @@ class WindbellTshLinkageTest {
     }
 
     @Test
+    fun testAstSelectorTextRegexIsCompiledAndExecuted() {
+        val engine = WindbellTshEngine.instance
+        val language = TSLanguageJava.getInstance()
+        val source = """
+            tsh 2 {
+                language { id: "java-ast-text-regex" extensions: [".jatr"] }
+                styles { methodName { scope: "entity.name.function" } }
+                ast: [
+                    {
+                        node: "identifier"
+                        ancestor: "method_declaration"
+                        textRegex: /^run$/
+                        style: "methodName"
+                        priority: 70
+                    }
+                ]
+            }
+        """.trimIndent()
+
+        assertTrue(engine.loadTshSource("java-ast-text-regex", source, language))
+        val parser = TSParser.create().apply { setLanguage(language) }
+        val code = "class Demo { void run() {} void skip() {} }"
+        val tree = parser.parseString(code)
+        val spans = engine.computeHighlights(tree, code, "java-ast-text-regex")
+        val styleId = engine.getStyleCatalog("java-ast-text-regex")
+            .first { it.name == "methodName" }.styleId
+
+        assertTrue(spans.any {
+            it.styleId == styleId && it.startByte == code.indexOf("run") * 2 && it.priority == 70
+        }, "ATS textRegex must match the complete UTF-16 node text.")
+        assertFalse(spans.any {
+            it.styleId == styleId && it.startByte == code.indexOf("skip") * 2
+        }, "ATS textRegex must reject nodes whose text does not match.")
+
+        tree?.close()
+        parser.close()
+
+        val invalid = """
+            tsh 2 {
+                language { id: "java-ast-text-regex-invalid" extensions: [".jatri"] }
+                styles { token { scope: "variable.other" } }
+                ast: [
+                    { node: "identifier" textRegex: /(/ style: "token" }
+                ]
+            }
+        """.trimIndent()
+        assertFalse(engine.loadTshSource("java-ast-text-regex-invalid", invalid, language),
+            "Invalid ATS regex patterns must fail during compilation.")
+    }
+
+    @Test
     fun testAstSelectorRejectsDuplicateProperties() {
         val engine = WindbellTshEngine.instance
         val source = """
