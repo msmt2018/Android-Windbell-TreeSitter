@@ -796,6 +796,31 @@ static bool validateNumericCaptureGroups(
     return true;
 }
 
+static bool validateNamedCaptureGroups(
+    regex_t* regex,
+    const std::unordered_map<std::string, uint16_t>& groups
+) {
+    if (!regex) return groups.empty();
+    for (const auto& entry : groups) {
+        // DSL identifiers are UTF-8; Oniguruma patterns are compiled as UTF-16LE.
+        // Named group identifiers are ASCII-compatible, so widen each byte here.
+        std::vector<uint16_t> name;
+        name.reserve(entry.first.size());
+        for (unsigned char ch : entry.first) name.push_back(static_cast<uint16_t>(ch));
+        const int group = onig_name_to_backref_number(
+            regex,
+            reinterpret_cast<const UChar*>(name.data()),
+            reinterpret_cast<const UChar*>(name.data() + name.size()),
+            nullptr
+        );
+        if (group < 0) {
+            g_tsh_last_error_detail = "named capture group does not exist: " + entry.first;
+            return false;
+        }
+    }
+    return true;
+}
+
 static regex_t* compileOnigurumaUtf16(const std::string& pattern_str, OnigOptionType options = ONIG_OPTION_DEFAULT) {
     if (pattern_str.empty()) return nullptr;
     std::vector<uint16_t> u16;
@@ -1028,10 +1053,18 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                                 size_t consumed = 0;
                                 const int group = std::stoi(child_token.text, &consumed);
                                 if (consumed != child_token.text.size() || group < 0) return false;
-                                (*numeric_map)[group] = ensureStyleId(style_name.text);
+                                if (!numeric_map->emplace(group, ensureStyleId(style_name.text)).second) {
+                                    g_tsh_last_error_detail = "duplicate numeric capture declaration: " +
+                                        std::to_string(group);
+                                    return false;
+                                }
                             } catch (...) { return false; }
                         } else {
-                            (*named_map)[child_token.text] = ensureStyleId(style_name.text);
+                            if (!named_map->emplace(child_token.text, ensureStyleId(style_name.text)).second) {
+                                g_tsh_last_error_detail = "duplicate named capture declaration: " +
+                                    child_token.text;
+                                return false;
+                            }
                         }
                     } else {
                         if (child_token.type != TshLexer::TokenType::TOK_LBRACE) return false;
@@ -1075,7 +1108,10 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
         // a .tsh file look like a successful but partially styled grammar.
         if (!validateNumericCaptureGroups(rule.onig_start, rule.group_style_map) ||
             !validateNumericCaptureGroups(rule.onig_start, rule.start_group_style_map) ||
-            !validateNumericCaptureGroups(rule.onig_end, rule.end_group_style_map)) return false;
+            !validateNumericCaptureGroups(rule.onig_end, rule.end_group_style_map) ||
+            !validateNamedCaptureGroups(rule.onig_start, rule.named_group_style_map) ||
+            !validateNamedCaptureGroups(rule.onig_start, rule.start_named_group_style_map) ||
+            !validateNamedCaptureGroups(rule.onig_end, rule.end_named_group_style_map)) return false;
 
         const bool has_delimiter_captures = !rule.start_group_style_map.empty() ||
             !rule.start_named_group_style_map.empty() || !rule.end_group_style_map.empty() ||
