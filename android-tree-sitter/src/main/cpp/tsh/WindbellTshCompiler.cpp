@@ -2593,6 +2593,19 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                                 g_tsh_last_error_detail =
                                     "ast selectors cannot contain query source; use treeSitter.queries for native query programs";
                                 return nullptr;
+                            } else if (field.text == "named" || field.text == "missing" ||
+                                       field.text == "extra" || field.text == "error" ||
+                                       field.text == "hasError") {
+                                auto value = read_ast_value();
+                                int8_t flag = -1;
+                                if (value.text == "true") flag = 1;
+                                else if (value.text == "false") flag = 0;
+                                else return nullptr;
+                                if (field.text == "named") ast_rule.named = flag;
+                                else if (field.text == "missing") ast_rule.missing = flag;
+                                else if (field.text == "extra") ast_rule.extra = flag;
+                                else if (field.text == "error") ast_rule.error = flag;
+                                else ast_rule.has_error = flag;
                             } else if (field.text == "priority") {
                                 auto value = read_ast_value();
                                 if (value.type != TshLexer::TokenType::TOK_NUMBER) return nullptr;
@@ -2628,7 +2641,10 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
 
                         if (ts_lang) {
                             if (!node_name.empty()) {
-                                ast_rule.target_symbol = ts_language_symbol_for_name(ts_lang, node_name.c_str(), static_cast<uint32_t>(node_name.length()), true);
+                                const bool symbol_is_named = ast_rule.named < 0 || ast_rule.named != 0;
+                                ast_rule.target_symbol = ts_language_symbol_for_name(
+                                    ts_lang, node_name.c_str(),
+                                    static_cast<uint32_t>(node_name.length()), symbol_is_named);
                                 if (ast_rule.target_symbol == 0) return nullptr;
                             }
                             if (!field_name.empty()) {
