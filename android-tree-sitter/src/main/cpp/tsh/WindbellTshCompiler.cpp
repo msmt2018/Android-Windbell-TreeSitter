@@ -53,7 +53,16 @@ public:
 
     explicit TshLexer(const std::string& src) : src_(src), cursor_(0) {}
 
+    void putBack(Token token) {
+        pending_ = std::move(token);
+        has_pending_ = true;
+    }
+
     Token nextToken() {
+        if (has_pending_) {
+            has_pending_ = false;
+            return std::move(pending_);
+        }
         skipIgnored();
         if (cursor_ >= src_.size()) {
             return {TokenType::TOK_EOF, ""};
@@ -156,6 +165,8 @@ private:
 
     const std::string& src_;
     size_t cursor_;
+    Token pending_{TokenType::TOK_EOF, ""};
+    bool has_pending_ = false;
 };
 
 std::string TshCompiler::expandKeywordsToRegex(const std::string& word_list) {
@@ -257,54 +268,75 @@ std::shared_ptr<TshGrammar> TshCompiler::compile(const std::string& source, cons
             // 2. 解析多主题方案: schemes { name { light [...], dark [...] } }
             // =================================================================
             else if (tok.text == "schemes") {
-                lexer.nextToken(); // :
-                lexer.nextToken(); // {
+                auto open = lexer.nextToken();
+                if (open.type == TshLexer::TokenType::TOK_COLON) open = lexer.nextToken();
+                if (open.type != TshLexer::TokenType::TOK_LBRACE) return nullptr;
+
                 while (true) {
                     auto scheme_name_tok = lexer.nextToken();
-                    if (scheme_name_tok.type == TshLexer::TokenType::TOK_RBRACE || scheme_name_tok.type == TshLexer::TokenType::TOK_EOF) break;
-                    
-                    std::string scheme_name = scheme_name_tok.text;
+                    if (scheme_name_tok.type == TshLexer::TokenType::TOK_RBRACE) break;
+                    if (scheme_name_tok.type == TshLexer::TokenType::TOK_EOF) return nullptr;
+                    if (scheme_name_tok.type != TshLexer::TokenType::TOK_IDENT &&
+                        scheme_name_tok.type != TshLexer::TokenType::TOK_STRING) return nullptr;
+
+                    const std::string scheme_name = scheme_name_tok.text;
                     if (grammar->default_scheme_name.empty()) {
                         grammar->default_scheme_name = scheme_name;
                     }
 
+                    auto scheme_open = lexer.nextToken();
+                    if (scheme_open.type != TshLexer::TokenType::TOK_LBRACE) return nullptr;
+
                     ColorScheme scheme;
                     scheme.name = scheme_name;
-
-                    lexer.nextToken(); // { (进入 scheme 体)
                     while (true) {
-                        auto mode_tok = lexer.nextToken(); // "light" 或 "dark"
-                        if (mode_tok.type == TshLexer::TokenType::TOK_RBRACE || mode_tok.type == TshLexer::TokenType::TOK_EOF) break;
-                        
-                        bool is_light = (mode_tok.text == "light");
-                        lexer.nextToken(); // [
+                        auto mode_tok = lexer.nextToken();
+                        if (mode_tok.type == TshLexer::TokenType::TOK_RBRACE) break;
+                        if (mode_tok.type == TshLexer::TokenType::TOK_EOF) return nullptr;
+
+                        const bool is_light = mode_tok.text == "light";
+                        const bool is_dark = mode_tok.text == "dark";
+                        if (!is_light && !is_dark) return nullptr;
+
+                        auto list_open = lexer.nextToken();
+                        if (list_open.type != TshLexer::TokenType::TOK_LBRACKET) return nullptr;
+
                         while (true) {
-                            auto item_tok = lexer.nextToken(); // 符号名，如 keyword, string
-                            if (item_tok.type == TshLexer::TokenType::TOK_RBRACKET || item_tok.type == TshLexer::TokenType::TOK_EOF) break;
-                            
-                            std::string symbol_name = item_tok.text;
+                            auto item_tok = lexer.nextToken();
+                            if (item_tok.type == TshLexer::TokenType::TOK_RBRACKET) break;
+                            if (item_tok.type == TshLexer::TokenType::TOK_COMMA) continue;
+                            if (item_tok.type == TshLexer::TokenType::TOK_EOF) return nullptr;
+
+                            const std::string symbol_name = item_tok.text;
+                            auto separator = lexer.nextToken();
+                            if (separator.type != TshLexer::TokenType::TOK_COLON) return nullptr;
+                            auto color_tok = lexer.nextToken();
+                            if (color_tok.type != TshLexer::TokenType::TOK_IDENT) return nullptr;
+
                             uint16_t sid = 0;
-                            if (grammar->style_name_to_id.count(symbol_name)) {
-                                sid = grammar->style_name_to_id[symbol_name];
-                            } else {
+                            auto style_it = grammar->style_name_to_id.find(symbol_name);
+                            if (style_it == grammar->style_name_to_id.end()) {
                                 sid = global_style_counter++;
-                                grammar->style_name_to_id[symbol_name] = sid;
+                                grammar->style_name_to_id.emplace(symbol_name, sid);
+                            } else {
+                                sid = style_it->second;
                             }
 
-                            auto color_tok = lexer.nextToken(); // 十六进制颜色 #FF007F
-                            uint32_t color_val = parseColorHex(color_tok.text);
-
+                            const uint32_t color_val = parseColorHex(color_tok.text);
                             uint16_t flags = 0;
-                            // 扫描后续是否有修饰符（如 @B 粗体, @I 斜体）
                             while (true) {
-                                auto next_t = lexer.nextToken();
-                                if (next_t.type == TshLexer::TokenType::TOK_COMMA || next_t.type == TshLexer::TokenType::TOK_RBRACKET) {
+                                auto modifier = lexer.nextToken();
+                                if (modifier.type == TshLexer::TokenType::TOK_COMMA) break;
+                                if (modifier.type == TshLexer::TokenType::TOK_RBRACKET) {
+                                    lexer.putBack(std::move(modifier));
                                     break;
                                 }
-                                if (next_t.type == TshLexer::TokenType::TOK_AT) {
-                                    auto f_tok = lexer.nextToken();
-                                    if (f_tok.text == "B") flags |= 0x01; // 粗体
-                                    else if (f_tok.text == "I") flags |= 0x02; // 斜体
+                                if (modifier.type == TshLexer::TokenType::TOK_EOF) return nullptr;
+                                if (modifier.type == TshLexer::TokenType::TOK_AT) {
+                                    auto flag_tok = lexer.nextToken();
+                                    if (flag_tok.text == "B" || flag_tok.text == "bold") flags |= 0x01;
+                                    else if (flag_tok.text == "I" || flag_tok.text == "italic") flags |= 0x02;
+                                    else if (flag_tok.text == "U" || flag_tok.text == "underline") flags |= 0x04;
                                 }
                             }
 
@@ -316,11 +348,10 @@ std::shared_ptr<TshGrammar> TshCompiler::compile(const std::string& source, cons
                                 color_entry.dark_color = color_val;
                                 color_entry.has_dark_color = true;
                             }
-                            color_entry.font_flags = flags;
+                            color_entry.font_flags |= flags;
                         }
-                        lexer.nextToken(); // } (闭合 light/dark)
                     }
-                    grammar->schemes[scheme_name] = scheme;
+                    grammar->schemes[scheme_name] = std::move(scheme);
                 }
             }
 
