@@ -613,6 +613,12 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
         onig_region_free(region, 1);
     }
 
+    // Tag regex spans before the stateful tokenizer appends its own results.
+    for (auto& span : micro_spans) {
+        span.source = static_cast<uint8_t>(HighlightSource::ONIGURUMA);
+    }
+    const size_t monarch_span_begin = micro_spans.size();
+
     // Monarch stateful tokenizer. It runs on the same UTF-16 buffer as
     // Oniguruma rules and emits the same span ABI, so the Android renderer does
     // not need a second token model.
@@ -771,6 +777,9 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
         }
         onig_region_free(monarch_case_region, 1);
         onig_region_free(monarch_region, 1);
+    }
+    for (size_t i = monarch_span_begin; i < micro_spans.size(); ++i) {
+        micro_spans[i].source = static_cast<uint8_t>(HighlightSource::MONARCH);
     }
 
     std::vector<HighlightSpan> macro_spans;
@@ -966,6 +975,13 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
         ts_tree_cursor_delete(&cursor);
     }
 
+    // AST selector candidates are tagged before native query captures join the
+    // same macro collection.
+    for (auto& span : macro_spans) {
+        span.source = static_cast<uint8_t>(HighlightSource::AST_SELECTOR);
+    }
+    const size_t native_query_span_begin = macro_spans.size();
+
     if (tree && tree_source_map_valid && !grammar->native_queries.empty()) {
         // Each .tsh query block has its own native TSQuery and capture namespace.
         // This preserves per-block priority/order and avoids concatenating query
@@ -1015,6 +1031,9 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
             ts_query_cursor_delete(q_cursor);
         }
     }
+    for (size_t i = native_query_span_begin; i < macro_spans.size(); ++i) {
+        macro_spans[i].source = static_cast<uint8_t>(HighlightSource::NATIVE_QUERY);
+    }
 
     if (macro_spans.empty()) {
         final_spans = std::move(micro_spans);
@@ -1055,6 +1074,7 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                 return a.declaration_order < b.declaration_order;
             if (a.start_byte != b.start_byte) return a.start_byte < b.start_byte;
             if (a.end_byte != b.end_byte) return a.end_byte > b.end_byte;
+            if (a.source != b.source) return a.source < b.source;
             if (a.style_id != b.style_id) return a.style_id < b.style_id;
             if (a.allow_overlap != b.allow_overlap) return a.allow_overlap < b.allow_overlap;
             return a.flags < b.flags;
@@ -1068,7 +1088,8 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
             return a.start_byte == b.start_byte && a.end_byte == b.end_byte &&
                    a.style_id == b.style_id && a.priority == b.priority &&
                    a.declaration_order == b.declaration_order &&
-                   a.allow_overlap == b.allow_overlap && a.flags == b.flags;
+                   a.allow_overlap == b.allow_overlap && a.source == b.source &&
+                   a.flags == b.flags;
         }), final_spans.end());
 
     std::vector<HighlightSpan> resolved_spans;
@@ -1103,6 +1124,7 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
         if (a.priority != b.priority) return a.priority > b.priority;
         if (a.declaration_order != b.declaration_order)
             return a.declaration_order < b.declaration_order;
+        if (a.source != b.source) return a.source < b.source;
         if (a.style_id != b.style_id) return a.style_id < b.style_id;
         return a.flags < b.flags;
     });
