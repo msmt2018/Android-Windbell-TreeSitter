@@ -21,14 +21,14 @@ namespace windbell::tsh {
 
 #pragma pack(push, 4)
 struct HighlightSpan {
-    uint32_t start_byte; // UTF-16 字节偏移量
-    uint32_t end_byte;   // UTF-16 字节偏移量
-    uint16_t style_id;   // 方案样式索引
+    uint32_t start_byte;
+    uint32_t end_byte;
+    uint16_t style_id;
     uint16_t flags;
     int32_t priority = 0;
     uint32_t declaration_order = 0;
-    std::string id;
-    bool enabled = true;
+    uint8_t allow_overlap = 0;
+    uint8_t reserved[3] = {};
 };
 #pragma pack(pop)
 
@@ -62,8 +62,9 @@ struct AstSelectorRule {
     bool has_style = false;
     int32_t priority = 0;
     uint32_t declaration_order = 0;
-    uint8_t allow_overlap = 0;
-    uint8_t reserved[3] = {};
+    std::string id;
+    bool enabled = true;
+    bool allow_overlap = false;
 };
 
 // Compiled style catalog entry. IDs are opaque runtime indices; names carry semantics.
