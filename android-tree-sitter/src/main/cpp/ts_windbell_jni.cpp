@@ -134,7 +134,7 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeGetDefaultIsDark
 
 /**
  * Export palette for the explicitly selected scheme.
- * Layout: [styleId, lightColor, darkColor, fontFlags] * N.
+ * Layout: [styleId, lightColor, darkColor, fontFlags, hasLight, hasDark] * N.
  * A zero color means that the DSL did not define a value for that appearance.
  */
 JNIEXPORT jintArray JNICALL
@@ -160,21 +160,23 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeGetPalette(
     if (scheme_it == grammar->schemes.end()) return env->NewIntArray(0);
 
     const jsize count = static_cast<jsize>(grammar->styles.size());
-    jintArray result = env->NewIntArray(count * 4);
+    jintArray result = env->NewIntArray(count * 6);
     if (!result) return nullptr;
-    std::vector<jint> values(static_cast<size_t>(count) * 4, 0);
+    std::vector<jint> values(static_cast<size_t>(count) * 6, 0);
     for (jsize i = 0; i < count; ++i) {
         const auto& style = grammar->styles[static_cast<size_t>(i)];
-        values[i * 4] = static_cast<jint>(style.style_id);
+        values[i * 6] = static_cast<jint>(style.style_id);
         auto color_it = scheme_it->second.colors.find(style.style_id);
         if (color_it != scheme_it->second.colors.end()) {
             const SchemeColor& color = color_it->second;
-            values[i * 4 + 1] = color.has_light_color ? static_cast<jint>(color.light_color) : 0;
-            values[i * 4 + 2] = color.has_dark_color ? static_cast<jint>(color.dark_color) : 0;
-            values[i * 4 + 3] = static_cast<jint>(color.font_flags);
+            values[i * 6 + 1] = static_cast<jint>(color.light_color);
+            values[i * 6 + 2] = static_cast<jint>(color.dark_color);
+            values[i * 6 + 3] = static_cast<jint>(color.font_flags);
+            values[i * 6 + 4] = color.has_light_color ? 1 : 0;
+            values[i * 6 + 5] = color.has_dark_color ? 1 : 0;
         }
     }
-    env->SetIntArrayRegion(result, 0, count * 4, values.data());
+    env->SetIntArrayRegion(result, 0, count * 6, values.data());
     return result;
 }
 
