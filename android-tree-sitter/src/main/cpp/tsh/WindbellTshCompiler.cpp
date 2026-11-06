@@ -1582,8 +1582,10 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
         if (grammar->monarch_states.find(grammar->monarch_start_state) == grammar->monarch_states.end()) return nullptr;
         auto validate_state_reference = [&](std::string value, bool allow_stack_ops) -> bool {
             if (value.empty()) return true;
-            if (!value.empty() && value.front() == '@') value.erase(value.begin());
-            if (allow_stack_ops && (value == "pop" || value == "popall" || value == "push")) return true;
+            const bool has_prefix = value.front() == '@';
+            if (has_prefix) value.erase(value.begin());
+            if (has_prefix && allow_stack_ops &&
+                (value == "pop" || value == "popall" || value == "push")) return true;
             return grammar->monarch_states.find(value) != grammar->monarch_states.end();
         };
         std::unordered_map<std::string, uint8_t> include_visit;
