@@ -49,11 +49,15 @@ static bool tshUtf8ToUtf16(const std::string& input, std::vector<UChar>& output)
         if ((continuation == 1 && cp < 0x80) || (continuation == 2 && cp < 0x800) ||
             (continuation == 3 && cp < 0x10000) || cp > 0x10FFFF ||
             (cp >= 0xD800 && cp <= 0xDFFF)) return false;
-        if (cp <= 0xFFFF) output.push_back(static_cast<UChar>(cp));
+        auto append_utf16le_unit = [&](uint16_t unit) {
+            output.push_back(static_cast<UChar>(unit & 0xFF));
+            output.push_back(static_cast<UChar>((unit >> 8) & 0xFF));
+        };
+        if (cp <= 0xFFFF) append_utf16le_unit(static_cast<uint16_t>(cp));
         else {
             cp -= 0x10000;
-            output.push_back(static_cast<UChar>(0xD800 + (cp >> 10)));
-            output.push_back(static_cast<UChar>(0xDC00 + (cp & 0x3FF)));
+            append_utf16le_unit(static_cast<uint16_t>(0xD800 + (cp >> 10)));
+            append_utf16le_unit(static_cast<uint16_t>(0xDC00 + (cp & 0x3FF)));
         }
     }
     return true;
