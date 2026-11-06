@@ -26,6 +26,46 @@ static const UChar* advanceOneUtf16CodePoint(const UChar* current, const UChar* 
     return reinterpret_cast<const UChar*>(bytes);
 }
 
+static void appendRegexCaptureSpans(
+    regex_t* regex,
+    OnigRegion* region,
+    const std::unordered_map<int, uint16_t>& numeric_styles,
+    const std::unordered_map<std::string, uint16_t>& named_styles,
+    int32_t priority,
+    uint32_t declaration_order,
+    bool allow_overlap,
+    std::vector<HighlightSpan>& output
+) {
+    if (!regex || !region) return;
+    auto append = [&](int group, uint16_t style_id) {
+        if (group < 0 || group >= region->num_regs ||
+            region->beg[group] < 0 || region->end[group] < 0) return;
+        const uint32_t start = static_cast<uint32_t>(region->beg[group]);
+        const uint32_t end = static_cast<uint32_t>(region->end[group]);
+        if ((start & 1u) || (end & 1u) || start >= end) return;
+        HighlightSpan span;
+        span.start_byte = start;
+        span.end_byte = end;
+        span.style_id = style_id;
+        span.flags = 0;
+        span.priority = priority;
+        span.declaration_order = declaration_order;
+        span.allow_overlap = allow_overlap ? 1 : 0;
+        output.push_back(span);
+    };
+    for (const auto& entry : numeric_styles) append(entry.first, entry.second);
+    for (const auto& entry : named_styles) {
+        std::vector<uint16_t> encoded_name(entry.first.begin(), entry.first.end());
+        const int group = onig_name_to_backref_number(
+            regex,
+            reinterpret_cast<const UChar*>(encoded_name.data()),
+            reinterpret_cast<const UChar*>(encoded_name.data() + encoded_name.size()),
+            region
+        );
+        append(group, entry.second);
+    }
+}
+
 TshGrammar::~TshGrammar() {
     std::function<void(CompiledRegexRule&)> release_rule;
     release_rule = [&](CompiledRegexRule& rule) {
@@ -110,15 +150,29 @@ void WindbellEngine::matchBlockRecursive(
             static_cast<uint32_t>(range_end - text_start);
 
         if ((block_start_byte & 1u) == 0 && (block_end_byte & 1u) == 0) {
-            HighlightSpan block_span;
-            block_span.start_byte = block_start_byte;
-            block_span.end_byte = block_end_byte;
-            block_span.style_id = rule.style_id;
-            block_span.flags = 0;
-            block_span.priority = rule.priority;
-            block_span.declaration_order = rule.declaration_order;
-            block_span.allow_overlap = rule.allow_overlap ? 1 : 0;
-            out_spans.push_back(block_span);
+            if (rule.has_style && block_start_byte < block_end_byte) {
+                HighlightSpan block_span;
+                block_span.start_byte = block_start_byte;
+                block_span.end_byte = block_end_byte;
+                block_span.style_id = rule.style_id;
+                block_span.flags = 0;
+                block_span.priority = rule.priority;
+                block_span.declaration_order = rule.declaration_order;
+                block_span.allow_overlap = rule.allow_overlap ? 1 : 0;
+                out_spans.push_back(block_span);
+            }
+            appendRegexCaptureSpans(
+                rule.onig_start, start_region, rule.start_group_style_map,
+                rule.start_named_group_style_map, rule.priority, rule.declaration_order,
+                rule.allow_overlap, out_spans
+            );
+            if (hit_end >= 0) {
+                appendRegexCaptureSpans(
+                    rule.onig_end, end_region, rule.end_group_style_map,
+                    rule.end_named_group_style_map, rule.priority, rule.declaration_order,
+                    rule.allow_overlap, out_spans
+                );
+            }
 
             if (!rule.nested_rules.empty()) {
                 const UChar* inner_start = content_start;
@@ -223,7 +277,7 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
 
     for (const auto& rule : grammar->regex_rules) {
         if (!rule.enabled) continue;
-        if (rule.type == RegexRuleType::BLOCK && rule.has_style && rule.onig_start && rule.onig_end) {
+        if (rule.type == RegexRuleType::BLOCK && rule.onig_start && rule.onig_end) {
             matchBlockRecursive(rule, text_start, text_end, text_start, text_end, micro_spans);
             continue;
         }
