@@ -181,7 +181,8 @@ void WindbellEngine::matchBlockRecursive(
                                 }
                             }
                             inner_curr = (inner_region->end[0] <= inner_region->beg[0]) ?
-                                inner_curr + sizeof(uint16_t) : text_start + inner_region->end[0];
+                                advanceOneUtf16CodePoint(text_start + inner_region->beg[0], inner_end) :
+                                text_start + inner_region->end[0];
                         }
                         onig_region_free(inner_region, 1);
                     }
@@ -194,7 +195,7 @@ void WindbellEngine::matchBlockRecursive(
             if (next <= curr) next = advanceOneUtf16CodePoint(curr, range_end);
             curr = next;
         } else {
-            curr = text_start + start_region->end[0] + sizeof(uint16_t);
+            curr = advanceOneUtf16CodePoint(text_start + start_region->end[0], range_end);
         }
     }
 
