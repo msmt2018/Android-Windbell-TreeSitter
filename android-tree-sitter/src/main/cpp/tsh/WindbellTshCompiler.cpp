@@ -631,8 +631,10 @@ static bool decodePatternUtf8ToUtf16(const std::string& input, std::vector<uint1
             return false;
         }
         if (i + continuation_count > input.size()) return false;
+        bool modified_utf8_null = false;
         for (size_t n = 0; n < continuation_count; ++n) {
             const uint8_t next = static_cast<uint8_t>(input[i++]);
+            if (n == 0 && first == 0xC0 && next == 0x80) modified_utf8_null = true;
             if ((next & 0xC0) != 0x80) return false;
             codepoint = (codepoint << 6) | (next & 0x3F);
         }
@@ -640,7 +642,7 @@ static bool decodePatternUtf8ToUtf16(const std::string& input, std::vector<uint1
         // code units. Preserve those code units while also accepting standard
         // four-byte UTF-8 supplied by source files.
         if (codepoint <= 0xFFFF) {
-            if (codepoint < 0x80 && continuation_count != 0) return false;
+            if (codepoint < 0x80 && continuation_count != 0 && !modified_utf8_null) return false;
             if (codepoint < 0x800 && continuation_count == 2) return false;
             if (codepoint < 0x10000 && continuation_count == 3) return false;
             output.push_back(static_cast<uint16_t>(codepoint));
