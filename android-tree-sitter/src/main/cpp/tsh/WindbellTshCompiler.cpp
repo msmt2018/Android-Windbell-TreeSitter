@@ -1106,6 +1106,21 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
             pattern = std::move(expanded);
             return true;
         };
+        // A rule is either a single-expression MATCH or a delimiter-based
+        // BLOCK. Allowing both forms previously overwrote onig_start after
+        // compiling the first expression, leaking that regex and making the
+        // resulting rule depend on declaration order.
+        if (!raw_match_pattern.empty() && !raw_start_pattern.empty()) {
+            g_tsh_last_error_detail =
+                "rule cannot declare both match and begin/start; choose one rule form";
+            return false;
+        }
+        if (rule.type == RegexRuleType::BLOCK && raw_match_pattern.size() > 0) {
+            g_tsh_last_error_detail =
+                "block rules must use begin/start and end delimiters, not match";
+            return false;
+        }
+
         if (!expand_pattern(raw_match_pattern) || !expand_pattern(raw_start_pattern) ||
             !expand_pattern(raw_end_pattern)) return false;
         if (!raw_match_pattern.empty()) {
