@@ -833,11 +833,36 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                                         definition.tags.push_back(tag.text);
                                     }
                                 }
-                            } else {
+                            } else if (field.text == "scope" || field.text == "description" ||
+                                       field.text == "parent") {
                                 auto value = lexer.nextToken();
+                                if (value.type != TshLexer::TokenType::TOK_STRING &&
+                                    value.type != TshLexer::TokenType::TOK_IDENT) return nullptr;
                                 if (field.text == "scope") definition.scope = value.text;
                                 else if (field.text == "description") definition.description = value.text;
-                                else if (field.text == "parent") definition.parent = value.text;
+                                else definition.parent = value.text;
+                            } else if (field.text == "deprecated") {
+                                auto value = lexer.nextToken();
+                                if (value.text == "true") definition.deprecated = true;
+                                else if (value.text == "false") definition.deprecated = false;
+                                else return nullptr;
+                            } else if (field.text == "metadata") {
+                                if (lexer.nextToken().type != TshLexer::TokenType::TOK_LBRACE) return nullptr;
+                                while (true) {
+                                    auto key = lexer.nextToken();
+                                    if (key.type == TshLexer::TokenType::TOK_RBRACE) break;
+                                    if (key.type == TshLexer::TokenType::TOK_COMMA) continue;
+                                    if (key.type != TshLexer::TokenType::TOK_IDENT &&
+                                        key.type != TshLexer::TokenType::TOK_STRING) return nullptr;
+                                    if (lexer.nextToken().type != TshLexer::TokenType::TOK_COLON) return nullptr;
+                                    auto value = lexer.nextToken();
+                                    if (value.type != TshLexer::TokenType::TOK_IDENT &&
+                                        value.type != TshLexer::TokenType::TOK_STRING &&
+                                        value.type != TshLexer::TokenType::TOK_NUMBER) return nullptr;
+                                    definition.metadata[key.text] = value.text;
+                                }
+                            } else {
+                                return nullptr;
                             }
                         }
                         grammar->style_definitions[style_name] = std::move(definition);
@@ -1245,6 +1270,8 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
             style.tags = definition_it->second.tags;
             style.description = definition_it->second.description;
             style.parent = definition_it->second.parent;
+            style.deprecated = definition_it->second.deprecated;
+            style.metadata = definition_it->second.metadata;
         }
         if (style.style_id >= grammar->styles.size()) {
             grammar->styles.resize(static_cast<size_t>(style.style_id) + 1);
