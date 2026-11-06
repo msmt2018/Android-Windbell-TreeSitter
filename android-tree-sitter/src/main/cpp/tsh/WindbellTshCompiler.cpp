@@ -699,6 +699,7 @@ std::shared_ptr<TshGrammar> TshCompiler::compile(const std::string& source, cons
                                     grammar->style_name_to_id[s_name] = sid;
                                     reg_rule.style_id = sid;
                                 }
+                                reg_rule.has_style = true;
                             }
                         }
 
