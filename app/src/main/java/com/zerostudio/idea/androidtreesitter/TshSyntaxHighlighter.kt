@@ -212,8 +212,8 @@ class TshSyntaxHighlighter(
             var parser: TSParser? = null
             var tree: TSTree? = null
             try {
-                parser = TSParser.create().also { it.setLanguage(language) }
-                tree = parser.parseString(textSnapshot)
+                parser = TSParser(language)
+                tree = parser.parse(null, textSnapshot)
                 val nextCaptures = engine.computeHighlights(tree, textSnapshot, extension)
                 if (generation.get() == ticket) {
                     allCaptures = nextCaptures
