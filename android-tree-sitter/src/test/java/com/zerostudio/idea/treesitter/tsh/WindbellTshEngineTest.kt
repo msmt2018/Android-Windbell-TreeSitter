@@ -262,6 +262,10 @@ class WindbellTshLinkageTest {
                     dark [ comment: #888888, todo: #FFAA55 ]
                 }
             }
+            repository {
+                todoBase: /FIXME/
+                todoWord: "include(\\\"#todoBase\\\")"
+            }
             contains: [
                 {
                     start: { match: /(?<open>\/\*)/ }
@@ -276,7 +280,7 @@ class WindbellTshLinkageTest {
                         priority: 100
                     }
                     {
-                        match: /FIXME/
+                        match: include("#todoWord")
                         captures: { 0: "todo" }
                         priority: 90
                     }
