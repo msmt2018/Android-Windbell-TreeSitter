@@ -1,3 +1,19 @@
+/*
+ * Copyright © 2026 Github Lzhiyong
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 import org.gradle.api.tasks.testing.logging.TestExceptionFormat.*
 import org.gradle.api.tasks.testing.logging.TestLogEvent.*
@@ -5,18 +21,16 @@ import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
     id("com.android.library")
+    id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.serialization")
 }
 
 android {
     namespace = "com.zerostudio.idea.piecetable"
-    compileSdk = libs.versions.compileSdk.get().toInt()
-    buildToolsVersion = libs.versions.buildTools.get()
+    compileSdk = 34
     
     defaultConfig {
-        // Set the same minSdk as the app. Unset, a library defaults to 1, and the androidTest APK
-        // is then dexed for API 1: test names with spaces fail to dex below API 30 (see README).
-        minSdk = libs.versions.minSdk.get().toInt()
+        minSdk = 21
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         consumerProguardFiles("consumer-rules.pro")
     }
@@ -27,19 +41,16 @@ android {
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
     }
-	
-	compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_21
-        targetCompatibility = JavaVersion.VERSION_21
+    
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
     }
     
-	buildFeatures {
+    buildFeatures {
         viewBinding = true
     }
     
-    // The shared tests compile into both test variants. This module uses AGP's built-in Kotlin
-    // (no org.jetbrains.kotlin.android plugin), which picks Kotlin files up through kotlin.srcDir:
-    // "test" had it, "androidTest" did not, hence "Unresolved reference 'TestSupport'".
     sourceSets {
         getByName("test") {
             java.srcDir("src/sharedTest/java")
@@ -53,15 +64,17 @@ android {
     
     testOptions {
         unitTests.all {
-            // buffers share no mutable state any more, test classes may also run in parallel
             it.forkEvery = 0
         }
     }
 }
 
-kotlin {
-    compilerOptions {
-        jvmTarget.set(JvmTarget.JVM_21)
+tasks.withType<KotlinCompile>().configureEach {
+    kotlinOptions {
+        jvmTarget = "17"
+        freeCompilerArgs += listOf(
+            "-opt-in=kotlin.ExperimentalUnsignedTypes"
+        )
     }
 }
 
@@ -79,7 +92,7 @@ tasks.withType<Test>().configureEach {
             println(
                 "\nresult ${result.resultType}  " +
                 "total: ${result.testCount}，Passed: ${result.successfulTestCount}，" +
-                "Failure: ${result.failedTestCount}，Skiped: ${result.skippedTestCount}"
+                "Failure: ${result.failedTestCount}，Skipped: ${result.skippedTestCount}"
             )
         }
     }))
@@ -88,13 +101,8 @@ tasks.withType<Test>().configureEach {
 dependencies {
     implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.jar"))))
     implementation(libs.kotlinx.serialization.json)
-    // Use the Kotlin JUnit 5 integration.
-    testImplementation(libs.kotlin.test.junit5)
     
-    // For android test. AndroidJUnitRunner is a JUnit 4 runner, so kotlin.test has to map onto
-    // JUnit 4 here: with kotlin-test-junit5, kotlin.test.Test becomes the JUnit 5 annotation and
-    // every shared test is silently skipped on the device (and @BeforeTest never runs).
-    // Catalog entry: kotlin-test-junit = { module = "org.jetbrains.kotlin:kotlin-test-junit", version.ref = "<same as kotlin-test-junit5>" }
+    testImplementation(libs.kotlin.test.junit5)
     androidTestImplementation(libs.kotlin.test.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.rules)

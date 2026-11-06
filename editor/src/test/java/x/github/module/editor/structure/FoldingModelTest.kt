@@ -17,7 +17,7 @@
 package x.github.module.editor.structure
 
 import x.github.module.editor.model.EditorDocument
-import x.github.module.piecetable.common.Range
+import com.zerostudio.idea.piecetable.common.Range
 
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals

@@ -20,7 +20,7 @@ import android.graphics.Canvas
 import android.graphics.drawable.Drawable
 import android.view.View
 
-import x.github.module.piecetable.common.Range
+import com.zerostudio.idea.piecetable.common.Range
 
 import x.github.module.editor.layout.FoldedLayout
 import x.github.module.editor.layout.TextLayout

@@ -16,7 +16,7 @@
 
 package x.github.module.editor.util
 
-import x.github.module.piecetable.common.Range
+import com.zerostudio.idea.piecetable.common.Range
 
 import kotlin.test.assertEquals
 import kotlin.test.assertSame

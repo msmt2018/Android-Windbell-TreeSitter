@@ -1,3 +1,19 @@
+/*
+ * Copyright © 2026 Github Lzhiyong
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 import org.gradle.api.tasks.testing.logging.TestExceptionFormat.*
 import org.gradle.api.tasks.testing.logging.TestLogEvent.*
@@ -5,15 +21,16 @@ import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
     id("com.android.library")
+    id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.serialization")
 }
 
 android {
     namespace = "x.github.module.editor"
-    compileSdk = "37.0.0"
+    compileSdk = 34
     
     defaultConfig {
-        minSdk = 24
+        minSdk = 21
         multiDexEnabled = true
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         consumerProguardFiles("consumer-rules.pro")
@@ -27,22 +44,26 @@ android {
     }
     
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_21
-        targetCompatibility = JavaVersion.VERSION_21
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
     }
     
-	buildFeatures {
-	    buildConfig = true
+    buildFeatures {
+        buildConfig = true
         viewBinding = true
     }
+    
     lint {
         baseline = file("lint-baseline.xml")
     }
 }
 
-kotlin {
-    compilerOptions {
-        jvmTarget.set(JvmTarget.JVM_21)
+tasks.withType<KotlinCompile>().configureEach {
+    kotlinOptions {
+        jvmTarget = "17"
+        freeCompilerArgs += listOf(
+            "-opt-in=kotlin.ExperimentalUnsignedTypes"
+        )
     }
 }
 
@@ -62,7 +83,7 @@ tasks.withType<Test>().configureEach {
             println(
                 "\nresult ${result.resultType}  " +
                 "total: ${result.testCount}，Passed: ${result.successfulTestCount}，" +
-                "Failure: ${result.failedTestCount}，Skiped: ${result.skippedTestCount}"
+                "Failure: ${result.failedTestCount}，Skipped: ${result.skippedTestCount}"
             )
         }
     }))
@@ -77,13 +98,8 @@ dependencies {
     implementation(libs.material)
     implementation(libs.kotlinx.serialization.json)
     
-    // Use the Kotlin JUnit 5 integration.
     testImplementation(libs.kotlin.test.junit5)
     
-    // For android test: AndroidJUnitRunner runs JUnit 4 tests, so kotlin.test in its
-    // JUnit 4 flavor (as in piecetable). The JUnit 5 one would only put the JUnit 5
-    // platform into the test APK, where nothing runs it, and its jars clash there
-    // (each has its own META-INF/LICENSE.md).
     androidTestImplementation(libs.kotlin.test.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.rules)

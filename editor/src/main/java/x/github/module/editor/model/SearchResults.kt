@@ -16,7 +16,7 @@
 
 package x.github.module.editor.model
 
-import x.github.module.piecetable.common.Range
+import com.zerostudio.idea.piecetable.common.Range
 
 /**
  * The matches of a search, and which of them is the current one.

@@ -21,6 +21,9 @@ buildscript {
 @Suppress("DSL_SCOPE_VIOLATION") plugins {
   id("build-logic.root-project")
   alias(libs.plugins.kotlin) apply false
+  alias(libs.plugins.ksp) apply false
+    alias(libs.plugins.kotlin.serialization) apply false
+    alias(libs.plugins.kotlin.parcelize) apply false
 }
 
 
@@ -76,7 +79,7 @@ fun Project.configureBaseExtension() {
 
     defaultConfig {
       minSdk = 21
-      targetSdk = 33
+      targetSdk = 34
       versionName = buildVersionName
         versionCode = buildVersionCode
     }
@@ -141,14 +144,12 @@ subprojects {
         publishing {
           singleVariant("release") {
             withSourcesJar()
-            // 🔹 补全中央仓库强制要求的 Javadoc（生成空包或标准包均可，中央仓库强制校验其存在）
             withJavadocJar()
           }
         }
       }
     }
 
-    // java-library 模块（如 annotations）也需要显式补全源码和文档生成
     plugins.withId("java-library") {
       extensions.configure<JavaPluginExtension> {
         withSourcesJar()
@@ -157,7 +158,6 @@ subprojects {
     }
 
     plugins.withId("maven-publish") {
-      // 🔹 引入并配置中央仓库必须的 GPG 签名插件
       apply(plugin = "signing")
 
       afterEvaluate {
@@ -188,7 +188,6 @@ subprojects {
           }
 
           repositories {
-            // 🔹 将原本推送到 GitHub 的目标替换为新版中央仓库 Portal 的发布 API 入口
             maven {
               name = "MavenCentral"
               url = uri("https://sonatype.com")
@@ -200,7 +199,6 @@ subprojects {
           }
         }
 
-        // 🔹 配置自动读取环境变量中的 GPG 私钥并对当前 release publication 执行签名
         extensions.configure<SigningExtension> {
           val signingKey = providers.environmentVariable("GPG_SIGNING_KEY").orNull
           val signingPassword = providers.environmentVariable("GPG_PASSWORD").orNull

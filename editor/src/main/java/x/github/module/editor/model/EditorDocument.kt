@@ -18,15 +18,15 @@ package x.github.module.editor.model
 
 import kotlin.text.Regex
 
-import x.github.module.piecetable.PieceTreeTextBufferBuilder
-import x.github.module.piecetable.SliceChange
-import x.github.module.piecetable.SliceEdit
-import x.github.module.piecetable.TextSlice
-import x.github.module.piecetable.common.ContentChange
-import x.github.module.piecetable.common.Position
-import x.github.module.piecetable.common.Range
-import x.github.module.piecetable.common.SingleEditOperation
-import x.github.module.piecetable.common.Strings
+import com.zerostudio.idea.piecetable.PieceTreeTextBufferBuilder
+import com.zerostudio.idea.piecetable.SliceChange
+import com.zerostudio.idea.piecetable.SliceEdit
+import com.zerostudio.idea.piecetable.TextSlice
+import com.zerostudio.idea.piecetable.common.ContentChange
+import com.zerostudio.idea.piecetable.common.Position
+import com.zerostudio.idea.piecetable.common.Range
+import com.zerostudio.idea.piecetable.common.SingleEditOperation
+import com.zerostudio.idea.piecetable.common.Strings
 
 import x.github.module.editor.util.TextBoundaries
 

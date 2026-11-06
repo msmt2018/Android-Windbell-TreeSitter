@@ -16,8 +16,8 @@
 
 package x.github.module.editor.model
 
-import x.github.module.piecetable.common.ReverseEditOperation
-import x.github.module.piecetable.common.TextChange
+import com.zerostudio.idea.piecetable.common.ReverseEditOperation
+import com.zerostudio.idea.piecetable.common.TextChange
 
 /**
  * The undo/redo history of the document, including the "typing burst" rule: edits that

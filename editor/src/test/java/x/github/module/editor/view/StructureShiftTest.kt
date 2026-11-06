@@ -19,7 +19,7 @@ package x.github.module.editor.view
 import x.github.module.editor.model.EditorDocument
 import x.github.module.editor.structure.FoldingRange
 import x.github.module.editor.structure.IndentGuide
-import x.github.module.piecetable.common.Range
+import com.zerostudio.idea.piecetable.common.Range
 
 import kotlin.test.Test
 import kotlin.test.assertEquals

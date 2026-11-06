@@ -17,8 +17,8 @@
 package x.github.module.editor.structure
 
 import x.github.module.editor.model.PieceTreeBuffer
-import x.github.module.piecetable.PieceTreeTextBufferBuilder
-import x.github.module.piecetable.common.Range
+import com.zerostudio.idea.piecetable.PieceTreeTextBufferBuilder
+import com.zerostudio.idea.piecetable.common.Range
 
 import kotlin.test.assertEquals
 import kotlin.test.assertNull

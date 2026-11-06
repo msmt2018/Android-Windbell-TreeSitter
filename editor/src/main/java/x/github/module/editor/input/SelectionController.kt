@@ -29,8 +29,8 @@ import android.view.HapticFeedbackConstants
 import android.view.animation.DecelerateInterpolator
 import android.view.animation.OvershootInterpolator
 
-import x.github.module.piecetable.common.Position
-import x.github.module.piecetable.common.Range
+import com.zerostudio.idea.piecetable.common.Position
+import com.zerostudio.idea.piecetable.common.Range
 
 import x.github.module.editor.EditorGeometry
 import x.github.module.editor.layout.TextLayout

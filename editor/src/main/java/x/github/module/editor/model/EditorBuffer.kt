@@ -18,14 +18,14 @@ package x.github.module.editor.model
 
 import kotlin.text.Regex
 
-import x.github.module.piecetable.SliceChange
-import x.github.module.piecetable.SliceEdit
-import x.github.module.piecetable.SliceEditResult
-import x.github.module.piecetable.TextSlice
-import x.github.module.piecetable.common.ApplyEditsResult
-import x.github.module.piecetable.common.Position
-import x.github.module.piecetable.common.Range
-import x.github.module.piecetable.common.SingleEditOperation
+import com.zerostudio.idea.piecetable.SliceChange
+import com.zerostudio.idea.piecetable.SliceEdit
+import com.zerostudio.idea.piecetable.SliceEditResult
+import com.zerostudio.idea.piecetable.TextSlice
+import com.zerostudio.idea.piecetable.common.ApplyEditsResult
+import com.zerostudio.idea.piecetable.common.Position
+import com.zerostudio.idea.piecetable.common.Range
+import com.zerostudio.idea.piecetable.common.SingleEditOperation
 
 /**
  * The text itself, as the editor needs it: lines, offsets, ranges, search, and one
@@ -113,7 +113,7 @@ interface EditorBuffer {
      * Applies edits, all at once: the ranges of [operations] are all in the
      * coordinates of the text as it is before any of them.
      *
-     * The result says what changed, one [x.github.module.piecetable.common.ContentChange]
+     * The result says what changed, one [com.zerostudio.idea.piecetable.common.ContentChange]
      * per edit, **the edit furthest down the text first**. The editor relies on that
      * order: it follows up each change in turn (layout, search matches), and a change
      * further up must not have moved the lines of one that is still to come. With

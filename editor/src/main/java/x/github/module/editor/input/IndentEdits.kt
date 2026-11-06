@@ -16,8 +16,8 @@
 
 package x.github.module.editor.input
 
-import x.github.module.piecetable.common.Range
-import x.github.module.piecetable.common.SingleEditOperation
+import com.zerostudio.idea.piecetable.common.Range
+import com.zerostudio.idea.piecetable.common.SingleEditOperation
 
 /**
  * The edits behind indenting: what Enter carries over to the new line, and what

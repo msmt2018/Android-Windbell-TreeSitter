@@ -21,7 +21,7 @@ import android.graphics.Color
 import android.graphics.Paint
 import android.text.TextPaint
 
-import x.github.module.piecetable.common.Range
+import com.zerostudio.idea.piecetable.common.Range
 
 import x.github.module.editor.EditorGeometry
 import x.github.module.editor.layout.TextLayout

@@ -16,9 +16,9 @@
 
 package x.github.module.editor.model
 
-import x.github.module.piecetable.PieceTreeTextBufferBuilder
-import x.github.module.piecetable.common.Range
-import x.github.module.piecetable.common.TextChange
+import com.zerostudio.idea.piecetable.PieceTreeTextBufferBuilder
+import com.zerostudio.idea.piecetable.common.Range
+import com.zerostudio.idea.piecetable.common.TextChange
 
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse

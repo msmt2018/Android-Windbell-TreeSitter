@@ -1,9 +1,0 @@
-x.github.module.editor-pngs-0 /root/xedit-app/editor/build/generated/res/pngs/debug
-x.github.module.editor-updated_navigation_xml-1 /root/xedit-app/editor/build/generated/updated_navigation_xml/debug
-x.github.module.editor-mergeDebugResources-2 /root/xedit-app/editor/build/intermediates/incremental/debug/mergeDebugResources/merged.dir
-x.github.module.editor-mergeDebugResources-3 /root/xedit-app/editor/build/intermediates/incremental/debug/mergeDebugResources/stripped.dir
-x.github.module.editor-debug-4 /root/xedit-app/editor/build/intermediates/merged_res/debug/mergeDebugResources
-x.github.module.editor-debug-5 /root/xedit-app/editor/build/intermediates/packaged_res/debug/packageDebugResources
-x.github.module.editor-debug-6 /root/xedit-app/editor/src/debug/res
-x.github.module.editor-main-7 /root/xedit-app/editor/src/main/res
-gradleHome-0 /root/.gradle

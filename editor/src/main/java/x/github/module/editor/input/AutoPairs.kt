@@ -16,7 +16,7 @@
 
 package x.github.module.editor.input
 
-import x.github.module.piecetable.common.Range
+import com.zerostudio.idea.piecetable.common.Range
 
 /**
  * Two chars that are typed together: typing [open] types [close] right after the

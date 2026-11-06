@@ -21,7 +21,7 @@ import x.github.module.editor.layout.TextMeasurer
 import x.github.module.editor.model.EditHistory
 import x.github.module.editor.model.EditorDocument
 import x.github.module.editor.model.EditorTextSource
-import x.github.module.piecetable.SliceEdit
+import com.zerostudio.idea.piecetable.SliceEdit
 
 import kotlin.test.assertEquals
 

@@ -18,7 +18,7 @@ package x.github.module.editor.view
 
 import android.os.Looper
 
-import x.github.module.piecetable.common.TextChange
+import com.zerostudio.idea.piecetable.common.TextChange
 
 import x.github.module.editor.model.EditHistory
 import x.github.module.editor.model.EditSession

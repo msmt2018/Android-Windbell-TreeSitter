@@ -18,7 +18,7 @@ package x.github.module.editor.model
 
 import kotlinx.serialization.Serializable
 
-import x.github.module.piecetable.common.TextChange
+import com.zerostudio.idea.piecetable.common.TextChange
 
 /**
  * The editing session of one text, without the text: where the cursor was, and

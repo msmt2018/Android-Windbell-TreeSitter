@@ -18,13 +18,13 @@ package x.github.module.editor.model
 
 import kotlin.text.Regex
 
-import x.github.module.piecetable.PieceTreeTextBuffer
-import x.github.module.piecetable.SliceEdit
-import x.github.module.piecetable.SliceEditResult
-import x.github.module.piecetable.common.ApplyEditsResult
-import x.github.module.piecetable.common.Position
-import x.github.module.piecetable.common.Range
-import x.github.module.piecetable.common.SingleEditOperation
+import com.zerostudio.idea.piecetable.PieceTreeTextBuffer
+import com.zerostudio.idea.piecetable.SliceEdit
+import com.zerostudio.idea.piecetable.SliceEditResult
+import com.zerostudio.idea.piecetable.common.ApplyEditsResult
+import com.zerostudio.idea.piecetable.common.Position
+import com.zerostudio.idea.piecetable.common.Range
+import com.zerostudio.idea.piecetable.common.SingleEditOperation
 
 /**
  * The buffer the editor comes with: a piece tree (the structure of VS Code's text

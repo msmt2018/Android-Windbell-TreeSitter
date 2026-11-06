@@ -70,13 +70,13 @@ import kotlin.text.Regex
 
 import x.github.module.editor.R
 
-import x.github.module.piecetable.PieceTreeTextBuffer
-import x.github.module.piecetable.SliceEdit
-import x.github.module.piecetable.common.Position
-import x.github.module.piecetable.common.Range
-import x.github.module.piecetable.common.ReverseEditOperation
-import x.github.module.piecetable.common.SingleEditOperation
-import x.github.module.piecetable.common.TextChange
+import com.zerostudio.idea.piecetable.PieceTreeTextBuffer
+import com.zerostudio.idea.piecetable.SliceEdit
+import com.zerostudio.idea.piecetable.common.Position
+import com.zerostudio.idea.piecetable.common.Range
+import com.zerostudio.idea.piecetable.common.ReverseEditOperation
+import com.zerostudio.idea.piecetable.common.SingleEditOperation
+import com.zerostudio.idea.piecetable.common.TextChange
 
 import x.github.module.editor.EditorGeometry
 import x.github.module.editor.input.AutoPair

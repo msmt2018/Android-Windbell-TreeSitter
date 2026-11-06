@@ -16,9 +16,9 @@
 
 package x.github.module.editor.model
 
-import x.github.module.piecetable.TextSlice
-import x.github.module.piecetable.common.Strings
-import x.github.module.piecetable.common.TextChange
+import com.zerostudio.idea.piecetable.TextSlice
+import com.zerostudio.idea.piecetable.common.Strings
+import com.zerostudio.idea.piecetable.common.TextChange
 
 /**
  * One change of an undo step, forwards: where the text before the step had [oldContent]

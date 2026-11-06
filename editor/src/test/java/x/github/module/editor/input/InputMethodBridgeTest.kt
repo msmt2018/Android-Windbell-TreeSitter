@@ -20,8 +20,8 @@ import x.github.module.editor.model.EditHistory
 import x.github.module.editor.model.EditorDocument
 import x.github.module.editor.testing.FakeScheduler
 import x.github.module.editor.testing.RecordingCallback
-import x.github.module.piecetable.common.Range
-import x.github.module.piecetable.common.SingleEditOperation
+import com.zerostudio.idea.piecetable.common.Range
+import com.zerostudio.idea.piecetable.common.SingleEditOperation
 
 import kotlin.test.Test
 import kotlin.test.assertEquals

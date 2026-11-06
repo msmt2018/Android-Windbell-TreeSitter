@@ -16,8 +16,8 @@
 
 package x.github.module.editor.input
 
-import x.github.module.piecetable.common.Range
-import x.github.module.piecetable.common.SingleEditOperation
+import com.zerostudio.idea.piecetable.common.Range
+import com.zerostudio.idea.piecetable.common.SingleEditOperation
 
 /**
  * Indenting as the keys ask for it: Enter carries the indentation over to the new

@@ -17,9 +17,9 @@
 package x.github.module.editor.model
 
 import x.github.module.editor.testing.FakeScheduler
-import x.github.module.piecetable.common.Range
-import x.github.module.piecetable.common.ReverseEditOperation
-import x.github.module.piecetable.common.TextChange
+import com.zerostudio.idea.piecetable.common.Range
+import com.zerostudio.idea.piecetable.common.ReverseEditOperation
+import com.zerostudio.idea.piecetable.common.TextChange
 
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse

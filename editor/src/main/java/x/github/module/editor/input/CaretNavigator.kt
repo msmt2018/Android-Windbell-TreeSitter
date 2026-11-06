@@ -16,7 +16,7 @@
 
 package x.github.module.editor.input
 
-import x.github.module.piecetable.common.Position
+import com.zerostudio.idea.piecetable.common.Position
 
 import x.github.module.editor.util.TextBoundaries
 

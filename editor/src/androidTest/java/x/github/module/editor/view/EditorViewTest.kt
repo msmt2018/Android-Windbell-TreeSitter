@@ -43,10 +43,10 @@ import x.github.module.editor.structure.FoldingRange
 import x.github.module.editor.structure.IndentationFoldingProvider
 import x.github.module.editor.structure.PlainBracketMatcher
 import x.github.module.editor.model.EditorDocument
-import x.github.module.piecetable.PieceTreeTextBufferBuilder
-import x.github.module.piecetable.SliceEdit
-import x.github.module.piecetable.common.SingleEditOperation
-import x.github.module.piecetable.common.Range
+import com.zerostudio.idea.piecetable.PieceTreeTextBufferBuilder
+import com.zerostudio.idea.piecetable.SliceEdit
+import com.zerostudio.idea.piecetable.common.SingleEditOperation
+import com.zerostudio.idea.piecetable.common.Range
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse

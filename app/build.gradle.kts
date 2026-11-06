@@ -18,7 +18,7 @@ import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
  */
 plugins {
     id("com.android.application")
-    id("kotlin-android")
+    id("org.jetbrains.kotlin.android")
 }
 
 android {
@@ -67,9 +67,11 @@ dependencies {
     implementation(libs.androidx.appcompat)
     implementation(libs.androidx.constraintlayout)
     implementation(libs.common.kotlin.coroutines.android)
-    implementation(libs.google.material)
+    implementation(libs.material)
 
     implementation(projects.androidTreeSitter)
+    implementation(project(":editor"))
+    implementation(project(":piecetable"))
     implementation(projects.treeSitterJava)
     implementation(projects.treeSitterJson)
     implementation(projects.treeSitterKotlin)

@@ -16,7 +16,7 @@
 
 package x.github.module.editor.util
 
-import x.github.module.piecetable.common.Range
+import com.zerostudio.idea.piecetable.common.Range
 
 /**
  * The ranges of a sorted list that overlap a given range, found by binary search.

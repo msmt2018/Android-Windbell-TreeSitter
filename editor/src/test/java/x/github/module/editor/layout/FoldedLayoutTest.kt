@@ -21,7 +21,7 @@ import x.github.module.editor.structure.FoldingModel
 import x.github.module.editor.structure.FoldingRange
 import x.github.module.editor.testing.FakeMeasurer
 import x.github.module.editor.testing.FakeTextSource
-import x.github.module.piecetable.common.Range
+import com.zerostudio.idea.piecetable.common.Range
 
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
