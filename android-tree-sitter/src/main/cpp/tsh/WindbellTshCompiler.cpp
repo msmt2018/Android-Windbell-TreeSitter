@@ -1637,6 +1637,76 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                                 return nullptr;
                             }
                         }
+                    } else if (field.text == "electricCharacters") {
+                        if (lexer.nextToken().type != TshLexer::TokenType::TOK_COLON ||
+                            !read_string_array(grammar->editor_metadata.electric_characters)) return nullptr;
+                    } else if (field.text == "autoCloseBefore") {
+                        if (lexer.nextToken().type != TshLexer::TokenType::TOK_COLON) return nullptr;
+                        auto value = lexer.nextToken();
+                        if (value.type != TshLexer::TokenType::TOK_REGEX) return nullptr;
+                        regex_t* validation = compileOnigurumaUtf16(value.text);
+                        if (!validation) return nullptr;
+                        onig_free(validation);
+                        grammar->editor_metadata.auto_close_before_pattern = value.text;
+                    } else if (field.text == "onEnterRules") {
+                        if (lexer.nextToken().type != TshLexer::TokenType::TOK_COLON ||
+                            lexer.nextToken().type != TshLexer::TokenType::TOK_LBRACKET) return nullptr;
+                        while (true) {
+                            auto entry = lexer.nextToken();
+                            if (entry.type == TshLexer::TokenType::TOK_RBRACKET) break;
+                            if (entry.type == TshLexer::TokenType::TOK_COMMA) continue;
+                            if (entry.type != TshLexer::TokenType::TOK_LBRACE) return nullptr;
+                            TshOnEnterRule rule;
+                            bool has_before = false;
+                            while (true) {
+                                auto key = lexer.nextToken();
+                                if (key.type == TshLexer::TokenType::TOK_RBRACE) break;
+                                if (key.type == TshLexer::TokenType::TOK_COMMA) continue;
+                                if (key.type == TshLexer::TokenType::TOK_EOF ||
+                                    lexer.nextToken().type != TshLexer::TokenType::TOK_COLON) return nullptr;
+                                if (key.text == "action") {
+                                    if (lexer.nextToken().type != TshLexer::TokenType::TOK_LBRACE) return nullptr;
+                                    while (true) {
+                                        auto action_key = lexer.nextToken();
+                                        if (action_key.type == TshLexer::TokenType::TOK_RBRACE) break;
+                                        if (action_key.type == TshLexer::TokenType::TOK_COMMA) continue;
+                                        if (lexer.nextToken().type != TshLexer::TokenType::TOK_COLON) return nullptr;
+                                        auto action_value = lexer.nextToken();
+                                        if (action_value.type != TshLexer::TokenType::TOK_STRING &&
+                                            action_value.type != TshLexer::TokenType::TOK_IDENT &&
+                                            action_value.type != TshLexer::TokenType::TOK_NUMBER) return nullptr;
+                                        if (action_key.text == "indent") {
+                                            if (action_value.text != "none" && action_value.text != "indent" &&
+                                                action_value.text != "indentOutdent" && action_value.text != "outdent") return nullptr;
+                                            rule.indent_action = action_value.text;
+                                        } else if (action_key.text == "appendText") {
+                                            rule.append_text = action_value.text;
+                                        } else if (action_key.text == "removeText") {
+                                            try {
+                                                size_t consumed = 0;
+                                                const int value = std::stoi(action_value.text, &consumed);
+                                                if (consumed != action_value.text.size() || value < 0) return nullptr;
+                                                rule.remove_text = static_cast<uint32_t>(value);
+                                            } catch (...) { return nullptr; }
+                                        } else {
+                                            return nullptr;
+                                        }
+                                    }
+                                } else {
+                                    auto value = lexer.nextToken();
+                                    if (value.type != TshLexer::TokenType::TOK_REGEX) return nullptr;
+                                    regex_t* validation = compileOnigurumaUtf16(value.text);
+                                    if (!validation) return nullptr;
+                                    onig_free(validation);
+                                    if (key.text == "beforeText") { rule.before_text = value.text; has_before = true; }
+                                    else if (key.text == "afterText") rule.after_text = value.text;
+                                    else if (key.text == "previousLineText") rule.previous_line_text = value.text;
+                                    else return nullptr;
+                                }
+                            }
+                            if (!has_before || rule.indent_action.empty()) return nullptr;
+                            grammar->editor_metadata.on_enter_rules.push_back(std::move(rule));
+                        }
                     } else {
                         // Unknown editor properties are rejected rather than silently misread.
                         return nullptr;
