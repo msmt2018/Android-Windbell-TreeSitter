@@ -20,12 +20,8 @@ class WindbellTshLinkageTest {
         }
     }
 
-    @Test
-    fun testNativeLoadTshSourceLinkageAndExecution() {
-        val engine = WindbellTshEngine.instance
-
-        // 验证具备复杂代理对 (Emoji / 罕见字) 与正则规则的 TSH 配置载入
-        val tshDsl = """
+    private fun javaTestDsl(): String {
+        return """
             name: ["Java", ".java"]
             styles: [
                 "keyword", #FF007F, #CC7832, @B,
@@ -41,6 +37,14 @@ class WindbellTshLinkageTest {
                 { match: /\/\/[^\n]*/, style: "comment" }
             ]
         """.trimIndent()
+    }
+
+    @Test
+    fun testNativeLoadTshSourceLinkageAndExecution() {
+        val engine = WindbellTshEngine.instance
+
+        // 验证具备复杂代理对 (Emoji / 罕见字) 与正则规则的 TSH 配置载入
+        val tshDsl = javaTestDsl()
 
         // 断言 nativeLoadTshSource 绝不产生 UnsatisfiedLinkError
         assertDoesNotThrow {
@@ -137,6 +141,9 @@ class WindbellTshLinkageTest {
     @Test
     fun testSurrogatePairsAndHighlightingStability() {
         val engine = WindbellTshEngine.instance
+        if (engine.listSchemes("java-test").isEmpty()) {
+            assertTrue(engine.loadTshSource("java-test", javaTestDsl(), null))
+        }
 
         // 包含 Emoji 👨‍👩‍👧‍👦 与罕见 CJK 字符 𠮷 (测试跨语言 UTF-16 双字节切片完整性)
         val testCode = """
