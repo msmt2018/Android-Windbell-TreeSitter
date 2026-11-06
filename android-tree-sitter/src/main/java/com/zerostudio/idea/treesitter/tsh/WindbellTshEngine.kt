@@ -26,10 +26,12 @@ class WindbellTshEngine private constructor() {
     data class StylePalette(
         val styleId: Int,
         val lightColor: Int,
-        val darkColor: Int
+        val darkColor: Int,
+        val fontFlags: Int
     )
 
     private val paletteCache = ConcurrentHashMap<String, Map<Int, StylePalette>>()
+    private val selectedSchemes = ConcurrentHashMap<String, String>()
     
     // 主题切换开关：切换时无需重新走分词运算，仅刷新颜色绘制
     var isDarkTheme: Boolean = false
@@ -50,23 +52,45 @@ class WindbellTshEngine private constructor() {
     fun loadTshSource(extension: String, tshSourceContent: String, language: TSLanguage? = null): Boolean {
         val success = nativeLoadTshSource(extension, tshSourceContent, language?.nativeObject ?: 0L)
         if (success) {
-            reloadPalette(extension)
+            val defaultScheme = nativeGetDefaultScheme(extension)
+            if (defaultScheme != null) {
+                selectedSchemes[extension] = defaultScheme
+                reloadPalette(extension, defaultScheme)
+            }
         }
         return success
     }
 
-    private fun reloadPalette(extension: String) {
-        val flatPalette = nativeGetPalette(extension) ?: return
+    private fun reloadPalette(extension: String, schemeName: String) {
+        val flatPalette = nativeGetPalette(extension, schemeName) ?: return
         val map = HashMap<Int, StylePalette>()
-        val count = flatPalette.size / 3
+        val count = flatPalette.size / 4
         for (i in 0 until count) {
-            val id = flatPalette[i * 3 + 0]
-            val light = flatPalette[i * 3 + 1]
-            val dark = flatPalette[i * 3 + 2]
-            map[id] = StylePalette(id, light, dark)
+            val id = flatPalette[i * 4]
+            val light = flatPalette[i * 4 + 1]
+            val dark = flatPalette[i * 4 + 2]
+            val flags = flatPalette[i * 4 + 3]
+            map[id] = StylePalette(id, light, dark, flags)
         }
         paletteCache[extension] = map
     }
+
+    /** Returns every scheme declared by the loaded .tsh document. */
+    fun listSchemes(extension: String): List<String> =
+        nativeGetSchemeNames(extension)?.toList() ?: emptyList()
+
+    /** Returns the default scheme selected by the .tsh document. */
+    fun getDefaultScheme(extension: String): String? = nativeGetDefaultScheme(extension)
+
+    /** Switches only the palette; parsing and the Tree-sitter tree are retained. */
+    fun selectScheme(extension: String, schemeName: String): Boolean {
+        if (schemeName !in listSchemes(extension)) return false
+        selectedSchemes[extension] = schemeName
+        reloadPalette(extension, schemeName)
+        return true
+    }
+
+    fun getSelectedScheme(extension: String): String? = selectedSchemes[extension]
 
     /**
      * 直接向 Android 编辑器 Spannable 批量直填着色 (零闪烁、零装箱开销)
@@ -96,7 +120,7 @@ class WindbellTshEngine private constructor() {
                 if (color != 0) {
                     spannable.setSpan(ForegroundColorSpan(color), charStart, charEnd, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
                 }
-                val flags = span.fontFlags
+                val flags = span.fontFlags or (colorDef?.fontFlags ?: 0)
                 if ((flags and 0x01) != 0) {
                     spannable.setSpan(StyleSpan(android.graphics.Typeface.BOLD), charStart, charEnd, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
                 }
@@ -126,7 +150,13 @@ class WindbellTshEngine private constructor() {
     private external fun nativeLoadTshSource(extension: String, tshSourceContent: String, languagePtr: Long): Boolean
 
     @FastNative
-    private external fun nativeGetPalette(extension: String): IntArray?
+    private external fun nativeGetSchemeNames(extension: String): Array<String>?
+
+    @FastNative
+    private external fun nativeGetDefaultScheme(extension: String): String?
+
+    @FastNative
+    private external fun nativeGetPalette(extension: String, schemeName: String): IntArray?
 
     @FastNative
     private external fun nativeHighlight(treePtr: Long, text: String, extension: String): IntArray?
