@@ -1,9 +1,5 @@
 /*
  * JNI Native Transport Layer for Windbell-TSH
- *
- * 内存与 GC 约束：
- * 1. 严格使用 env->GetStringRegion 与扁平数组传输，严防局部引用溢出。
- * 2. 批量将调色板、Span、折叠数据在 Native 栈写入，消除 Java 对象装箱。
  */
 
 #include <jni.h>
@@ -11,16 +7,13 @@
 #include <string>
 #include "tsh/WindbellTshCore.h"
 #include "tsh/WindbellTshCompiler.h"
-#include "utils/ts_preconditions.h"
+#include "utils/ts_exceptions.h"
 #include "ts__log.h"
 
 using namespace windbell::tsh;
 
 extern "C" {
 
-/**
- * 动态加载并编译 .tsh 源码，绑定目标语言符号
- */
 JNIEXPORT jboolean JNICALL
 Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeLoadTshSource(
     JNIEnv* env,
@@ -29,8 +22,10 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeLoadTshSource(
     jstring tsh_source_jstr,
     jlong language_ptr
 ) {
-    req_nnp(env, extension_jstr, "extension");
-    req_nnp(env, tsh_source_jstr, "tshSourceContent");
+    if (!extension_jstr || !tsh_source_jstr) {
+        throw_npe(env, "Parameters cannot be null");
+        return JNI_FALSE;
+    }
 
     const char* ext = env->GetStringUTFChars(extension_jstr, nullptr);
     std::string ext_str(ext);
@@ -51,17 +46,17 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeLoadTshSource(
     return JNI_TRUE;
 }
 
-/**
- * 批量传输调色板色彩映射
- * 格式：[StyleID, LightColor(0xAARRGGBB), DarkColor(0xAARRGGBB)]
- */
 JNIEXPORT jintArray JNICALL
 Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeGetPalette(
     JNIEnv* env,
     jclass clazz,
     jstring extension_jstr
 ) {
-    req_nnp(env, extension_jstr, "extension");
+    if (!extension_jstr) {
+        throw_npe(env, "extension cannot be null");
+        return nullptr;
+    }
+
     const char* ext = env->GetStringUTFChars(extension_jstr, nullptr);
     auto grammar = WindbellEngine::getInstance().getGrammarByExtension(ext);
     env->ReleaseStringUTFChars(extension_jstr, ext);
@@ -82,10 +77,6 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeGetPalette(
     return result;
 }
 
-/**
- * 执行混合分词计算并返回扁平数组
- * 格式：[start_byte, end_byte, style_id | (flags << 16)]
- */
 JNIEXPORT jintArray JNICALL
 Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlight(
     JNIEnv* env,
@@ -94,8 +85,10 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlight(
     jstring text_jstr,
     jstring extension_jstr
 ) {
-    req_nnp(env, text_jstr, "text");
-    req_nnp(env, extension_jstr, "extension");
+    if (!text_jstr || !extension_jstr) {
+        throw_npe(env, "text or extension cannot be null");
+        return nullptr;
+    }
 
     TSTree* tree = reinterpret_cast<TSTree*>(tree_ptr);
     const char* ext = env->GetStringUTFChars(extension_jstr, nullptr);
@@ -130,10 +123,6 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlight(
     return result;
 }
 
-/**
- * 提取代码折叠范围
- * 格式：[start_byte, end_byte, kind]
- */
 JNIEXPORT jintArray JNICALL
 Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeComputeFolds(
     JNIEnv* env,
@@ -142,14 +131,18 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeComputeFolds(
     jstring text_jstr,
     jstring extension_jstr
 ) {
-    req_nnp(env, tree_ptr, "tree");
-    req_nnp(env, text_jstr, "text");
-    req_nnp(env, extension_jstr, "extension");
+    if (!tree_ptr || !text_jstr) {
+        throw_npe(env, "tree or text cannot be null");
+        return nullptr;
+    }
 
     TSTree* tree = reinterpret_cast<TSTree*>(tree_ptr);
-    const char* ext = env->GetStringUTFChars(extension_jstr, nullptr);
-    std::string ext_str(ext);
-    env->ReleaseStringUTFChars(extension_jstr, ext);
+    std::string ext_str = "";
+    if (extension_jstr != nullptr) {
+        const char* ext = env->GetStringUTFChars(extension_jstr, nullptr);
+        ext_str = ext;
+        env->ReleaseStringUTFChars(extension_jstr, ext);
+    }
 
     jsize len = env->GetStringLength(text_jstr);
     std::vector<uint16_t> buffer(len);
@@ -173,10 +166,6 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeComputeFolds(
     return result;
 }
 
-/**
- * 提取符号大纲列表
- * 格式：[start_byte, end_byte, kind, name]
- */
 JNIEXPORT jobjectArray JNICALL
 Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeGetOutline(
     JNIEnv* env,
@@ -185,14 +174,18 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeGetOutline(
     jstring text_jstr,
     jstring extension_jstr
 ) {
-    req_nnp(env, tree_ptr, "tree");
-    req_nnp(env, text_jstr, "text");
-    req_nnp(env, extension_jstr, "extension");
+    if (!tree_ptr || !text_jstr) {
+        throw_npe(env, "tree or text cannot be null");
+        return nullptr;
+    }
 
     TSTree* tree = reinterpret_cast<TSTree*>(tree_ptr);
-    const char* ext = env->GetStringUTFChars(extension_jstr, nullptr);
-    std::string ext_str(ext);
-    env->ReleaseStringUTFChars(extension_jstr, ext);
+    std::string ext_str = "";
+    if (extension_jstr != nullptr) {
+        const char* ext = env->GetStringUTFChars(extension_jstr, nullptr);
+        ext_str = ext;
+        env->ReleaseStringUTFChars(extension_jstr, ext);
+    }
 
     jsize len = env->GetStringLength(text_jstr);
     std::vector<uint16_t> buffer(len);
@@ -224,9 +217,6 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeGetOutline(
     return strArray;
 }
 
-/**
- * 悬停信息查询接口
- */
 JNIEXPORT jobjectArray JNICALL
 Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeGetHoverInfo(
     JNIEnv* env,
@@ -234,7 +224,10 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeGetHoverInfo(
     jlong tree_ptr,
     jint byte_offset
 ) {
-    req_nnp(env, tree_ptr, "tree");
+    if (!tree_ptr) {
+        throw_npe(env, "tree cannot be null");
+        return nullptr;
+    }
     TSTree* tree = reinterpret_cast<TSTree*>(tree_ptr);
 
     HoverInfo info;

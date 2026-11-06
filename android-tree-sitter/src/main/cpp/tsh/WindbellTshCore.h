@@ -7,6 +7,7 @@
  * 1. 纯声明式语法对象模型（完全由 .tsh 动态生成，零硬编码）。
  * 2. 宏观 Tree-sitter AST 选择器 + 微观 Oniguruma 正则双引擎契约。
  * 3. 内存布局严格适配 ARM64 64 字节 Cache Line。
+ * 4. 折叠和大纲支持基于 AST 语言自感知的默认扩展名参数。
  */
 
 #pragma once
@@ -101,6 +102,7 @@ class TshGrammar {
 public:
     std::string name;
     std::vector<std::string> file_extensions;
+    const TSLanguage* ts_language = nullptr; // 绑定的 AST 原生语言指针
     
     std::unordered_map<std::string, uint16_t> style_name_to_id;
     std::vector<StyleDefinition> styles;
@@ -137,8 +139,22 @@ public:
         const std::string& extension
     );
 
-    std::vector<FoldRange> computeFoldRanges(TSTree* tree, const uint16_t* input_chars, uint32_t length_chars, const std::string& extension);
-    std::vector<OutlineTag> computeOutline(TSTree* tree, const uint16_t* input_chars, uint32_t length_chars, const std::string& extension);
+    // 折叠区域提取 (支持带或不带 extension 参数调用)
+    std::vector<FoldRange> computeFoldRanges(
+        TSTree* tree,
+        const uint16_t* input_chars,
+        uint32_t length_chars,
+        const std::string& extension = ""
+    );
+
+    // 符号大纲提取 (支持带或不带 extension 参数调用)
+    std::vector<OutlineTag> computeOutline(
+        TSTree* tree,
+        const uint16_t* input_chars,
+        uint32_t length_chars,
+        const std::string& extension = ""
+    );
+
     bool getHoverInfo(TSTree* tree, uint32_t byte_offset, HoverInfo& out_info);
 
 private:

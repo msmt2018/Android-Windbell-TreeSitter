@@ -31,14 +31,16 @@ include(${CMAKE_CURRENT_SOURCE_DIR}/../../../../cmake/common-config.cmake)
 include_directories("${TS_DIR}/lib/src")
 include_directories("${TS_DIR}/lib/include")
 
-# Oniguruma
+# ==============================================================================
+# Oniguruma (鬼车) 路径配置：位于当前 cpp/oniguruma 目录
+# ==============================================================================
 set(ONIG_DIR "${CMAKE_CURRENT_SOURCE_DIR}/oniguruma")
 set(ONIG_SRC_DIR "${ONIG_DIR}/src")
 
-#Oniguruma 源码及配置头文件路径
+# 引入 Oniguruma 源码及配置头文件路径
 include_directories("${ONIG_SRC_DIR}")
 
-# Windbell-TSH 自身头文件
+# 引入 Windbell-TSH 自身头文件
 include_directories("${CMAKE_CURRENT_SOURCE_DIR}")
 include_directories("${CMAKE_CURRENT_SOURCE_DIR}/tsh")
 
@@ -57,7 +59,7 @@ add_library(android-tree-sitter SHARED
     # Tree-sitter 核心内核
     "${TS_DIR}/lib/src/lib.c"
 
-    # Oniguruma 核心源文件
+    # Oniguruma 完整核心与编码表实现 (完全闭合依赖符号，避免 NDK 静态断言失败)
     "${ONIG_SRC_DIR}/regerror.c"
     "${ONIG_SRC_DIR}/regparse.c"
     "${ONIG_SRC_DIR}/regext.c"
@@ -72,9 +74,19 @@ add_library(android-tree-sitter SHARED
     "${ONIG_SRC_DIR}/onig_init.c"
     "${ONIG_SRC_DIR}/unicode.c"
     "${ONIG_SRC_DIR}/ascii.c"
+    "${ONIG_SRC_DIR}/utf8.c"
     "${ONIG_SRC_DIR}/utf16_le.c"
     "${ONIG_SRC_DIR}/utf16_be.c"
-    "${ONIG_SRC_DIR}/utf8.c"
+    "${ONIG_SRC_DIR}/utf32_le.c"
+    "${ONIG_SRC_DIR}/utf32_be.c"
+    "${ONIG_SRC_DIR}/sjis.c"
+    "${ONIG_SRC_DIR}/sjis_prop.c"
+    "${ONIG_SRC_DIR}/euc_jp.c"
+    "${ONIG_SRC_DIR}/euc_jp_prop.c"
+    "${ONIG_SRC_DIR}/unicode_unfold_key.c"
+    "${ONIG_SRC_DIR}/unicode_fold1_key.c"
+    "${ONIG_SRC_DIR}/unicode_fold2_key.c"
+    "${ONIG_SRC_DIR}/unicode_fold3_key.c"
 
     # 原生 JNI 适配层
     main.cc
@@ -103,5 +115,5 @@ add_library(android-tree-sitter SHARED
 
 if (${CMAKE_SYSTEM_NAME} STREQUAL Android)
     find_library(log log)
-    target_link_libraries(android-tree-sitter ${log})
+    target_link_libraries(android-tree-sitter PRIVATE ${log})
 endif()

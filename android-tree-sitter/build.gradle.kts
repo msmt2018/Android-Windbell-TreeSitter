@@ -14,10 +14,13 @@
  *   You should have received a copy of the GNU General Public License
  *  along with android-tree-sitter.  If not, see <https://www.gnu.org/licenses/>.
  */
+import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
   id("com.android.library")
   id("maven-publish")
+  id("org.jetbrains.kotlin.android")
   id("android-tree-sitter.ts")
 }
 
@@ -25,6 +28,15 @@ description = "Android Java bindings for Tree Sitter."
 
 android {
   namespace = "com.zerostudio.idea.treesitter"
+  
+  tasks.withType<KotlinCompile>().configureEach {
+    kotlinOptions {
+        jvmTarget = "11"
+        freeCompilerArgs += listOf(
+            "-opt-in=kotlin.ExperimentalUnsignedTypes"
+        )
+    }
+}
 }
 
 dependencies {
