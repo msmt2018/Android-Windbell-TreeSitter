@@ -9,6 +9,7 @@
 #include <limits>
 #include <functional>
 #include <unordered_set>
+#include <string_view>
 #include "ts__log.h"
 
 namespace windbell::tsh {
@@ -826,6 +827,22 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                         }
                     }
                     if (!child_found) continue;
+                }
+
+                if (ast_rule.has_text_equals || ast_rule.has_text_prefix ||
+                    ast_rule.has_text_suffix) {
+                    const uint32_t text_start = ts_node_start_byte(node);
+                    const uint32_t text_end = ts_node_end_byte(node);
+                    if (text_start > text_end || text_end > tree_source_utf8.size()) continue;
+                    const std::string_view node_text(
+                        tree_source_utf8.data() + text_start, text_end - text_start);
+                    if (ast_rule.has_text_equals && node_text != ast_rule.text_equals) continue;
+                    if (ast_rule.has_text_prefix &&
+                        (node_text.size() < ast_rule.text_prefix.size() ||
+                         node_text.substr(0, ast_rule.text_prefix.size()) != ast_rule.text_prefix)) continue;
+                    if (ast_rule.has_text_suffix &&
+                        (node_text.size() < ast_rule.text_suffix.size() ||
+                         node_text.substr(node_text.size() - ast_rule.text_suffix.size()) != ast_rule.text_suffix)) continue;
                 }
 
                 if (ast_rule.child_index != UINT32_MAX ||
