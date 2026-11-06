@@ -260,7 +260,6 @@ std::shared_ptr<TshGrammar> TshCompiler::compile(const std::string& source, cons
     std::string dynamic_query_accumulator;
 
     uint16_t global_style_counter = 0;
-    uint32_t regex_declaration_order = 0;
     auto ensureStyleId = [&](const std::string& name) -> uint16_t {
         auto it = grammar->style_name_to_id.find(name);
         if (it != grammar->style_name_to_id.end()) return it->second;
