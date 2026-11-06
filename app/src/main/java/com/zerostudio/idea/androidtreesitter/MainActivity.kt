@@ -127,6 +127,7 @@ class MainActivity : AppCompatActivity() {
                 withContext(Dispatchers.Main) {
                     javaTshReady = ok
                     installTshHighlighterIfReady()
+                    applyTshThemeTokens()
                     Log.d(TAG, "Windbell-TSH [Java] configuration compiled: $ok")
                 }
             }.onFailure {
@@ -254,10 +255,22 @@ class MainActivity : AppCompatActivity() {
                 )
             }
             view.setSyntaxHighlighter(activeTshHighlighter)
+            applyTshThemeTokens()
         } else {
             view.setSyntaxHighlighter(null)
             activeTshHighlighter = null
         }
+    }
+
+    /** Applies only UI colors explicitly declared by the active .tsh scheme. */
+    private fun applyTshThemeTokens() {
+        val view = editorView ?: return
+        val tokens = WindbellTshEngine.instance.getThemeTokens("java")
+        tokens["editor.background"]?.let(view::setBackgroundColor)
+        tokens["editor.foreground"]?.let(view::setTextColor)
+        tokens["editor.selection"]?.let(view::setSelectionColor)
+        tokens["editor.lineHighlight"]?.let(view::setCurrentLineColor)
+        tokens["editor.gutter"]?.let(view::setLineNumberColor)
     }
 
     private fun setEditorContent(text: String) {
