@@ -1606,6 +1606,7 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                                     } else if (key.text == "cases") {
                                         if (value.type != TshLexer::TokenType::TOK_LBRACE) return nullptr;
                                         bool saw_default_case = false;
+                                        std::unordered_map<std::string, bool> seen_case_keys;
                                         while (true) {
                                             auto case_key = lexer.nextToken();
                                             if (case_key.type == TshLexer::TokenType::TOK_RBRACE) break;
@@ -1613,10 +1614,12 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                                             if (saw_default_case ||
                                                 (case_key.type != TshLexer::TokenType::TOK_STRING &&
                                                  case_key.type != TshLexer::TokenType::TOK_IDENT) ||
+                                                !seen_case_keys.emplace(case_key.text, true).second ||
                                                 lexer.nextToken().type != TshLexer::TokenType::TOK_COLON) return nullptr;
                                             auto case_token = lexer.nextToken();
-                                            if (case_token.type != TshLexer::TokenType::TOK_STRING &&
-                                                case_token.type != TshLexer::TokenType::TOK_IDENT) return nullptr;
+                                            if ((case_token.type != TshLexer::TokenType::TOK_STRING &&
+                                                 case_token.type != TshLexer::TokenType::TOK_IDENT) ||
+                                                case_token.text.empty()) return nullptr;
                                             MonarchCase case_entry;
                                             case_entry.token_name = case_token.text;
                                             if (case_key.text == "@default") {
