@@ -71,15 +71,20 @@ schemes {
       comment: #808080 @italic
     ]
     ui {
-      editor.background: #FFFFFF
-      editor.foreground: #202020
-      editor.selection: #ADD6FF
-      editor.lineHighlight: #F2F2F2
-      editor.gutter: #858585
-      editor.caret: #000000
-      editor.whitespace: #D0D0D0
-      editor.indentGuide: #D0D0D0
-      editor.invisibles: #A0A0A0
+      light {
+        editor.background: #FFFFFF
+        editor.foreground: #202020
+        editor.selection: #ADD6FF
+        editor.lineHighlight: #F2F2F2
+        editor.gutter: #858585
+      }
+      dark {
+        editor.background: #2B2B2B
+        editor.foreground: #A9B7C6
+        editor.selection: #214283
+        editor.lineHighlight: #323232
+        editor.gutter: #6B6B6B
+      }
       diagnostics.error: #E51400
       diagnostics.warning: #BF8803
     }
