@@ -1894,10 +1894,14 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
             auto child_ui = std::move(child.ui_colors);
             auto child_light_ui = std::move(child.ui_light_colors);
             auto child_dark_ui = std::move(child.ui_dark_colors);
+            auto child_scope_rules = std::move(child.scope_rules);
             child.colors = parent.colors;
             child.ui_colors = parent.ui_colors;
             child.ui_light_colors = parent.ui_light_colors;
             child.ui_dark_colors = parent.ui_dark_colors;
+            child.scope_rules = parent.scope_rules;
+            child.scope_rules.insert(child.scope_rules.end(),
+                child_scope_rules.begin(), child_scope_rules.end());
             for (const auto& entry : child_colors) {
                 auto& target = child.colors[entry.first];
                 if (entry.second.has_light_color) {
@@ -1942,6 +1946,47 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
             grammar->styles.resize(static_cast<size_t>(style.style_id) + 1);
         }
         grammar->styles[style.style_id] = std::move(style);
+    }
+
+    // Apply TextMate scope-selector theme rules to styles that do not already
+    // have an explicit per-style color in the selected scheme.
+    for (auto& scheme_entry : grammar->schemes) {
+        auto& scheme = scheme_entry.second;
+        std::unordered_map<uint16_t, int> best_light;
+        std::unordered_map<uint16_t, int> best_dark;
+        std::unordered_map<uint16_t, uint32_t> best_light_order;
+        std::unordered_map<uint16_t, uint32_t> best_dark_order;
+        for (const auto& style : grammar->styles) {
+            const auto scope_stack = buildStyleScopeStack(*grammar, style);
+            if (scope_stack.empty()) continue;
+            auto& palette = scheme.colors[style.style_id];
+            for (const auto& scope_rule : scheme.scope_rules) {
+                const int specificity = textMateSelectorSpecificity(scope_rule.selector, scope_stack);
+                if (specificity < 0) continue;
+                if (scope_rule.has_light_color && !palette.has_light_color) {
+                    const int previous = best_light.count(style.style_id) ? best_light[style.style_id] : -1;
+                    const uint32_t previous_order = best_light_order[style.style_id];
+                    if (specificity > previous ||
+                        (specificity == previous && scope_rule.declaration_order >= previous_order)) {
+                        palette.light_color = scope_rule.light_color;
+                        palette.has_light_color = true;
+                        best_light[style.style_id] = specificity;
+                        best_light_order[style.style_id] = scope_rule.declaration_order;
+                    }
+                }
+                if (scope_rule.has_dark_color && !palette.has_dark_color) {
+                    const int previous = best_dark.count(style.style_id) ? best_dark[style.style_id] : -1;
+                    const uint32_t previous_order = best_dark_order[style.style_id];
+                    if (specificity > previous ||
+                        (specificity == previous && scope_rule.declaration_order >= previous_order)) {
+                        palette.dark_color = scope_rule.dark_color;
+                        palette.has_dark_color = true;
+                        best_dark[style.style_id] = specificity;
+                        best_dark_order[style.style_id] = scope_rule.declaration_order;
+                    }
+                }
+            }
+        }
     }
 
     // Keep extension aliases deterministic while avoiding duplicates when a
