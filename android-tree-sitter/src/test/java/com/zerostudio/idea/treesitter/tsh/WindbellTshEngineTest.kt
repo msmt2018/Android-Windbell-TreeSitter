@@ -336,12 +336,13 @@ class WindbellTshLinkageTest {
             }
             styles {
                 comment { scope: "comment.block", tags: ["comment"] }
+                commentContent { scope: "comment.content", tags: ["comment", "content"] }
                 todo { scope: "keyword.other.todo", tags: ["todo"] }
             }
             schemes {
                 plain {
-                    light [ comment: #808080, todo: #CC5500 ]
-                    dark [ comment: #888888, todo: #FFAA55 ]
+                    light [ comment: #808080, commentContent: #707070, todo: #CC5500 ]
+                    dark [ comment: #888888, commentContent: #777777, todo: #FFAA55 ]
                 }
             }
             repository {
