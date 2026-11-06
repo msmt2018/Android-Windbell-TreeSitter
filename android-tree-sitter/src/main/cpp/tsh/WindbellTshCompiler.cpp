@@ -1607,10 +1607,20 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                          entry.type != TshLexer::TokenType::TOK_STRING)) return nullptr;
                     if (lexer.nextToken().type != TshLexer::TokenType::TOK_COLON) return nullptr;
                     auto pattern = lexer.nextToken();
-                    if ((pattern.type != TshLexer::TokenType::TOK_REGEX &&
-                         pattern.type != TshLexer::TokenType::TOK_STRING) ||
-                        pattern.text.empty()) return nullptr;
-                    if (!defines_map.emplace(entry.text, pattern.text).second) return nullptr;
+                    std::string repository_value;
+                    if (pattern.type == TshLexer::TokenType::TOK_REGEX ||
+                        pattern.type == TshLexer::TokenType::TOK_STRING) {
+                        repository_value = pattern.text;
+                    } else if (pattern.type == TshLexer::TokenType::TOK_IDENT &&
+                               pattern.text == "include") {
+                        const std::string target = lexer.extractParenthesizedBlock();
+                        if (target.empty()) return nullptr;
+                        repository_value = "include(" + target + ")";
+                    } else {
+                        return nullptr;
+                    }
+                    if (repository_value.empty() ||
+                        !defines_map.emplace(entry.text, repository_value).second) return nullptr;
                 }
             }
 
