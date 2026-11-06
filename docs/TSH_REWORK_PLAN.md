@@ -139,7 +139,7 @@ The current implementation has concrete integration defects that must be correct
 
 - The compiler still needs structured source diagnostics (line/column, error code, precise source range) and transactional preservation of the last valid grammar.
 - Embedded Tree-sitter query parsing/capture maps need full validation and dedicated tests.
-- Full TextMate selector parsing/matching, pattern-based repositories (the current repository supports reusable regex fragments only), external scope includes/injections, and begin/while/end continuation semantics remain pending.
+- Full TextMate selector syntax beyond the implemented common selector subset, pattern-object repositories, external scope includes/injections, and begin/while/end continuation semantics remain pending.
 - Monarch state-machine execution (`next`, `switchTo`, push/pop, cases, tokenizer state stacks) remains pending.
 - The unified `rules { ats { ... } regex { ... } }` façade remains pending; the currently implemented entry points are `treeSitter.queries`, `ast`, and `contains`.
 - Additional rule attributes such as lookarounds/options, begin/while/end state, named capture groups, content scopes and rule repository includes need implementation.
