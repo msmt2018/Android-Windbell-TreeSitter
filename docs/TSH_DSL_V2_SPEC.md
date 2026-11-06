@@ -14,7 +14,7 @@
 
 ## 2. File shape
 
-A v2 file is a brace-delimited document. Commas after entries are optional. Strings support single and double quotes; comments support // and /* */. Regex literals use /.../ with optional flags.
+A v2 file is a brace-delimited document. Commas after entries are optional. Strings support single and double quotes with JSON escapes (`\\n`, `\\r`, `\\t`, quotes, backslash and `\\uXXXX` including valid surrogate pairs); backticks are raw strings. Comments support // and /* */. Regex literals use /.../ with optional flags. Unknown punctuation, malformed escapes, unterminated strings/comments/regexes, and unescaped newlines in quoted strings are lexical errors rather than silently skipped input.
 
 ```tsh
 tsh 2 {
@@ -259,7 +259,7 @@ monarch {
 }
 ```
 
-The runtime tokenizes the complete UTF-16 document with a persistent state stack and emits normalized spans into the shared arbitration pipeline. State references and include cycles are validated. Regex variables declared in `variables` are recursively expanded (with unknown references and cycles rejected); escaped references and character classes are not rewritten. `tokenPostfix` is appended to token names and `defaultToken` after parsing, so declarations are order-independent. `ignoreCase` sets the tokenizer's default Oniguruma option. Remaining planned Monarch features include `cases`, action arrays, embedded-language tokens, `goBack`, `@rematch` action syntax, and bracket actions.
+The runtime tokenizes the complete UTF-16 document with a persistent state stack and emits normalized spans into the shared arbitration pipeline. State references and include cycles are validated. Regex variables declared in `variables` before `tokenizer` are recursively expanded (with unknown references and cycles rejected, including unused cyclic definitions); escaped references and character classes are not rewritten. `tokenPostfix` is appended to token names and `defaultToken` after parsing, so the postfix declaration itself may appear in any position. `ignoreCase` must be declared before `tokenizer` and sets the tokenizer's default Oniguruma option. Remaining planned Monarch features include `cases`, action arrays, embedded-language tokens, `goBack`, `@rematch` action syntax, and bracket actions.
 
 ## 8. Editor/language metadata
 
