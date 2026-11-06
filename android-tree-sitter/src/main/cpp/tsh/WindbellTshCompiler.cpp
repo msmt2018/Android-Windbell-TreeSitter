@@ -1585,6 +1585,35 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                 }
             }
 
+            // TextMate-compatible named repository. Entries are regex fragments
+            // addressable through include("#name") from match/begin/end patterns.
+            // Keep the same expansion and cycle detection path as legacy defines.
+            else if (tok.text == "repository") {
+                if (!mark_root_section("repository")) return nullptr;
+                auto open = lexer.nextToken();
+                if (open.type == TshLexer::TokenType::TOK_COLON) open = lexer.nextToken();
+                const auto close_type = open.type == TshLexer::TokenType::TOK_LBRACE
+                    ? TshLexer::TokenType::TOK_RBRACE
+                    : open.type == TshLexer::TokenType::TOK_LBRACKET
+                        ? TshLexer::TokenType::TOK_RBRACKET
+                        : TshLexer::TokenType::TOK_INVALID;
+                if (close_type == TshLexer::TokenType::TOK_INVALID) return nullptr;
+                while (true) {
+                    auto entry = lexer.nextToken();
+                    if (entry.type == close_type) break;
+                    if (entry.type == TshLexer::TokenType::TOK_COMMA) continue;
+                    if (entry.type == TshLexer::TokenType::TOK_EOF ||
+                        (entry.type != TshLexer::TokenType::TOK_IDENT &&
+                         entry.type != TshLexer::TokenType::TOK_STRING)) return nullptr;
+                    if (lexer.nextToken().type != TshLexer::TokenType::TOK_COLON) return nullptr;
+                    auto pattern = lexer.nextToken();
+                    if ((pattern.type != TshLexer::TokenType::TOK_REGEX &&
+                         pattern.type != TshLexer::TokenType::TOK_STRING) ||
+                        pattern.text.empty()) return nullptr;
+                    if (!defines_map.emplace(entry.text, pattern.text).second) return nullptr;
+                }
+            }
+
             // Monarch-compatible tokenizer states. Rules are compiled to the
             // same Oniguruma UTF-16 engine used by TextMate-style regex patterns.
             else if (tok.text == "monarch") {
