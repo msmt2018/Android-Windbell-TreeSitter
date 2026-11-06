@@ -232,7 +232,7 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeGetThemeTokens(
 /**
  * Export palette for the explicitly selected scheme.
  * Layout: [styleId, lightColor, darkColor, lightFlags, darkFlags, hasLight, hasDark] * N.
- * A zero color means that the DSL did not define a value for that appearance.
+ * Presence flags distinguish an absent value from an explicit transparent color.
  */
 JNIEXPORT jintArray JNICALL
 Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeGetPalette(
