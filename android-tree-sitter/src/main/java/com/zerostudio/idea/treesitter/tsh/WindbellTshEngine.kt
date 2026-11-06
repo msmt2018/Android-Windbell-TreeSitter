@@ -140,7 +140,7 @@ class WindbellTshEngine private constructor() {
         val tokens = LinkedHashMap<String, Int>(raw.size / 2)
         var index = 0
         while (index + 1 < raw.size) {
-            tokens[raw[index]] = raw[index + 1].toInt()
+            tokens[raw[index]] = raw[index + 1].toLong().toInt()
             index += 2
         }
         return tokens
