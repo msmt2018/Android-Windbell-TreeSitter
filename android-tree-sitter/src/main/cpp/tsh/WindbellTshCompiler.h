@@ -11,8 +11,18 @@
 #include <string>
 #include <memory>
 #include <unordered_map>
+#include <mutex>
+#include <cstdint>
 
 namespace windbell::tsh {
+
+struct TshCompileDiagnostic {
+    std::string code;
+    std::string message;
+    uint32_t offset = 0;
+    uint32_t line = 1;
+    uint32_t column = 1;
+};
 
 class TshCompiler {
 public:
@@ -23,9 +33,14 @@ public:
 
     // 从 .tsh 文件源码直接编译出可执行的高可用语法对象 (若传入 ts_lang 则同时完成符号对齐)
     std::shared_ptr<TshGrammar> compile(const std::string& source, const TSLanguage* ts_lang = nullptr);
+    std::vector<TshCompileDiagnostic> getLastDiagnostics() const;
 
 private:
     TshCompiler() = default;
+
+    std::shared_ptr<TshGrammar> compileInternal(const std::string& source, const TSLanguage* ts_lang);
+    mutable std::mutex diagnostic_mutex_;
+    std::vector<TshCompileDiagnostic> last_diagnostics_;
 
     std::string expandKeywordsToRegex(const std::string& word_list);
     uint32_t parseColorHex(const std::string& hex_str);
