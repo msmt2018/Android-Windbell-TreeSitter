@@ -356,6 +356,7 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
 
     std::function<bool(CompiledRegexRule&)> parseRegexRule;
     parseRegexRule = [&](CompiledRegexRule& rule) -> bool {
+        rule.regex_options = grammar->default_regex_options;
         std::string raw_match_pattern;
         std::string raw_start_pattern;
         std::string raw_end_pattern;
@@ -512,6 +513,38 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
 
     while (tok.type != TshLexer::TokenType::TOK_EOF) {
         if (tok.type == TshLexer::TokenType::TOK_IDENT) {
+
+            // Language-wide regex execution semantics.
+            if (tok.text == "matching") {
+                auto open = lexer.nextToken();
+                if (open.type == TshLexer::TokenType::TOK_COLON) open = lexer.nextToken();
+                if (open.type != TshLexer::TokenType::TOK_LBRACE) return nullptr;
+                while (true) {
+                    auto key = lexer.nextToken();
+                    if (key.type == TshLexer::TokenType::TOK_RBRACE) break;
+                    if (key.type == TshLexer::TokenType::TOK_COMMA) continue;
+                    if (key.type == TshLexer::TokenType::TOK_EOF ||
+                        lexer.nextToken().type != TshLexer::TokenType::TOK_COLON) return nullptr;
+                    auto value = lexer.nextToken();
+                    const bool enabled = value.text == "true";
+                    if (value.text != "true" && value.text != "false") return nullptr;
+                    if (key.text == "caseSensitive") {
+                        if (!enabled) grammar->default_regex_options |= ONIG_OPTION_IGNORECASE;
+                    } else if (key.text == "multiline") {
+                        if (enabled) grammar->default_regex_options |= ONIG_OPTION_MULTILINE;
+                    } else if (key.text == "dotAll") {
+                        if (enabled) grammar->default_regex_options |= ONIG_OPTION_SINGLELINE;
+                    } else if (key.text == "extended") {
+                        if (enabled) grammar->default_regex_options |= ONIG_OPTION_EXTEND;
+                    } else if (key.text == "unicode") {
+                        // Oniguruma is always compiled in UTF-16LE mode. Reject
+                        // disabling Unicode rather than silently changing encoding.
+                        if (!enabled) return nullptr;
+                    } else {
+                        return nullptr;
+                    }
+                }
+            }
 
             // Language identity and editor/file association metadata.
             if (tok.text == "language") {
