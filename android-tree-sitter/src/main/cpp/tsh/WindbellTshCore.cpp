@@ -748,17 +748,12 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                     continue;
                 for (uint32_t capture_index = 0; capture_index < match.capture_count; ++capture_index) {
                     const TSQueryCapture& capture = match.captures[capture_index];
-                    uint32_t name_len = 0;
-                    const char* cap_name = ts_query_capture_name_for_id(
-                        native_query.query, capture.index, &name_len);
-                    if (!cap_name) continue;
-                    const std::string cap_str(cap_name, name_len);
-                    auto it = grammar->style_name_to_id.find(cap_str);
-                    if (it == grammar->style_name_to_id.end()) continue;
+                    auto style_binding = native_query.capture_style_ids.find(capture.index);
+                    if (style_binding == native_query.capture_style_ids.end()) continue;
                     HighlightSpan span;
                     span.start_byte = ts_node_start_byte(capture.node);
                     span.end_byte = ts_node_end_byte(capture.node);
-                    span.style_id = it->second;
+                    span.style_id = style_binding->second;
                     span.flags = 0;
                     span.priority = native_query.priority;
                     span.declaration_order = native_query.declaration_order + current_order + capture_index;
