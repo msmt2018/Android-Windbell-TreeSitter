@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cstring>
 #include <functional>
+#include <unordered_set>
 #include "ts__log.h"
 
 namespace windbell::tsh {
@@ -353,6 +354,123 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
             }
         }
         onig_region_free(region, 1);
+    }
+
+    // Monarch stateful tokenizer. It runs on the same UTF-16 buffer as
+    // Oniguruma rules and emits the same span ABI, so the Android renderer does
+    // not need a second token model.
+    if (!grammar->monarch_states.empty()) {
+        std::vector<std::string> state_stack{grammar->monarch_start_state};
+        OnigRegion* monarch_region = onig_region_new();
+        uint32_t position = 0;
+        uint32_t zero_width_steps = 0;
+        while (position < total_bytes) {
+            const MonarchRule* matched_rule = nullptr;
+            std::unordered_set<std::string> include_path;
+            std::function<const MonarchRule*(const std::string&)> find_rule =
+                [&](const std::string& state_name) -> const MonarchRule* {
+                    if (!include_path.insert(state_name).second) return nullptr;
+                    auto state = grammar->monarch_states.find(state_name);
+                    if (state == grammar->monarch_states.end()) {
+                        include_path.erase(state_name);
+                        return nullptr;
+                    }
+                    for (const auto& candidate : state->second) {
+                        if (!candidate.enabled) continue;
+                        if (!candidate.include_state.empty()) {
+                            if (const MonarchRule* included = find_rule(candidate.include_state)) {
+                                include_path.erase(state_name);
+                                return included;
+                            }
+                        }
+                        if (!candidate.pattern) continue;
+                        const int length = onig_match(
+                            candidate.pattern,
+                            text_start,
+                            text_end,
+                            text_start + position,
+                            monarch_region,
+                            ONIG_OPTION_NONE
+                        );
+                        if (length >= 0) {
+                            include_path.erase(state_name);
+                            return &candidate;
+                        }
+                    }
+                    include_path.erase(state_name);
+                    return nullptr;
+                };
+
+            const std::string active_state = state_stack.empty() ?
+                grammar->monarch_start_state : state_stack.back();
+            matched_rule = find_rule(active_state);
+            if (!matched_rule) {
+                const UChar* next = advanceOneUtf16CodePoint(text_start + position, text_end);
+                const uint32_t end = static_cast<uint32_t>(next - text_start);
+                if (grammar->monarch_has_default_style && end > position) {
+                    HighlightSpan span;
+                    span.start_byte = position;
+                    span.end_byte = end;
+                    span.style_id = grammar->monarch_default_style_id;
+                    span.priority = 0;
+                    span.declaration_order = 0;
+                    micro_spans.push_back(span);
+                }
+                position = end;
+                zero_width_steps = 0;
+                continue;
+            }
+
+            const uint32_t match_start = monarch_region->beg[0] >= 0 ?
+                static_cast<uint32_t>(monarch_region->beg[0]) : position;
+            const uint32_t match_end = monarch_region->end[0] >= 0 ?
+                static_cast<uint32_t>(monarch_region->end[0]) : position;
+            if (matched_rule->has_style && match_end > match_start &&
+                (match_start & 1u) == 0 && (match_end & 1u) == 0) {
+                HighlightSpan span;
+                span.start_byte = match_start;
+                span.end_byte = match_end;
+                span.style_id = matched_rule->style_id;
+                span.priority = matched_rule->priority;
+                span.declaration_order = matched_rule->declaration_order;
+                micro_spans.push_back(span);
+            }
+
+            const std::vector<std::string> old_stack = state_stack;
+            auto strip_at = [](std::string value) {
+                if (!value.empty() && value.front() == '@') value.erase(value.begin());
+                return value;
+            };
+            if (matched_rule->pop || matched_rule->next_state == "@pop") {
+                if (state_stack.size() > 1) state_stack.pop_back();
+            } else if (matched_rule->next_state == "@popall") {
+                state_stack.assign(1, grammar->monarch_start_state);
+            } else if (matched_rule->next_state == "@push") {
+                state_stack.push_back(state_stack.back());
+            } else if (!matched_rule->next_state.empty()) {
+                state_stack.back() = strip_at(matched_rule->next_state);
+            } else if (!matched_rule->push_state.empty()) {
+                state_stack.push_back(strip_at(matched_rule->push_state));
+            } else if (!matched_rule->switch_state.empty()) {
+                state_stack.back() = strip_at(matched_rule->switch_state);
+            }
+
+            if (matched_rule->rematch && state_stack != old_stack) {
+                if (++zero_width_steps > 64) {
+                    const UChar* next = advanceOneUtf16CodePoint(text_start + position, text_end);
+                    position = static_cast<uint32_t>(next - text_start);
+                    zero_width_steps = 0;
+                }
+            } else if (match_end > position) {
+                position = match_end;
+                zero_width_steps = 0;
+            } else {
+                const UChar* next = advanceOneUtf16CodePoint(text_start + position, text_end);
+                position = static_cast<uint32_t>(next - text_start);
+                if (++zero_width_steps > 64) zero_width_steps = 0;
+            }
+        }
+        onig_region_free(monarch_region, 1);
     }
 
     std::vector<HighlightSpan> macro_spans;
