@@ -642,6 +642,20 @@ std::shared_ptr<TshGrammar> TshCompiler::compile(const std::string& source, cons
                                 auto style_name = lexer.nextToken();
                                 const uint16_t style_id = ensureStyleId(style_name.text);
                                 reg_rule.group_style_map[group_index] = style_id;
+                            } else if (item.text == "id") {
+                                lexer.nextToken();
+                                reg_rule.id = lexer.nextToken().text;
+                            } else if (item.text == "priority") {
+                                lexer.nextToken();
+                                auto value = lexer.nextToken();
+                                if (value.type != TshLexer::TokenType::TOK_NUMBER) return nullptr;
+                                reg_rule.priority = std::stoi(value.text);
+                            } else if (item.text == "enabled") {
+                                lexer.nextToken();
+                                reg_rule.enabled = lexer.nextToken().text != "false";
+                            } else if (item.text == "overlap") {
+                                lexer.nextToken();
+                                reg_rule.allow_overlap = lexer.nextToken().text == "allow";
                             } else if (item.text == "builtin") {
                                 lexer.nextToken();
                                 auto b_id = lexer.nextToken().text;
