@@ -367,6 +367,16 @@ std::shared_ptr<TshGrammar> TshCompiler::compile(const std::string& source, cons
                 }
             }
 
+            // DSL default rendering mode: false = light/day, true = dark/night.
+            else if (tok.text == "isDark") {
+                auto separator = lexer.nextToken();
+                if (separator.type != TshLexer::TokenType::TOK_COLON) return nullptr;
+                auto value = lexer.nextToken();
+                if (value.text == "true") grammar->default_is_dark = true;
+                else if (value.text == "false") grammar->default_is_dark = false;
+                else return nullptr;
+            }
+
             // =================================================================
             // 3. Semantic style declarations. Supports v2 object syntax and the
             // legacy [name, lightColor, darkColor, @modifier] tuple syntax.
