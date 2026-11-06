@@ -2569,7 +2569,7 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                     if (at.type == TshLexer::TokenType::TOK_LBRACE) {
                         AstSelectorRule ast_rule;
                         ast_rule.declaration_order = ast_declaration_order++;
-                        std::string node_name, field_name, parent_name, ancestor_name, style_bind_name;
+                        std::string node_name, field_name, parent_name, ancestor_name, child_name, style_bind_name;
                         auto read_ast_value = [&]() -> TshLexer::Token {
                             if (lexer.nextToken().type != TshLexer::TokenType::TOK_COLON) {
                                 return {TshLexer::TokenType::TOK_EOF, ""};
@@ -2584,7 +2584,7 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                             if (field.type == TshLexer::TokenType::TOK_COMMA) continue;
 
                             if (field.text == "node" || field.text == "field" || field.text == "parent" ||
-                                field.text == "ancestor" ||
+                                field.text == "ancestor" || field.text == "child" ||
                                 field.text == "style" || field.text == "id") {
                                 auto value = read_ast_value();
                                 if (value.type != TshLexer::TokenType::TOK_STRING &&
@@ -2593,6 +2593,7 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                                 else if (field.text == "field") field_name = value.text;
                                 else if (field.text == "parent") parent_name = value.text;
                                 else if (field.text == "ancestor") ancestor_name = value.text;
+                                else if (field.text == "child") child_name = value.text;
                                 else if (field.text == "style") style_bind_name = value.text;
                                 else ast_rule.id = value.text;
                             } else if (field.text == "query") {
@@ -2671,6 +2672,12 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                                     ts_lang, ancestor_name.c_str(),
                                     static_cast<uint32_t>(ancestor_name.length()), true);
                                 if (ast_rule.ancestor_symbol == 0) return nullptr;
+                            }
+                            if (!child_name.empty()) {
+                                ast_rule.child_symbol = ts_language_symbol_for_name(
+                                    ts_lang, child_name.c_str(),
+                                    static_cast<uint32_t>(child_name.length()), true);
+                                if (ast_rule.child_symbol == 0) return nullptr;
                             }
                         }
 
