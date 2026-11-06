@@ -220,8 +220,8 @@
         },
 
         // ---------- 5.3 字符串与数值复合内置模式 ----------
-        {builtin: "javaQuotedString"},
-        {builtin: "javaNumber"},
+        {builtin: "javaQuotedString", 0: "string"},
+        {builtin: "javaNumber", 0: "number"},
 
         // ---------- 5.4 单行与普通多行注释 ----------
         {
