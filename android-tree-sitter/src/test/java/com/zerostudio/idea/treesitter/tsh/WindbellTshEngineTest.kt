@@ -583,25 +583,25 @@ class WindbellTshLinkageTest {
         val styleId = engine.getStyleCatalog("java-ast-node-flags")
             .first { it.name == "declaration" }.styleId
         assertTrue(spans.any {
-            it.styleId == styleId && it.startByte == code.indexOf("Demo") && it.priority == 35
+            it.styleId == styleId && it.startByte == code.indexOf("Demo") * 2 && it.priority == 35
         })
         val aliasId = engine.getStyleCatalog("java-ast-node-flags")
             .first { it.name == "declarationAlias" }.styleId
         assertTrue(spans.any {
-            it.styleId == aliasId && it.startByte == code.indexOf("Demo") && it.priority == 34
+            it.styleId == aliasId && it.startByte == code.indexOf("Demo") * 2 && it.priority == 34
         }, "All matching ATS rules must emit candidates; the resolver handles overlap.")
         val operatorId = engine.getStyleCatalog("java-ast-node-flags")
             .first { it.name == "operator" }.styleId
         assertTrue(spans.any {
-            it.styleId == operatorId && it.startByte == code.indexOf("+") && it.endByte == code.indexOf("+") + 1
+            it.styleId == operatorId && it.startByte == code.indexOf("+") * 2 && it.endByte == (code.indexOf("+") + 1) * 2
         }, "ATS must resolve and match anonymous Tree-sitter symbols.")
         val methodNameId = engine.getStyleCatalog("java-ast-node-flags")
             .first { it.name == "methodName" }.styleId
         assertTrue(spans.any {
-            it.styleId == methodNameId && it.startByte == code.indexOf("run")
+            it.styleId == methodNameId && it.startByte == code.indexOf("run") * 2
         }, "ATS ancestor constraints must match descendants.")
         assertFalse(spans.any {
-            it.styleId == methodNameId && it.startByte == code.indexOf("Demo")
+            it.styleId == methodNameId && it.startByte == code.indexOf("Demo") * 2
         }, "ATS ancestor constraints must reject nodes outside the selected ancestor.")
         val methodBodyId = engine.getStyleCatalog("java-ast-node-flags")
             .first { it.name == "methodWithBody" }.styleId
@@ -643,10 +643,10 @@ class WindbellTshLinkageTest {
         val tokenId = engine.getStyleCatalog("java-pattern-metadata").first { it.name == "token" }.styleId
 
         assertFalse(spans.any {
-            it.styleId == tokenId && it.startByte == code.indexOf("Demo")
+            it.styleId == tokenId && it.startByte == code.indexOf("Demo") * 2
         })
         assertTrue(spans.any {
-            it.styleId == tokenId && it.startByte == code.indexOf("run") && it.priority == 90
+            it.styleId == tokenId && it.startByte == code.indexOf("run") * 2 && it.priority == 90
         })
         tree?.close()
         parser.close()
@@ -709,7 +709,7 @@ class WindbellTshLinkageTest {
         assertTrue(spans.any { it.styleId == methodId && it.priority == 50 })
         assertTrue(spans.any { it.styleId == methodId && it.priority == 60 })
         assertFalse(spans.any {
-            it.styleId == methodId && it.priority == 50 && it.startByte == code.indexOf("other") * 2
+            it.styleId == methodId && it.priority == 50 && it.startByte == code.indexOf("other") * 2 * 2
         })
         assertFalse(spans.any {
             it.styleId == methodId && it.priority == 60 && it.startByte == code.indexOf("skip") * 2
