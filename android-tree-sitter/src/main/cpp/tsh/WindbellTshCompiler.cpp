@@ -2607,6 +2607,20 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                                 g_tsh_last_error_detail =
                                     "ast selectors cannot contain query source; use treeSitter.queries for native query programs";
                                 return nullptr;
+                            } else if (field.text == "text" || field.text == "textPrefix" ||
+                                       field.text == "textSuffix") {
+                                auto value = read_ast_value();
+                                if (value.type != TshLexer::TokenType::TOK_STRING) return nullptr;
+                                if (field.text == "text") {
+                                    ast_rule.text_equals = value.text;
+                                    ast_rule.has_text_equals = true;
+                                } else if (field.text == "textPrefix") {
+                                    ast_rule.text_prefix = value.text;
+                                    ast_rule.has_text_prefix = true;
+                                } else {
+                                    ast_rule.text_suffix = value.text;
+                                    ast_rule.has_text_suffix = true;
+                                }
                             } else if (field.text == "firstChild" || field.text == "lastChild") {
                                 auto value = read_ast_value();
                                 int8_t flag = -1;
