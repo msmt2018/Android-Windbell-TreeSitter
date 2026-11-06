@@ -226,7 +226,7 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeGetThemeTokens(
 
 /**
  * Export palette for the explicitly selected scheme.
- * Layout: [styleId, lightColor, darkColor, fontFlags, hasLight, hasDark] * N.
+ * Layout: [styleId, lightColor, darkColor, lightFlags, darkFlags, hasLight, hasDark] * N.
  * A zero color means that the DSL did not define a value for that appearance.
  */
 JNIEXPORT jintArray JNICALL
@@ -252,23 +252,24 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeGetPalette(
     if (scheme_it == grammar->schemes.end()) return env->NewIntArray(0);
 
     const jsize count = static_cast<jsize>(grammar->styles.size());
-    jintArray result = env->NewIntArray(count * 6);
+    jintArray result = env->NewIntArray(count * 7);
     if (!result) return nullptr;
-    std::vector<jint> values(static_cast<size_t>(count) * 6, 0);
+    std::vector<jint> values(static_cast<size_t>(count) * 7, 0);
     for (jsize i = 0; i < count; ++i) {
         const auto& style = grammar->styles[static_cast<size_t>(i)];
-        values[i * 6] = static_cast<jint>(style.style_id);
+        values[i * 7] = static_cast<jint>(style.style_id);
         auto color_it = scheme_it->second.colors.find(style.style_id);
         if (color_it != scheme_it->second.colors.end()) {
             const SchemeColor& color = color_it->second;
-            values[i * 6 + 1] = static_cast<jint>(color.light_color);
-            values[i * 6 + 2] = static_cast<jint>(color.dark_color);
-            values[i * 6 + 3] = static_cast<jint>(color.font_flags);
-            values[i * 6 + 4] = color.has_light_color ? 1 : 0;
-            values[i * 6 + 5] = color.has_dark_color ? 1 : 0;
+            values[i * 7 + 1] = static_cast<jint>(color.light_color);
+            values[i * 7 + 2] = static_cast<jint>(color.dark_color);
+            values[i * 7 + 3] = static_cast<jint>(color.light_font_flags);
+            values[i * 7 + 4] = static_cast<jint>(color.dark_font_flags);
+            values[i * 7 + 5] = color.has_light_color ? 1 : 0;
+            values[i * 7 + 6] = color.has_dark_color ? 1 : 0;
         }
     }
-    env->SetIntArrayRegion(result, 0, count * 6, values.data());
+    env->SetIntArrayRegion(result, 0, count * 7, values.data());
     return result;
 }
 
