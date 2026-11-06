@@ -32,7 +32,7 @@ struct HighlightSpan {
 };
 #pragma pack(pop)
 
-static_assert(sizeof(HighlightSpan) == 20, "HighlightSpan ABI must remain 20 bytes.");
+static_assert(sizeof(HighlightSpan) == 24, "HighlightSpan ABI must remain 24 bytes.");
 
 enum class RegexRuleType : uint8_t {
     MATCH,
@@ -62,6 +62,8 @@ struct AstSelectorRule {
     bool has_style = false;
     int32_t priority = 0;
     uint32_t declaration_order = 0;
+    uint8_t allow_overlap = 0;
+    uint8_t reserved[3] = {};
 };
 
 // Compiled style catalog entry. IDs are opaque runtime indices; names carry semantics.
