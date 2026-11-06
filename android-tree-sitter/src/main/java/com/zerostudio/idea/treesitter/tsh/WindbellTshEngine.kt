@@ -226,6 +226,11 @@ class WindbellTshEngine private constructor() {
         return result
     }
 
+    fun getStylePalette(extension: String, styleName: String): StylePalette? {
+        val style = getStyleCatalog(extension).firstOrNull { it.name == styleName } ?: return null
+        return paletteCache[extension]?.get(style.styleId)
+    }
+
     /** Returns every scheme declared by the loaded .tsh document. */
     fun listSchemes(extension: String): List<String> =
         nativeGetSchemeNames(extension)?.toList() ?: emptyList()
