@@ -67,6 +67,10 @@ jobs:
           ndk-version: r25
       - name: Install dependencies
         run: $ATS_SUDO $ATS_APT_UPDATE && $ATS_SUDO $ATS_APT_UPGRADE && $ATS_SUDO $ATS_APT_INSTALL $ATS_APT_DEPS
+      - name: Set up Node.js 20 for legacy tree-sitter grammar bindings
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
       - name: Install Node packages
         run: |
           # 1. 寻找 grammars 目录下所有包含 package.json 的子目录
@@ -145,6 +149,10 @@ jobs:
           ndk-version: r25
       - name: Install dependencies
         run: $ATS_SUDO $ATS_APT_UPDATE && $ATS_SUDO $ATS_APT_UPGRADE && $ATS_SUDO $ATS_APT_INSTALL $ATS_APT_DEPS
+      - name: Set up Node.js 20 for legacy tree-sitter grammar bindings
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
       - name: Install Node packages
         run: |
           cd grammars/cpp && npm install && cd -
