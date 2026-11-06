@@ -78,6 +78,8 @@ struct TshStyle {
     std::vector<std::string> tags;
     std::string description;
     std::string parent;
+    bool deprecated = false;
+    std::unordered_map<std::string, std::string> metadata;
 };
 
 // 单个 Token 的方案配色定义
