@@ -267,8 +267,8 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeGetEditorMetadat
 }
 
 /**
- * Export semantic style catalog entries as six strings each:
- * id, name, scope, description, parent, tags joined with U+001F.
+ * Export semantic style catalog entries as eight strings each:
+ * id, name, scope, description, parent, tags, deprecated, metadata.
  */
 JNIEXPORT jobjectArray JNICALL
 Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeGetStyleCatalog(
@@ -288,7 +288,7 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeGetStyleCatalog(
         return empty;
     }
 
-    jobjectArray result = env->NewObjectArray(static_cast<jsize>(grammar->styles.size() * 6), string_class, nullptr);
+    jobjectArray result = env->NewObjectArray(static_cast<jsize>(grammar->styles.size() * 8), string_class, nullptr);
     if (!result) { env->DeleteLocalRef(string_class); return nullptr; }
     for (size_t i = 0; i < grammar->styles.size(); ++i) {
         const auto& style = grammar->styles[i];
@@ -297,13 +297,21 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeGetStyleCatalog(
             if (tag_index) tags.push_back('\x1F');
             tags += style.tags[tag_index];
         }
+        std::string metadata;
+        for (const auto& entry : style.metadata) {
+            if (!metadata.empty()) metadata.push_back('\x1E');
+            metadata += entry.first;
+            metadata.push_back('\x1F');
+            metadata += entry.second;
+        }
         const std::string values[] = {
             std::to_string(style.style_id), style.name, style.scope,
-            style.description, style.parent, tags
+            style.description, style.parent, tags,
+            style.deprecated ? "true" : "false", metadata
         };
-        for (size_t field = 0; field < 6; ++field) {
+        for (size_t field = 0; field < 8; ++field) {
             jstring value = env->NewStringUTF(values[field].c_str());
-            env->SetObjectArrayElement(result, static_cast<jsize>(i * 6 + field), value);
+            env->SetObjectArrayElement(result, static_cast<jsize>(i * 8 + field), value);
             env->DeleteLocalRef(value);
         }
     }
