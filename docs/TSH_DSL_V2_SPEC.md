@@ -221,7 +221,7 @@ Implemented today:
 - A `repository` block for reusable regex fragments, referenced with `include("#name")`.
 - Recursive repository fragment expansion with cycle detection.
 
-Scope theme rules use `scopeRules: [{ selector, light, dark }]`. The current selector evaluator supports comma alternatives, descendant selectors, direct-child `>`, exclusion terms with `-`, exact/prefix scope matching, `*` and `.*` wildcards, and strips the `L:`/`R:` priority prefixes. Full TextMate selector grouping/precedence and injection-selector semantics are not implemented. Specificity is resolved before palette assignment. Matching stacks are built from `source.<language.id>` and the semantic style's parent-scope chain. Explicit per-style colors take precedence over scope rules.
+Scope theme rules use `scopeRules: [{ selector, light, dark }]`. The current selector evaluator supports comma and grouped `|` alternatives (including nested parenthesized groups), descendant selectors, direct-child `>`, exclusion terms with `-`, exact/prefix scope matching, `*` and `.*` wildcards, and strips the `L:`/`R:` priority prefixes. Full TextMate selector precedence/priority semantics and injection-selector semantics are not implemented. Specificity is resolved before palette assignment. Matching stacks are built from `source.<language.id>` and the semantic style's parent-scope chain. Explicit per-style colors take precedence over scope rules.
 
 Still planned:
 - Pattern-object repositories and external `$self`/`$base` scope includes.
