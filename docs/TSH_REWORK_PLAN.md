@@ -127,6 +127,7 @@ The current implementation has concrete integration defects that must be correct
 - Added structured compile diagnostics through JNI/Kotlin (error code/message, source offset, line and column).
 - Added Oniguruma global/per-rule flags, UTF-8/modified-UTF-8 to UTF-16 pattern decoding, named capture groups, TextMate begin/end delimiter capture maps, and recursive named repository-fragment includes with cycle detection.
 - Added the canonical `tsh 2 { ... }` envelope, strict duplicate/unknown-property checks for core sections, typed editor options, raw multiline Tree-sitter query strings, and validated embedded query capture names.
+- Added a working Monarch tokenizer state machine with ordered Oniguruma rules, state includes, default token handling, persistent state stack, next/push/switch/pop transitions, rematch guards and compile-time state/include validation.
 - Added per-appearance bold/italic/underline/strikethrough modifiers, correct style-ID-zero handling, explicit color-presence transport (including transparent colors), and RGB/RGBA/ARGB normalization.
 - Fixed ATS field selectors so `node + field` styles the selected child node; removed numeric style-ID assumptions from span arbitration.
 - Added recursive Oniguruma block/contains parsing, numeric capture maps, `captures { ... }`, named rule IDs, priority, enablement and overlap declarations. Capture results carry priority and declaration order; nested regions are range-constrained and recursively released.
