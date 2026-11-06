@@ -40,6 +40,24 @@ class WindbellTshLinkageTest {
     }
 
     @Test
+    fun testCompileFailureExposesStructuredDiagnostic() {
+        val engine = WindbellTshEngine.instance
+        assertFalse(engine.loadTshSource("invalid", """
+            language {
+                id: "invalid"
+                extensions: [".invalid"]
+                unknownField: true
+            }
+        """.trimIndent(), null))
+        val diagnostic = engine.lastCompileDiagnostics.firstOrNull()
+        assertNotNull(diagnostic)
+        assertEquals("TSH_PARSE_OR_COMPILE_ERROR", diagnostic?.code)
+        assertTrue((diagnostic?.line ?: 0) >= 1)
+        assertTrue((diagnostic?.column ?: 0) >= 1)
+        assertTrue(diagnostic?.message?.isNotBlank() == true)
+    }
+
+    @Test
     fun testNativeLoadTshSourceLinkageAndExecution() {
         val engine = WindbellTshEngine.instance
 
@@ -57,6 +75,14 @@ class WindbellTshLinkageTest {
     fun testNamedSchemesAndDslAppearance() {
         val engine = WindbellTshEngine.instance
         val source = """
+            language {
+                id: "scheme-test"
+                name: "Scheme Test"
+                extensions: [".scheme", ".sch"]
+                aliases: ["Scheme", "Test Scheme"]
+                mimeTypes: ["text/x-scheme-test"]
+                firstLine: /^#!.*scheme-test/
+            }
             name: ["Scheme Test", ".scheme"]
             isDark: true
             styles {
@@ -106,6 +132,13 @@ class WindbellTshLinkageTest {
         """.trimIndent()
 
         assertTrue(engine.loadTshSource("scheme", source, null))
+        val language = engine.getLanguageMetadata("scheme")
+        assertEquals("scheme-test", language.id)
+        assertEquals("Scheme Test", language.name)
+        assertEquals(listOf("scheme", "sch"), language.extensions)
+        assertEquals(listOf("Scheme", "Test Scheme"), language.aliases)
+        assertEquals(listOf("text/x-scheme-test"), language.mimeTypes)
+        assertEquals("^#!.*scheme-test", language.firstLinePattern)
         assertEquals(listOf("github", "midnight"), engine.listSchemes("scheme").sorted())
         assertEquals("midnight", engine.getDefaultScheme("scheme"))
         assertTrue(engine.isDark("scheme"))
