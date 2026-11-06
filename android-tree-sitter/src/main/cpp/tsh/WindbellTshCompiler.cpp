@@ -446,24 +446,23 @@ std::shared_ptr<TshGrammar> TshCompiler::compile(const std::string& source, cons
                         color.has_light_color = true;
                         color.has_dark_color = true;
 
-                        while (true) {
-                            auto modifier = lexer.nextToken();
-                            if (modifier.type == TshLexer::TokenType::TOK_COMMA) break;
-                            if (modifier.type == TshLexer::TokenType::TOK_RBRACKET) {
-                                lexer.putBack(std::move(modifier));
-                                break;
-                            }
-                            if (modifier.type == TshLexer::TokenType::TOK_EOF) return nullptr;
-                            if (modifier.type == TshLexer::TokenType::TOK_AT) {
-                                auto flag = lexer.nextToken();
-                                if (flag.text == "B" || flag.text == "bold") color.font_flags |= 0x01;
-                                else if (flag.text == "I" || flag.text == "italic") color.font_flags |= 0x02;
-                                else if (flag.text == "U" || flag.text == "underline") color.font_flags |= 0x04;
-                                continue;
-                            }
-                            lexer.putBack(std::move(modifier));
-                            break;
+                        auto modifier = lexer.nextToken();
+                        if (modifier.type == TshLexer::TokenType::TOK_COMMA) {
+                            modifier = lexer.nextToken();
                         }
+                        while (modifier.type == TshLexer::TokenType::TOK_AT) {
+                            auto flag = lexer.nextToken();
+                            if (flag.text == "B" || flag.text == "bold") color.font_flags |= 0x01;
+                            else if (flag.text == "I" || flag.text == "italic") color.font_flags |= 0x02;
+                            else if (flag.text == "U" || flag.text == "underline") color.font_flags |= 0x04;
+                            modifier = lexer.nextToken();
+                            if (modifier.type == TshLexer::TokenType::TOK_COMMA) {
+                                modifier = lexer.nextToken();
+                            }
+                        }
+                        if (modifier.type == TshLexer::TokenType::TOK_EOF) return nullptr;
+                        // Leave the next tuple or closing bracket for the outer loop.
+                        lexer.putBack(std::move(modifier));
                         legacy_scheme.colors[style_id] = color;
                     }
                     grammar->schemes[legacy_scheme.name] = std::move(legacy_scheme);
