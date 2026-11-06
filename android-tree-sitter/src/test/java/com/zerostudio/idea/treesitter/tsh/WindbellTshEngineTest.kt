@@ -217,6 +217,11 @@ class WindbellTshLinkageTest {
                         captures: { todo: "todo" }
                         priority: 100
                     }
+                    {
+                        match: /FIXME/
+                        captures: { 0: "todo" }
+                        priority: 90
+                    }
                     ]
                 }
             ]
