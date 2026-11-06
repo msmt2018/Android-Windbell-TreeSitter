@@ -546,8 +546,19 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
     };
 
     TshLexer::Token tok = lexer.nextToken();
+    bool versioned_document = false;
+    bool versioned_document_closed = false;
+    if (tok.type == TshLexer::TokenType::TOK_IDENT && tok.text == "tsh") {
+        const auto version = lexer.nextToken();
+        if (version.type != TshLexer::TokenType::TOK_NUMBER || version.text != "2") return nullptr;
+        if (lexer.nextToken().type != TshLexer::TokenType::TOK_LBRACE) return nullptr;
+        versioned_document = true;
+        tok = lexer.nextToken();
+    }
 
-    while (tok.type != TshLexer::TokenType::TOK_EOF) {
+    while (tok.type != TshLexer::TokenType::TOK_EOF &&
+           !(versioned_document && tok.type == TshLexer::TokenType::TOK_RBRACE)) {
+        if (versioned_document && tok.type == TshLexer::TokenType::TOK_EOF) break;
         if (tok.type == TshLexer::TokenType::TOK_IDENT) {
 
             // Legacy shorthand retained with explicit, validated semantics.
@@ -1246,6 +1257,12 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
             }
         }
         tok = lexer.nextToken();
+    }
+    if (versioned_document) {
+        versioned_document_closed = tok.type == TshLexer::TokenType::TOK_RBRACE;
+        if (!versioned_document_closed || lexer.nextToken().type != TshLexer::TokenType::TOK_EOF) {
+            return nullptr;
+        }
     }
 
     if (!grammar->default_scheme_name.empty() &&
