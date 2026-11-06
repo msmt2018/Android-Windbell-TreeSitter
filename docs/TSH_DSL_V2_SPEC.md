@@ -218,8 +218,9 @@ Implemented today:
 - A `repository` block for reusable regex fragments, referenced with `include("#name")`.
 - Recursive repository fragment expansion with cycle detection.
 
+Scope theme rules use `scopeRules: [{ selector, light, dark }]`. The current selector evaluator supports comma alternatives, descendant selectors, direct-child `>`, exclusion terms with `-`, exact/prefix scope matching, `*` and `.*` wildcards, and `L:`/`R:` selector prefixes. Specificity is resolved before palette assignment. Matching stacks are built from `source.<language.id>` and the semantic style's parent-scope chain. Explicit per-style colors take precedence over scope rules.
+
 Still planned:
-- Full TextMate scope selector parsing and specificity matching.
 - Pattern-object repositories and external `$self`/`$base` scope includes.
 - Injection selectors, scope inheritance across nested patterns, `while` continuation and complete begin/end precedence semantics.
 - Full `contentName`, `applyEndPatternLast`, and rule metadata behavior.
