@@ -535,4 +535,32 @@ class WindbellTshLinkageTest {
         }
     }
 
+
+    @Test
+    fun testIncrementalRenderPreservesSpansOutsideRequestedRange() {
+        val engine = WindbellTshEngine.instance
+        assertTrue(engine.loadTshSource("java-incremental-range", javaTestDsl(), null))
+        val source = "public class RangeDemo { String value = \"hello\"; }"
+        val buffer = SpannableStringBuilder(source)
+        val sentinel = android.text.style.ForegroundColorSpan(0xFF123456.toInt())
+        buffer.setSpan(sentinel, 0, 3, android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+
+        val spans = engine.computeHighlights(null, source, "java-incremental-range")
+        engine.applyHighlightSpansToSpannable(
+            spans = spans,
+            documentOffset = 0,
+            text = source,
+            extension = "java-incremental-range",
+            spannable = buffer,
+            start = 10,
+            end = 20
+        )
+
+        assertTrue(
+            buffer.getSpans(0, 3, android.text.style.ForegroundColorSpan::class.java)
+                .any { it === sentinel },
+            "A partial render must preserve pre-existing spans outside its invalidation range."
+        )
+    }
+
 }
