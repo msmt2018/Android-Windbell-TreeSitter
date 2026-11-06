@@ -269,6 +269,7 @@ std::shared_ptr<TshGrammar> TshCompiler::compile(const std::string& source, cons
     };
     TshLexer lexer(source);
     uint32_t regex_declaration_order = 0;
+    uint32_t ast_declaration_order = 0;
 
     std::function<bool(CompiledRegexRule&)> parseRegexRule;
     parseRegexRule = [&](CompiledRegexRule& rule) -> bool {
@@ -696,6 +697,7 @@ std::shared_ptr<TshGrammar> TshCompiler::compile(const std::string& source, cons
                     if (at.type == TshLexer::TokenType::TOK_RBRACKET || at.type == TshLexer::TokenType::TOK_EOF) break;
                     if (at.type == TshLexer::TokenType::TOK_LBRACE) {
                         AstSelectorRule ast_rule;
+                        ast_rule.declaration_order = ast_declaration_order++;
                         std::string node_name, field_name, parent_name, style_bind_name;
 
                         while (true) {
@@ -717,6 +719,17 @@ std::shared_ptr<TshGrammar> TshCompiler::compile(const std::string& source, cons
                             } else if (field.text == "query") {
                                 lexer.nextToken();
                                 dynamic_query_accumulator += lexer.nextToken().text + "\n";
+                            } else if (field.text == "id") {
+                                lexer.nextToken();
+                                ast_rule.id = lexer.nextToken().text;
+                            } else if (field.text == "priority") {
+                                lexer.nextToken();
+                                auto value = lexer.nextToken();
+                                if (value.type != TshLexer::TokenType::TOK_NUMBER) return nullptr;
+                                ast_rule.priority = std::stoi(value.text);
+                            } else if (field.text == "enabled") {
+                                lexer.nextToken();
+                                ast_rule.enabled = lexer.nextToken().text != "false";
                             }
                         }
 
