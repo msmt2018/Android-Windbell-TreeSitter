@@ -99,6 +99,19 @@ class WindbellTshEngine private constructor() {
 
     fun getSelectedScheme(extension: String): String? = selectedSchemes[extension]
 
+    /** Returns arbitrary DSL-defined UI colors (for example editor.background). */
+    fun getThemeTokens(extension: String): Map<String, Int> {
+        val scheme = selectedSchemes[extension] ?: getDefaultScheme(extension) ?: return emptyMap()
+        val raw = nativeGetThemeTokens(extension, scheme) ?: return emptyMap()
+        val tokens = LinkedHashMap<String, Int>(raw.size / 2)
+        var index = 0
+        while (index + 1 < raw.size) {
+            tokens[raw[index]] = raw[index + 1].toInt()
+            index += 2
+        }
+        return tokens
+    }
+
     /** Explicitly overrides the DSL's default appearance for this extension. */
     fun setAppearance(extension: String, isDark: Boolean) {
         appearanceOverrides[extension] = isDark
@@ -178,6 +191,9 @@ class WindbellTshEngine private constructor() {
 
     @FastNative
     private external fun nativeGetDefaultIsDark(extension: String): Boolean
+
+    @FastNative
+    private external fun nativeGetThemeTokens(extension: String, schemeName: String): Array<String>?
 
     @FastNative
     private external fun nativeGetPalette(extension: String, schemeName: String): IntArray?
