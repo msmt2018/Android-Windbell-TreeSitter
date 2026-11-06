@@ -212,7 +212,7 @@ class WindbellTshLinkageTest {
                     end: { match: /\*\// }
                     contains: [
                         {
-                        match: /todo/
+                        match: /(?<todo>todo)/
                         flags: ["i"]
                         captures: { todo: "todo" }
                         priority: 100
