@@ -75,7 +75,8 @@ class WindbellTshLinkageTest {
     fun testNamedSchemesAndDslAppearance() {
         val engine = WindbellTshEngine.instance
         val source = """
-            language {
+            tsh 2 {
+                language {
                 id: "scheme-test"
                 name: "Scheme Test"
                 extensions: [".scheme", ".sch"]
@@ -143,7 +144,8 @@ class WindbellTshLinkageTest {
                     triggerCharacters: [".", ":"]
                 }
             }
-        """.trimIndent()
+
+            }        """.trimIndent()
 
         assertTrue(engine.loadTshSource("scheme", source, null))
         val language = engine.getLanguageMetadata("scheme")
