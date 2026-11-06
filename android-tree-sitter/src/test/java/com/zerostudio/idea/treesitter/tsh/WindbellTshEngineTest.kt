@@ -462,6 +462,81 @@ class WindbellTshLinkageTest {
     }
 
     @Test
+    fun testNativeQueryTextPredicatesFilterWholeMatches() {
+        val engine = WindbellTshEngine.instance
+        val language = TSLanguageJava.getInstance()
+        val source = """
+            tsh 2 {
+                language { id: "java-query-predicates" name: "Java Query Predicates" extensions: [".jqp"] }
+                styles {
+                    type { scope: "entity.name.type" }
+                    method { scope: "entity.name.function" }
+                }
+                treeSitter {
+                    queries: [
+                        {
+                            id: "exact-type"
+                            priority: 20
+                            source: `(class_declaration name: (identifier) @type (#eq? @type "Demo"))`
+                        },
+                        {
+                            id: "exclude-method"
+                            priority: 30
+                            source: `(method_declaration name: (identifier) @method (#not-eq? @method "skip"))`
+                        },
+                        {
+                            id: "allowed-method"
+                            priority: 40
+                            source: `(method_declaration name: (identifier) @method (#any-of? @method "run" "start"))`
+                        }
+                    ]
+                }
+            }
+        """.trimIndent()
+
+        assertTrue(engine.loadTshSource("java-query-predicates", source, language))
+        val parser = TSParser.create().apply { setLanguage(language) }
+        val code = "class Demo { void run() {} void skip() {} void other() {} }"
+        val tree = parser.parseString(code)
+        val spans = engine.computeHighlights(tree, code, "java-query-predicates")
+        val catalog = engine.getStyleCatalog("java-query-predicates")
+        val typeId = catalog.first { it.name == "type" }.styleId
+        val methodId = catalog.first { it.name == "method" }.styleId
+
+        assertTrue(spans.any { it.styleId == typeId && it.priority == 20 })
+        assertTrue(spans.any { it.styleId == methodId && it.priority == 30 })
+        assertTrue(spans.any { it.styleId == methodId && it.priority == 40 })
+        val skipOffset = code.indexOf("skip") * 2
+        val otherOffset = code.indexOf("other") * 2
+        assertFalse(spans.any { it.styleId == methodId && it.startByte == skipOffset })
+        assertFalse(spans.any {
+            it.styleId == methodId && it.priority == 40 && it.startByte == otherOffset
+        })
+
+        tree?.close()
+        parser.close()
+    }
+
+    @Test
+    fun testNativeQueryRejectsUnsupportedPredicates() {
+        val engine = WindbellTshEngine.instance
+        val source = """
+            tsh 2 {
+                language { id: "query-unsupported-predicate" extensions: [".qup"] }
+                styles { token { scope: "variable.other" } }
+                treeSitter {
+                    queries: [
+                        { id: "unsupported" source: `(identifier) @token (#match? @token "^[a-z]+$")` }
+                    ]
+                }
+            }
+        """.trimIndent()
+        assertFalse(engine.loadTshSource(
+            "query-unsupported-predicate", source, TSLanguageJava.getInstance()
+        ))
+    }
+
+    @Test
     fun testOnigurumaCaptureGroupsAndNestedRegions() {
         val engine = WindbellTshEngine.instance
         val sourceDsl = """
