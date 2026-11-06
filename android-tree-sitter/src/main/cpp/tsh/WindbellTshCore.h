@@ -95,6 +95,10 @@ struct NativeQueryProgram {
     int32_t priority = 0;
     uint32_t declaration_order = 0;
     bool enabled = true;
+    // Capture names are query-local identifiers; bindings resolve them to
+    // independent style IDs during compilation.
+    std::unordered_map<std::string, std::string> capture_bindings;
+    std::unordered_map<uint16_t, uint16_t> capture_style_ids;
 };
 
 struct AstSelectorRule {
