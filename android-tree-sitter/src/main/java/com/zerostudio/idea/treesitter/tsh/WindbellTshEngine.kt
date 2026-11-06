@@ -39,7 +39,10 @@ class WindbellTshEngine private constructor() {
         val styleId: Int,
         val lightColor: Int,
         val darkColor: Int,
-        val fontFlags: Int
+        val lightFontFlags: Int,
+        val darkFontFlags: Int,
+        val hasLightColor: Boolean,
+        val hasDarkColor: Boolean
     )
 
     private val paletteCache = ConcurrentHashMap<String, Map<Int, StylePalette>>()
