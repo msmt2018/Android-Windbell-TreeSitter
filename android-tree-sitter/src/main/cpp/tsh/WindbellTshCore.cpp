@@ -856,8 +856,10 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                         const uint32_t start_u16 = utf8_to_utf16_byte[text_start];
                         const uint32_t end_u16 = utf8_to_utf16_byte[text_end];
                         if ((start_u16 & 1u) || (end_u16 & 1u) || end_u16 < start_u16) continue;
-                        const UChar* regex_begin = text_start + start_u16 / 2;
-                        const UChar* regex_end = text_start + end_u16 / 2;
+                        const UChar* regex_source = input_chars
+                            ? reinterpret_cast<const UChar*>(input_chars) : &kEmptyInput;
+                        const UChar* regex_begin = regex_source + start_u16 / 2;
+                        const UChar* regex_end = regex_source + end_u16 / 2;
                         OnigRegion* regex_region = onig_region_new();
                         if (!regex_region) continue;
                         const int regex_result = onig_search(
