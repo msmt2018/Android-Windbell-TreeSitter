@@ -3047,6 +3047,27 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
         return nullptr;
     }
 
+    // Build immutable ATS dispatch indexes once. Runtime traversal only visits
+    // rules that can target the current node (plus intentionally generic rules).
+    grammar->ast_rules_by_node_symbol.clear();
+    grammar->ast_field_rules_by_parent_symbol.clear();
+    grammar->ast_wildcard_rules.clear();
+    for (uint32_t rule_index = 0;
+         rule_index < grammar->ast_selector_rules.size(); ++rule_index) {
+        const AstSelectorRule& rule = grammar->ast_selector_rules[rule_index];
+        if (rule.field_id != 0) {
+            if (rule.target_symbol != 0) {
+                grammar->ast_field_rules_by_parent_symbol[rule.target_symbol].push_back(rule_index);
+            } else {
+                grammar->ast_wildcard_rules.push_back(rule_index);
+            }
+        } else if (rule.target_symbol != 0) {
+            grammar->ast_rules_by_node_symbol[rule.target_symbol].push_back(rule_index);
+        } else {
+            grammar->ast_wildcard_rules.push_back(rule_index);
+        }
+    }
+
     // Each native query block was compiled independently by Tree-sitter's
     // own query parser. No SCM source is synthesized or written to disk.
 
