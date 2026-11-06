@@ -94,7 +94,7 @@ class WindbellTshLinkageTest {
                 id: "scheme-test"
                 name: "Scheme Test"
                 extensions: [".scheme", ".sch"]
-                aliases: ["Scheme", "Test Scheme", "Line\\nBreak"]
+                aliases: ["Scheme", "Test Scheme", "Line\\nBreak", "Rocket \\uD83D\\uDE80"]
                 mimeTypes: ["text/x-scheme-test"]
                 firstLine: /^#!.*scheme-test/
             }
@@ -182,7 +182,7 @@ class WindbellTshLinkageTest {
         assertEquals("scheme-test", language.id)
         assertEquals("Scheme Test", language.name)
         assertEquals(listOf("scheme", "sch"), language.extensions)
-        assertEquals(listOf("Scheme", "Test Scheme", "Line\nBreak"), language.aliases)
+        assertEquals(listOf("Scheme", "Test Scheme", "Line\nBreak", "Rocket 🚀"), language.aliases)
         assertEquals(listOf("text/x-scheme-test"), language.mimeTypes)
         assertEquals("^#!.*scheme-test", language.firstLinePattern)
         assertTrue(engine.matchesFirstLine("scheme", "#!/usr/bin/env scheme-test"))
