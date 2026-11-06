@@ -153,6 +153,7 @@ public:
     std::vector<std::string> aliases;
     std::vector<std::string> mime_types;
     std::string first_line_pattern;
+    regex_t* first_line_regex = nullptr;
     const TSLanguage* ts_language = nullptr;
     
     std::unordered_map<std::string, uint16_t> style_name_to_id;
