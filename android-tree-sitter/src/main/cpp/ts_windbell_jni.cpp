@@ -116,6 +116,33 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeGetLanguageMetad
 }
 
 /**
+ * Test a first source line against the language's DSL-declared detector.
+ */
+JNIEXPORT jboolean JNICALL
+Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeMatchesFirstLine(
+    JNIEnv* env, jobject, jstring extension_jstr, jstring line_jstr
+) {
+    if (!extension_jstr || !line_jstr) return JNI_FALSE;
+    const char* ext = env->GetStringUTFChars(extension_jstr, nullptr);
+    if (!ext) return JNI_FALSE;
+    const std::string extension(ext);
+    env->ReleaseStringUTFChars(extension_jstr, ext);
+    auto grammar = WindbellEngine::getInstance().getGrammarByExtension(extension);
+    if (!grammar || !grammar->first_line_regex) return JNI_FALSE;
+
+    const jchar* chars = env->GetStringChars(line_jstr, nullptr);
+    if (!chars) return JNI_FALSE;
+    const jsize length = env->GetStringLength(line_jstr);
+    const UChar* start = reinterpret_cast<const UChar*>(chars);
+    const UChar* end = start + static_cast<size_t>(length) * sizeof(jchar);
+    OnigRegion* region = onig_region_new();
+    const int matched = onig_match(grammar->first_line_regex, start, end, start, region, ONIG_OPTION_NONE);
+    onig_region_free(region, 1);
+    env->ReleaseStringChars(line_jstr, chars);
+    return matched >= 0 ? JNI_TRUE : JNI_FALSE;
+}
+
+/**
  * Return structured compiler diagnostics as [code, message, offset, line, column] tuples.
  */
 JNIEXPORT jobjectArray JNICALL
