@@ -102,6 +102,11 @@ WindbellEngine::WindbellEngine() {
 }
 
 WindbellEngine::~WindbellEngine() {
+    // Destroy compiled regex objects before shutting down the Oniguruma runtime.
+    {
+        std::lock_guard<std::mutex> lock(registry_lock_);
+        grammar_registry_.clear();
+    }
     onig_end();
 }
 
