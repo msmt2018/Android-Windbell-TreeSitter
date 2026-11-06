@@ -36,8 +36,8 @@
     defines: [
         "identifier": /[a-zA-Z_$][a-zA-Z0-9_$]*/,
         "docTags": /@(param|return|throws|exception|see|since|deprecated|author|version|serial)\b/,
-        "javaQuotedString": /"(?:\\\\.|[^"\\\\])*"|'(?:\\\\.|[^'\\\\])*'/,
-        "javaNumber": /\\b(?:0[xX][0-9a-fA-F_]+|0[bB][01_]+|0[0-7_]+|[0-9_]+(?:\\.[0-9_]+)?(?:[eE][+-]?[0-9_]+)?[fFdDlL]?)\\b/
+                "javaQuotedString": /"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'/,
+                "javaNumber": /\b(?:0[xX][0-9a-fA-F_]+|0[bB][01_]+|0[0-7_]+|[0-9_]+(?:\.[0-9_]+)?(?:[eE][+-]?[0-9_]+)?[fFdDlL]?)\b/
     ],
 
     // =========================================================================
