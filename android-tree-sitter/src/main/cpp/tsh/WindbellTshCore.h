@@ -117,6 +117,7 @@ struct AstSelectorRule {
     TSFieldId field_id = 0;
     TSSymbol parent_symbol = 0;
     TSSymbol ancestor_symbol = 0;
+    TSSymbol child_symbol = 0;
     // -1 means unconstrained; 0/1 require the corresponding Tree-sitter node flag.
     int8_t named = -1;
     int8_t missing = -1;
