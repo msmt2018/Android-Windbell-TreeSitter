@@ -73,6 +73,10 @@ public:
         }
         skipIgnored();
         g_tsh_last_source_offset = static_cast<uint32_t>(cursor_);
+        auto invalid = [&](const std::string& reason) {
+            g_tsh_last_error_detail = reason;
+            return Token{TokenType::TOK_INVALID, reason};
+        };
         if (lexical_error_) {
             g_tsh_last_error_detail = "unterminated block comment";
             return {TokenType::TOK_INVALID, g_tsh_last_error_detail};
@@ -167,13 +171,13 @@ public:
             while (cursor_ < src_.size() && src_[cursor_] != quote) {
                 const char current = src_[cursor_++];
                 if (!raw_string && (current == '\n' || current == '\r')) {
-                    return {TokenType::TOK_INVALID, "unescaped newline in quoted string"};
+                    return invalid("unescaped newline in quoted string");
                 }
                 if (raw_string || current != '\\') {
                     content.push_back(current);
                     continue;
                 }
-                if (cursor_ >= src_.size()) return {TokenType::TOK_INVALID, "unterminated escape"};
+                if (cursor_ >= src_.size()) return invalid("unterminated escape");
                 const char escaped = src_[cursor_++];
                 switch (escaped) {
                     case '"': content.push_back('"'); break;
@@ -187,28 +191,28 @@ public:
                     case 't': content.push_back('\t'); break;
                     case 'u': {
                         uint32_t cp = 0;
-                        if (!read_hex4(cp)) return {TokenType::TOK_INVALID, "invalid unicode escape"};
+                        if (!read_hex4(cp)) return invalid("invalid unicode escape");
                         if (cp >= 0xD800 && cp <= 0xDBFF) {
                             if (cursor_ + 6 > src_.size() || src_[cursor_] != '\\' ||
                                 src_[cursor_ + 1] != 'u') {
-                                return {TokenType::TOK_INVALID, "unpaired high surrogate"};
+                                return invalid("unpaired high surrogate");
                             }
                             cursor_ += 2;
                             uint32_t low = 0;
                             if (!read_hex4(low) || low < 0xDC00 || low > 0xDFFF) {
-                                return {TokenType::TOK_INVALID, "invalid low surrogate"};
+                                return invalid("invalid low surrogate");
                             }
                             cp = 0x10000 + ((cp - 0xD800) << 10) + (low - 0xDC00);
                         } else if (cp >= 0xDC00 && cp <= 0xDFFF) {
-                            return {TokenType::TOK_INVALID, "unpaired low surrogate"};
+                            return invalid("unpaired low surrogate");
                         }
                         append_utf8(cp);
                         break;
                     }
-                    default: return {TokenType::TOK_INVALID, "unsupported string escape"};
+                    default: return invalid("unsupported string escape");
                 }
             }
-            if (cursor_ >= src_.size()) return {TokenType::TOK_INVALID, "unterminated string"};
+            if (cursor_ >= src_.size()) return invalid("unterminated string");
             ++cursor_;
             return {TokenType::TOK_STRING, content};
         }
@@ -223,7 +227,7 @@ public:
                 }
                 regex_body += src_[cursor_++];
             }
-            if (cursor_ >= src_.size()) return {TokenType::TOK_INVALID, "unterminated regex"};
+            if (cursor_ >= src_.size()) return invalid("unterminated regex");
             cursor_++;
             return {TokenType::TOK_REGEX, regex_body};
         }
