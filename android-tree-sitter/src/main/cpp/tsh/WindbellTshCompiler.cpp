@@ -1081,19 +1081,21 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
             // =================================================================
             else if (tok.text == "defines") {
                 if (!mark_root_section("defines")) return nullptr;
-                lexer.nextToken(); // :
-                lexer.nextToken(); // [
+                if (lexer.nextToken().type != TshLexer::TokenType::TOK_COLON ||
+                    lexer.nextToken().type != TshLexer::TokenType::TOK_LBRACKET) return nullptr;
                 while (true) {
                     auto dt = lexer.nextToken();
-                    if (dt.type == TshLexer::TokenType::TOK_RBRACKET || dt.type == TshLexer::TokenType::TOK_EOF) break;
-                    if (dt.type == TshLexer::TokenType::TOK_STRING || dt.type == TshLexer::TokenType::TOK_IDENT) {
-                        std::string d_name = dt.text;
-                        lexer.nextToken(); // :
-                        auto d_val = lexer.nextToken();
-                        if (d_val.type == TshLexer::TokenType::TOK_REGEX) {
-                            defines_map[d_name] = d_val.text;
-                        }
-                    }
+                    if (dt.type == TshLexer::TokenType::TOK_RBRACKET) break;
+                    if (dt.type == TshLexer::TokenType::TOK_COMMA) continue;
+                    if (dt.type == TshLexer::TokenType::TOK_EOF ||
+                        (dt.type != TshLexer::TokenType::TOK_STRING &&
+                         dt.type != TshLexer::TokenType::TOK_IDENT)) return nullptr;
+                    const std::string d_name = dt.text;
+                    if (lexer.nextToken().type != TshLexer::TokenType::TOK_COLON) return nullptr;
+                    auto d_val = lexer.nextToken();
+                    if (d_val.type != TshLexer::TokenType::TOK_REGEX &&
+                        d_val.type != TshLexer::TokenType::TOK_STRING) return nullptr;
+                    if (!defines_map.emplace(d_name, d_val.text).second) return nullptr;
                 }
             }
 
