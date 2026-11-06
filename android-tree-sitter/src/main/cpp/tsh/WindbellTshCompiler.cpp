@@ -432,6 +432,7 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
     TshLexer lexer(source);
     uint32_t regex_declaration_order = 0;
     uint32_t ast_declaration_order = 0;
+    std::unordered_map<std::string, bool> regex_rule_ids;
 
     std::function<bool(CompiledRegexRule&)> parseRegexRule;
     parseRegexRule = [&](CompiledRegexRule& rule) -> bool {
@@ -629,6 +630,7 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
             if (!rule.onig_end) return false;
         }
 
+        if (!rule.id.empty() && !regex_rule_ids.emplace(rule.id, true).second) return false;
         if (rule.type == RegexRuleType::BLOCK) {
             return (rule.has_style || !rule.start_group_style_map.empty() ||
                     !rule.start_named_group_style_map.empty() || !rule.end_group_style_map.empty() ||
