@@ -109,7 +109,12 @@ void WindbellEngine::matchBlockRecursive(
                 const UChar* inner_end = text_start + end_region->beg[0];
 
                 for (const auto& nested : rule.nested_rules) {
-                    if (nested.enabled && nested.type == RegexRuleType::MATCH && nested.onig_start) {
+                    if (!nested.enabled) continue;
+                    if (nested.type == RegexRuleType::BLOCK && nested.onig_start && nested.onig_end) {
+                        matchBlockRecursive(nested, text_start, text_end, inner_start, inner_end, out_spans);
+                        continue;
+                    }
+                    if (nested.type == RegexRuleType::MATCH && nested.onig_start) {
                         OnigRegion* inner_region = onig_region_new();
                         const UChar* inner_curr = inner_start;
                         while (inner_curr < inner_end) {
