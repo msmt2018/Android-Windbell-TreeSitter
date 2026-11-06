@@ -311,8 +311,10 @@ std::shared_ptr<TshGrammar> TshCompiler::compile(const std::string& source, cons
                             auto& color_entry = scheme.colors[sid];
                             if (is_light) {
                                 color_entry.light_color = color_val;
+                                color_entry.has_light_color = true;
                             } else {
                                 color_entry.dark_color = color_val;
+                                color_entry.has_dark_color = true;
                             }
                             color_entry.font_flags = flags;
                         }
@@ -480,6 +482,29 @@ std::shared_ptr<TshGrammar> TshCompiler::compile(const std::string& source, cons
             }
         }
         tok = lexer.nextToken();
+    }
+
+    // Materialize the symbol catalog in stable ID order. A missing scheme color
+    // remains zero/absent; the renderer must not synthesize black or white.
+    grammar->styles.resize(grammar->style_name_to_id.size());
+    for (const auto& entry : grammar->style_name_to_id) {
+        TshStyle style;
+        style.name = entry.first;
+        style.style_id = entry.second;
+        auto scheme_it = grammar->schemes.find(grammar->default_scheme_name);
+        if (scheme_it != grammar->schemes.end()) {
+            auto color_it = scheme_it->second.colors.find(style.style_id);
+            if (color_it != scheme_it->second.colors.end()) {
+                const SchemeColor& color = color_it->second;
+                if (color.has_light_color) style.light_color = color.light_color;
+                if (color.has_dark_color) style.dark_color = color.dark_color;
+                style.font_flags = color.font_flags;
+            }
+        }
+        if (style.style_id >= grammar->styles.size()) {
+            grammar->styles.resize(static_cast<size_t>(style.style_id) + 1);
+        }
+        grammar->styles[style.style_id] = std::move(style);
     }
 
     if (ts_lang && !dynamic_query_accumulator.empty()) {
