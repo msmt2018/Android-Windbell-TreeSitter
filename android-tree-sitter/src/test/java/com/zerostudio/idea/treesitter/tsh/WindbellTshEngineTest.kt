@@ -93,6 +93,41 @@ class WindbellTshLinkageTest {
     }
 
     @Test
+    fun testOnigurumaCaptureGroupsAndNestedRegions() {
+        val engine = WindbellTshEngine.instance
+        val sourceDsl = """
+            name: ["Regex Test", ".regex"]
+            styles {
+                comment { scope: "comment.block", tags: ["comment"] }
+                todo { scope: "keyword.other.todo", tags: ["todo"] }
+            }
+            schemes {
+                plain {
+                    light [ comment: #808080, todo: #CC5500 ]
+                    dark [ comment: #888888, todo: #FFAA55 ]
+                }
+            }
+            contains: [
+                {
+                    style: "comment"
+                    start: { match: /\\/\\*/ }
+                    end: { match: /\\*\\// }
+                    contains: [
+                        { match: /TODO/, captures: { 0: "todo" }, priority: 100 }
+                    ]
+                }
+            ]
+        """.trimIndent()
+
+        assertTrue(engine.loadTshSource("regex", sourceDsl, null))
+        val text = "/* TODO: verify nested capture */"
+        val spans = engine.computeHighlights(null, text, "regex")
+        assertTrue(spans.isNotEmpty())
+        val todoId = engine.getStyleCatalog("regex").first { it.name == "todo" }.styleId
+        assertTrue(spans.any { it.styleId == todoId && it.priority == 100 })
+    }
+
+    @Test
     fun testSurrogatePairsAndHighlightingStability() {
         val engine = WindbellTshEngine.instance
 
