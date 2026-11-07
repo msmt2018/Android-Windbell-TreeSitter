@@ -615,7 +615,7 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
 
     // Tag regex spans before the stateful tokenizer appends its own results.
     for (auto& span : micro_spans) {
-        span.source = static_cast<uint8_t>(HighlightSource::ONIGURUMA);
+        span.source = static_cast<uint8_t>(HighlightSource::ONIG_REGEX);
     }
     const size_t monarch_span_begin = micro_spans.size();
 

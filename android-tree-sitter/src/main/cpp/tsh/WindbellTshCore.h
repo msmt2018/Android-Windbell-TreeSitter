@@ -21,7 +21,7 @@
 namespace windbell::tsh {
 
 enum class HighlightSource : uint8_t {
-    ONIGURUMA = 0,
+    ONIG_REGEX = 0,
     MONARCH = 1,
     AST_SELECTOR = 2,
     NATIVE_QUERY = 3,
