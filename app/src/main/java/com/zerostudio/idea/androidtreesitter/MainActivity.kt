@@ -468,12 +468,133 @@ class MainActivity : AppCompatActivity() {
                 showTshCoreTestSuiteDialog()
                 return true
             }
+            R.id.test_tsh_cursor_capture -> {
+                runCursorCaptureDiagnostic()
+                return true
+            }
+            R.id.show_tsh_schemes -> {
+                showTshSchemesDialog()
+                return true
+            }
             R.id.toggle_tsh_theme -> {
                 toggleTshTheme()
                 return true
             }
         }
         return super.onOptionsItemSelected(item)
+    }
+
+
+    /** Reparse the editor's current source and report parser, captures and Android spans. */
+    private fun runCursorCaptureDiagnostic() {
+        val view = editorView
+        if (view == null || !javaTshReady) {
+            showResultDialog("TSH 捕获诊断", "编辑器或 Java TSH 尚未就绪。")
+            return
+        }
+        val source = view.getText()
+        val lineNumber = view.getCursorLine().coerceAtLeast(1)
+        val lines = source.split('\\n')
+        val lineIndex = (lineNumber - 1).coerceIn(0, (lines.size - 1).coerceAtLeast(0))
+        var lineStart = 0
+        for (index in 0 until lineIndex) lineStart += lines[index].length + 1
+        val lineText = lines.getOrElse(lineIndex) { "" }
+        val lineEnd = lineStart + lineText.length
+        val engine = WindbellTshEngine.instance
+        val report = StringBuilder()
+        report.appendLine("=== TSH 光标行捕获诊断 ===")
+        report.appendLine("Editor language: " + editorLanguageKey)
+        report.appendLine("Console language: " + currentLanguageKey)
+        report.appendLine("Cursor: line=" + lineNumber + " column=" + view.getCursorColumn())
+        report.appendLine("Source chars=" + source.length + ", UTF-16 bytes=" + source.length * 2)
+        report.appendLine("Line range=[" + lineStart + "," + lineEnd + ")")
+        report.appendLine(lineText)
+        val parserStart = System.nanoTime()
+        val activeParser = TSParser.create()
+        try {
+            activeParser.setLanguage(TSLanguageJava.getInstance())
+            val tree = activeParser.parseString(source)
+            val parserNanos = System.nanoTime() - parserStart
+            if (tree == null) {
+                report.appendLine("Parser FAILED: null tree")
+            } else {
+                tree.use {
+                    val queryStart = System.nanoTime()
+                    val captures = engine.computeHighlights(it, source, "java")
+                    val queryNanos = System.nanoTime() - queryStart
+                    val lineCaptures = captures.filter { span ->
+                        (span.startByte shr 1) < lineEnd && (span.endByte shr 1) > lineStart
+                    }
+                    val scheme = engine.getSelectedScheme("java") ?: ""
+                    val paletteStart = System.nanoTime()
+                    val palette = engine.getSchemePalette("java", scheme)
+                    val paletteNanos = System.nanoTime() - paletteStart
+                    val styles = engine.getStyleCatalog("java").associateBy { style -> style.styleId }
+                    val preview = android.text.SpannableStringBuilder(lineText)
+                    engine.applyHighlightSpansToSpannable(lineCaptures, lineStart, lineText, "java", preview)
+                    val foreground = preview.getSpans(0, preview.length, android.text.style.ForegroundColorSpan::class.java)
+                    report.appendLine("1) Tree-sitter: OK root=" + it.rootNode.type + ", " + parserNanos / 1000000.0 + " ms")
+                    report.appendLine("2) TSH: total=" + captures.size + ", cursor-line=" + lineCaptures.size + ", " + queryNanos / 1000000.0 + " ms")
+                    report.appendLine("3) Scheme=" + scheme + " dark=" + engine.isDark("java") + ", styles=" + styles.size + ", palette=" + palette.size + ", " + paletteNanos / 1000000.0 + " ms")
+                    report.appendLine("4) Android preview ForegroundColorSpan=" + foreground.size)
+                    report.appendLine("5) Editor highlighter attached=" + (view.getSyntaxHighlighter() === activeTshHighlighter))
+                    report.appendLine("Canvas pixels are not claimed; that requires device instrumentation.")
+                    lineCaptures.forEachIndexed { index, span ->
+                        val start = ((span.startByte shr 1) - lineStart).coerceIn(0, lineText.length)
+                        val end = ((span.endByte shr 1) - lineStart).coerceIn(start, lineText.length)
+                        val style = styles[span.styleId]
+                        val colors = palette[span.styleId]
+                        val light = if (colors?.hasLightColor == true) String.format(Locale.ROOT, "#%08X", colors.lightColor) else "MISSING"
+                        val dark = if (colors?.hasDarkColor == true) String.format(Locale.ROOT, "#%08X", colors.darkColor) else "MISSING"
+                        report.appendLine("[" + index + "] " + (style?.name ?: "UNKNOWN") + " id=" + span.styleId + " text=" + lineText.substring(start, end))
+                        report.appendLine("    scope=" + style?.scope + " light=" + light + " dark=" + dark + " priority=" + span.priority)
+                    }
+                    if (lineCaptures.isEmpty()) report.appendLine("NO CAPTURES: inspect AST selector / ATS query / regex stages.")
+                }
+            }
+        } catch (error: Throwable) {
+            report.appendLine("ERROR: " + error.stackTraceToString())
+        } finally {
+            activeParser.close()
+        }
+        showResultDialog("TSH 光标行捕获诊断", report.toString())
+    }
+
+    /** Browse all compiled schemes and their light/dark semantic colors. */
+    private fun showTshSchemesDialog() {
+        val engine = WindbellTshEngine.instance
+        val schemes = engine.listSchemes("java")
+        if (schemes.isEmpty()) {
+            showResultDialog("TSH Schemes", "没有已编译的 Java Scheme。")
+            return
+        }
+        MaterialAlertDialogBuilder(this)
+            .setTitle("TSH Scheme 主题包")
+            .setItems(schemes.toTypedArray()) { _, index ->
+                val scheme = schemes[index]
+                val palette = engine.getSchemePalette("java", scheme)
+                val styles = engine.getStyleCatalog("java").associateBy { it.styleId }
+                val detail = StringBuilder("Scheme: " + scheme + "\\nPalette entries: " + palette.size + "\\n\\n")
+                palette.values.sortedBy { it.styleId }.forEach { entry ->
+                    val style = styles[entry.styleId]
+                    val light = if (entry.hasLightColor) String.format(Locale.ROOT, "#%08X", entry.lightColor) else "未配置"
+                    val dark = if (entry.hasDarkColor) String.format(Locale.ROOT, "#%08X", entry.darkColor) else "未配置"
+                    detail.appendLine((style?.name ?: "style#" + entry.styleId) + " (" + (style?.scope ?: "unknown") + ")")
+                    detail.appendLine("  Light: " + light)
+                    detail.appendLine("  Dark:  " + dark)
+                }
+                MaterialAlertDialogBuilder(this)
+                    .setTitle(scheme + " · Light / Dark")
+                    .setMessage(detail.toString())
+                    .setPositiveButton("应用此 Scheme") { _, _ ->
+                        if (activeTshHighlighter?.selectScheme(scheme) == true) applyTshThemeTokens()
+                        else showResultDialog("TSH Scheme", "Scheme 切换失败：" + scheme)
+                    }
+                    .setNegativeButton("返回", null)
+                    .show()
+            }
+            .setNegativeButton("关闭", null)
+            .show()
     }
 
     /**
