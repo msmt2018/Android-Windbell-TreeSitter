@@ -560,6 +560,25 @@ class MainActivity : AppCompatActivity() {
         showResultDialog("TSH 光标行捕获诊断", report.toString())
     }
 
+    /**
+     * Switches the compiled scheme and appearance together. This only swaps the cached
+     * palette and UI tokens; it deliberately does not recompile TSH or reparse source.
+     */
+    private fun applyTshScheme(scheme: String, isDark: Boolean) {
+        val engine = WindbellTshEngine.instance
+        val selected = activeTshHighlighter?.selectScheme(scheme) ?: engine.selectScheme("java", scheme)
+        if (!selected) {
+            showResultDialog("TSH Scheme", "Scheme 切换失败：" + scheme)
+            return
+        }
+        engine.setAppearance("java", isDark)
+        AppCompatDelegate.setDefaultNightMode(
+            if (isDark) AppCompatDelegate.MODE_NIGHT_YES else AppCompatDelegate.MODE_NIGHT_NO
+        )
+        activeTshHighlighter?.refreshTheme()
+        applyTshThemeTokens()
+    }
+
     /** Browse all compiled schemes and their light/dark semantic colors. */
     private fun showTshSchemesDialog() {
         val engine = WindbellTshEngine.instance
@@ -586,11 +605,16 @@ class MainActivity : AppCompatActivity() {
                 MaterialAlertDialogBuilder(this)
                     .setTitle(scheme + " · Light / Dark")
                     .setMessage(detail.toString())
-                    .setPositiveButton("应用此 Scheme") { _, _ ->
-                        if (activeTshHighlighter?.selectScheme(scheme) == true) applyTshThemeTokens()
-                        else showResultDialog("TSH Scheme", "Scheme 切换失败：" + scheme)
+                    .setPositiveButton("按当前 Activity 模式应用") { _, _ ->
+                        val mode = AppCompatDelegate.getDefaultNightMode()
+                        val dark = mode == AppCompatDelegate.MODE_NIGHT_YES ||
+                            (mode == AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM &&
+                                (resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK) ==
+                                android.content.res.Configuration.UI_MODE_NIGHT_YES)
+                        applyTshScheme(scheme, dark)
                     }
-                    .setNegativeButton("返回", null)
+                    .setNeutralButton("应用 Light") { _, _ -> applyTshScheme(scheme, false) }
+                    .setNegativeButton("应用 Dark") { _, _ -> applyTshScheme(scheme, true) }
                     .show()
             }
             .setNegativeButton("关闭", null)
