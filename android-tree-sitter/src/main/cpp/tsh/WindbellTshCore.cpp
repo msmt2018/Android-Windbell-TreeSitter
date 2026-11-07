@@ -119,7 +119,8 @@ static bool tshUtf8ToUtf16(const std::string& input, std::vector<UChar>& output)
 
 static bool tshPredicateCaptureTexts(const TSQueryMatch& match, uint32_t capture_id,
     const std::string& utf8_source,
-    const std::vector<uint32_t>& utf16_to_utf8_byte,\n    std::vector<std::vector<UChar>>& texts) {
+    const std::vector<uint32_t>& utf16_to_utf8_byte,
+    std::vector<std::vector<UChar>>& texts) {
     texts.clear();
     for (uint32_t i = 0; i < match.capture_count; ++i) {
         if (match.captures[i].index != capture_id) continue;
