@@ -157,6 +157,22 @@ add_library(android-tree-sitter SHARED
     ts_windbell_jni.cpp
 )
 
+# Drop unreferenced code/data from the monolithic JNI library.
+#
+# Oniguruma is built from its upstream source files, but Windbell-TSH currently
+# initializes only UTF-16 LE. Section-level garbage collection allows the linker
+# to discard unused encoding implementations and other unreachable routines
+# without maintaining a fragile hand-picked list of Oniguruma translation units.
+if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU" AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(android-tree-sitter PRIVATE
+        -ffunction-sections
+        -fdata-sections
+    )
+    target_link_options(android-tree-sitter PRIVATE
+        -Wl,--gc-sections
+    )
+endif()
+
 if (${CMAKE_SYSTEM_NAME} STREQUAL Android)
     find_library(log log)
     target_link_libraries(android-tree-sitter PRIVATE ${log})
