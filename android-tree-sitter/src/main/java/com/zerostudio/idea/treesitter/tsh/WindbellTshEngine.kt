@@ -1,6 +1,7 @@
 package com.zerostudio.idea.treesitter.tsh
 
 import android.text.Spannable
+import android.text.Spanned
 import android.text.SpannableStringBuilder
 import android.text.TextPaint
 import android.text.style.CharacterStyle
