@@ -404,6 +404,7 @@ class MainActivity : AppCompatActivity() {
             tokens["editor.selection"]?.let(view::setSelectionColor)
             tokens["editor.lineHighlight"]?.let(view::setCurrentLineColor)
             tokens["editor.gutter"]?.let(view::setLineNumberColor)
+            tokens["editor.caret"]?.let(view::setHandleColor)
         }
 
         // TSH UI tokens are the source of truth for the whole Activity, not only
