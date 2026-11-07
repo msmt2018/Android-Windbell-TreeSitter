@@ -19,14 +19,19 @@ class JavaTshFullTest {
         @JvmStatic
         @BeforeAll
         fun setup() {
-            val file = File(TSH_RESOURCE_PATH)
-            val tshContent = if (file.exists()) {
-                file.readText(Charsets.UTF_8)
-            } else {
-                JavaTshFullTest::class.java.classLoader.getResourceAsStream("tsh/java.tsh")
+            // The grammar lives in the app's asset source set; this test belongs
+            // to the android-tree-sitter module, so resolve it from either Gradle
+            // working-directory convention before falling back to classpath assets.
+            val candidates = listOf(
+                File(TSH_RESOURCE_PATH),
+                File("../app/src/main/assets/tsh/java.tsh"),
+                File("app/src/main/assets/tsh/java.tsh")
+            )
+            val tshContent = candidates.firstOrNull { it.isFile }
+                ?.readText(Charsets.UTF_8)
+                ?: JavaTshFullTest::class.java.classLoader.getResourceAsStream("tsh/java.tsh")
                     ?.bufferedReader()?.use { it.readText() }
-                    ?: error("Could not find java.tsh file!")
-            }
+                ?: error("Could not find app/src/main/assets/tsh/java.tsh; checked ${candidates.map { it.absolutePath }}")
 
             // 直接驱动动态 DSL 编译器完成 Native 装配（零 SCM 硬编码）
             val loadSuccess = WindbellTshEngine.instance.loadTshSource(
@@ -95,6 +100,10 @@ class JavaTshFullTest {
             WindbellTshEngine.instance.applyHighlightsToSpannable(tree, testSource, "java", ssb)
         }
         assertEquals(testSource.length, ssb.length)
+        assertTrue(
+            ssb.getSpans(0, ssb.length, android.text.style.ForegroundColorSpan::class.java).isNotEmpty(),
+            "The Java TSH palette must produce visible Android foreground-color spans."
+        )
 
         WindbellTshEngine.instance.setAppearance("java", true)
         assertDoesNotThrow {
