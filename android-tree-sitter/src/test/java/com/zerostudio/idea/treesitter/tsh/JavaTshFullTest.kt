@@ -80,6 +80,16 @@ class JavaTshFullTest {
         assertTrue(spans.isNotEmpty(), "Highlight spans must not be empty.")
         assertTrue(spans.any { it.source == 0 }, "Oniguruma regex rules must emit identifiable spans.")
         assertTrue(spans.any { it.source == 2 }, "ATS selectors must emit identifiable spans.")
+        val atsTexts = spans.filter { it.source == 2 }.map { span ->
+            testSource.substring(
+                (span.startByte shr 1).coerceIn(0, testSource.length),
+                (span.endByte shr 1).coerceIn(0, testSource.length)
+            )
+        }
+        assertTrue(
+            atsTexts.any { it == "UserProfile" },
+            "ATS field selector record_declaration.name must capture the declared type identifier; got $atsTexts"
+        )
 
         // 2. 严格硬件边界与 UTF-16 Code Unit 偶数对齐断言
         for (span in spans) {
