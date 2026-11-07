@@ -1138,6 +1138,69 @@ class WindbellTshLinkageTest {
         }
     }
 
+
+    @Test
+    fun testUtf16UnicodeCrossLineBlockAndZeroWidthRegexRegression() {
+        val engine = WindbellTshEngine.instance
+        val source = """
+            tsh 2 {
+                language { id: "unicode-cross-line" extensions: [".unicode-cross-line"] }
+                matching { multiline: true dotAll: true unicode: true }
+                styles {
+                    block { scope: "comment.block" }
+                    blockContent { scope: "comment.content" }
+                    word { scope: "variable.other" }
+                    zeroWidth { scope: "meta.zero-width" }
+                }
+                contains: [
+                    {
+                        start: { match: /BEGIN/ }
+                        end: { match: /END/ }
+                        name: "block"
+                        contentName: "blockContent"
+                    }
+                    { match: /^/, style: "zeroWidth" }
+                    { match: /alpha/, style: "word" }
+                ]
+            }
+        """.trimIndent()
+
+        assertTrue(engine.loadTshSource("unicode-cross-line", source, null))
+        val code = "BEGIN\n中文 👋 𠮷\nEND\nalpha"
+        val spans = engine.computeHighlights(null, code, "unicode-cross-line")
+        val styles = engine.getStyleCatalog("unicode-cross-line").associateBy { it.name }
+        val blockId = styles.getValue("block").styleId
+        val contentId = styles.getValue("blockContent").styleId
+        val wordId = styles.getValue("word").styleId
+        val zeroWidthId = styles.getValue("zeroWidth").styleId
+
+        val block = spans.firstOrNull { it.styleId == blockId }
+        assertNotNull(block, "The block start delimiter must be captured.")
+        assertEquals(0, block!!.startByte)
+        assertEquals("BEGIN".length * 2, block.endByte)
+
+        val content = spans.firstOrNull { it.styleId == contentId }
+        assertNotNull(content, "The multiline block content must be captured.")
+        val contentText = code.substring(content!!.startByte / 2, content.endByte / 2)
+        assertEquals("中文 👋 𠮷\n", contentText)
+        assertEquals(code.indexOf("中文") * 2, content.startByte)
+        assertEquals((code.indexOf("END")) * 2, content.endByte)
+
+        assertTrue(spans.any {
+            it.styleId == wordId &&
+                it.startByte == code.indexOf("alpha") * 2 &&
+                it.endByte == (code.indexOf("alpha") + "alpha".length) * 2
+        }, "The regex pipeline must continue after a zero-width match.")
+        assertFalse(spans.any { it.styleId == zeroWidthId && it.startByte == it.endByte },
+            "Zero-width matches must never escape as paint spans.")
+        spans.forEach { span ->
+            assertEquals(0, span.startByte % 2)
+            assertEquals(0, span.endByte % 2)
+            assertTrue(span.endByte >= span.startByte)
+        }
+    }
+
+
     @Test
     fun testConcurrentHighlightAndSharedSpannableRendering() {
         val engine = WindbellTshEngine.instance
