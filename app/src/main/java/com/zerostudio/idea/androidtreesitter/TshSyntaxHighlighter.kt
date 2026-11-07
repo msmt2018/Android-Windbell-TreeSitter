@@ -1,5 +1,6 @@
 package com.zerostudio.idea.androidtreesitter
 
+import android.util.Log
 import android.text.SpannableStringBuilder
 import android.text.Spanned
 import com.zerostudio.idea.treesitter.TSLanguage
@@ -32,6 +33,10 @@ class TshSyntaxHighlighter(
     private val extension: String,
     private val engine: WindbellTshEngine = WindbellTshEngine.instance
 ) : SyntaxHighlighter {
+
+    companion object {
+        private const val TAG = "WindbellTSH"
+    }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val generation = AtomicLong()
@@ -224,8 +229,9 @@ class TshSyntaxHighlighter(
                 }
             } catch (cancelled: CancellationException) {
                 throw cancelled
-            } catch (_: Throwable) {
+            } catch (error: Throwable) {
                 if (generation.get() == ticket) {
+                    Log.e(TAG, "TSH parse/highlight failed for .$extension (length=${textSnapshot.length})", error)
                     capturesByLine = emptyMap()
                     allCaptures = emptyList()
                     parsing = false
