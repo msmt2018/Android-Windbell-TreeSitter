@@ -1,6 +1,7 @@
 package com.zerostudio.idea.androidtreesitter
 
 import android.util.Log
+import android.text.style.CharacterStyle
 import android.text.SpannableStringBuilder
 import android.text.Spanned
 import com.zerostudio.idea.treesitter.TSLanguage
@@ -21,6 +22,7 @@ import x.github.module.editor.structure.PlainBracketMatcher
 import x.github.module.editor.model.EditorBuffer
 import x.github.module.editor.model.EditorDocument
 import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Connects a loaded TSH language package to EditorView's line-based renderer.
@@ -40,6 +42,7 @@ class TshSyntaxHighlighter(
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val generation = AtomicLong()
+    private val firstStyleCallLogged = AtomicBoolean(false)
     @Volatile private var host: SyntaxHighlighter.Host? = null
     @Volatile private var capturesByLine: Map<Int, List<WindbellTshEngine.HighlightSpan>> = emptyMap()
     @Volatile private var allCaptures: List<WindbellTshEngine.HighlightSpan> = emptyList()
@@ -50,6 +53,7 @@ class TshSyntaxHighlighter(
 
     override fun onAttached(host: SyntaxHighlighter.Host) {
         this.host = host
+        Log.i(TAG, "Attached to EditorView: extension=.$extension, textLength=${host.buffer.getText().length}")
         scheduleParse(host.buffer)
     }
 
@@ -85,7 +89,11 @@ class TshSyntaxHighlighter(
         end: Int
     ): Spanned? {
         val snapshot = capturesByLine[bufferLine].orEmpty()
-        if (snapshot.isEmpty() || start >= end) return null
+        if (start >= end) return null
+        if (firstStyleCallLogged.compareAndSet(false, true)) {
+            Log.i(TAG, "Editor renderer invoked styleLine: extension=.$extension line=$bufferLine range=$start..$end captures=${snapshot.size}")
+        }
+        if (snapshot.isEmpty()) return null
 
         val styled = SpannableStringBuilder(text)
         engine.applyHighlightSpansToSpannable(
@@ -97,7 +105,14 @@ class TshSyntaxHighlighter(
             start = start,
             end = end
         )
-        return if (styled.getSpans(start, end, Any::class.java).isEmpty()) null else styled
+        val applied = styled.getSpans(start, end, CharacterStyle::class.java)
+        if (applied.isEmpty()) {
+            if (firstStyleCallLogged.get()) {
+                Log.w(TAG, "No Android CharacterStyle applied: extension=.$extension line=$bufferLine captures=${snapshot.size} paletteMissing=${snapshot.map { it.styleId }.distinct().filter { id -> stylesById.values.none { style -> style.styleId == id && engine.getStylePalette(extension, style.name) != null } }}")
+            }
+            return null
+        }
+        return styled
     }
 
     override fun isStyleReady(
@@ -146,6 +161,11 @@ class TshSyntaxHighlighter(
     /** Call after selecting another scheme or appearance to repaint without reparsing. */
     fun refreshTheme() {
         host?.invalidateStyles()
+    }
+
+    /** Re-runs the same parser/highlighter pipeline used by EditorView rendering. */
+    fun reparse() {
+        host?.buffer?.let(::scheduleParse)
     }
 
     fun selectScheme(name: String): Boolean {
@@ -224,6 +244,13 @@ class TshSyntaxHighlighter(
                     allCaptures = nextCaptures
                     capturesByLine = indexCapturesByLine(textSnapshot, nextCaptures)
                     parsing = false
+                    val styleIds = nextCaptures.map { it.styleId }.distinct()
+                    val catalog = stylesById
+                    val missingPalette = styleIds.filter { id ->
+                        val style = catalog[id]
+                        style == null || engine.getStylePalette(extension, style.name) == null
+                    }
+                    Log.i(TAG, "TSH pipeline ready: extension=.$extension textLength=${textSnapshot.length} spans=${nextCaptures.size} lines=${capturesByLine.size} styles=${catalog.size} usedStyleIds=$styleIds missingPalette=$missingPalette")
                     host?.invalidateStyles()
                     host?.invalidateStructure()
                 }
