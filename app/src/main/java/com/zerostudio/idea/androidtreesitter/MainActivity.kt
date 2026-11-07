@@ -643,7 +643,7 @@ class MainActivity : AppCompatActivity() {
                         0, symbolPreview.length, android.text.style.ForegroundColorSpan::class.java
                     )
 
-                    val installed = view.getSyntaxHighlighter() === activeTshHighlighter
+                    val installed = activeTshHighlighter != null && view.getSyntaxHighlighter() === activeTshHighlighter
                     val editorLineSpans = activeTshHighlighter?.styleLine(
                         lineText, lineNumber, lineStart, 0, lineText.length
                     )
@@ -846,7 +846,7 @@ class MainActivity : AppCompatActivity() {
             if (schemes.isNotEmpty()) report.appendLine("   " + schemes.joinToString())
         }
         report.appendLine()
-        report.appendLine("Editor language=$editorLanguageKey · attached=${editorView?.getSyntaxHighlighter() === activeTshHighlighter}")
+        report.appendLine("Editor language=$editorLanguageKey · attached=${activeTshHighlighter != null && editorView?.getSyntaxHighlighter() === activeTshHighlighter}")
         showResultDialog("Parser / TSH 注册审计", report.toString())
     }
 
