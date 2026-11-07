@@ -137,21 +137,34 @@ class WindbellTshEngine private constructor() {
         return success
     }
 
-    private fun reloadPalette(extension: String, schemeName: String) {
-        val flatPalette = nativeGetPalette(extension, schemeName) ?: return
-        val map = HashMap<Int, StylePalette>()
+    private fun decodePalette(flatPalette: IntArray): Map<Int, StylePalette> {
+        val map = LinkedHashMap<Int, StylePalette>(flatPalette.size / 7)
         val count = flatPalette.size / 7
         for (i in 0 until count) {
             val id = flatPalette[i * 7]
-            val light = flatPalette[i * 7 + 1]
-            val dark = flatPalette[i * 7 + 2]
-            val lightFlags = flatPalette[i * 7 + 3]
-            val darkFlags = flatPalette[i * 7 + 4]
-            val hasLight = flatPalette[i * 7 + 5] != 0
-            val hasDark = flatPalette[i * 7 + 6] != 0
-            map[id] = StylePalette(id, light, dark, lightFlags, darkFlags, hasLight, hasDark)
+            map[id] = StylePalette(
+                styleId = id,
+                lightColor = flatPalette[i * 7 + 1],
+                darkColor = flatPalette[i * 7 + 2],
+                lightFontFlags = flatPalette[i * 7 + 3],
+                darkFontFlags = flatPalette[i * 7 + 4],
+                hasLightColor = flatPalette[i * 7 + 5] != 0,
+                hasDarkColor = flatPalette[i * 7 + 6] != 0
+            )
         }
-        paletteCache[extension] = map
+        return map.toMap()
+    }
+
+    /** Reads a scheme's compiled light/dark palette without changing the active scheme. */
+    fun getSchemePalette(extension: String, schemeName: String): Map<Int, StylePalette> {
+        if (schemeName !in listSchemes(extension)) return emptyMap()
+        val flatPalette = nativeGetPalette(extension, schemeName) ?: return emptyMap()
+        return decodePalette(flatPalette)
+    }
+
+    private fun reloadPalette(extension: String, schemeName: String) {
+        val palette = getSchemePalette(extension, schemeName)
+        if (palette.isNotEmpty()) paletteCache[extension] = palette
     }
 
     fun matchesFirstLine(extension: String, line: String): Boolean =
