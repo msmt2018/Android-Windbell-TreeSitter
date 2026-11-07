@@ -793,7 +793,8 @@ class WindbellTshLinkageTest {
         val code = "class Demo { void run() {} }"
         val tree = parser.parseString(code)
         val spans = engine.computeHighlights(tree, code, "java-unified-span-sources")
-        val rawCandidates = engine.computeDiagnosticCandidates(tree, code, "java-unified-span-sources")
+        val diagnostics = engine.computePipelineDiagnostics(tree, code, "java-unified-span-sources")
+        val rawCandidates = diagnostics.captures
         val catalog = engine.getStyleCatalog("java-unified-span-sources")
         val astId = catalog.first { it.name == "astName" }.styleId
         val queryId = catalog.first { it.name == "queryName" }.styleId
@@ -818,6 +819,10 @@ class WindbellTshLinkageTest {
             "Diagnostic mode must preserve native query candidates before resolver processing.")
         assertTrue(rawCandidates.size >= spans.size,
             "Raw producer diagnostics must not lose candidates during final conflict resolution.")
+        assertTrue((diagnostics.matchCounts[2] ?: 0) > 0,
+            "AST selector match count must be reported independently of capture count.")
+        assertTrue((diagnostics.matchCounts[3] ?: 0) > 0,
+            "Native Tree-sitter Query match count must be reported independently of capture count.")
 
         tree?.close()
         parser.close()

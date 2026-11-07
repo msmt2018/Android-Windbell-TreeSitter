@@ -1,4 +1,0 @@
-modulePath=:piecetable
-testedVariantName=debug
-testSuiteName=UnitTest
-testTarget=host

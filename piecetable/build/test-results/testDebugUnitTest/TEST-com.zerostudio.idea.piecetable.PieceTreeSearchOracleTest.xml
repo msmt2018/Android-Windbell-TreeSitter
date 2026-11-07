@@ -1,8 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="com.zerostudio.idea.piecetable.PieceTreeSearchOracleTest" tests="2" skipped="0" failures="0" errors="0" timestamp="2026-11-07T08:09:19" hostname="localhost" time="0.257">
-  <properties/>
-  <testcase name="cancelledSearchStops()" classname="com.zerostudio.idea.piecetable.PieceTreeSearchOracleTest" time="0.018"/>
-  <testcase name="findMatchesTheNaiveReference()" classname="com.zerostudio.idea.piecetable.PieceTreeSearchOracleTest" time="0.237"/>
-  <system-out><![CDATA[]]></system-out>
-  <system-err><![CDATA[]]></system-err>
-</testsuite>

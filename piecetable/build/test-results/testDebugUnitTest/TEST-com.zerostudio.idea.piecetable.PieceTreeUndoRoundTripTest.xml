@@ -1,9 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="com.zerostudio.idea.piecetable.PieceTreeUndoRoundTripTest" tests="3" skipped="0" failures="0" errors="0" timestamp="2026-11-07T08:09:21" hostname="localhost" time="2.377">
-  <properties/>
-  <testcase name="largePastesWithMixedLineBreaksRoundTrip()" classname="com.zerostudio.idea.piecetable.PieceTreeUndoRoundTripTest" time="1.664"/>
-  <testcase name="lfDocumentsWithMixedLineBreaksRoundTrip()" classname="com.zerostudio.idea.piecetable.PieceTreeUndoRoundTripTest" time="0.335"/>
-  <testcase name="crlfDocumentsWithMixedLineBreaksRoundTrip()" classname="com.zerostudio.idea.piecetable.PieceTreeUndoRoundTripTest" time="0.377"/>
-  <system-out><![CDATA[]]></system-out>
-  <system-err><![CDATA[]]></system-err>
-</testsuite>
