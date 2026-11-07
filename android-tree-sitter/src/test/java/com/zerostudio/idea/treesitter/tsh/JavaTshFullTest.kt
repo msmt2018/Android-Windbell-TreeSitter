@@ -3,10 +3,9 @@ package com.zerostudio.idea.treesitter.tsh
 import android.text.SpannableStringBuilder
 import com.zerostudio.idea.treesitter.TSParser
 import com.zerostudio.idea.treesitter.java.TSLanguageJava
-import org.junit.jupiter.api.Assertions.*
-import org.junit.jupiter.api.BeforeAll
-import org.junit.jupiter.api.DisplayName
-import org.junit.jupiter.api.Test
+import org.junit.Assert.*
+import org.junit.BeforeClass
+import org.junit.Test
 import java.io.File
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
@@ -17,7 +16,7 @@ class JavaTshFullTest {
         private const val TSH_RESOURCE_PATH = "src/main/assets/tsh/java.tsh"
 
         @JvmStatic
-        @BeforeAll
+        @BeforeClass
         fun setup() {
             // The grammar lives in the app's asset source set; this test belongs
             // to the android-tree-sitter module, so resolve it from either Gradle
@@ -44,9 +43,9 @@ class JavaTshFullTest {
     }
 
     @Test
-    @DisplayName("断言：验证 Javadoc 嵌套块、文本块与代理对字符高亮稳定性")
     fun testBlockScopeAndSurrogatePairStability() {
         // 覆盖：现代 Text Block、Javadoc 嵌套块、Emoji 👨‍👩‍👧‍👦 (4 个 Code Units) 与罕见汉字 𠮷
+        val textBlockDelimiter = "\"\"\""
         val testSource = """
             package com.zerostudio.test;
 
@@ -59,11 +58,11 @@ class JavaTshFullTest {
                 public static final int MAX_CACHE_CAPACITY = 0x1000;
 
                 public void renderEmoji() {
-                    var multiline = """
+                    var multiline = $textBlockDelimiter
                         First line of text block
                         Multi-byte Emoji: 👨‍👩‍👧‍👦
                         End of block.
-                        """;
+                        $textBlockDelimiter;
                     System.out.println(targetUser + ": " + MAX_CACHE_CAPACITY);
                 }
             }
@@ -168,9 +167,7 @@ class JavaTshFullTest {
         // 5. 校验多态色彩应用 (Light / Dark 热切换上屏)
         val ssb = SpannableStringBuilder(testSource)
         WindbellTshEngine.instance.setAppearance("java", false)
-        assertDoesNotThrow {
-            WindbellTshEngine.instance.applyHighlightsToSpannable(tree, testSource, "java", ssb)
-        }
+        WindbellTshEngine.instance.applyHighlightsToSpannable(tree, testSource, "java", ssb)
         assertEquals(testSource.length, ssb.length)
         assertTrue(
             ssb.getSpans(0, ssb.length, android.text.style.ForegroundColorSpan::class.java).isNotEmpty(),
@@ -178,16 +175,13 @@ class JavaTshFullTest {
         )
 
         WindbellTshEngine.instance.setAppearance("java", true)
-        assertDoesNotThrow {
-            WindbellTshEngine.instance.applyHighlightsToSpannable(tree, testSource, "java", ssb)
-        }
+        WindbellTshEngine.instance.applyHighlightsToSpannable(tree, testSource, "java", ssb)
 
         WindbellTshEngine.instance.clearAppearanceOverride("java")
         parser.close()
     }
 
     @Test
-    @DisplayName("断言：验证 32 线程高并发无锁竞争与重入稳定性")
     fun testHighConcurrencyReentrancy() {
         val threadCount = 32
         val iterationsPerThread = 50
