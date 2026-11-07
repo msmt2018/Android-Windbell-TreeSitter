@@ -13,11 +13,13 @@ import android.os.Bundle
 import android.text.Editable
 import android.text.TextWatcher
 import android.util.Log
+import android.util.TypedValue
 import android.view.Menu
 import android.view.MenuItem
 import android.view.View
 import android.widget.ArrayAdapter
 import androidx.appcompat.app.AppCompatActivity
+import androidx.appcompat.app.AppCompatDelegate
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.tabs.TabLayout
 import com.zerostudio.idea.androidtreesitter.databinding.ActivityMainBinding
@@ -37,6 +39,7 @@ import com.zerostudio.idea.treesitter.xml.TSLanguageXml
 import kotlinx.coroutines.*
 import x.github.module.editor.model.PieceTreeBuffer
 import x.github.module.editor.view.EditorView
+import x.github.module.editor.input.AutoPair
 import java.io.PrintWriter
 import java.io.StringWriter
 import java.util.Locale
@@ -55,22 +58,29 @@ class MainActivity : AppCompatActivity() {
     // 解析与高亮作业句柄
     private var parser: TSParser? = null
     private var parseJob: Job? = null
-    private var editorHighlightJob: Job? = null
 
     private var parseCount = 0L
     private var avgParse = 0L
 
+    // Console parser selection is independent from the editor active grammar.
     private var currentLanguageKey: String = "Java"
+    private var editorLanguageKey: String = "java"
     private var currentLanguage: TSLanguage? = null
 
     // 核心编辑器控件与文本缓存
     private var editorView: EditorView? = null
     private var editorTree: TSTree? = null
     private var currentEditorRawText: String = ""
+    @Volatile private var javaTshReady: Boolean = false
+    private var activeTshHighlighter: TshSyntaxHighlighter? = null
+    private val tshConfigurationStates = java.util.concurrent.ConcurrentHashMap<String, String>()
+    private var restoredTshScheme: String? = null
+    private var restoredTshDark: Boolean? = null
 
     companion object {
         private const val TAG = "Windbell_MainActivity"
-        private val languageMap = hashMapOf<String, TSLanguage>()
+        // Keep Java first and make the console language spinner deterministic.
+        private val languageMap = java.util.Collections.synchronizedMap(linkedMapOf<String, TSLanguage>())
 
         init {
             TreeSitter.loadLibrary()
@@ -92,6 +102,10 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        restoredTshScheme = savedInstanceState?.getString("tsh.selectedScheme")
+        if (savedInstanceState?.containsKey("tsh.isDark") == true) {
+            restoredTshDark = savedInstanceState.getBoolean("tsh.isDark")
+        }
         _binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
         setSupportActionBar(binding.toolbar)
@@ -110,23 +124,104 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * 加载并编译原生 .tsh 语法配置
+     * Loads every packaged TSH configuration whose matching Tree-sitter language is registered.
+     * Parser availability and TSH configuration availability are tracked independently.
      */
     private fun initTshEngineConfigurations() {
-        activityScope.launch(Dispatchers.IO) {
-            runCatching {
-                assets.open("tsh/java.tsh").bufferedReader().use { it.readText() }
-            }.onSuccess { javaTshContent ->
-                val ok = WindbellTshEngine.instance.loadTshSource(
-                    "java",
-                    javaTshContent,
-                    TSLanguageJava.getInstance()
-                )
-                Log.d(TAG, "Windbell-TSH [Java] configuration compiled: $ok")
-            }.onFailure {
-                Log.e(TAG, "Failed to load java.tsh from assets: ${it.message}")
+        // Only use parsers whose native libraries and language bindings actually
+        // registered during process initialization. A missing .so must be reported,
+        // not converted into an Activity crash by another getInstance() call.
+        val registrations = linkedMapOf(
+            "java" to "Java", "json" to "JSON", "kotlin" to "Kotlin",
+            "logcat" to "Logcat", "python" to "Python", "xml" to "XML"
+        )
+        val languages = linkedMapOf<String, TSLanguage>()
+        registrations.forEach { (extension, displayName) ->
+            val language = languageMap[displayName]
+            if (language != null) {
+                languages[extension] = language
+            } else {
+                tshConfigurationStates[extension] = "PARSER_MISSING"
+                Log.e(TAG, "Tree-sitter parser unavailable: .$extension ($displayName); native .so or language binding did not register")
             }
         }
+        loadAvailableTshConfigurations(languages)
+    }
+
+    private fun loadAvailableTshConfigurations(languages: Map<String, TSLanguage>) {
+        activityScope.launch(Dispatchers.IO) {
+            val availableAssets = runCatching { assets.list("tsh").orEmpty().toSet() }
+                .getOrElse {
+                    Log.e(TAG, "Unable to enumerate assets/tsh", it)
+                    emptySet()
+                }
+            languages.forEach { (extension, language) ->
+                val assetName = "$extension.tsh"
+                if (assetName !in availableAssets) {
+                    tshConfigurationStates[extension] = "MISSING"
+                    Log.i(TAG, "TSH config unavailable: assets/tsh/$assetName (Parser is registered; highlighting config is not)")
+                    return@forEach
+                }
+                val engine = WindbellTshEngine.instance
+                if (engine.isGrammarLoaded(extension)) {
+                    tshConfigurationStates[extension] = "READY"
+                    Log.i(TAG, "Reusing compiled native TSH grammar .$extension; skip recompilation on Activity recreation")
+                    return@forEach
+                }
+                val result = runCatching {
+                    val source = assets.open("tsh/$assetName").bufferedReader().use { it.readText() }
+                    val compiled = synchronized(engine) {
+                        engine.loadTshSource(extension, source, language)
+                    }
+                    if (!compiled) {
+                        val diagnostics = WindbellTshEngine.instance.lastCompileDiagnostics
+                        val message = diagnostics.joinToString { "${it.code}@${it.line}:${it.column}: ${it.message}" }
+                        error(message.ifBlank { "Native TSH compilation failed without diagnostics" })
+                    }
+                }
+                result.onSuccess {
+                    tshConfigurationStates[extension] = "READY"
+                    Log.i(TAG, "TSH config ready: .$extension")
+                }.onFailure { error ->
+                    tshConfigurationStates[extension] = "FAILED: ${error.message}"
+                    Log.e(TAG, "Failed to compile $assetName", error)
+                }
+            }
+            withContext(Dispatchers.Main) {
+                if ("java" in languages) {
+                    javaTshReady = tshConfigurationStates["java"] == "READY"
+                    restoredTshScheme?.let { scheme ->
+                        val restored = WindbellTshEngine.instance.selectScheme("java", scheme)
+                        if (!restored) Log.w(TAG, "Saved TSH scheme no longer exists: $scheme")
+                    }
+                    restoredTshDark?.let { dark ->
+                        WindbellTshEngine.instance.setAppearance("java", dark)
+                    }
+                    // On first launch there is no saved override. The Activity must
+                    // still follow the active TSH scheme's declared default appearance.
+                    val schemeDark = WindbellTshEngine.instance.isDark("java")
+                    val desiredNightMode = if (schemeDark) {
+                        AppCompatDelegate.MODE_NIGHT_YES
+                    } else {
+                        AppCompatDelegate.MODE_NIGHT_NO
+                    }
+                    if (AppCompatDelegate.getDefaultNightMode() != desiredNightMode) {
+                        AppCompatDelegate.setDefaultNightMode(desiredNightMode)
+                    }
+                    restoredTshScheme = null
+                    restoredTshDark = null
+                    installTshHighlighterIfReady()
+                    applyTshThemeTokens()
+                }
+                languages.keys.forEach { extension ->
+                    Log.i(TAG, "TSH registration status .$extension: parser=READY config=${tshConfigurationStates[extension] ?: "UNKNOWN"}")
+                }
+            }
+        }
+    }
+
+    private fun loadExternalTshConfiguration(extension: String, language: TSLanguage) {
+        loadAvailableTshConfigurations(mapOf(extension to language))
     }
 
     private fun setupTabs() {
@@ -178,6 +273,7 @@ class MainActivity : AppCompatActivity() {
             override fun onItemSelected(parent: android.widget.AdapterView<*>, view: View?, position: Int, id: Long) {
                 currentLanguageKey = parent.getItemAtPosition(position) as String
                 currentLanguage = languageMap[currentLanguageKey]
+                installTshHighlighterIfReady()
                 currentLanguage?.let { lang ->
                     parser?.close()
                     parser = TSParser.create()
@@ -194,6 +290,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun setupEditorTab(editorBinding: LayoutEditorPageBinding) {
         editorView = editorBinding.editorViewContainer
+        installTshHighlighterIfReady()
 
         // 弹窗引导是否载入大型示例文件 (View.java.txt)
         MaterialAlertDialogBuilder(this)
@@ -236,6 +333,125 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
+    /**
+     * The console language selector and the code editor are independent surfaces.
+     * Changing the console parser must never detach the editor's Java TSH styler.
+     * The editor currently owns a Java document, so install its grammar whenever
+     * that grammar has compiled successfully, regardless of currentLanguageKey.
+     */
+    private fun installTshHighlighterIfReady() {
+        val view = editorView ?: return
+        if (javaTshReady) {
+            if (activeTshHighlighter == null) {
+                activeTshHighlighter = TshSyntaxHighlighter(
+                    language = languageMap.getValue("Java"),
+                    extension = "java"
+                )
+            }
+            if (view.getSyntaxHighlighter() !== activeTshHighlighter) {
+                view.setSyntaxHighlighter(activeTshHighlighter)
+            }
+            applyTshEditorMetadata()
+            applyTshThemeTokens()
+        } else {
+            if (view.getSyntaxHighlighter() != null) view.setSyntaxHighlighter(null)
+            view.setAutoPairs(emptyList())
+            view.setAutoPairFilter(null)
+            view.setBracketMatcher(null)
+        }
+    }
+
+    /** Installs bracket and auto-pair behavior declared by the active .tsh file. */
+    private fun applyTshEditorMetadata() {
+        val view = editorView ?: return
+        val highlighter = activeTshHighlighter ?: return
+        val metadata = WindbellTshEngine.instance.getEditorMetadata("java")
+        metadata.options["tabSize"]?.toIntOrNull()?.let { size ->
+            if (size in 1..16) view.setTabSize(size)
+        }
+        metadata.options["fontSize"]?.toFloatOrNull()?.let { size ->
+            if (size in 6f..48f) {
+                view.setTextSize(TypedValue.applyDimension(
+                    TypedValue.COMPLEX_UNIT_SP, size, resources.displayMetrics
+                ))
+            }
+        }
+        metadata.options["insertSpaces"]?.toBooleanStrictOrNull()?.let { useSpaces ->
+            val tabSize = metadata.options["tabSize"]?.toIntOrNull()?.coerceIn(1, 16) ?: 4
+            view.setIndentUnit(if (useSpaces) " ".repeat(tabSize) else "\t")
+        }
+        metadata.options["autoIndent"]?.toBooleanStrictOrNull()?.let(view::setAutoIndent)
+        metadata.options["lineNumbers"]?.toBooleanStrictOrNull()?.let(view::setLineNumbersVisible)
+        val pairs = metadata.autoClosingPairs.mapNotNull { pair ->
+            if (pair.open.length == 1 && pair.close.length == 1) {
+                AutoPair(pair.open[0], pair.close[0])
+            } else {
+                null
+            }
+        }
+        view.setAutoPairs(pairs)
+        view.setAutoPairFilter(highlighter.createAutoPairFilter())
+        view.setBracketMatcher(highlighter.createBracketMatcher())
+    }
+
+    /** Applies only UI colors explicitly declared by the active .tsh scheme. */
+    private fun applyTshThemeTokens() {
+        val engine = WindbellTshEngine.instance
+        val tokens = engine.getThemeTokens("java")
+        editorView?.let { view ->
+            tokens["editor.background"]?.let(view::setBackgroundColor)
+            tokens["editor.foreground"]?.let(view::setTextColor)
+            tokens["editor.selection"]?.let(view::setSelectionColor)
+            tokens["editor.lineHighlight"]?.let(view::setCurrentLineColor)
+            tokens["editor.gutter"]?.let(view::setLineNumberColor)
+            tokens["editor.caret"]?.let(view::setHandleColor)
+        }
+
+        // TSH UI tokens are the source of truth for the whole Activity, not only
+        // the editor canvas. Apply them in-place; no DSL compilation or reparsing.
+        tokens["activity.background"]?.let(binding.root::setBackgroundColor)
+        tokens["activity.surface"]?.let(binding.appBarLayout::setBackgroundColor)
+        tokens["activity.toolbar.background"]?.let(binding.toolbar::setBackgroundColor)
+        tokens["activity.toolbar.foreground"]?.let { color ->
+            binding.toolbar.setTitleTextColor(color)
+            binding.toolbar.setSubtitleTextColor(color)
+        }
+        tokens["activity.tabs.background"]?.let(binding.tabLayout::setBackgroundColor)
+        val normalTabColor = tokens["activity.tabs.foreground"]
+        val selectedTabColor = tokens["activity.tabs.selected"]
+        if (normalTabColor != null || selectedTabColor != null) {
+            val fallback = normalTabColor ?: selectedTabColor!!
+            binding.tabLayout.setTabTextColors(
+                normalTabColor ?: fallback,
+                selectedTabColor ?: fallback
+            )
+        }
+        tokens["activity.tabs.indicator"]?.let(binding.tabLayout::setSelectedTabIndicatorColor)
+        tokens["activity.statusBar"]?.let { window.statusBarColor = it }
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+            tokens["activity.navigationBar"]?.let { window.navigationBarColor = it }
+        }
+
+        // Match status/navigation icon contrast to the selected TSH appearance.
+        val lightSystemBars = !engine.isDark("java")
+        var flags = window.decorView.systemUiVisibility
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
+            flags = if (lightSystemBars) {
+                flags or View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
+            } else {
+                flags and View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR.inv()
+            }
+        }
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+            flags = if (lightSystemBars) {
+                flags or View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
+            } else {
+                flags and View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR.inv()
+            }
+        }
+        window.decorView.systemUiVisibility = flags
+    }
+
     private fun setEditorContent(text: String) {
         currentEditorRawText = text
         val buffer = PieceTreeBuffer(PieceTreeTextBufferBuilder().build().apply {
@@ -248,37 +464,19 @@ class MainActivity : AppCompatActivity() {
     /**
      * 驱动 TSH 引擎执行宏微双通道高亮与语义分析
      */
+    /**
+     * Refreshes the single highlighting pipeline that actually feeds EditorView.
+     *
+     * Do not parse a second tree here: the installed TshSyntaxHighlighter owns the
+     * parser, capture snapshot, line indexing and invalidation used by drawText().
+     */
     private fun triggerEditorFullHighlight() {
-        val currentJob = editorHighlightJob
-
-        editorHighlightJob = activityScope.launch(Dispatchers.Default) {
-            currentJob?.cancel(CancellationException("New editor highlight requested"))
-
-            val rawText = currentEditorRawText
-            if (rawText.isEmpty()) return@launch
-
-            // 1. 宏观 AST 解析
-            val lang = currentLanguage ?: TSLanguageJava.getInstance()
-            val localParser = TSParser.create().apply { setLanguage(lang) }
-            val newTree = localParser.parseString(rawText)
-            localParser.close()
-
-            editorTree?.close()
-            editorTree = newTree
-
-            // 2. 调用 Windbell-TSH 核心引擎进行微观正则 + 宏观 AST 合成
-            val ext = if (currentLanguageKey.equals("Kotlin", ignoreCase = true)) "kt" else "java"
-            val spans = WindbellTshEngine.instance.computeHighlights(
-                tree = editorTree,
-                text = rawText,
-                extension = ext
-            )
-
-            // 3. 计算折叠和符号大纲
-            val folds = editorTree?.let { WindbellTshEngine.instance.computeFolds(it, rawText, ext) } ?: emptyList()
-            val outlines = editorTree?.let { WindbellTshEngine.instance.computeOutline(it, rawText, ext) } ?: emptyList()
-
-            Log.d(TAG, "TSH Highlighting complete: spans=${spans.size}, folds=${folds.size}, outlines=${outlines.size}")
+        installTshHighlighterIfReady()
+        val highlighter = activeTshHighlighter
+        if (javaTshReady && highlighter != null) {
+            highlighter.reparse()
+        } else {
+            Log.w(TAG, "Editor TSH renderer unavailable: ready=$javaTshReady highlighterInstalled=${editorView?.getSyntaxHighlighter() != null} editorLanguage=$editorLanguageKey consoleLanguage=$currentLanguageKey")
         }
     }
 
@@ -358,12 +556,16 @@ class MainActivity : AppCompatActivity() {
 
     private fun loadExternalLanguages() {
         activityScope.launch(Dispatchers.IO) {
+            // The language registry and native TSH engine outlive Activity recreation.
+            // Do not reopen the same C grammar library on every Light/Dark switch.
+            if (languageMap.containsKey("C")) return@launch
             runCatching {
                 val cLang = TSLanguage.loadLanguage(this@MainActivity, "c")
                 if (cLang != null) {
                     withContext(Dispatchers.Main) {
                         languageMap["C"] = cLang
                         (binding.contentConsole.languageChooser.adapter as? ArrayAdapter<*>)?.notifyDataSetChanged()
+                        loadExternalTshConfiguration("c", cLang)
                     }
                 }
             }
@@ -386,6 +588,14 @@ class MainActivity : AppCompatActivity() {
                 showTshCoreTestSuiteDialog()
                 return true
             }
+            R.id.test_tsh_cursor_capture -> {
+                runCursorCaptureDiagnostic()
+                return true
+            }
+            R.id.show_tsh_schemes -> {
+                showTshSchemesDialog()
+                return true
+            }
             R.id.toggle_tsh_theme -> {
                 toggleTshTheme()
                 return true
@@ -394,16 +604,272 @@ class MainActivity : AppCompatActivity() {
         return super.onOptionsItemSelected(item)
     }
 
+
+    /** Find the deepest named Java Tree-sitter node containing a UTF-16LE byte range. */
+    private fun findSmallestNamedNode(root: TSNode, startByte: Int, endByte: Int): TSNode {
+        var current = root
+        while (true) {
+            var next: TSNode? = null
+            for (index in 0 until current.childCount) {
+                val child = current.getChild(index)
+                if (!child.isNull && child.isNamed &&
+                    child.startByte <= startByte && child.endByte >= endByte
+                ) {
+                    next = child
+                    break
+                }
+            }
+            current = next ?: return current
+        }
+    }
+
+    /** Reparse the editor's current source and report parser, captures and Android spans. */
+    private fun runCursorCaptureDiagnostic() {
+        val view = editorView
+        if (view == null || !javaTshReady) {
+            showResultDialog("TSH 捕获诊断", "编辑器或 Java TSH 尚未就绪。")
+            return
+        }
+        val source = view.getText()
+        val lineNumber = view.getCursorLine().coerceIn(1, view.getLineCount())
+        val lineStart = view.getLineStartOffset(lineNumber)
+        val lineText = view.getLineText(lineNumber)
+        val lineEnd = lineStart + lineText.length
+        val cursorOffset = (lineStart + view.getCursorColumn() - 1)
+            .coerceIn(0, (source.length - 1).coerceAtLeast(0))
+        val engine = WindbellTshEngine.instance
+        val report = StringBuilder()
+        report.appendLine("=== TSH 光标行 / 符号块全链路诊断 ===")
+        report.appendLine("Editor language: " + editorLanguageKey + " · Parser registry: " + languageMap.keys)
+        report.appendLine("Console language: " + currentLanguageKey)
+        report.appendLine("Cursor: line=" + lineNumber + " column=" + view.getCursorColumn() + " UTF16-offset=" + cursorOffset)
+        report.appendLine("Source chars=" + source.length + ", UTF-16LE bytes=" + source.length * 2)
+        report.appendLine("Cursor line [" + lineStart + "," + lineEnd + "):")
+        report.appendLine(lineText)
+
+        val parserStart = System.nanoTime()
+        val activeParser = TSParser.create()
+        try {
+            activeParser.setLanguage(languageMap.getValue("Java"))
+            val tree = activeParser.parseString(source)
+            val parserNanos = System.nanoTime() - parserStart
+            if (tree == null) {
+                report.appendLine("Tree-sitter FAILED: null tree")
+            } else {
+                tree.use { parsedTree ->
+                    val root = parsedTree.rootNode
+                    val cursorByteStart = cursorOffset * 2
+                    val cursorByteEnd = (cursorOffset + 1).coerceAtMost(source.length) * 2
+                    val cursorNode = if (source.isEmpty()) root else
+                        findSmallestNamedNode(root, cursorByteStart, cursorByteEnd)
+                    val declarationTypes = setOf(
+                        "class_declaration", "interface_declaration", "enum_declaration",
+                        "record_declaration", "annotation_type_declaration",
+                        "method_declaration", "constructor_declaration",
+                        "field_declaration", "local_variable_declaration",
+                        "formal_parameter", "enum_constant"
+                    )
+                    var symbolNode: TSNode? = cursorNode
+                    while (symbolNode != null && symbolNode.type !in declarationTypes) {
+                        symbolNode = symbolNode.parent
+                    }
+                    if (symbolNode == null) symbolNode = cursorNode
+                    val selectedNode = checkNotNull(symbolNode)
+                    val symbolStart = (selectedNode.startByte / 2).coerceIn(0, source.length)
+                    val symbolEnd = (selectedNode.endByte / 2).coerceIn(symbolStart, source.length)
+                    val symbolText = source.substring(symbolStart, symbolEnd)
+
+                    val queryStart = System.nanoTime()
+                    val pipelineDiagnostics = engine.computePipelineDiagnostics(parsedTree, source, "java")
+                    val captures = pipelineDiagnostics.captures
+                    val queryNanos = System.nanoTime() - queryStart
+                    val lineCaptures = captures.filter { span ->
+                        (span.startByte shr 1) < lineEnd && (span.endByte shr 1) > lineStart
+                    }
+                    val symbolCaptures = captures.filter { span ->
+                        (span.startByte shr 1) < symbolEnd && (span.endByte shr 1) > symbolStart
+                    }
+
+                    val scheme = engine.getSelectedScheme("java") ?: ""
+                    val paletteStart = System.nanoTime()
+                    val palette = engine.getSchemePalette("java", scheme)
+                    val paletteNanos = System.nanoTime() - paletteStart
+                    val styles = engine.getStyleCatalog("java").associateBy { it.styleId }
+
+                    val linePreview = android.text.SpannableStringBuilder(lineText)
+                    engine.applyHighlightSpansToSpannable(lineCaptures, lineStart, lineText, "java", linePreview)
+                    val lineForeground = linePreview.getSpans(
+                        0, linePreview.length, android.text.style.ForegroundColorSpan::class.java
+                    )
+                    val symbolPreview = android.text.SpannableStringBuilder(symbolText)
+                    engine.applyHighlightSpansToSpannable(
+                        symbolCaptures, symbolStart, symbolText, "java", symbolPreview
+                    )
+                    val symbolForeground = symbolPreview.getSpans(
+                        0, symbolPreview.length, android.text.style.ForegroundColorSpan::class.java
+                    )
+
+                    val installed = activeTshHighlighter != null && view.getSyntaxHighlighter() === activeTshHighlighter
+                    val editorLineSpans = activeTshHighlighter?.styleLine(
+                        lineText, lineNumber, lineStart, 0, lineText.length
+                    )
+                    val editorForeground = editorLineSpans?.getSpans(
+                        0, lineText.length, android.text.style.ForegroundColorSpan::class.java
+                    ) ?: emptyArray()
+
+                    report.appendLine()
+                    report.appendLine("1) Parser: " + parsedTree.rootNode.type + " · " +
+                        String.format(Locale.US, "%.3f", parserNanos / 1_000_000.0) + " ms")
+                    report.appendLine("2) TSH native pipeline: " + captures.size + " raw captures · " +
+                        String.format(Locale.US, "%.3f", queryNanos / 1_000_000.0) + " ms")
+                    val sourceNames = mapOf(
+                        0 to "Oniguruma Regex", 1 to "Monarch",
+                        2 to "ATS Selector", 3 to "Tree-sitter Query"
+                    )
+                    for (sourceId in 0..3) {
+                        val produced = captures.count { it.source == sourceId }
+                        val inLine = lineCaptures.count { it.source == sourceId }
+                        val inSymbol = symbolCaptures.count { it.source == sourceId }
+                        report.appendLine(
+                            "   " + sourceNames.getValue(sourceId) +
+                                ": matches=" + (pipelineDiagnostics.matchCounts[sourceId] ?: 0) +
+                                " captures=" + produced + " line=" + inLine + " symbol=" + inSymbol
+                        )
+                    }
+                    report.appendLine()
+                    report.appendLine("3) Cursor AST node: " + cursorNode.type)
+                    report.appendLine("   Ancestors: " + generateSequence(cursorNode) { it.parent }
+                        .take(8).joinToString(" <- ") { it.type })
+                    report.appendLine("4) Selected symbol block: " + selectedNode.type +
+                        " UTF16=[" + symbolStart + "," + symbolEnd + ") chars=" + symbolText.length)
+                    report.appendLine(symbolText.take(12000))
+                    if (symbolText.length > 12000) report.appendLine("… symbol block truncated in report")
+                    report.appendLine("5) Scheme=" + scheme + " dark=" + engine.isDark("java") +
+                        " styles=" + styles.size + " palette=" + palette.size +
+                        " paletteLookup=" + String.format(Locale.US, "%.3f", paletteNanos / 1_000_000.0) + " ms")
+                    report.appendLine("6) Android preview spans: lineForeground=" + lineForeground.size +
+                        " symbolForeground=" + symbolForeground.size)
+                    report.appendLine("7) Editor renderer: attached=" + installed +
+                        " styleLineForeground=" + editorForeground.size +
+                        " (zero may mean the installed async snapshot has not completed yet)")
+                    report.appendLine("8) Palette binding audit:")
+                    symbolCaptures.distinctBy { it.styleId }.forEach { span ->
+                        val style = styles[span.styleId]
+                        val colors = palette[span.styleId]
+                        val light = if (colors?.hasLightColor == true) String.format(Locale.ROOT, "#%08X", colors.lightColor) else "MISSING"
+                        val dark = if (colors?.hasDarkColor == true) String.format(Locale.ROOT, "#%08X", colors.darkColor) else "MISSING"
+                        report.appendLine(
+                            "   id=" + span.styleId + " name=" + (style?.name ?: "UNKNOWN") +
+                                " scope=" + (style?.scope ?: "UNKNOWN") + " light=" + light + " dark=" + dark
+                        )
+                    }
+                    report.appendLine("9) Sample captures in selected symbol:")
+                    symbolCaptures.take(80).forEach { span ->
+                        val from = ((span.startByte shr 1) - symbolStart).coerceIn(0, symbolText.length)
+                        val to = ((span.endByte shr 1) - symbolStart).coerceIn(from, symbolText.length)
+                        report.appendLine(
+                            "   " + sourceNames[span.source] +
+                                " [" + from + "," + to + ") " +
+                                (styles[span.styleId]?.name ?: "style#" + span.styleId) +
+                                " = " + symbolText.substring(from, to).replace("\n", "\\n")
+                        )
+                    }
+                    if (symbolCaptures.isEmpty()) report.appendLine("NO SYMBOL CAPTURES: inspect TSH rule match, ATS selector, query predicate and parser grammar.")
+                    report.appendLine("10) Canvas pixels are not claimed here; device instrumentation is required for final pixel verification.")
+                }
+            }
+        } catch (error: Throwable) {
+            report.appendLine("DIAGNOSTIC ERROR: " + error.stackTraceToString())
+        } finally {
+            activeParser.close()
+        }
+        showResultDialog("TSH 光标行 / 符号捕获诊断", report.toString())
+    }
+
+    private fun applyTshScheme(scheme: String, isDark: Boolean) {
+        val engine = WindbellTshEngine.instance
+        val selected = activeTshHighlighter?.selectScheme(scheme) ?: engine.selectScheme("java", scheme)
+        if (!selected) {
+            showResultDialog("TSH Scheme", "Scheme 切换失败：" + scheme)
+            return
+        }
+        engine.setAppearance("java", isDark)
+        AppCompatDelegate.setDefaultNightMode(
+            if (isDark) AppCompatDelegate.MODE_NIGHT_YES else AppCompatDelegate.MODE_NIGHT_NO
+        )
+        activeTshHighlighter?.refreshTheme()
+        applyTshThemeTokens()
+    }
+
+    /** Browse all compiled schemes and their light/dark semantic colors. */
+    private fun showTshSchemesDialog() {
+        val engine = WindbellTshEngine.instance
+        val schemes = engine.listSchemes("java")
+        if (schemes.isEmpty()) {
+            showResultDialog("TSH Schemes", "没有已编译的 Java Scheme。")
+            return
+        }
+        MaterialAlertDialogBuilder(this)
+            .setTitle("TSH Scheme 主题包")
+            .setItems(schemes.toTypedArray()) { _, index ->
+                val scheme = schemes[index]
+                val palette = engine.getSchemePalette("java", scheme)
+                val styles = engine.getStyleCatalog("java").associateBy { it.styleId }
+                val detail = StringBuilder("Scheme: " + scheme + "\nPalette entries: " + palette.size + "\n\n")
+                palette.values.sortedBy { it.styleId }.forEach { entry ->
+                    val style = styles[entry.styleId]
+                    val light = if (entry.hasLightColor) String.format(Locale.ROOT, "#%08X", entry.lightColor) else "未配置"
+                    val dark = if (entry.hasDarkColor) String.format(Locale.ROOT, "#%08X", entry.darkColor) else "未配置"
+                    detail.appendLine((style?.name ?: "style#" + entry.styleId) + " (" + (style?.scope ?: "unknown") + ")")
+                    detail.appendLine("  Light: " + light)
+                    detail.appendLine("  Dark:  " + dark)
+                }
+                val lightTokens = engine.getSchemeThemeTokens("java", scheme, false)
+                val darkTokens = engine.getSchemeThemeTokens("java", scheme, true)
+                detail.appendLine()
+                detail.appendLine("UI Theme Tokens · Light (${lightTokens.size})")
+                lightTokens.toSortedMap().forEach { (key, color) ->
+                    detail.appendLine("  " + key + ": " + String.format(Locale.ROOT, "#%08X", color))
+                }
+                detail.appendLine("UI Theme Tokens · Dark (${darkTokens.size})")
+                darkTokens.toSortedMap().forEach { (key, color) ->
+                    detail.appendLine("  " + key + ": " + String.format(Locale.ROOT, "#%08X", color))
+                }
+                MaterialAlertDialogBuilder(this)
+                    .setTitle(scheme + " · Light / Dark")
+                    .setMessage(detail.toString())
+                    .setPositiveButton("按当前 Activity 模式应用") { _, _ ->
+                        val mode = AppCompatDelegate.getDefaultNightMode()
+                        val dark = mode == AppCompatDelegate.MODE_NIGHT_YES ||
+                            (mode == AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM &&
+                                (resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK) ==
+                                android.content.res.Configuration.UI_MODE_NIGHT_YES)
+                        applyTshScheme(scheme, dark)
+                    }
+                    .setNeutralButton("应用 Light") { _, _ -> applyTshScheme(scheme, false) }
+                    .setNegativeButton("应用 Dark") { _, _ -> applyTshScheme(scheme, true) }
+                    .show()
+            }
+            .setNegativeButton("关闭", null)
+            .show()
+    }
+
     /**
      * 切换 TSH 白天/黑夜多态调色板
      */
     private fun toggleTshTheme() {
-        WindbellTshEngine.instance.isDarkTheme = !WindbellTshEngine.instance.isDarkTheme
-        val currentThemeName = if (WindbellTshEngine.instance.isDarkTheme) "黑夜深色 (Dark)" else "白天浅色 (Light)"
-        triggerEditorFullHighlight()
+        val engine = WindbellTshEngine.instance
+        val nextDark = !engine.isDark("java")
+        engine.setAppearance("java", nextDark)
+        AppCompatDelegate.setDefaultNightMode(
+            if (nextDark) AppCompatDelegate.MODE_NIGHT_YES else AppCompatDelegate.MODE_NIGHT_NO
+        )
+        activeTshHighlighter?.refreshTheme()
+        applyTshThemeTokens()
+        val currentThemeName = if (nextDark) "黑夜深色 (Dark)" else "白天浅色 (Light)"
         MaterialAlertDialogBuilder(this)
-            .setTitle("🎨 TSH 多态调色板热切换")
-            .setMessage("当前调色板已瞬间切换为: $currentThemeName\n（验证：零重新分词开销，仅依赖 Native StyleID 调色板重新投射绘制）")
+            .setTitle("🎨 TSH / Activity 主题")
+            .setMessage("已请求切换为 $currentThemeName。TSH 复用已编译 palette，不重新编译规则或重新解析文档；Activity 主题由 AppCompatDelegate 同步切换。")
             .setPositiveButton(android.R.string.ok, null)
             .show()
     }
@@ -413,28 +879,41 @@ class MainActivity : AppCompatActivity() {
      */
     private fun showTshCoreTestSuiteDialog() {
         val testOptions = arrayOf(
-            "1. 🎨 多态调色板 (Palette) 映射完整性测试",
-            "2. ⚡ 原生 AST 选择器 vs 正则微观流覆盖测试",
-            "3. 📂 语法代码折叠 (Fold Ranges) 自动化提取测试",
-            "4. 🏷️ 符号大纲导航 (Outline Tags) 深度提取测试",
-            "5. 💡 光标位置悬停感知 (Hover Info) 测试",
-            "6. 🚀 32 线程高并发重入 Fuzzing 压测"
+            "1. 🎨 Scheme / Style ID / UI Token 颜色映射",
+            "2. ⚡ Regex / Monarch / ATS / Native Query 四管线覆盖",
+            "3. 🧩 Tree-sitter Parser 与 TSH 配置注册审计",
+            "4. 🧵 32 线程并发重入与资源释放压测"
         )
-
         MaterialAlertDialogBuilder(this)
-            .setTitle("⚙️ Windbell-TSH 引擎全功能测试与诊断")
+            .setTitle("⚙️ Windbell-TSH 核心测试与诊断")
             .setItems(testOptions) { _, which ->
                 when (which) {
                     0 -> runTshPaletteTest()
                     1 -> runTshHybridCoverageTest()
-                    2 -> runTshFoldRangesTest()
-                    3 -> runTshOutlineTagsTest()
-                    4 -> runTshHoverInfoTest()
-                    5 -> runTshConcurrencyTest()
+                    2 -> runTshParserRegistryTest()
+                    3 -> runTshConcurrencyTest()
                 }
             }
             .setNegativeButton("关闭", null)
             .show()
+    }
+
+    private fun runTshParserRegistryTest() {
+        val report = StringBuilder("=== Tree-sitter Parser / TSH 注册审计 ===\n\n")
+        val labels = linkedMapOf("Java" to "java", "JSON" to "json", "Kotlin" to "kotlin", "Logcat" to "logcat", "Python" to "python", "XML" to "xml", "C" to "c")
+        labels.forEach { (name, extension) ->
+            val parserState = if (languageMap.containsKey(name)) "READY" else "PARSER_MISSING"
+            val configState = tshConfigurationStates[extension] ?: "NOT_CHECKED"
+            val schemes = if (configState == "READY") WindbellTshEngine.instance.listSchemes(extension) else emptyList()
+            val styles = if (configState == "READY") WindbellTshEngine.instance.getStyleCatalog(extension).size else 0
+            val bindingClass = if (name == "C") "TSLanguage.loadLanguage" else "TSLanguage$name"
+            val nativeLibrary = "libtree-sitter-$extension.so"
+            report.appendLine("$name (.$extension): parser=$parserState · binding=$bindingClass · native=$nativeLibrary · tsh=$configState · schemes=${schemes.size} · styles=$styles")
+            if (schemes.isNotEmpty()) report.appendLine("   " + schemes.joinToString())
+        }
+        report.appendLine()
+        report.appendLine("Editor language=$editorLanguageKey · attached=${activeTshHighlighter != null && editorView?.getSyntaxHighlighter() === activeTshHighlighter}")
+        showResultDialog("Parser / TSH 注册审计", report.toString())
     }
 
     private fun runTshPaletteTest() {
@@ -442,13 +921,39 @@ class MainActivity : AppCompatActivity() {
         report.append("=== 🎨 TSH 调色板映射测试 ===\n\n")
 
         val ext = "java"
-        val sampleCode = "public class Sample { int x = 100; }"
-        val spans = WindbellTshEngine.instance.computeHighlights(editorTree, sampleCode, ext)
+        // Never reuse editorTree here: it belongs to the console editor, not this sample.
+        val sampleCode = editorView?.getText()?.takeIf { it.isNotBlank() }
+            ?: "public class Sample { int x = 100; }"
+        val sampleParser = TSParser.create().also { it.setLanguage(languageMap.getValue("Java")) }
+        val sampleTree = sampleParser.parseString(sampleCode)
+        val spans = try {
+            WindbellTshEngine.instance.computeHighlights(sampleTree, sampleCode, ext)
+        } finally {
+            sampleTree?.close()
+            sampleParser.close()
+        }
 
         report.append("当前已加载语言扩展: $ext\n")
         report.append("生成 Span 数量: ${spans.size}\n\n")
 
         val distinctStyleIds = spans.map { it.styleId }.distinct()
+        val engine = WindbellTshEngine.instance
+        val scheme = engine.getSelectedScheme(ext) ?: engine.getDefaultScheme(ext) ?: "(none)"
+        val palette = engine.getSchemePalette(ext, scheme)
+        val styleCatalog = engine.getStyleCatalog(ext).associateBy { it.styleId }
+        val missing = distinctStyleIds.filter { id ->
+            val color = palette[id]
+            color == null || (!color.hasLightColor && !color.hasDarkColor)
+        }
+        val preview = android.text.SpannableStringBuilder(sampleCode)
+        engine.applyHighlightSpansToSpannable(spans, 0, sampleCode, ext, preview)
+        val foreground = preview.getSpans(0, preview.length, android.text.style.ForegroundColorSpan::class.java)
+        report.append("Scheme=$scheme · palette=${palette.size} · foregroundSpans=${foreground.size} · missing=$missing\n")
+        distinctStyleIds.forEach { id ->
+            val style = styleCatalog[id]
+            val color = palette[id]
+            report.appendLine("  id=$id ${style?.name ?: "UNKNOWN"} scope=${style?.scope ?: "UNKNOWN"} light=" + (if (color?.hasLightColor == true) String.format(Locale.ROOT, "#%08X", color.lightColor) else "MISSING") + " dark=" + (if (color?.hasDarkColor == true) String.format(Locale.ROOT, "#%08X", color.darkColor) else "MISSING"))
+        }
         report.append("捕获的独立 Style ID 集合: $distinctStyleIds\n")
         report.append("StyleID 映射状态: 全部在 Native 栈完成偶数对齐与非重叠校验。\n")
 
@@ -463,29 +968,50 @@ class MainActivity : AppCompatActivity() {
 
         activityScope.launch(Dispatchers.IO) {
             val text = """
+                // UTF-16LE probe: 中文 👨‍👩‍👧‍👦 𠮷
                 package com.demo;
                 /** Javadoc comment with @param target */
                 public class TestClass {
+                    private static final int MAX_CACHE_CAPACITY = 1024;
                     // Single line comment
                     private String message = "Hello \"Escaped\" World";
                     public void doWork() {
                         int value = 0xABCD;
+                        String multiline = "native query probe";
                     }
                 }
             """.trimIndent()
 
-            val lang = TSLanguageJava.getInstance()
+            val lang = languageMap.getValue("Java")
             val parser = TSParser.create().apply { setLanguage(lang) }
-            val tree = parser.parseString(text)
-            parser.close()
-
-            val spans = WindbellTshEngine.instance.computeHighlights(tree, text, "java")
-            tree?.close()
+            var tree: TSTree? = null
+            val engine = WindbellTshEngine.instance
+            val diagnostics: WindbellTshEngine.PipelineDiagnostics
+            val spans: List<WindbellTshEngine.HighlightSpan>
+            try {
+                tree = parser.parseString(text)
+                diagnostics = engine.computePipelineDiagnostics(tree, text, "java")
+                spans = engine.computeHighlights(tree, text, "java")
+            } catch (error: Throwable) {
+                withContext(Dispatchers.Main) {
+                    pd.dismiss()
+                    showResultDialog("四管线测试失败", error.stackTraceToString())
+                }
+                return@launch
+            } finally {
+                tree?.close()
+                parser.close()
+            }
 
             val report = StringBuilder()
-            report.append("=== ⚡ 双通道混合扫描线合成报告 ===\n\n")
-            report.append("源码字符总数: ${text.length} (字节数: ${text.length * 2})\n")
-            report.append("合成后有效 Span 数量: ${spans.size}\n\n")
+            report.append("=== ⚡ 四管线混合扫描线合成报告 ===\n\n")
+            report.append("源码字符总数: ${text.length} (UTF-16LE bytes: ${text.length * 2})\n")
+            report.append("原始候选捕获: ${diagnostics.captures.size} · 最终渲染 Span: ${spans.size}\n")
+            val pipelineNames = mapOf(0 to "Oniguruma", 1 to "Monarch", 2 to "ATS", 3 to "Native Query")
+            for (id in 0..3) {
+                report.appendLine("${pipelineNames.getValue(id)} matches=${diagnostics.matchCounts[id] ?: 0} captures=${diagnostics.captures.count { it.source == id }}")
+            }
+            report.appendLine()
 
             for (span in spans.take(12)) {
                 val startChar = span.startByte shr 1
@@ -501,175 +1027,63 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun runTshFoldRangesTest() {
-        val text = """
-            package com.demo;
-            import java.util.*;
-            
-            /**
-             * Class Documentation
-             */
-            public class FoldDemo {
-                public void methodOne() {
-                    System.out.println("Line 1");
-                    System.out.println("Line 2");
-                }
-            }
-        """.trimIndent()
-
-        activityScope.launch(Dispatchers.IO) {
-            val parser = TSParser.create().apply { setLanguage(TSLanguageJava.getInstance()) }
-            val tree = parser.parseString(text)
-            parser.close()
-
-            val folds = tree?.let { WindbellTshEngine.instance.computeFolds(it, text, "java") } ?: emptyList()
-            tree?.close()
-
-            val report = StringBuilder()
-            report.append("=== 📂 代码折叠 (Fold Ranges) 自动化测试 ===\n\n")
-            report.append("检测到可折叠块数量: ${folds.size}\n\n")
-
-            for (fold in folds) {
-                val kindStr = when (fold.kind) {
-                    0 -> "代码块 (Code Block)"
-                    1 -> "注释段 (Comment)"
-                    2 -> "导入区域 (Imports)"
-                    else -> "其他"
-                }
-                report.append("  🔹 [字节: ${fold.startByte}..${fold.endByte}] 类别: $kindStr\n")
-            }
-
-            withContext(Dispatchers.Main) {
-                showResultDialog("代码折叠测试结果", report.toString())
-            }
-        }
-    }
-
-    private fun runTshOutlineTagsTest() {
-        val text = """
-            public class OuterClass {
-                int fieldAlpha = 1;
-                public void testMethod() {}
-                enum Status { OK, FAIL }
-            }
-        """.trimIndent()
-
-        activityScope.launch(Dispatchers.IO) {
-            val parser = TSParser.create().apply { setLanguage(TSLanguageJava.getInstance()) }
-            val tree = parser.parseString(text)
-            parser.close()
-
-            val outlines = tree?.let { WindbellTshEngine.instance.computeOutline(it, text, "java") } ?: emptyList()
-            tree?.close()
-
-            val report = StringBuilder()
-            report.append("=== 🏷️ 符号大纲提取 (Outline Tags) 测试 ===\n\n")
-            report.append("提取到的全局符号数: ${outlines.size}\n\n")
-
-            for (tag in outlines) {
-                val kindStr = when (tag.kind) {
-                    1 -> "Class/Interface"
-                    2 -> "Method"
-                    3 -> "Field"
-                    4 -> "Enum"
-                    else -> "Symbol"
-                }
-                report.append("  📌 [${kindStr}] 名称: \"${tag.name}\" (字节: ${tag.startByte}..${tag.endByte})\n")
-            }
-
-            withContext(Dispatchers.Main) {
-                showResultDialog("符号大纲测试结果", report.toString())
-            }
-        }
-    }
-
-    private fun runTshHoverInfoTest() {
-        val text = "public class HoverDemo { int targetVariable = 42; }"
-        activityScope.launch(Dispatchers.IO) {
-            val parser = TSParser.create().apply { setLanguage(TSLanguageJava.getInstance()) }
-            val tree = parser.parseString(text)
-            parser.close()
-
-            val offset = text.indexOf("targetVariable") * 2
-            val hover = tree?.let { WindbellTshEngine.instance.getHoverInfo(it, offset) }
-            tree?.close()
-
-            val report = StringBuilder()
-            report.append("=== 💡 悬停感知信息提取测试 ===\n\n")
-            if (hover != null) {
-                report.append("目标位置: 字符索引 ${offset / 2} ('targetVariable')\n")
-                report.append("AST 节点类型: ${hover.nodeType}\n")
-                report.append("作用域详情: ${hover.detail}\n")
-                report.append("物理字节范围: [${hover.startByte}..${hover.endByte}]\n")
-            } else {
-                report.append("未命中指定位置的 AST 节点。")
-            }
-
-            withContext(Dispatchers.Main) {
-                showResultDialog("悬停提示测试结果", report.toString())
-            }
-        }
-    }
-
     private fun runTshConcurrencyTest() {
         val pd = ProgressDialog(this).apply {
-            setTitle("🚀 TSH 32 线程并发 Fuzzing 压测")
-            setMessage("正在压测双通道 Native 引擎与调色板并发重入安全性...")
+            setTitle("TSH Native 并发重入压测")
+            setMessage("32 个线程执行 Tree-sitter parse + 四管线高亮 + 释放…")
             setCancelable(false)
             show()
         }
-
         activityScope.launch(Dispatchers.IO) {
             val threadCount = 32
             val iterations = 30
             val executor = Executors.newFixedThreadPool(threadCount)
             val latch = CountDownLatch(threadCount)
-            val codeSnippet = "public class ConcTest { int a = 1; void run() { a++; } }"
-            var errorCount = 0
-
-            val start = System.currentTimeMillis()
-
-            for (t in 0 until threadCount) {
+            val errors = java.util.concurrent.atomic.AtomicInteger(0)
+            val emptyResults = java.util.concurrent.atomic.AtomicInteger(0)
+            val code = "// UTF-16: 中文 👨‍👩‍👧‍👦 𠮷\npublic class ConcTest { int a = 1; void run() { a++; } }"
+            val started = System.nanoTime()
+            repeat(threadCount) {
                 executor.submit {
+                    var parser: TSParser? = null
+                    var tree: TSTree? = null
                     try {
-                        val p = TSParser.create().apply { setLanguage(TSLanguageJava.getInstance()) }
-                        val tree = p.parseString(codeSnippet)
+                        val activeParser = TSParser.create()
+                        parser = activeParser
+                        activeParser.setLanguage(languageMap.getValue("Java"))
+                        tree = activeParser.parseString(code)
                         repeat(iterations) {
-                            val spans = WindbellTshEngine.instance.computeHighlights(tree, codeSnippet, "java")
-                            val folds = tree?.let { WindbellTshEngine.instance.computeFolds(it, codeSnippet, "java") }
-                            if (spans.isEmpty() || folds == null) {
-                                errorCount++
-                            }
+                            val result = WindbellTshEngine.instance.computeHighlights(tree, code, "java")
+                            if (result.isEmpty()) emptyResults.incrementAndGet()
                         }
-                        tree?.close()
-                        p.close()
-                    } catch (e: Throwable) {
-                        errorCount++
-                        Log.e(TAG, "Concurrency fuzz error", e)
+                    } catch (error: Throwable) {
+                        errors.incrementAndGet()
+                        Log.e(TAG, "TSH concurrency probe failed", error)
                     } finally {
+                        tree?.close()
+                        parser?.close()
                         latch.countDown()
                     }
                 }
             }
-
             latch.await()
             executor.shutdown()
-            val duration = System.currentTimeMillis() - start
-
+            executor.awaitTermination(30, java.util.concurrent.TimeUnit.SECONDS)
+            val durationMs = (System.nanoTime() - started) / 1_000_000.0
+            val totalCalls = threadCount * iterations
             withContext(Dispatchers.Main) {
                 pd.dismiss()
+                val passed = errors.get() == 0 && emptyResults.get() == 0
                 showResultDialog(
-                    "并发压测通过",
-                    "测试规格: $threadCount 个并发线程，每线程 $iterations 次遍历循环。\n" +
-                            "累计混合渲染调用: ${threadCount * iterations} 次。\n" +
-                            "总耗时: ${duration}ms (平均单次渲染: ${String.format(Locale.US, "%.3f", duration.toDouble() / (threadCount * iterations))}ms)\n" +
-                            "异常/空结果数: $errorCount\n" +
-                            (if (errorCount == 0) "✅ 验证通过：底层线程隔离与局部引用防护达成绝对安全！" else "❌ 发现竞态条件错误。")
+                    "TSH 并发压测结果",
+                    "线程数=$threadCount · 每线程=$iterations · 总调用=$totalCalls\n" +
+                        "耗时=" + String.format(Locale.US, "%.3f", durationMs) + " ms\n" +
+                        "异常数=${errors.get()} · 空结果数=${emptyResults.get()}\n" +
+                        if (passed) "RESULT: PASS" else "RESULT: FAIL"
                 )
             }
         }
     }
-
     private fun showResultDialog(title: String, message: String) {
         MaterialAlertDialogBuilder(this)
             .setTitle(title)
@@ -680,11 +1094,16 @@ class MainActivity : AppCompatActivity() {
 
     private fun destroyParserResources() {
         parseJob?.cancel()
-        editorHighlightJob?.cancel()
         parser?.close()
         parser = null
         editorTree?.close()
         editorTree = null
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        outState.putString("tsh.selectedScheme", WindbellTshEngine.instance.getSelectedScheme("java"))
+        outState.putBoolean("tsh.isDark", WindbellTshEngine.instance.isDark("java"))
+        super.onSaveInstanceState(outState)
     }
 
     override fun onDestroy() {

@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="x.github.module.editor.util.TextBoundariesTest" tests="7" skipped="0" failures="0" errors="0" timestamp="2026-11-07T07:35:20" hostname="localhost" time="0.008">
+  <properties/>
+  <testcase name="whitespaceIsSkippedHoweverMuchThereIs()" classname="x.github.module.editor.util.TextBoundariesTest" time="0.001"/>
+  <testcase name="previousWordStartGoesToTheStartOfTheWordBefore()" classname="x.github.module.editor.util.TextBoundariesTest" time="0.0"/>
+  <testcase name="offsetsOutsideTheTextAreTakenAsItsEnds()" classname="x.github.module.editor.util.TextBoundariesTest" time="0.001"/>
+  <testcase name="underscoresAndDigitsBelongToTheWord()" classname="x.github.module.editor.util.TextBoundariesTest" time="0.001"/>
+  <testcase name="aRunOfPunctuationIsOneStop()" classname="x.github.module.editor.util.TextBoundariesTest" time="0.001"/>
+  <testcase name="punctuationIsAStopOfItsOwn()" classname="x.github.module.editor.util.TextBoundariesTest" time="0.001"/>
+  <testcase name="nextWordEndGoesToTheEndOfTheWordAfter()" classname="x.github.module.editor.util.TextBoundariesTest" time="0.0"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

@@ -4,12 +4,22 @@
 
  <item
   android:id="@+id/toggle_tsh_theme"
-  android:title="🎨 切换白天/黑夜主题"
+  android:title="🎨 全局 Activity + Scheme 白昼/黑夜切换"
   app:showAsAction="ifRoom" />
 
  <item
   android:id="@+id/test_tsh_suite"
   android:title="⚙️ TSH 核心测试套件"
+  app:showAsAction="never" />
+
+ <item
+  android:id="@+id/test_tsh_cursor_capture"
+  android:title="🔬 光标行 / AST 符号块全链路诊断"
+  app:showAsAction="never" />
+
+ <item
+  android:id="@+id/show_tsh_schemes"
+  android:title="🎨 TSH Scheme 双模式颜色浏览器"
   app:showAsAction="never" />
 
  <item

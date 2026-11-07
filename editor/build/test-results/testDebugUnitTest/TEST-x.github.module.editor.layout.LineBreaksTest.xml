@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="x.github.module.editor.layout.LineBreaksTest" tests="13" skipped="0" failures="0" errors="0" timestamp="2026-11-07T07:35:17" hostname="localhost" time="0.07">
+  <properties/>
+  <testcase name="aBreakExactlyAtAWordBoundaryStaysThere()" classname="x.github.module.editor.layout.LineBreaksTest" time="0.001"/>
+  <testcase name="emptyTextIsOneEmptyRow()" classname="x.github.module.editor.layout.LineBreaksTest" time="0.001"/>
+  <testcase name="firstAndLastRowOfALine()" classname="x.github.module.editor.layout.LineBreaksTest" time="0.0"/>
+  <testcase name="digitCountCountsDecimalDigits()" classname="x.github.module.editor.layout.LineBreaksTest" time="0.001"/>
+  <testcase name="aColumnPastTheEndOfTheLineIsOnItsLastRow()" classname="x.github.module.editor.layout.LineBreaksTest" time="0.0"/>
+  <testcase name="breaksAlwaysCoverTheTextInRowsThatFit()" classname="x.github.module.editor.layout.LineBreaksTest" time="0.031"/>
+  <testcase name="aWordLongerThanARowIsCutWhereItStopsFitting()" classname="x.github.module.editor.layout.LineBreaksTest" time="0.001"/>
+  <testcase name="theRowOfAColumn()" classname="x.github.module.editor.layout.LineBreaksTest" time="0.001"/>
+  <testcase name="sumRangeAddsTheWidthsOfARange()" classname="x.github.module.editor.layout.LineBreaksTest" time="0.019"/>
+  <testcase name="aRowBreaksAfterTheLastSpaceThatFits()" classname="x.github.module.editor.layout.LineBreaksTest" time="0.001"/>
+  <testcase name="charsThatAreNotWordCharsCanBreakAnywhere()" classname="x.github.module.editor.layout.LineBreaksTest" time="0.001"/>
+  <testcase name="textThatFitsIsOneRow()" classname="x.github.module.editor.layout.LineBreaksTest" time="0.001"/>
+  <testcase name="tabsGetTheirWidthOnTheRowTheyEndUpOn()" classname="x.github.module.editor.layout.LineBreaksTest" time="0.004"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

@@ -1,19 +1,19 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="x.github.module.piecetable.PieceTreeSearchTest" tests="13" skipped="0" failures="0" errors="0" timestamp="2026-10-28T06:46:03.086Z" hostname="localhost" time="0.025">
+<testsuite name="com.zerostudio.idea.piecetable.PieceTreeSearchTest" tests="13" skipped="0" failures="0" errors="0" timestamp="2026-11-07T08:09:19" hostname="localhost" time="0.055">
   <properties/>
-  <testcase name="findRegexMultilineRespectsLimit()" classname="x.github.module.piecetable.PieceTreeSearchTest" time="0.001"/>
-  <testcase name="findWordHonoursCancellation()" classname="x.github.module.piecetable.PieceTreeSearchTest" time="0.002"/>
-  <testcase name="findRegexMultilineOnCrlfDocument()" classname="x.github.module.piecetable.PieceTreeSearchTest" time="0.003"/>
-  <testcase name="findWordAcrossLines()" classname="x.github.module.piecetable.PieceTreeSearchTest" time="0.001"/>
-  <testcase name="findRegexOnEmptyBuffer()" classname="x.github.module.piecetable.PieceTreeSearchTest" time="0.002"/>
-  <testcase name="findRegexWithCharacterClass()" classname="x.github.module.piecetable.PieceTreeSearchTest" time="0.001"/>
-  <testcase name="findWordOnASingleLine()" classname="x.github.module.piecetable.PieceTreeSearchTest" time="0.001"/>
-  <testcase name="findWordWithNoMatch()" classname="x.github.module.piecetable.PieceTreeSearchTest" time="0.001"/>
-  <testcase name="findRegexLineByLine()" classname="x.github.module.piecetable.PieceTreeSearchTest" time="0.001"/>
-  <testcase name="searchStillWorksAfterEdits()" classname="x.github.module.piecetable.PieceTreeSearchTest" time="0.001"/>
-  <testcase name="findWordRespectsResultLimit()" classname="x.github.module.piecetable.PieceTreeSearchTest" time="0.001"/>
-  <testcase name="findRegexMultiline()" classname="x.github.module.piecetable.PieceTreeSearchTest" time="0.002"/>
-  <testcase name="findRegexInsideSubRange()" classname="x.github.module.piecetable.PieceTreeSearchTest" time="0.001"/>
+  <testcase name="findRegexMultilineRespectsLimit()" classname="com.zerostudio.idea.piecetable.PieceTreeSearchTest" time="0.006"/>
+  <testcase name="findWordHonoursCancellation()" classname="com.zerostudio.idea.piecetable.PieceTreeSearchTest" time="0.002"/>
+  <testcase name="findRegexMultilineOnCrlfDocument()" classname="com.zerostudio.idea.piecetable.PieceTreeSearchTest" time="0.005"/>
+  <testcase name="findWordAcrossLines()" classname="com.zerostudio.idea.piecetable.PieceTreeSearchTest" time="0.002"/>
+  <testcase name="findRegexOnEmptyBuffer()" classname="com.zerostudio.idea.piecetable.PieceTreeSearchTest" time="0.002"/>
+  <testcase name="findRegexWithCharacterClass()" classname="com.zerostudio.idea.piecetable.PieceTreeSearchTest" time="0.003"/>
+  <testcase name="findWordOnASingleLine()" classname="com.zerostudio.idea.piecetable.PieceTreeSearchTest" time="0.003"/>
+  <testcase name="findWordWithNoMatch()" classname="com.zerostudio.idea.piecetable.PieceTreeSearchTest" time="0.004"/>
+  <testcase name="findRegexLineByLine()" classname="com.zerostudio.idea.piecetable.PieceTreeSearchTest" time="0.005"/>
+  <testcase name="searchStillWorksAfterEdits()" classname="com.zerostudio.idea.piecetable.PieceTreeSearchTest" time="0.006"/>
+  <testcase name="findWordRespectsResultLimit()" classname="com.zerostudio.idea.piecetable.PieceTreeSearchTest" time="0.004"/>
+  <testcase name="findRegexMultiline()" classname="com.zerostudio.idea.piecetable.PieceTreeSearchTest" time="0.003"/>
+  <testcase name="findRegexInsideSubRange()" classname="com.zerostudio.idea.piecetable.PieceTreeSearchTest" time="0.002"/>
   <system-out><![CDATA[]]></system-out>
   <system-err><![CDATA[]]></system-err>
 </testsuite>

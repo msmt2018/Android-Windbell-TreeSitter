@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="x.github.module.editor.model.EditorDocumentTest" tests="31" skipped="0" failures="0" errors="0" timestamp="2026-11-07T07:35:19" hostname="localhost" time="0.248">
+  <properties/>
+  <testcase name="severalChangesAreReportedWithTheTextAsTheirRangesSay()" classname="x.github.module.editor.model.EditorDocumentTest" time="0.066"/>
+  <testcase name="appliedChangeOfAnInsertionEndingWithALineBreak()" classname="x.github.module.editor.model.EditorDocumentTest" time="0.003"/>
+  <testcase name="replaceBufferSwapsTheTextWithoutRunningThePipeline()" classname="x.github.module.editor.model.EditorDocumentTest" time="0.006"/>
+  <testcase name="aLargeDeletionIsKeptAsReferencesAndUndoneExactly()" classname="x.github.module.editor.model.EditorDocumentTest" time="0.034"/>
+  <testcase name="undoWorksWithinTheMergeDelay()" classname="x.github.module.editor.model.EditorDocumentTest" time="0.001"/>
+  <testcase name="aMultiLineEditIsUndoneAsAWhole()" classname="x.github.module.editor.model.EditorDocumentTest" time="0.001"/>
+  <testcase name="anEditThatIsNotUndoableLeavesTheTextModified()" classname="x.github.module.editor.model.EditorDocumentTest" time="0.001"/>
+  <testcase name="theCallbackLearnsTheShapeOfALargeChangeWithoutItsText()" classname="x.github.module.editor.model.EditorDocumentTest" time="0.016"/>
+  <testcase name="editsDoNotSplitACharacterOfTwoChars()" classname="x.github.module.editor.model.EditorDocumentTest" time="0.003"/>
+  <testcase name="afterABatchEditTheCaretIsWhereTheLastChangeEndsNow()" classname="x.github.module.editor.model.EditorDocumentTest" time="0.002"/>
+  <testcase name="aBatchReportsEveryChange()" classname="x.github.module.editor.model.EditorDocumentTest" time="0.002"/>
+  <testcase name="aSliceExportedFromTheDocumentGoesBackWithoutBeingCopied()" classname="x.github.module.editor.model.EditorDocumentTest" time="0.011"/>
+  <testcase name="appliedChangeOfADeletion()" classname="x.github.module.editor.model.EditorDocumentTest" time="0.001"/>
+  <testcase name="appliedChangeTreatsMissingTextAsADeletion()" classname="x.github.module.editor.model.EditorDocumentTest" time="0.0"/>
+  <testcase name="setTextIsNotUndoable()" classname="x.github.module.editor.model.EditorDocumentTest" time="0.0"/>
+  <testcase name="undoingBackToTheSavedTextMakesItUnmodified()" classname="x.github.module.editor.model.EditorDocumentTest" time="0.0"/>
+  <testcase name="setTextForgetsTheHistoryOfTheTextItReplaces()" classname="x.github.module.editor.model.EditorDocumentTest" time="0.001"/>
+  <testcase name="appliedChangeOfAnInsertionEndingOnANewLine()" classname="x.github.module.editor.model.EditorDocumentTest" time="0.001"/>
+  <testcase name="anEditGoesThroughAllThreeStagesInOrder()" classname="x.github.module.editor.model.EditorDocumentTest" time="0.001"/>
+  <testcase name="aNewDocumentHasOneEmptyLine()" classname="x.github.module.editor.model.EditorDocumentTest" time="0.0"/>
+  <testcase name="aLargePasteIsHeldAsReferencesOnceUndone()" classname="x.github.module.editor.model.EditorDocumentTest" time="0.043"/>
+  <testcase name="undoGoesThroughThePipelineLikeAnyEdit()" classname="x.github.module.editor.model.EditorDocumentTest" time="0.001"/>
+  <testcase name="theCaretLandsWhereDeletedTextStarted()" classname="x.github.module.editor.model.EditorDocumentTest" time="0.006"/>
+  <testcase name="insertsAtTheSamePlaceKeepTheirOrder()" classname="x.github.module.editor.model.EditorDocumentTest" time="0.003"/>
+  <testcase name="theCaretLandsAfterTextInsertedInALine()" classname="x.github.module.editor.model.EditorDocumentTest" time="0.001"/>
+  <testcase name="appliedChangeOfAnInsertionInsideALine()" classname="x.github.module.editor.model.EditorDocumentTest" time="0.001"/>
+  <testcase name="undoAndRedoRestoreTheText()" classname="x.github.module.editor.model.EditorDocumentTest" time="0.003"/>
+  <testcase name="undoWithNothingToUndoTouchesNothing()" classname="x.github.module.editor.model.EditorDocumentTest" time="0.002"/>
+  <testcase name="theCaretLandsOnTheLastLineOfMultiLineText()" classname="x.github.module.editor.model.EditorDocumentTest" time="0.002"/>
+  <testcase name="appliedChangeOfAReplacementAcrossLines()" classname="x.github.module.editor.model.EditorDocumentTest" time="0.0"/>
+  <testcase name="linesOffsetsAndPositionsAgree()" classname="x.github.module.editor.model.EditorDocumentTest" time="0.001"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

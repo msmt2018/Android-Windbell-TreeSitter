@@ -1,60 +1,262 @@
 {
+    language {
+        id: "java"
+        name: "Java"
+        extensions: [".java", ".jav"]
+        aliases: ["Java"]
+        mimeTypes: ["text/x-java-source", "text/x-java"]
+        firstLine: /^#!.*\bjava\b/
+    }
     name: ["Java", ".java", ".jav"],
     ignoreCase: false,
 
     // =========================================================================
-    // 1. 词法容器定界与括号配对 (Bracket & Comment Pairing)
+    // 1. Editor language metadata
     // =========================================================================
-    comment: {startsWith: "//"},
-    comment: {startsWith: "/*", endsWith: "*/"},
-    bracketPairs: ["{}", "[]", "()", "<>"],
+    editor {
+        tabSize: 4
+        fontSize: 14
+        insertSpaces: true
+        autoIndent: true
+        trimTrailingWhitespace: true
+        formatOnType: false
+        renderWhitespace: "selection"
+        lineNumbers: true
+        comments {
+            line: ["//"]
+            block: [["/*", "*/"]]
+        }
+        brackets: ["{}", "[]", "()", "<>"]
+        bracketNotIn: ["string", "comment"]
+        autoClosingPairs: [
+            { open: "(", close: ")", notIn: ["string", "comment"] }
+            { open: "[", close: "]", notIn: ["string", "comment"] }
+            { open: "{", close: "}", notIn: ["string", "comment"] }
+            { open: "\"", close: "\"", notIn: ["string", "comment"] }
+        ]
+        surroundingPairs: ["{}", "[]", "()", "\"\""]
+        wordPattern: /[A-Za-z_$][A-Za-z0-9_$]*/
+        indentation {
+            increaseIndentPattern: /\{[^}]*$/
+            decreaseIndentPattern: /^\s*\}/
+            indentNextLine: /=>\s*$/
+            unIndentedLinePattern: /^\s*(\/\/|\*)/
+        }
+        completion {
+            triggerCharacters: [".", "@", ":"]
+        }
+        electricCharacters: ["}", ";"]
+        autoCloseBefore: /[\s)\]};,]/
+        onEnterRules: [
+            {
+                beforeText: /\{[^}]*$/
+                afterText: /^\s*\}/
+                action: { indent: "indentOutdent" }
+            }
+        ]
+    },
 
     // =========================================================================
-    // 2. 多态色彩定义表 (格式: "样式名", #LightHex, #DarkHex, @字体修饰)
+    // 2. Semantic style catalog and unlimited named schemes
     // =========================================================================
-    styles: [
-        "keyword",          #0000FF, #CC7832, @B  // 控制流与核心语法关键字 (粗体)
-        "keyword2",         #7F0055, #6897BB      // 辅助上下文修饰符 (var, sealed, permits)
-        "type",             #2B91AF, #4EC9B0      // 类、接口、记录与注解类型
-        "typeBuiltin",      #0000FF, #E06C75      // 基本原始数据类型 (int, void 等)
-        "string",           #A31515, #6A8759      // 单/双引号字符串字面量
-        "stringBlock",      #800000, #497B51      // Java 15+ 多行文本块 (Text Blocks)
-        "comment",          #008000, #808080      // 普通单行与块级注释
-        "docComment",       #3F5FBF, #629755      // Javadoc 结构化文档注释
-        "docTag",           #7F0055, #526F5C, @B  // Javadoc @param, @return 标签
-        "number",           #098658, #6897BB      // 十进制、十六进制、二进制与浮点数值
-        "annotation",       #2B91AF, #BBB529      // @Override, @Deprecated 元数据注解
-        "constant",         #6F42C1, #9876AA, @B  // 全大写静态常量、枚举常量 (粗体)
-        "variable",         #001080, #A9B7C6      // 局部变量、成员变量与字段访问
-        "function",         #795E26, #FFC66D      // 方法声明与函数调用槽位
-        "operator",         #000000, #A9B7C6      // 运算符、Lambda 箭头与标点符号
-    ],
+    isDark: false,
+    defaultScheme: "darcula",
+    styles {
+        keyword       { scope: "keyword.control", tags: ["keyword", "control"] }
+        keyword2      { scope: "keyword.context", tags: ["keyword", "contextual"] }
+        type          { scope: "entity.name.type", tags: ["type", "declaration"] }
+        typeBuiltin   { scope: "support.type", tags: ["type", "builtin"] }
+        string        { scope: "string.quoted", tags: ["string"] }
+        stringBlock   { scope: "string.quoted.block", tags: ["string", "multiline"] }
+        comment       { scope: "comment", tags: ["comment"] }
+        docComment    { scope: "comment.block.documentation", tags: ["comment", "documentation"] }
+        docTag        { scope: "keyword.other.documentation", tags: ["documentation", "tag"] }
+        number        { scope: "constant.numeric", tags: ["constant", "number"] }
+        annotation    { scope: "storage.type.annotation", tags: ["annotation", "metadata"] }
+        constant      { scope: "constant.language", tags: ["constant"] }
+        variable      { scope: "variable.other", tags: ["variable"] }
+        function      { scope: "entity.name.function", tags: ["function"] }
+        operator      { scope: "keyword.operator", tags: ["operator"] }
+    },
+
+    schemes {
+        darcula {
+            light [
+                keyword: #0000FF @bold,
+                keyword2: #7F0055,
+                type: #2B91AF,
+                typeBuiltin: #0000FF,
+                string: #A31515,
+                stringBlock: #800000,
+                comment: #008000,
+                docComment: #3F5FBF,
+                docTag: #7F0055 @bold,
+                number: #098658,
+                annotation: #2B91AF,
+                constant: #6F42C1 @bold,
+                variable: #001080,
+                function: #795E26,
+                operator: #000000
+            ]
+            dark [
+                keyword: #CC7832 @bold,
+                keyword2: #6897BB,
+                type: #4EC9B0,
+                typeBuiltin: #E06C75,
+                string: #6A8759,
+                stringBlock: #497B51,
+                comment: #808080,
+                docComment: #629755,
+                docTag: #526F5C @bold,
+                number: #6897BB,
+                annotation: #BBB529,
+                constant: #9876AA @bold,
+                variable: #A9B7C6,
+                function: #FFC66D,
+                operator: #A9B7C6
+            ]
+            ui {
+                light {
+                    editor.background: #FFFFFF
+                    editor.foreground: #202020
+                    editor.selection: #ADD6FF
+                    editor.lineHighlight: #F2F2F2
+                    editor.gutter: #858585
+                    editor.caret: #000000
+                    activity.background: #FFFFFF
+                    activity.surface: #F4F4F4
+                    activity.toolbar.background: #F4F4F4
+                    activity.toolbar.foreground: #202020
+                    activity.tabs.background: #F4F4F4
+                    activity.tabs.foreground: #666666
+                    activity.tabs.selected: #202020
+                    activity.tabs.indicator: #3F51B5
+                    activity.statusBar: #EAEAEA
+                    activity.navigationBar: #FFFFFF
+                }
+                dark {
+                    editor.background: #2B2B2B
+                    editor.foreground: #A9B7C6
+                    editor.selection: #214283
+                    editor.lineHighlight: #323232
+                    editor.gutter: #6B6B6B
+                    editor.caret: #FFFFFF
+                    activity.background: #1E1E1E
+                    activity.surface: #252526
+                    activity.toolbar.background: #252526
+                    activity.toolbar.foreground: #E8E8E8
+                    activity.tabs.background: #252526
+                    activity.tabs.foreground: #9DA0A6
+                    activity.tabs.selected: #FFFFFF
+                    activity.tabs.indicator: #CC7832
+                    activity.statusBar: #1E1E1E
+                    activity.navigationBar: #1E1E1E
+                }
+            }
+        }
+
+        github {
+            light [
+                keyword: #0550AE @bold,
+                keyword2: #8250DF,
+                type: #953800,
+                typeBuiltin: #0550AE,
+                string: #0A3069,
+                stringBlock: #0A3069,
+                comment: #6E7781,
+                docComment: #6E7781,
+                docTag: #8250DF,
+                number: #0550AE,
+                annotation: #8250DF,
+                constant: #0550AE,
+                variable: #24292F,
+                function: #8250DF,
+                operator: #24292F
+            ]
+            dark [
+                keyword: #79C0FF @bold,
+                keyword2: #D2A8FF,
+                type: #FFA657,
+                typeBuiltin: #79C0FF,
+                string: #A5D6FF,
+                stringBlock: #A5D6FF,
+                comment: #8B949E,
+                docComment: #8B949E,
+                docTag: #D2A8FF,
+                number: #79C0FF,
+                annotation: #D2A8FF,
+                constant: #79C0FF,
+                variable: #E6EDF3,
+                function: #D2A8FF,
+                operator: #E6EDF3
+            ]
+            ui {
+                light {
+                    editor.background: #FFFFFF
+                    editor.foreground: #24292F
+                    editor.selection: #B6E3FF
+                    editor.lineHighlight: #F6F8FA
+                    editor.gutter: #6E7781
+                    editor.caret: #24292F
+                    activity.background: #FFFFFF
+                    activity.surface: #F6F8FA
+                    activity.toolbar.background: #F6F8FA
+                    activity.toolbar.foreground: #24292F
+                    activity.tabs.background: #F6F8FA
+                    activity.tabs.foreground: #6E7781
+                    activity.tabs.selected: #24292F
+                    activity.tabs.indicator: #0969DA
+                    activity.statusBar: #F6F8FA
+                    activity.navigationBar: #FFFFFF
+                }
+                dark {
+                    editor.background: #0D1117
+                    editor.foreground: #E6EDF3
+                    editor.selection: #264F78
+                    editor.lineHighlight: #161B22
+                    editor.gutter: #8B949E
+                    editor.caret: #E6EDF3
+                    activity.background: #0D1117
+                    activity.surface: #161B22
+                    activity.toolbar.background: #161B22
+                    activity.toolbar.foreground: #E6EDF3
+                    activity.tabs.background: #161B22
+                    activity.tabs.foreground: #8B949E
+                    activity.tabs.selected: #E6EDF3
+                    activity.tabs.indicator: #2F81F7
+                    activity.statusBar: #0D1117
+                    activity.navigationBar: #0D1117
+                }
+            }
+        }
+    },
 
     // =========================================================================
     // 3. 复用宏词典 (Defines: 词法片段)
     // =========================================================================
     defines: [
         "identifier": /[a-zA-Z_$][a-zA-Z0-9_$]*/,
-        "docTags": /@(param|return|throws|exception|see|since|deprecated|author|version|serial)\b/
+        "docTags": /@(param|return|throws|exception|see|since|deprecated|author|version|serial)\b/,
+        "javaQuotedString": /"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'/,
+                "javaNumber": /\b(?:0[xX][0-9a-fA-F_]+|0[bB][01_]+|0[0-7_]+|[0-9_]+(?:\.[0-9_]+)?(?:[eE][+-]?[0-9_]+)?[fFdDlL]?)\b/
     ],
 
     // =========================================================================
     // 4. 原生 AST 节点选择器规则 (Native AST Selectors: 100% 解耦 SCM，内核寄存器直连)
     // =========================================================================
     ast: [
-        // --- 4.1 符号大纲、代码折叠与类结构声明 ---
-        { node: "class_declaration", field: "name", style: "type", outline: "class", fold: true },
-        { node: "interface_declaration", field: "name", style: "type", outline: "class", fold: true },
-        { node: "record_declaration", field: "name", style: "type", outline: "class", fold: true },
-        { node: "enum_declaration", field: "name", style: "type", outline: "enum", fold: true },
+        // --- 4.1 类型声明节点 ---
+        { node: "class_declaration", field: "name", style: "type" },
+        { node: "interface_declaration", field: "name", style: "type" },
+        { node: "record_declaration", field: "name", textRegex: /^UserProfile$/, style: "type" },
+        { node: "enum_declaration", field: "name", style: "type" },
 
-        // --- 4.2 方法与构造器声明 (绑定大纲与折叠) ---
-        { node: "method_declaration", field: "name", style: "function", outline: "method", fold: true },
-        { node: "constructor_declaration", field: "name", style: "function", outline: "method", fold: true },
+        // --- 4.2 方法与构造器声明 ---
+        { node: "method_declaration", field: "name", style: "function" },
+        { node: "constructor_declaration", field: "name", style: "function" },
 
-        // --- 4.3 字段、常量与枚举项声明 ---
-        { node: "field_declaration", fold: false },
-        { node: "enum_constant", field: "name", style: "constant", outline: "field" },
+        // --- 4.3 枚举常量声明 ---
+        { node: "enum_constant", field: "name", style: "constant" },
 
         // --- 4.4 函数调用与动态属性绑定 (消除 AST 歧义) ---
         { node: "method_invocation", field: "name", style: "function" },
@@ -66,6 +268,20 @@
         { node: "annotation", field: "name", style: "annotation" },
         { node: "marker_annotation", field: "name", style: "annotation" }
     ],
+
+    // =========================================================================
+    // 4.6 原生 Tree-sitter Query：局部变量声明（与 ATS/Regex 独立执行）
+    // =========================================================================
+    treeSitter {
+        queries: [
+            {
+                id: "local-variable-declarations"
+                priority: 12
+                source: `(variable_declarator name: (identifier) @localName (#match? @localName "^(?:multiline|MAX_CACHE_CAPACITY)$"))`
+                captures: { localName: variable }
+            }
+        ]
+    },
 
     // =========================================================================
     // 5. 微观正则流与下推自动机 Block 匹配流 (Contains)
@@ -93,8 +309,8 @@
         },
 
         // ---------- 5.3 字符串与数值复合内置模式 ----------
-        {builtin: "#JAVA_QUOTED_STRING#"},
-        {builtin: "#JAVA_NUMBER#"},
+        {builtin: "javaQuotedString", 0: "string"},
+        {builtin: "javaNumber", 0: "number"},
 
         // ---------- 5.4 单行与普通多行注释 ----------
         {
@@ -142,7 +358,7 @@
         {match: keywordsToRegex("true false null"), 0: "constant"},
 
         // ---------- 5.11 方法调用微观补充 ----------
-        {match: /\b(/ + include("identifier") + /)(?=\s*\()/, 1: "function"},
+        {match: /\b[A-Za-z_$][A-Za-z0-9_$]*(?=\s*\()/, 0: "function"},
 
         // ---------- 5.12 常用核心类自动高亮 ----------
         {match: keywordsToRegex(

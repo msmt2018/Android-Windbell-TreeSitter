@@ -105,7 +105,8 @@ class StyledTextPainter {
 
             // foreground color
             paint.color = spans.getSpans(runStart, runEnd, ForegroundColorSpan::class.java)
-                .firstOrNull()?.foregroundColor ?: plainColor
+                .maxByOrNull { span -> spans.getSpanFlags(span) and Spanned.SPAN_PRIORITY }
+                ?.foregroundColor ?: plainColor
 
             // bold, italic
             val style = spans.getSpans(runStart, runEnd, StyleSpan::class.java).firstOrNull()?.style

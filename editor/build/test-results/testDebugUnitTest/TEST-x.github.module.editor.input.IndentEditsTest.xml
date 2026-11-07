@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="x.github.module.editor.input.IndentEditsTest" tests="5" skipped="0" failures="0" errors="0" timestamp="2026-11-07T07:35:16" hostname="localhost" time="0.046">
+  <properties/>
+  <testcase name="outdentingLeavesLinesWithoutIndentationAlone()" classname="x.github.module.editor.input.IndentEditsTest" time="0.037"/>
+  <testcase name="aSelectionOfWholeLinesDoesNotIndentTheLineItEndsAt()" classname="x.github.module.editor.input.IndentEditsTest" time="0.001"/>
+  <testcase name="aNewLineTakesTheIndentationBeforeTheCursor()" classname="x.github.module.editor.input.IndentEditsTest" time="0.001"/>
+  <testcase name="outdentingTakesOneLevelAway()" classname="x.github.module.editor.input.IndentEditsTest" time="0.001"/>
+  <testcase name="indentingPutsTheUnitAtTheStartOfEachLine()" classname="x.github.module.editor.input.IndentEditsTest" time="0.001"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

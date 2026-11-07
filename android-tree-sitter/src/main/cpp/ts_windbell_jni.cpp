@@ -7,6 +7,8 @@
 
 #include <jni.h>
 #include <vector>
+#include <array>
+#include <algorithm>
 #include <string>
 #include <cstdint>
 #include <cstring>
@@ -18,6 +20,30 @@
 #include "ts__log.h"
 
 using namespace windbell::tsh;
+
+static size_t utf16LengthModifiedUtf8(const std::string& value) {
+    size_t count = 0;
+    for (size_t i = 0; i < value.size();) {
+        const uint8_t first = static_cast<uint8_t>(value[i]);
+        if (first <= 0x7F) {
+            ++i;
+            ++count;
+        } else if ((first & 0xE0) == 0xC0 && i + 1 < value.size()) {
+            i += 2;
+            ++count;
+        } else if ((first & 0xF0) == 0xE0 && i + 2 < value.size()) {
+            i += 3;
+            ++count;
+        } else if ((first & 0xF8) == 0xF0 && i + 3 < value.size()) {
+            i += 4;
+            count += 2;
+        } else {
+            ++i;
+            ++count;
+        }
+    }
+    return count;
+}
 
 extern "C" {
 
@@ -56,68 +82,428 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeLoadTshSource(
 
     const TSLanguage* ts_lang = reinterpret_cast<const TSLanguage*>(language_ptr);
     
-    // 动态编译 DSL 规则并对齐 Tree-sitter AST 符号
-    auto grammar = TshCompiler::getInstance().compile(src_str, ts_lang);
-    if (!grammar) {
+    // Keep diagnostics attached to this exact invocation. Reading the compiler's
+    // compatibility "last diagnostics" slot here would race with other documents
+    // compiling different language grammars on worker threads.
+    auto compilation = TshCompiler::getInstance().compileDetailed(src_str, ts_lang);
+    if (!compilation.grammar) {
+        for (const auto& diagnostic : compilation.diagnostics) {
+            LOGE("WindbellTSH",
+                 "[%s] %s (offset=%u, line=%u, column=%u)",
+                 diagnostic.code.c_str(),
+                 diagnostic.message.c_str(),
+                 diagnostic.offset,
+                 diagnostic.line,
+                 diagnostic.column);
+        }
         LOGE("WindbellTSH", "Failed to compile TSH grammar rules for: %s", ext_str.c_str());
         return JNI_FALSE;
     }
 
-    WindbellEngine::getInstance().registerGrammar(ext_str, grammar);
+    WindbellEngine::getInstance().registerGrammar(ext_str, compilation.grammar);
     return JNI_TRUE;
 }
 
 /**
- * 2. 导出指定语法的高效多态调色板表
- * 签名: (Ljava/lang/String;)[I
- * 返回结构: [StyleID, LightColor(0xAARRGGBB), DarkColor(0xAARRGGBB)] * N
+ * Export language identity metadata as key/value pairs.
+ */
+JNIEXPORT jobjectArray JNICALL
+Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeGetLanguageMetadata(
+    JNIEnv* env, jobject, jstring extension_jstr
+) {
+    if (!extension_jstr) return nullptr;
+    const char* ext = env->GetStringUTFChars(extension_jstr, nullptr);
+    if (!ext) return nullptr;
+    const std::string extension(ext);
+    env->ReleaseStringUTFChars(extension_jstr, ext);
+    auto grammar = WindbellEngine::getInstance().getGrammarByExtension(extension);
+    std::vector<std::pair<std::string, std::string>> values;
+    if (grammar) {
+        auto join = [](const std::vector<std::string>& items) {
+            std::string out;
+            for (size_t i = 0; i < items.size(); ++i) {
+                if (i) out.push_back('\x1F');
+                out += items[i];
+            }
+            return out;
+        };
+        values.emplace_back("id", grammar->id);
+        values.emplace_back("name", grammar->name);
+        values.emplace_back("extensions", join(grammar->file_extensions));
+        values.emplace_back("aliases", join(grammar->aliases));
+        values.emplace_back("mimeTypes", join(grammar->mime_types));
+        values.emplace_back("firstLine", grammar->first_line_pattern);
+    }
+    jclass string_class = env->FindClass("java/lang/String");
+    if (!string_class) return nullptr;
+    jobjectArray result = env->NewObjectArray(static_cast<jsize>(values.size() * 2), string_class, nullptr);
+    if (!result) { env->DeleteLocalRef(string_class); return nullptr; }
+    for (size_t i = 0; i < values.size(); ++i) {
+        jstring key = env->NewStringUTF(values[i].first.c_str());
+        jstring value = env->NewStringUTF(values[i].second.c_str());
+        env->SetObjectArrayElement(result, static_cast<jsize>(i * 2), key);
+        env->SetObjectArrayElement(result, static_cast<jsize>(i * 2 + 1), value);
+        env->DeleteLocalRef(key);
+        env->DeleteLocalRef(value);
+    }
+    env->DeleteLocalRef(string_class);
+    return result;
+}
+
+/**
+ * Test a first source line against the language's DSL-declared detector.
+ */
+JNIEXPORT jboolean JNICALL
+Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeMatchesFirstLine(
+    JNIEnv* env, jobject, jstring extension_jstr, jstring line_jstr
+) {
+    if (!extension_jstr || !line_jstr) return JNI_FALSE;
+    const char* ext = env->GetStringUTFChars(extension_jstr, nullptr);
+    if (!ext) return JNI_FALSE;
+    const std::string extension(ext);
+    env->ReleaseStringUTFChars(extension_jstr, ext);
+    auto grammar = WindbellEngine::getInstance().getGrammarByExtension(extension);
+    if (!grammar || !grammar->first_line_regex) return JNI_FALSE;
+
+    const jchar* chars = env->GetStringChars(line_jstr, nullptr);
+    if (!chars) return JNI_FALSE;
+    const jsize length = env->GetStringLength(line_jstr);
+    const UChar* start = reinterpret_cast<const UChar*>(chars);
+    const UChar* end = start + static_cast<size_t>(length) * sizeof(jchar);
+    OnigRegion* region = onig_region_new();
+    if (!region) {
+        env->ReleaseStringChars(line_jstr, chars);
+        return JNI_FALSE;
+    }
+    const int matched = onig_match(grammar->first_line_regex, start, end, start, region, ONIG_OPTION_NONE);
+    onig_region_free(region, 1);
+    env->ReleaseStringChars(line_jstr, chars);
+    return matched >= 0 ? JNI_TRUE : JNI_FALSE;
+}
+
+/**
+ * Return structured compiler diagnostics as [code, message, offset, line, column] tuples.
+ */
+JNIEXPORT jobjectArray JNICALL
+Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeGetCompileDiagnostics(
+    JNIEnv* env, jobject
+) {
+    const auto diagnostics = TshCompiler::getInstance().getLastDiagnostics();
+    jclass string_class = env->FindClass("java/lang/String");
+    if (!string_class) return nullptr;
+    jobjectArray result = env->NewObjectArray(
+        static_cast<jsize>(diagnostics.size() * 5), string_class, nullptr);
+    if (!result) { env->DeleteLocalRef(string_class); return nullptr; }
+    for (size_t i = 0; i < diagnostics.size(); ++i) {
+        const auto& d = diagnostics[i];
+        const std::array<std::string, 5> values = {
+            d.code, d.message, std::to_string(d.offset),
+            std::to_string(d.line), std::to_string(d.column)
+        };
+        for (size_t k = 0; k < values.size(); ++k) {
+            jstring value = env->NewStringUTF(values[k].c_str());
+            env->SetObjectArrayElement(result, static_cast<jsize>(i * 5 + k), value);
+            env->DeleteLocalRef(value);
+        }
+    }
+    env->DeleteLocalRef(string_class);
+    return result;
+}
+
+/**
+ * Enumerate DSL-declared color schemes for an extension.
+ */
+JNIEXPORT jobjectArray JNICALL
+Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeGetSchemeNames(
+    JNIEnv* env, jobject, jstring extension_jstr
+) {
+    if (!extension_jstr) return nullptr;
+    const char* ext = env->GetStringUTFChars(extension_jstr, nullptr);
+    if (!ext) return nullptr;
+    const std::string extension(ext);
+    env->ReleaseStringUTFChars(extension_jstr, ext);
+
+    auto grammar = WindbellEngine::getInstance().getGrammarByExtension(extension);
+    if (!grammar) return env->NewObjectArray(0, env->FindClass("java/lang/String"), nullptr);
+
+    std::vector<std::string> names;
+    names.reserve(grammar->schemes.size());
+    for (const auto& entry : grammar->schemes) names.push_back(entry.first);
+    std::sort(names.begin(), names.end());
+
+    jclass string_class = env->FindClass("java/lang/String");
+    if (!string_class) return nullptr;
+    jobjectArray result = env->NewObjectArray(static_cast<jsize>(names.size()), string_class, nullptr);
+    if (!result) { env->DeleteLocalRef(string_class); return nullptr; }
+    for (size_t i = 0; i < names.size(); ++i) {
+        jstring value = env->NewStringUTF(names[i].c_str());
+        env->SetObjectArrayElement(result, static_cast<jsize>(i), value);
+        env->DeleteLocalRef(value);
+    }
+    env->DeleteLocalRef(string_class);
+    return result;
+}
+
+/**
+ * Return the first declared scheme, or null when the DSL declares none.
+ */
+JNIEXPORT jstring JNICALL
+Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeGetDefaultScheme(
+    JNIEnv* env, jobject, jstring extension_jstr
+) {
+    if (!extension_jstr) return nullptr;
+    const char* ext = env->GetStringUTFChars(extension_jstr, nullptr);
+    if (!ext) return nullptr;
+    const std::string extension(ext);
+    env->ReleaseStringUTFChars(extension_jstr, ext);
+    auto grammar = WindbellEngine::getInstance().getGrammarByExtension(extension);
+    if (!grammar || grammar->default_scheme_name.empty()) return nullptr;
+    return env->NewStringUTF(grammar->default_scheme_name.c_str());
+}
+
+JNIEXPORT jboolean JNICALL
+Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeGetDefaultIsDark(
+    JNIEnv* env, jobject, jstring extension_jstr
+) {
+    if (!extension_jstr) return JNI_FALSE;
+    const char* ext = env->GetStringUTFChars(extension_jstr, nullptr);
+    if (!ext) return JNI_FALSE;
+    const std::string extension(ext);
+    env->ReleaseStringUTFChars(extension_jstr, ext);
+    auto grammar = WindbellEngine::getInstance().getGrammarByExtension(extension);
+    return grammar && grammar->default_is_dark ? JNI_TRUE : JNI_FALSE;
+}
+
+/**
+ * Export editor metadata as triples: [kind, value1, value2] * N.
+ */
+JNIEXPORT jobjectArray JNICALL
+Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeGetEditorMetadata(
+    JNIEnv* env, jobject, jstring extension_jstr
+) {
+    if (!extension_jstr) return nullptr;
+    const char* ext = env->GetStringUTFChars(extension_jstr, nullptr);
+    if (!ext) return nullptr;
+    const std::string extension(ext);
+    env->ReleaseStringUTFChars(extension_jstr, ext);
+    auto grammar = WindbellEngine::getInstance().getGrammarByExtension(extension);
+
+    jclass string_class = env->FindClass("java/lang/String");
+    if (!string_class) return nullptr;
+    if (!grammar) {
+        jobjectArray empty = env->NewObjectArray(0, string_class, nullptr);
+        env->DeleteLocalRef(string_class);
+        return empty;
+    }
+
+    std::vector<std::array<std::string, 3>> records;
+    const auto& metadata = grammar->editor_metadata;
+    for (const auto& value : metadata.line_comments) records.push_back({"lineComment", value, ""});
+    for (const auto& pair : metadata.block_comments) records.push_back({"blockComment", pair.first, pair.second});
+    for (const auto& pair : metadata.brackets) records.push_back({"bracket", pair.first, pair.second});
+    for (const auto& scope : metadata.bracket_not_in) records.push_back({"bracketNotIn", scope, ""});
+    for (const auto& pair : metadata.surrounding_pairs) records.push_back({"surrounding", pair.first, pair.second});
+    for (const auto& pair : metadata.auto_closing_pairs) {
+        std::string not_in;
+        for (size_t i = 0; i < pair.not_in.size(); ++i) {
+            if (i) not_in.push_back('\x1F');
+            not_in += pair.not_in[i];
+        }
+        records.push_back({"autoClosing", pair.open, pair.close + std::string(1, '\x1F') + not_in});
+    }
+    if (!metadata.word_pattern.empty()) records.push_back({"wordPattern", metadata.word_pattern, ""});
+    if (!metadata.increase_indent_pattern.empty()) records.push_back({"indentIncrease", metadata.increase_indent_pattern, ""});
+    if (!metadata.decrease_indent_pattern.empty()) records.push_back({"indentDecrease", metadata.decrease_indent_pattern, ""});
+    if (!metadata.indent_next_line_pattern.empty()) records.push_back({"indentNextLine", metadata.indent_next_line_pattern, ""});
+    if (!metadata.unindented_line_pattern.empty()) records.push_back({"unIndentedLine", metadata.unindented_line_pattern, ""});
+    for (const auto& value : metadata.completion_trigger_characters) records.push_back({"completionTrigger", value, ""});
+    for (const auto& value : metadata.electric_characters) records.push_back({"electricCharacter", value, ""});
+    if (!metadata.auto_close_before_pattern.empty()) records.push_back({"autoCloseBefore", metadata.auto_close_before_pattern, ""});
+    for (size_t i = 0; i < metadata.on_enter_rules.size(); ++i) {
+        const auto& rule = metadata.on_enter_rules[i];
+        const std::string index = std::to_string(i);
+        records.push_back({"onEnterBefore", index, rule.before_text});
+        if (!rule.after_text.empty()) records.push_back({"onEnterAfter", index, rule.after_text});
+        if (!rule.previous_line_text.empty()) records.push_back({"onEnterPrevious", index, rule.previous_line_text});
+        records.push_back({"onEnterIndent", index, rule.indent_action});
+        if (!rule.append_text.empty()) records.push_back({"onEnterAppend", index, rule.append_text});
+        if (rule.remove_text != 0) records.push_back({"onEnterRemove", index, std::to_string(rule.remove_text)});
+    }
+    for (const auto& option : metadata.options) records.push_back({"editorOption", option.first, option.second});
+
+    jobjectArray result = env->NewObjectArray(static_cast<jsize>(records.size() * 3), string_class, nullptr);
+    if (!result) { env->DeleteLocalRef(string_class); return nullptr; }
+    for (size_t i = 0; i < records.size(); ++i) {
+        for (size_t field = 0; field < 3; ++field) {
+            jstring value = env->NewStringUTF(records[i][field].c_str());
+            env->SetObjectArrayElement(result, static_cast<jsize>(i * 3 + field), value);
+            env->DeleteLocalRef(value);
+        }
+    }
+    env->DeleteLocalRef(string_class);
+    return result;
+}
+
+/**
+ * Export semantic style catalog entries as eight strings each:
+ * id, name, scope, description, parent, tags, deprecated, metadata.
+ */
+JNIEXPORT jobjectArray JNICALL
+Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeGetStyleCatalog(
+    JNIEnv* env, jobject, jstring extension_jstr
+) {
+    if (!extension_jstr) return nullptr;
+    const char* ext = env->GetStringUTFChars(extension_jstr, nullptr);
+    if (!ext) return nullptr;
+    const std::string extension(ext);
+    env->ReleaseStringUTFChars(extension_jstr, ext);
+    auto grammar = WindbellEngine::getInstance().getGrammarByExtension(extension);
+    jclass string_class = env->FindClass("java/lang/String");
+    if (!string_class) return nullptr;
+    if (!grammar) {
+        jobjectArray empty = env->NewObjectArray(0, string_class, nullptr);
+        env->DeleteLocalRef(string_class);
+        return empty;
+    }
+
+    jobjectArray result = env->NewObjectArray(static_cast<jsize>(grammar->styles.size() * 8), string_class, nullptr);
+    if (!result) { env->DeleteLocalRef(string_class); return nullptr; }
+    for (size_t i = 0; i < grammar->styles.size(); ++i) {
+        const auto& style = grammar->styles[i];
+        std::string tags;
+        for (size_t tag_index = 0; tag_index < style.tags.size(); ++tag_index) {
+            if (tag_index) tags.push_back('\x1F');
+            tags += style.tags[tag_index];
+        }
+        std::string metadata;
+        for (const auto& entry : style.metadata) {
+            metadata += std::to_string(utf16LengthModifiedUtf8(entry.first));
+            metadata.push_back(':');
+            metadata += entry.first;
+            metadata += std::to_string(utf16LengthModifiedUtf8(entry.second));
+            metadata.push_back(':');
+            metadata += entry.second;
+        }
+        const std::string values[] = {
+            std::to_string(style.style_id), style.name, style.scope,
+            style.description, style.parent, tags,
+            style.deprecated ? "true" : "false", metadata
+        };
+        for (size_t field = 0; field < 8; ++field) {
+            jstring value = env->NewStringUTF(values[field].c_str());
+            env->SetObjectArrayElement(result, static_cast<jsize>(i * 8 + field), value);
+            env->DeleteLocalRef(value);
+        }
+    }
+    env->DeleteLocalRef(string_class);
+    return result;
+}
+
+/**
+ * Return arbitrary UI theme token pairs as [name, decimalARGB, ...].
+ */
+JNIEXPORT jobjectArray JNICALL
+Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeGetThemeTokens(
+    JNIEnv* env, jobject, jstring extension_jstr, jstring scheme_jstr, jboolean is_dark
+) {
+    if (!extension_jstr || !scheme_jstr) return nullptr;
+    const char* ext = env->GetStringUTFChars(extension_jstr, nullptr);
+    const char* scheme_name = env->GetStringUTFChars(scheme_jstr, nullptr);
+    if (!ext || !scheme_name) {
+        if (ext) env->ReleaseStringUTFChars(extension_jstr, ext);
+        if (scheme_name) env->ReleaseStringUTFChars(scheme_jstr, scheme_name);
+        return nullptr;
+    }
+    const std::string extension(ext);
+    const std::string selected_scheme(scheme_name);
+    env->ReleaseStringUTFChars(extension_jstr, ext);
+    env->ReleaseStringUTFChars(scheme_jstr, scheme_name);
+
+    auto grammar = WindbellEngine::getInstance().getGrammarByExtension(extension);
+    if (!grammar) return nullptr;
+    auto scheme_it = grammar->schemes.find(selected_scheme);
+    if (scheme_it == grammar->schemes.end()) return nullptr;
+
+    auto effective_tokens = scheme_it->second.ui_colors;
+    const auto& appearance_tokens = is_dark ?
+        scheme_it->second.ui_dark_colors : scheme_it->second.ui_light_colors;
+    for (const auto& entry : appearance_tokens) effective_tokens[entry.first] = entry.second;
+
+    std::vector<std::string> keys;
+    keys.reserve(effective_tokens.size());
+    for (const auto& entry : effective_tokens) keys.push_back(entry.first);
+    std::sort(keys.begin(), keys.end());
+
+    jclass string_class = env->FindClass("java/lang/String");
+    if (!string_class) return nullptr;
+    jobjectArray result = env->NewObjectArray(static_cast<jsize>(keys.size() * 2), string_class, nullptr);
+    if (!result) { env->DeleteLocalRef(string_class); return nullptr; }
+    for (size_t i = 0; i < keys.size(); ++i) {
+        const auto color = effective_tokens.at(keys[i]);
+        jstring key = env->NewStringUTF(keys[i].c_str());
+        jstring value = env->NewStringUTF(std::to_string(color).c_str());
+        env->SetObjectArrayElement(result, static_cast<jsize>(i * 2), key);
+        env->SetObjectArrayElement(result, static_cast<jsize>(i * 2 + 1), value);
+        env->DeleteLocalRef(key);
+        env->DeleteLocalRef(value);
+    }
+    env->DeleteLocalRef(string_class);
+    return result;
+}
+
+/**
+ * Export palette for the explicitly selected scheme.
+ * Layout: [styleId, lightColor, darkColor, lightFlags, darkFlags, hasLight, hasDark] * N.
+ * Presence flags distinguish an absent value from an explicit transparent color.
  */
 JNIEXPORT jintArray JNICALL
 Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeGetPalette(
-    JNIEnv* env,
-    jobject /* thiz */,
-    jstring extension_jstr
+    JNIEnv* env, jobject, jstring extension_jstr, jstring scheme_jstr
 ) {
-    if (!extension_jstr) {
-        throw_npe(env, "extension cannot be null");
-        return nullptr;
-    }
-
+    if (!extension_jstr || !scheme_jstr) return nullptr;
     const char* ext = env->GetStringUTFChars(extension_jstr, nullptr);
-    if (!ext) {
-        throw_npe(env, "Failed to extract extension string");
+    const char* scheme_name = env->GetStringUTFChars(scheme_jstr, nullptr);
+    if (!ext || !scheme_name) {
+        if (ext) env->ReleaseStringUTFChars(extension_jstr, ext);
+        if (scheme_name) env->ReleaseStringUTFChars(scheme_jstr, scheme_name);
         return nullptr;
     }
-    std::string ext_str(ext);
+    const std::string extension(ext);
+    const std::string selected_scheme(scheme_name);
     env->ReleaseStringUTFChars(extension_jstr, ext);
+    env->ReleaseStringUTFChars(scheme_jstr, scheme_name);
 
-    auto grammar = WindbellEngine::getInstance().getGrammarByExtension(ext_str);
-    if (!grammar) {
-        return env->NewIntArray(0);
-    }
+    auto grammar = WindbellEngine::getInstance().getGrammarByExtension(extension);
+    if (!grammar) return env->NewIntArray(0);
+    auto scheme_it = grammar->schemes.find(selected_scheme);
+    if (scheme_it == grammar->schemes.end()) return env->NewIntArray(0);
 
     const jsize count = static_cast<jsize>(grammar->styles.size());
-    jintArray result = env->NewIntArray(count * 3);
-    if (!result) {
-        throw_npe(env, "Out of memory allocating palette int array");
-        return nullptr;
-    }
-
-    std::vector<jint> flat_palette(count * 3);
+    jintArray result = env->NewIntArray(count * 7);
+    if (!result) return nullptr;
+    std::vector<jint> values(static_cast<size_t>(count) * 7, 0);
     for (jsize i = 0; i < count; ++i) {
-        flat_palette[i * 3 + 0] = static_cast<jint>(grammar->styles[i].style_id);
-        flat_palette[i * 3 + 1] = static_cast<jint>(grammar->styles[i].light_color);
-        flat_palette[i * 3 + 2] = static_cast<jint>(grammar->styles[i].dark_color);
+        const auto& style = grammar->styles[static_cast<size_t>(i)];
+        values[i * 7] = static_cast<jint>(style.style_id);
+        auto color_it = scheme_it->second.colors.find(style.style_id);
+        if (color_it != scheme_it->second.colors.end()) {
+            const SchemeColor& color = color_it->second;
+            values[i * 7 + 1] = static_cast<jint>(color.light_color);
+            values[i * 7 + 2] = static_cast<jint>(color.dark_color);
+            values[i * 7 + 3] = static_cast<jint>(color.light_font_flags);
+            values[i * 7 + 4] = static_cast<jint>(color.dark_font_flags);
+            values[i * 7 + 5] = color.has_light_color ? 1 : 0;
+            values[i * 7 + 6] = color.has_dark_color ? 1 : 0;
+        }
     }
-
-    env->SetIntArrayRegion(result, 0, count * 3, flat_palette.data());
+    env->SetIntArrayRegion(result, 0, count * 7, values.data());
     return result;
 }
 
 /**
  * 3. 双通道混合高亮计算 (微观正则 + 宏观 AST 语法树剪枝)
  * 签名: (JLjava/lang/String;Ljava/lang/String;)[I
- * 返回结构: [start_byte, end_byte, (style_id | (font_flags << 16))] * N
+ * 返回结构: [start_byte, end_byte, packed_style_flags, priority, declaration_order, source] * N
  */
 JNIEXPORT jintArray JNICALL
 Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlight(
@@ -125,7 +511,8 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlight(
     jobject /* thiz */,
     jlong tree_ptr,
     jstring text_jstr,
-    jstring extension_jstr
+    jstring extension_jstr,
+    jboolean diagnostics
 ) {
     if (!text_jstr || !extension_jstr) {
         throw_npe(env, "text or extension cannot be null");
@@ -150,15 +537,21 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlight(
     std::vector<uint16_t> buffer(len);
     env->GetStringRegion(text_jstr, 0, len, reinterpret_cast<jchar*>(buffer.data()));
 
+    std::vector<HighlightSpan> raw_candidates;
+    uint32_t pipeline_match_counts[4] = {};
     std::vector<HighlightSpan> spans = WindbellEngine::getInstance().highlightHybrid(
         tree ? ts_tree_language(tree) : nullptr,
         tree,
         buffer.data(),
         static_cast<uint32_t>(len),
-        ext_str
+        ext_str,
+        diagnostics == JNI_TRUE ? &raw_candidates : nullptr,
+        diagnostics == JNI_TRUE ? pipeline_match_counts : nullptr
     );
+    if (diagnostics == JNI_TRUE) spans = std::move(raw_candidates);
 
-    const jsize out_size = static_cast<jsize>(spans.size() * 3);
+    const jsize header_size = diagnostics == JNI_TRUE ? 4 : 0;
+    const jsize out_size = header_size + static_cast<jsize>(spans.size() * 6);
     jintArray result = env->NewIntArray(out_size);
     if (!result) {
         throw_npe(env, "Out of memory allocating spans int array");
@@ -166,195 +559,21 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlight(
     }
 
     std::vector<jint> flat_spans(out_size);
+    if (diagnostics == JNI_TRUE) {
+        for (size_t source = 0; source < 4; ++source) flat_spans[source] = static_cast<jint>(pipeline_match_counts[source]);
+    }
     for (size_t i = 0; i < spans.size(); ++i) {
-        flat_spans[i * 3 + 0] = static_cast<jint>(spans[i].start_byte);
-        flat_spans[i * 3 + 1] = static_cast<jint>(spans[i].end_byte);
-        flat_spans[i * 3 + 2] = static_cast<jint>(spans[i].style_id | (static_cast<uint32_t>(spans[i].flags) << 16));
+        const size_t offset = static_cast<size_t>(header_size) + i * 6;
+        flat_spans[offset + 0] = static_cast<jint>(spans[i].start_byte);
+        flat_spans[offset + 1] = static_cast<jint>(spans[i].end_byte);
+        flat_spans[offset + 2] = static_cast<jint>(spans[i].style_id | (static_cast<uint32_t>(spans[i].flags) << 16));
+        flat_spans[offset + 3] = static_cast<jint>(spans[i].priority);
+        flat_spans[offset + 4] = static_cast<jint>(spans[i].declaration_order);
+        flat_spans[offset + 5] = static_cast<jint>(spans[i].source);
     }
 
     env->SetIntArrayRegion(result, 0, out_size, flat_spans.data());
     return result;
-}
-
-/**
- * 4. 计算 AST 代码折叠区间
- * 签名: (JLjava/lang/String;Ljava/lang/String;)[I
- * 返回结构: [start_byte, end_byte, kind] * N
- */
-JNIEXPORT jintArray JNICALL
-Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeComputeFolds(
-    JNIEnv* env,
-    jobject /* thiz */,
-    jlong tree_ptr,
-    jstring text_jstr,
-    jstring extension_jstr
-) {
-    if (!tree_ptr || !text_jstr) {
-        throw_npe(env, "tree pointer or text cannot be null");
-        return nullptr;
-    }
-
-    TSTree* tree = reinterpret_cast<TSTree*>(tree_ptr);
-    std::string ext_str;
-    if (extension_jstr != nullptr) {
-        const char* ext = env->GetStringUTFChars(extension_jstr, nullptr);
-        if (ext) {
-            ext_str = ext;
-            env->ReleaseStringUTFChars(extension_jstr, ext);
-        }
-    }
-
-    const jsize len = env->GetStringLength(text_jstr);
-    std::vector<uint16_t> buffer(len);
-    env->GetStringRegion(text_jstr, 0, len, reinterpret_cast<jchar*>(buffer.data()));
-
-    std::vector<FoldRange> folds = WindbellEngine::getInstance().computeFoldRanges(
-        tree, buffer.data(), static_cast<uint32_t>(len), ext_str
-    );
-
-    const jsize out_size = static_cast<jsize>(folds.size() * 3);
-    jintArray result = env->NewIntArray(out_size);
-    if (!result) {
-        throw_npe(env, "Out of memory allocating folds int array");
-        return nullptr;
-    }
-
-    std::vector<jint> flat_folds(out_size);
-    for (size_t i = 0; i < folds.size(); ++i) {
-        flat_folds[i * 3 + 0] = static_cast<jint>(folds[i].start_byte);
-        flat_folds[i * 3 + 1] = static_cast<jint>(folds[i].end_byte);
-        flat_folds[i * 3 + 2] = static_cast<jint>(folds[i].kind);
-    }
-
-    env->SetIntArrayRegion(result, 0, out_size, flat_folds.data());
-    return result;
-}
-
-/**
- * 5. 导出符号大纲表（支持严密的局部引用管理，杜绝 512 LocalRef 溢出崩溃）
- * 签名: (JLjava/lang/String;Ljava/lang/String;)[Ljava/lang/String;
- * 返回结构: [start_byte, end_byte, kind, name] * N
- */
-JNIEXPORT jobjectArray JNICALL
-Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeGetOutline(
-    JNIEnv* env,
-    jobject /* thiz */,
-    jlong tree_ptr,
-    jstring text_jstr,
-    jstring extension_jstr
-) {
-    if (!tree_ptr || !text_jstr) {
-        throw_npe(env, "tree pointer or text cannot be null");
-        return nullptr;
-    }
-
-    TSTree* tree = reinterpret_cast<TSTree*>(tree_ptr);
-    std::string ext_str;
-    if (extension_jstr != nullptr) {
-        const char* ext = env->GetStringUTFChars(extension_jstr, nullptr);
-        if (ext) {
-            ext_str = ext;
-            env->ReleaseStringUTFChars(extension_jstr, ext);
-        }
-    }
-
-    const jsize len = env->GetStringLength(text_jstr);
-    std::vector<uint16_t> buffer(len);
-    env->GetStringRegion(text_jstr, 0, len, reinterpret_cast<jchar*>(buffer.data()));
-
-    std::vector<OutlineTag> tags = WindbellEngine::getInstance().computeOutline(tree, buffer.data(), len, ext_str);
-
-    jclass strClass = env->FindClass("java/lang/String");
-    if (!strClass) {
-        return nullptr;
-    }
-
-    const jsize total_elements = static_cast<jsize>(tags.size() * 4);
-    jobjectArray strArray = env->NewObjectArray(total_elements, strClass, nullptr);
-    if (!strArray) {
-        env->DeleteLocalRef(strClass);
-        throw_npe(env, "Out of memory allocating outline string array");
-        return nullptr;
-    }
-
-    for (size_t i = 0; i < tags.size(); ++i) {
-        jstring s_byte = env->NewStringUTF(std::to_string(tags[i].start_byte).c_str());
-        jstring e_byte = env->NewStringUTF(std::to_string(tags[i].end_byte).c_str());
-        jstring kind   = env->NewStringUTF(std::to_string(tags[i].kind).c_str());
-        jstring name   = env->NewStringUTF(tags[i].name);
-
-        env->SetObjectArrayElement(strArray, static_cast<jsize>(i * 4 + 0), s_byte);
-        env->SetObjectArrayElement(strArray, static_cast<jsize>(i * 4 + 1), e_byte);
-        env->SetObjectArrayElement(strArray, static_cast<jsize>(i * 4 + 2), kind);
-        env->SetObjectArrayElement(strArray, static_cast<jsize>(i * 4 + 3), name);
-
-        // 必须在每一次迭代后显式释放，严防 Android 512 LocalRef 溢出
-        env->DeleteLocalRef(s_byte);
-        env->DeleteLocalRef(e_byte);
-        env->DeleteLocalRef(kind);
-        env->DeleteLocalRef(name);
-    }
-
-    env->DeleteLocalRef(strClass);
-    return strArray;
-}
-
-/**
- * 6. AST 节点悬停诊断与类型反查
- * 签名: (JI)[Ljava/lang/String;
- * 返回结构: [start_byte, end_byte, node_type, detail]
- */
-JNIEXPORT jobjectArray JNICALL
-Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeGetHoverInfo(
-    JNIEnv* env,
-    jobject /* thiz */,
-    jlong tree_ptr,
-    jint byte_offset
-) {
-    if (!tree_ptr) {
-        throw_npe(env, "tree pointer cannot be null");
-        return nullptr;
-    }
-    TSTree* tree = reinterpret_cast<TSTree*>(tree_ptr);
-
-    HoverInfo info;
-    const bool found = WindbellEngine::getInstance().getHoverInfo(
-        tree,
-        static_cast<uint32_t>(byte_offset),
-        info
-    );
-    if (!found) {
-        return nullptr;
-    }
-
-    jclass strClass = env->FindClass("java/lang/String");
-    if (!strClass) {
-        return nullptr;
-    }
-
-    jobjectArray arr = env->NewObjectArray(4, strClass, nullptr);
-    if (!arr) {
-        env->DeleteLocalRef(strClass);
-        return nullptr;
-    }
-
-    jstring s_byte = env->NewStringUTF(std::to_string(info.start_byte).c_str());
-    jstring e_byte = env->NewStringUTF(std::to_string(info.end_byte).c_str());
-    jstring type   = env->NewStringUTF(info.node_type.c_str());
-    jstring detail = env->NewStringUTF(info.detail.c_str());
-
-    env->SetObjectArrayElement(arr, 0, s_byte);
-    env->SetObjectArrayElement(arr, 1, e_byte);
-    env->SetObjectArrayElement(arr, 2, type);
-    env->SetObjectArrayElement(arr, 3, detail);
-
-    env->DeleteLocalRef(s_byte);
-    env->DeleteLocalRef(e_byte);
-    env->DeleteLocalRef(type);
-    env->DeleteLocalRef(detail);
-    env->DeleteLocalRef(strClass);
-
-    return arr;
 }
 
 } // extern "C"
