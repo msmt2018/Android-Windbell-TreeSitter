@@ -136,7 +136,7 @@ class WindbellTshEngine private constructor() {
             // palette entries decoded from the previous source revision.
             schemePaletteCache.keys
                 .filter { it.startsWith("$extension::") }
-                .forEach(schemePaletteCache::remove)
+                .forEach { cacheKey -> schemePaletteCache.remove(cacheKey) }
             paletteCache.remove(extension)
             defaultAppearances[extension] = nativeGetDefaultIsDark(extension)
             val defaultScheme = nativeGetDefaultScheme(extension)
