@@ -574,7 +574,7 @@ class MainActivity : AppCompatActivity() {
                 val scheme = schemes[index]
                 val palette = engine.getSchemePalette("java", scheme)
                 val styles = engine.getStyleCatalog("java").associateBy { it.styleId }
-                val detail = StringBuilder("Scheme: " + scheme + "\\nPalette entries: " + palette.size + "\\n\\n")
+                val detail = StringBuilder("Scheme: " + scheme + "\nPalette entries: " + palette.size + "\n\n")
                 palette.values.sortedBy { it.styleId }.forEach { entry ->
                     val style = styles[entry.styleId]
                     val light = if (entry.hasLightColor) String.format(Locale.ROOT, "#%08X", entry.lightColor) else "未配置"
