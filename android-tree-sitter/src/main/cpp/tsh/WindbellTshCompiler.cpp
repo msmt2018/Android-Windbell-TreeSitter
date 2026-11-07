@@ -2419,6 +2419,7 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                                 const TSQueryPredicateStep* steps =
                                     ts_query_predicates_for_pattern(program.query, pattern, &step_count);
                                 uint32_t step = 0;
+                                uint32_t predicate_index = 0;
                                 while (steps && step < step_count) {
                                     std::vector<TSQueryPredicateStep> predicate;
                                     while (step < step_count &&
@@ -2481,11 +2482,13 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                                         }
                                         NativeQueryProgram::PredicateRegex entry;
                                         entry.pattern_index = pattern;
+                                        entry.predicate_index = predicate_index;
                                         entry.capture_id = predicate[1].value_id;
                                         entry.regex = compiled;
                                         entry.negate = op == "not-match?";
                                         program.predicate_regexes.push_back(entry);
                                     }
+                                    ++predicate_index;
                                 }
                             }
 

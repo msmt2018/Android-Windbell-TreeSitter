@@ -143,6 +143,7 @@ static bool tshEvaluateNativePredicates(const NativeQueryProgram& program,
         ts_query_predicates_for_pattern(query, match.pattern_index, &step_count);
     if (!steps || step_count == 0) return true;
     uint32_t cursor = 0;
+    uint32_t predicate_index = 0;
     while (cursor < step_count) {
         std::vector<TSQueryPredicateStep> predicate;
         while (cursor < step_count && steps[cursor].type != TSQueryPredicateStepTypeDone)
@@ -186,6 +187,7 @@ static bool tshEvaluateNativePredicates(const NativeQueryProgram& program,
             const NativeQueryProgram::PredicateRegex* compiled = nullptr;
             for (const auto& candidate : program.predicate_regexes) {
                 if (candidate.pattern_index == match.pattern_index &&
+                    candidate.predicate_index == predicate_index &&
                     candidate.capture_id == predicate[1].value_id) {
                     compiled = &candidate;
                     break;
@@ -207,6 +209,7 @@ static bool tshEvaluateNativePredicates(const NativeQueryProgram& program,
             accepted = compiled->negate ? !all_match : all_match;
         } else return false;
         if (!accepted) return false;
+        ++predicate_index;
     }
     return true;
 }

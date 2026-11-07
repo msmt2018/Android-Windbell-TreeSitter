@@ -955,6 +955,11 @@ class WindbellTshLinkageTest {
                             id: "nonmatching-method"
                             priority: 60
                             source: `(method_declaration name: (identifier) @method (#not-match? @method "^skip$"))`
+                        },
+                        {
+                            id: "combined-method-regex"
+                            priority: 70
+                            source: `(method_declaration name: (identifier) @method (#match? @method "^r") (#match? @method "n$"))`
                         }
                     ]
                 }
@@ -962,13 +967,19 @@ class WindbellTshLinkageTest {
         """.trimIndent()
         assertTrue(engine.loadTshSource("java-query-regex", source, language))
         val parser = TSParser.create().apply { setLanguage(language) }
-        val code = "class Demo { void run() {} void skip() {} void other() {} }"
+        val code = "class Demo { void run() {} void rune() {} void skip() {} void other() {} }"
         val tree = parser.parseString(code)
         val spans = engine.computeHighlights(tree, code, "java-query-regex")
         val methodId = engine.getStyleCatalog("java-query-regex").first { it.name == "method" }.styleId
 
         assertTrue(spans.any { it.styleId == methodId && it.priority == 50 })
         assertTrue(spans.any { it.styleId == methodId && it.priority == 60 })
+        assertTrue(spans.any {
+            it.styleId == methodId && it.priority == 70 && it.startByte == code.indexOf("run") * 2
+        }, "Both regex predicates must be evaluated for the same query pattern.")
+        assertFalse(spans.any {
+            it.styleId == methodId && it.priority == 70 && it.startByte == code.indexOf("rune") * 2
+        }, "A match accepted by only the first regex predicate must be rejected.")
         assertFalse(spans.any {
             it.styleId == methodId && it.priority == 50 && it.startByte == code.indexOf("other") * 2 * 2
         })
