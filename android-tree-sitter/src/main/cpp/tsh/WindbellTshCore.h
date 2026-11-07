@@ -295,7 +295,9 @@ public:
         TSTree* tree,
         const uint16_t* input_chars,
         uint32_t length_chars,
-        const std::string& extension
+        const std::string& extension,
+        std::vector<HighlightSpan>* diagnostic_spans = nullptr,
+        uint32_t* diagnostic_match_counts = nullptr
     );
 
 private:
@@ -308,7 +310,8 @@ private:
         const UChar* text_end,
         const UChar* range_start,
         const UChar* range_end,
-        std::vector<HighlightSpan>& out_spans
+        std::vector<HighlightSpan>& out_spans,
+        uint32_t* regex_match_count = nullptr
     );
 
     std::mutex registry_lock_;

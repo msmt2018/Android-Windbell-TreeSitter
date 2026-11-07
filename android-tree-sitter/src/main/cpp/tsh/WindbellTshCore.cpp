@@ -355,7 +355,8 @@ void WindbellEngine::matchBlockRecursive(
     const UChar* text_end,
     const UChar* range_start,
     const UChar* range_end,
-    std::vector<HighlightSpan>& out_spans
+    std::vector<HighlightSpan>& out_spans,
+    uint32_t* regex_match_count
 ) {
     OnigRegion* start_region = onig_region_new();
     OnigRegion* end_region = onig_region_new();
@@ -377,6 +378,7 @@ void WindbellEngine::matchBlockRecursive(
             ONIG_OPTION_NONE
         );
         if (hit_start < 0) break;
+        if (regex_match_count) ++(*regex_match_count);
 
         uint32_t block_start_byte = static_cast<uint32_t>(start_region->beg[0]);
         const UChar* content_start = text_start + start_region->end[0];
@@ -444,7 +446,7 @@ void WindbellEngine::matchBlockRecursive(
                 for (const auto& nested : rule.nested_rules) {
                     if (!nested.enabled) continue;
                     if (nested.type == RegexRuleType::BLOCK && nested.onig_start && nested.onig_end) {
-                        matchBlockRecursive(nested, text_start, text_end, inner_start, inner_end, out_spans);
+                        matchBlockRecursive(nested, text_start, text_end, inner_start, inner_end, out_spans, regex_match_count);
                         continue;
                     }
                     if (nested.type == RegexRuleType::MATCH && nested.onig_start) {
@@ -526,9 +528,12 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
     TSTree* tree,
     const uint16_t* input_chars,
     uint32_t length_chars,
-    const std::string& extension
+    const std::string& extension,
+    std::vector<HighlightSpan>* diagnostic_spans,
+    uint32_t* diagnostic_match_counts
 ) {
     std::vector<HighlightSpan> final_spans;
+    if (diagnostic_match_counts) std::fill(diagnostic_match_counts, diagnostic_match_counts + 4, 0u);
     if (length_chars != 0 && input_chars == nullptr) return final_spans;
     if (length_chars > (std::numeric_limits<uint32_t>::max() / sizeof(uint16_t))) return final_spans;
     auto grammar = getGrammarByExtension(extension);
@@ -557,7 +562,8 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
     for (const auto& rule : grammar->regex_rules) {
         if (!rule.enabled) continue;
         if (rule.type == RegexRuleType::BLOCK && rule.onig_start && rule.onig_end) {
-            matchBlockRecursive(rule, text_start, text_end, text_start, text_end, micro_spans);
+            matchBlockRecursive(rule, text_start, text_end, text_start, text_end, micro_spans,
+                diagnostic_match_counts ? &diagnostic_match_counts[0] : nullptr);
             continue;
         }
 
@@ -578,6 +584,7 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                 ONIG_OPTION_NONE
             );
             if (hit_pos >= 0) {
+                if (diagnostic_match_counts) ++diagnostic_match_counts[0];
                 uint32_t match_start = static_cast<uint32_t>(region->beg[0]);
                 uint32_t match_end = static_cast<uint32_t>(region->end[0]);
 
@@ -704,6 +711,7 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                 continue;
             }
 
+            if (diagnostic_match_counts) ++diagnostic_match_counts[1];
             const uint32_t match_start = monarch_region->beg[0] >= 0 ?
                 static_cast<uint32_t>(monarch_region->beg[0]) : position;
             const uint32_t match_end = monarch_region->end[0] >= 0 ?
@@ -955,6 +963,7 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                     }
                 }
 
+                if (diagnostic_match_counts) ++diagnostic_match_counts[2];
                 if (ast_rule.has_style) {
                     HighlightSpan span;
                     const uint32_t node_start = ts_node_start_byte(node);
@@ -1017,6 +1026,7 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                 }
                 if (!tshEvaluateNativePredicates(native_query, match, tree_source_utf8))
                     continue;
+                if (diagnostic_match_counts) ++diagnostic_match_counts[3];
                 const int32_t pattern_priority =
                     pattern_metadata != native_query.pattern_metadata.end() &&
                     pattern_metadata->second.has_priority
@@ -1047,6 +1057,16 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
     }
     for (size_t i = native_query_span_begin; i < macro_spans.size(); ++i) {
         macro_spans[i].source = static_cast<uint8_t>(HighlightSource::NATIVE_QUERY);
+    }
+
+    // Preserve producer candidates before overlap resolution, duplicate collapse,
+    // clipping and adjacent-fragment merging. These are the actual captures
+    // emitted by each pipeline, not merely the surviving renderer spans.
+    if (diagnostic_spans) {
+        diagnostic_spans->clear();
+        diagnostic_spans->reserve(macro_spans.size() + micro_spans.size());
+        diagnostic_spans->insert(diagnostic_spans->end(), macro_spans.begin(), macro_spans.end());
+        diagnostic_spans->insert(diagnostic_spans->end(), micro_spans.begin(), micro_spans.end());
     }
 
     if (macro_spans.empty()) {

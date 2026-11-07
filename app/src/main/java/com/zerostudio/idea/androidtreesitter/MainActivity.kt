@@ -566,7 +566,10 @@ class MainActivity : AppCompatActivity() {
             } else {
                 tree.use {
                     val queryStart = System.nanoTime()
-                    val captures = engine.computeHighlights(it, source, "java")
+                    // Diagnostic mode reports producer candidates before the final
+                    // renderer overlap/duplicate resolution pass.
+                    val pipelineDiagnostics = engine.computePipelineDiagnostics(it, source, "java")
+                    val captures = pipelineDiagnostics.captures
                     val queryNanos = System.nanoTime() - queryStart
                     val lineCaptures = captures.filter { span ->
                         (span.startByte shr 1) < lineEnd && (span.endByte shr 1) > lineStart
@@ -598,7 +601,8 @@ class MainActivity : AppCompatActivity() {
                         }
                         report.appendLine(
                             "   producer=" + (sourceNames[sourceId] ?: "Unknown(" + sourceId + ")") +
-                                " matches=" + producerSpans.size +
+                                " matches=" + (pipelineDiagnostics.matchCounts[sourceId] ?: 0) +
+                                " captures=" + producerSpans.size +
                                 " cursor-line=" + lineCount +
                                 " UTF16-range=[" + producerStart + "," + producerEnd + ")" +
                                 " captures=" + ranges +

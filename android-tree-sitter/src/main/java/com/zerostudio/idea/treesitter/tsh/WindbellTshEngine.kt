@@ -492,7 +492,7 @@ class WindbellTshEngine private constructor() {
     }
 
     fun computeHighlights(tree: TSTree?, text: String, extension: String): List<HighlightSpan> {
-        val flatData = nativeHighlight(tree?.nativeObject ?: 0L, text, extension) ?: return emptyList()
+        val flatData = nativeHighlight(tree?.nativeObject ?: 0L, text, extension, false) ?: return emptyList()
         // JNI row layout: start, end, packed(styleId|flags), priority, order, source.
         val count = flatData.size / 6
         val result = ArrayList<HighlightSpan>(count)
@@ -509,6 +509,31 @@ class WindbellTshEngine private constructor() {
         }
         return result
     }
+
+    data class PipelineDiagnostics(val matchCounts: Map<Int, Int>, val captures: List<HighlightSpan>)
+
+    fun computePipelineDiagnostics(tree: TSTree?, text: String, extension: String): PipelineDiagnostics {
+        val flatData = nativeHighlight(tree?.nativeObject ?: 0L, text, extension, true)
+            ?: return PipelineDiagnostics(emptyMap(), emptyList())
+        if (flatData.size < 4) return PipelineDiagnostics(emptyMap(), emptyList())
+        val counts = (0..3).associateWith { flatData[it] }
+        val count = (flatData.size - 4) / 6
+        val captures = ArrayList<HighlightSpan>(count)
+        for (i in 0 until count) {
+            val offset = 4 + i * 6
+            val packedMeta = flatData[offset + 2]
+            captures.add(HighlightSpan(
+                startByte = flatData[offset], endByte = flatData[offset + 1],
+                styleId = packedMeta and 0xFFFF, fontFlags = (packedMeta ushr 16) and 0xFFFF,
+                priority = flatData[offset + 3], declarationOrder = flatData[offset + 4],
+                source = flatData[offset + 5]
+            ))
+        }
+        return PipelineDiagnostics(counts, captures)
+    }
+
+    fun computeDiagnosticCandidates(tree: TSTree?, text: String, extension: String): List<HighlightSpan> =
+        computePipelineDiagnostics(tree, text, extension).captures
 
     @FastNative
     private external fun nativeLoadTshSource(extension: String, tshSourceContent: String, languagePtr: Long): Boolean
@@ -544,7 +569,7 @@ class WindbellTshEngine private constructor() {
     private external fun nativeGetPalette(extension: String, schemeName: String): IntArray?
 
     @FastNative
-    private external fun nativeHighlight(treePtr: Long, text: String, extension: String): IntArray?
+    private external fun nativeHighlight(treePtr: Long, text: String, extension: String, diagnostics: Boolean): IntArray?
 
 
 }

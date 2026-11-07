@@ -511,7 +511,8 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlight(
     jobject /* thiz */,
     jlong tree_ptr,
     jstring text_jstr,
-    jstring extension_jstr
+    jstring extension_jstr,
+    jboolean diagnostics
 ) {
     if (!text_jstr || !extension_jstr) {
         throw_npe(env, "text or extension cannot be null");
@@ -536,15 +537,21 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlight(
     std::vector<uint16_t> buffer(len);
     env->GetStringRegion(text_jstr, 0, len, reinterpret_cast<jchar*>(buffer.data()));
 
+    std::vector<HighlightSpan> raw_candidates;
+    uint32_t pipeline_match_counts[4] = {};
     std::vector<HighlightSpan> spans = WindbellEngine::getInstance().highlightHybrid(
         tree ? ts_tree_language(tree) : nullptr,
         tree,
         buffer.data(),
         static_cast<uint32_t>(len),
-        ext_str
+        ext_str,
+        diagnostics == JNI_TRUE ? &raw_candidates : nullptr,
+        diagnostics == JNI_TRUE ? pipeline_match_counts : nullptr
     );
+    if (diagnostics == JNI_TRUE) spans = std::move(raw_candidates);
 
-    const jsize out_size = static_cast<jsize>(spans.size() * 6);
+    const jsize header_size = diagnostics == JNI_TRUE ? 4 : 0;
+    const jsize out_size = header_size + static_cast<jsize>(spans.size() * 6);
     jintArray result = env->NewIntArray(out_size);
     if (!result) {
         throw_npe(env, "Out of memory allocating spans int array");
@@ -552,13 +559,17 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlight(
     }
 
     std::vector<jint> flat_spans(out_size);
+    if (diagnostics == JNI_TRUE) {
+        for (size_t source = 0; source < 4; ++source) flat_spans[source] = static_cast<jint>(pipeline_match_counts[source]);
+    }
     for (size_t i = 0; i < spans.size(); ++i) {
-        flat_spans[i * 6 + 0] = static_cast<jint>(spans[i].start_byte);
-        flat_spans[i * 6 + 1] = static_cast<jint>(spans[i].end_byte);
-        flat_spans[i * 6 + 2] = static_cast<jint>(spans[i].style_id | (static_cast<uint32_t>(spans[i].flags) << 16));
-        flat_spans[i * 6 + 3] = static_cast<jint>(spans[i].priority);
-        flat_spans[i * 6 + 4] = static_cast<jint>(spans[i].declaration_order);
-        flat_spans[i * 6 + 5] = static_cast<jint>(spans[i].source);
+        const size_t offset = static_cast<size_t>(header_size) + i * 6;
+        flat_spans[offset + 0] = static_cast<jint>(spans[i].start_byte);
+        flat_spans[offset + 1] = static_cast<jint>(spans[i].end_byte);
+        flat_spans[offset + 2] = static_cast<jint>(spans[i].style_id | (static_cast<uint32_t>(spans[i].flags) << 16));
+        flat_spans[offset + 3] = static_cast<jint>(spans[i].priority);
+        flat_spans[offset + 4] = static_cast<jint>(spans[i].declaration_order);
+        flat_spans[offset + 5] = static_cast<jint>(spans[i].source);
     }
 
     env->SetIntArrayRegion(result, 0, out_size, flat_spans.data());
