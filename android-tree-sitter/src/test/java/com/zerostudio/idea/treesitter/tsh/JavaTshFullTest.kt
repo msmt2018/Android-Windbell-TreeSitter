@@ -75,6 +75,7 @@ class JavaTshFullTest {
         assertNotNull(tree, "Tree-sitter must generate non-null syntax tree.")
 
         // 1. 混合分词测试 (AST 寄存器比对 + 正则下推自动机)
+        assertTrue(WindbellTshEngine.instance.isGrammarLoaded("java"))
         val spans = WindbellTshEngine.instance.computeHighlights(tree, testSource, "java")
         assertNotNull(spans)
         assertTrue(spans.isNotEmpty(), "Highlight spans must not be empty.")
@@ -89,6 +90,39 @@ class JavaTshFullTest {
         assertTrue(
             atsTexts.any { it == "UserProfile" },
             "ATS field selector record_declaration.name must capture the declared type identifier; got $atsTexts"
+        )
+
+        // Tree-sitter's Kotlin binding parses UTF-16LE. Prefixing the declarations
+        // with CJK/Emoji text must not make ATS or native-query byte offsets drift.
+        val nativeQueryTexts = spans.filter { it.source == 3 }.map { span ->
+            testSource.substring(
+                (span.startByte shr 1).coerceIn(0, testSource.length),
+                (span.endByte shr 1).coerceIn(0, testSource.length)
+            )
+        }
+        assertTrue(
+            nativeQueryTexts.contains("multiline"),
+            "Native Tree-sitter Query must capture variable_declarator.name after UTF-16 offsets are mapped; got $nativeQueryTexts"
+        )
+
+        assertTrue(
+            nativeQueryTexts.contains("MAX_CACHE_CAPACITY"),
+            "Native #match? predicate must evaluate against the UTF-8 slice mapped from UTF-16LE node offsets."
+        )
+        assertTrue(
+            nativeQueryTexts.all { it == "multiline" || it == "MAX_CACHE_CAPACITY" },
+            "Native query regex predicate must reject identifiers outside its pattern; got $nativeQueryTexts"
+        )
+
+        val pipelineDiagnostics = WindbellTshEngine.instance
+            .computePipelineDiagnostics(tree, testSource, "java")
+        assertTrue(
+            (pipelineDiagnostics.matchCounts[2] ?: 0) > 0,
+            "ATS selector matches must be counted against UTF-16LE Tree-sitter node offsets."
+        )
+        assertTrue(
+            (pipelineDiagnostics.matchCounts[3] ?: 0) > 0,
+            "Native query matches must be counted after predicates evaluate on the correct UTF-8 slices."
         )
 
         // 2. 严格硬件边界与 UTF-16 Code Unit 偶数对齐断言

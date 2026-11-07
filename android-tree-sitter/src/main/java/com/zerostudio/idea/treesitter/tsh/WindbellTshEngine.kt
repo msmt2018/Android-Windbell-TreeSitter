@@ -107,6 +107,9 @@ class WindbellTshEngine private constructor() {
     // Keep every compiled scheme palette, not just the currently selected one. A scheme
     // switch is then a map reference swap and does not cross JNI or recompile the DSL.
     private val schemePaletteCache = ConcurrentHashMap<String, Map<Int, StylePalette>>()
+    // Cache both Light and Dark UI tokens independently so a theme switch only
+    // swaps already-decoded maps and never crosses JNI on the hot path.
+    private val schemeThemeTokenCache = ConcurrentHashMap<String, Map<String, Int>>()
     private val selectedSchemes = ConcurrentHashMap<String, String>()
     private val defaultAppearances = ConcurrentHashMap<String, Boolean>()
     private val appearanceOverrides = ConcurrentHashMap<String, Boolean>()
@@ -137,6 +140,9 @@ class WindbellTshEngine private constructor() {
             schemePaletteCache.keys
                 .filter { it.startsWith("$extension::") }
                 .forEach { cacheKey -> schemePaletteCache.remove(cacheKey) }
+            schemeThemeTokenCache.keys
+                .filter { it.startsWith("$extension::") }
+                .forEach { cacheKey -> schemeThemeTokenCache.remove(cacheKey) }
             paletteCache.remove(extension)
             defaultAppearances[extension] = nativeGetDefaultIsDark(extension)
             val defaultScheme = nativeGetDefaultScheme(extension)
@@ -202,6 +208,10 @@ class WindbellTshEngine private constructor() {
 
     fun matchesFirstLine(extension: String, line: String): Boolean =
         nativeMatchesFirstLine(extension, line)
+
+    /** True when this process already owns a compiled native grammar for the extension. */
+    fun isGrammarLoaded(extension: String): Boolean =
+        getLanguageMetadata(extension).id.isNotBlank()
 
     fun getLanguageMetadata(extension: String): LanguageMetadata {
         val raw = nativeGetLanguageMetadata(extension) ?: return LanguageMetadata()
@@ -369,14 +379,17 @@ class WindbellTshEngine private constructor() {
 
     /** Reads Light or Dark UI tokens from a named scheme without changing selection. */
     fun getSchemeThemeTokens(extension: String, schemeName: String, isDark: Boolean): Map<String, Int> {
-        val raw = nativeGetThemeTokens(extension, schemeName, isDark) ?: return emptyMap()
-        val tokens = LinkedHashMap<String, Int>(raw.size / 2)
-        var index = 0
-        while (index + 1 < raw.size) {
-            tokens[raw[index]] = raw[index + 1].toLong().toInt()
-            index += 2
+        val cacheKey = "$extension::$schemeName::" + if (isDark) "dark" else "light"
+        return schemeThemeTokenCache[cacheKey] ?: run {
+            val raw = nativeGetThemeTokens(extension, schemeName, isDark)
+            val tokens = LinkedHashMap<String, Int>((raw?.size ?: 0) / 2)
+            var index = 0
+            while (raw != null && index + 1 < raw.size) {
+                tokens[raw[index]] = raw[index + 1].toLong().toInt()
+                index += 2
+            }
+            tokens.toMap().also { schemeThemeTokenCache[cacheKey] = it }
         }
-        return tokens
     }
 
     /** Explicitly overrides the DSL's default appearance for this extension. */

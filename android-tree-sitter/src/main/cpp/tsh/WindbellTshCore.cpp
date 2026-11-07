@@ -30,23 +30,24 @@ static const UChar* advanceOneUtf16CodePoint(const UChar* current, const UChar* 
 }
 
 
-static bool tshBuildUtf8ToUtf16ByteMap(
+static bool tshBuildUtf16ByteToUtf8ByteMap(
     const UChar* input,
     uint32_t input_bytes,
     std::string& utf8,
     std::vector<uint32_t>& byte_map
 ) {
     utf8.clear();
-    byte_map.clear();
-    byte_map.push_back(0);
+    byte_map.assign(static_cast<size_t>(input_bytes) + 1,
+                    std::numeric_limits<uint32_t>::max());
     if ((input_bytes & 1u) != 0 || (!input && input_bytes != 0)) return false;
+    byte_map[0] = 0;
 
     for (uint32_t i = 0; i < input_bytes;) {
+        const uint32_t utf16_start = i;
         const uint16_t first = static_cast<uint16_t>(input[i]) |
             (static_cast<uint16_t>(input[i + 1]) << 8);
         i += 2;
         uint32_t cp = first;
-        uint32_t utf16_width = 2;
         if (first >= 0xD800 && first <= 0xDBFF) {
             if (i + 1 >= input_bytes) return false;
             const uint16_t second = static_cast<uint16_t>(input[i]) |
@@ -55,35 +56,31 @@ static bool tshBuildUtf8ToUtf16ByteMap(
             i += 2;
             cp = 0x10000 + ((static_cast<uint32_t>(first) - 0xD800) << 10) +
                 (static_cast<uint32_t>(second) - 0xDC00);
-            utf16_width = 4;
         } else if (first >= 0xDC00 && first <= 0xDFFF) {
             return false;
         }
 
-        std::string encoded;
-        if (cp <= 0x7F) encoded.push_back(static_cast<char>(cp));
-        else if (cp <= 0x7FF) {
-            encoded.push_back(static_cast<char>(0xC0 | (cp >> 6)));
-            encoded.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+        byte_map[utf16_start] = static_cast<uint32_t>(utf8.size());
+        if (cp <= 0x7F) {
+            utf8.push_back(static_cast<char>(cp));
+        } else if (cp <= 0x7FF) {
+            utf8.push_back(static_cast<char>(0xC0 | (cp >> 6)));
+            utf8.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
         } else if (cp <= 0xFFFF) {
-            encoded.push_back(static_cast<char>(0xE0 | (cp >> 12)));
-            encoded.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F)));
-            encoded.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+            utf8.push_back(static_cast<char>(0xE0 | (cp >> 12)));
+            utf8.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F)));
+            utf8.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
         } else {
-            encoded.push_back(static_cast<char>(0xF0 | (cp >> 18)));
-            encoded.push_back(static_cast<char>(0x80 | ((cp >> 12) & 0x3F)));
-            encoded.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F)));
-            encoded.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+            utf8.push_back(static_cast<char>(0xF0 | (cp >> 18)));
+            utf8.push_back(static_cast<char>(0x80 | ((cp >> 12) & 0x3F)));
+            utf8.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F)));
+            utf8.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
         }
-
-        const uint32_t utf16_start = i - utf16_width;
-        utf8.append(encoded);
-        for (size_t byte = 0; byte < encoded.size(); ++byte) {
-            byte_map.push_back(byte + 1 == encoded.size()
-                ? i : utf16_start);
-        }
+        // Tree-sitter parses this project with UTF-16LE, so its byte offsets
+        // address this UTF-16 input directly. Only code-point boundaries map.
+        byte_map[i] = static_cast<uint32_t>(utf8.size());
     }
-    return byte_map.size() == utf8.size() + 1;
+    return true;
 }
 
 static bool tshUtf8ToUtf16(const std::string& input, std::vector<UChar>& output) {
@@ -121,13 +118,19 @@ static bool tshUtf8ToUtf16(const std::string& input, std::vector<UChar>& output)
 }
 
 static bool tshPredicateCaptureTexts(const TSQueryMatch& match, uint32_t capture_id,
-    const std::string& utf8_source, std::vector<std::vector<UChar>>& texts) {
+    const std::string& utf8_source,
+    const std::vector<uint32_t>& utf16_to_utf8_byte,\n    std::vector<std::vector<UChar>>& texts) {
     texts.clear();
     for (uint32_t i = 0; i < match.capture_count; ++i) {
         if (match.captures[i].index != capture_id) continue;
-        const uint32_t start = ts_node_start_byte(match.captures[i].node);
-        const uint32_t end = ts_node_end_byte(match.captures[i].node);
-        if (start > end || end > utf8_source.size()) return false;
+        const uint32_t start_byte = ts_node_start_byte(match.captures[i].node);
+        const uint32_t end_byte = ts_node_end_byte(match.captures[i].node);
+        if (start_byte > end_byte || end_byte >= utf16_to_utf8_byte.size()) return false;
+        const uint32_t start = utf16_to_utf8_byte[start_byte];
+        const uint32_t end = utf16_to_utf8_byte[end_byte];
+        if (start == std::numeric_limits<uint32_t>::max() ||
+            end == std::numeric_limits<uint32_t>::max() ||
+            start > end || end > utf8_source.size()) return false;
         std::vector<UChar> converted;
         if (!tshUtf8ToUtf16(utf8_source.substr(start, end - start), converted)) return false;
         texts.push_back(std::move(converted));
@@ -139,7 +142,8 @@ static bool tshPredicateCaptureTexts(const TSQueryMatch& match, uint32_t capture
 }
 
 static bool tshEvaluateNativePredicates(const NativeQueryProgram& program,
-    const TSQueryMatch& match, const std::string& utf8_source) {
+    const TSQueryMatch& match, const std::string& utf8_source,
+    const std::vector<uint32_t>& utf16_to_utf8_byte) {
     const TSQuery* query = program.query;
     uint32_t step_count = 0;
     const TSQueryPredicateStep* steps =
@@ -162,7 +166,7 @@ static bool tshEvaluateNativePredicates(const NativeQueryProgram& program,
         if (!op.empty() && op.front() == '#') op.erase(op.begin());
 
         std::vector<std::vector<UChar>> actual;
-        if (!tshPredicateCaptureTexts(match, predicate[1].value_id, utf8_source, actual))
+        if (!tshPredicateCaptureTexts(match, predicate[1].value_id, utf8_source, utf16_to_utf8_byte, actual))
             return false;
         std::vector<std::vector<UChar>> expected;
         for (size_t i = 2; i < predicate.size(); ++i) {
@@ -550,12 +554,12 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
     const UChar* text_end = text_start + total_bytes;
 
     std::string tree_source_utf8;
-    std::vector<uint32_t> utf8_to_utf16_byte;
+    std::vector<uint32_t> utf16_to_utf8_byte;
     const bool needs_tree_source_map = tree &&
         (!grammar->ast_selector_rules.empty() || !grammar->native_queries.empty());
     const bool tree_source_map_valid = !needs_tree_source_map ||
-        tshBuildUtf8ToUtf16ByteMap(
-            text_start, total_bytes, tree_source_utf8, utf8_to_utf16_byte);
+        tshBuildUtf16ByteToUtf8ByteMap(
+            text_start, total_bytes, tree_source_utf8, utf16_to_utf8_byte);
 
     std::vector<HighlightSpan> micro_spans;
     micro_spans.reserve(length_chars / 4);
@@ -895,9 +899,14 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                     ast_rule.has_text_suffix || ast_rule.text_regex) {
                     const uint32_t text_start = ts_node_start_byte(node);
                     const uint32_t text_end = ts_node_end_byte(node);
-                    if (text_start > text_end || text_end > tree_source_utf8.size()) continue;
+                    if (text_start > text_end || text_end >= utf16_to_utf8_byte.size()) continue;
+                    const uint32_t utf8_start = utf16_to_utf8_byte[text_start];
+                    const uint32_t utf8_end = utf16_to_utf8_byte[text_end];
+                    if (utf8_start == std::numeric_limits<uint32_t>::max() ||
+                        utf8_end == std::numeric_limits<uint32_t>::max() ||
+                        utf8_start > utf8_end || utf8_end > tree_source_utf8.size()) continue;
                     const std::string_view node_text(
-                        tree_source_utf8.data() + text_start, text_end - text_start);
+                        tree_source_utf8.data() + utf8_start, utf8_end - utf8_start);
                     if (ast_rule.has_text_equals && node_text != ast_rule.text_equals) continue;
                     if (ast_rule.has_text_prefix &&
                         (node_text.size() < ast_rule.text_prefix.size() ||
@@ -906,15 +915,14 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                         (node_text.size() < ast_rule.text_suffix.size() ||
                          node_text.substr(node_text.size() - ast_rule.text_suffix.size()) != ast_rule.text_suffix)) continue;
                     if (ast_rule.text_regex) {
-                        if (text_start >= utf8_to_utf16_byte.size() ||
-                            text_end >= utf8_to_utf16_byte.size()) continue;
-                        const uint32_t start_u16 = utf8_to_utf16_byte[text_start];
-                        const uint32_t end_u16 = utf8_to_utf16_byte[text_end];
-                        if ((start_u16 & 1u) || (end_u16 & 1u) || end_u16 < start_u16) continue;
+                        if ((text_start & 1u) || (text_end & 1u) ||
+                            text_end > total_bytes || text_end < text_start) continue;
+                        // Oniguruma receives UTF-16LE bytes; Tree-sitter node
+                        // offsets are already byte offsets into this same buffer.
                         const UChar* regex_source = input_chars
                             ? reinterpret_cast<const UChar*>(input_chars) : &kEmptyInput;
-                        const UChar* regex_begin = regex_source + start_u16 / 2;
-                        const UChar* regex_end = regex_source + end_u16 / 2;
+                        const UChar* regex_begin = regex_source + text_start;
+                        const UChar* regex_end = regex_source + text_end;
                         OnigRegion* regex_region = onig_region_new();
                         if (!regex_region) continue;
                         const int regex_result = onig_search(
@@ -969,10 +977,10 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                     HighlightSpan span;
                     const uint32_t node_start = ts_node_start_byte(node);
                     const uint32_t node_end = ts_node_end_byte(node);
-                    if (node_start >= utf8_to_utf16_byte.size() ||
-                        node_end >= utf8_to_utf16_byte.size()) continue;
-                    span.start_byte = utf8_to_utf16_byte[node_start];
-                    span.end_byte = utf8_to_utf16_byte[node_end];
+                    if (node_start > node_end || node_end > total_bytes ||
+                        (node_start & 1u) || (node_end & 1u)) continue;
+                    span.start_byte = node_start;
+                    span.end_byte = node_end;
                     span.style_id = ast_rule.style_id;
                     span.flags = 0;
                     span.priority = ast_rule.priority;
@@ -1025,7 +1033,7 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                     !pattern_metadata->second.enabled) {
                     continue;
                 }
-                if (!tshEvaluateNativePredicates(native_query, match, tree_source_utf8))
+                if (!tshEvaluateNativePredicates(native_query, match, tree_source_utf8, utf16_to_utf8_byte))
                     continue;
                 if (diagnostic_match_counts) ++diagnostic_match_counts[3];
                 const int32_t pattern_priority =
@@ -1042,10 +1050,10 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                     HighlightSpan span;
                     const uint32_t capture_start = ts_node_start_byte(capture.node);
                     const uint32_t capture_end = ts_node_end_byte(capture.node);
-                    if (capture_start >= utf8_to_utf16_byte.size() ||
-                        capture_end >= utf8_to_utf16_byte.size()) continue;
-                    span.start_byte = utf8_to_utf16_byte[capture_start];
-                    span.end_byte = utf8_to_utf16_byte[capture_end];
+                    if (capture_start > capture_end || capture_end > total_bytes ||
+                        (capture_start & 1u) || (capture_end & 1u)) continue;
+                    span.start_byte = capture_start;
+                    span.end_byte = capture_end;
                     span.style_id = style_binding->second;
                     span.flags = 0;
                     span.priority = pattern_priority;

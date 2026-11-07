@@ -9,6 +9,7 @@ import android.text.Spanned
 import android.text.TextPaint
 import android.text.style.ForegroundColorSpan
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -79,6 +80,24 @@ class StyledTextPainterTest {
             )
 
             assertEquals(listOf(outerColor, innerColor, outerColor), canvas.textPaintColors)
+
+            // Verify that the Canvas wrote pixels using the foreground colors,
+            // not merely that the painter passed the expected Paint to drawText().
+            var redPixels = 0
+            var bluePixels = 0
+            for (py in 0 until bitmap.height) {
+                for (px in 0 until bitmap.width) {
+                    val pixel = bitmap.getPixel(px, py)
+                    val alpha = pixel ushr 24 and 0xFF
+                    val red = pixel ushr 16 and 0xFF
+                    val green = pixel ushr 8 and 0xFF
+                    val blue = pixel and 0xFF
+                    if (alpha > 0 && red > green * 1.5 && red > blue * 1.5) redPixels++
+                    if (alpha > 0 && blue > red * 1.5 && blue > green * 1.2) bluePixels++
+                }
+            }
+            assertTrue("Canvas bitmap must contain the outer foreground color", redPixels > 0)
+            assertTrue("Canvas bitmap must contain the nested foreground color", bluePixels > 0)
         } finally {
             bitmap.recycle()
         }

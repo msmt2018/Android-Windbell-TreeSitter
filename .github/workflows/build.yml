@@ -82,7 +82,31 @@ jobs:
           echo "Python: $(python --version)"
 
           failed=()
-          mapfile -d '' manifests < <(find grammars -mindepth 2 -maxdepth 3 -type f -name package.json ! -path 'grammars/asm/*' ! -path 'grammars/*/test-npm-package/*' -print0 | sort -z)
+          # Install each npm workspace root exactly once. A workspace root installs
+          # its child grammar packages and creates local symlinks; installing those
+          # children independently races with npm and fails with EEXIST/MODULE_NOT_FOUND.
+          mapfile -d '' manifests < <(
+            while IFS= read -r -d '' manifest; do
+              dir_path="$(dirname "$manifest")"
+              ancestor="$(dirname "$dir_path")"
+              workspace_managed=false
+              while [[ "$ancestor" == grammars/* ]]; do
+                parent_manifest="$GITHUB_WORKSPACE/$ancestor/package.json"
+                if [[ -f "$parent_manifest" ]] && node -e 'const p=require(process.argv[1]); process.exit(p.workspaces ? 0 : 1)' "$parent_manifest"; then
+                  workspace_managed=true
+                  break
+                fi
+                next_ancestor="$(dirname "$ancestor")"
+                [[ "$next_ancestor" == "$ancestor" ]] && break
+                ancestor="$next_ancestor"
+              done
+              if [[ "$workspace_managed" == false ]]; then
+                printf '%s\0' "$manifest"
+              else
+                echo "::notice::Skipping workspace child package $dir_path; installed by $ancestor"
+              fi
+            done < <(find grammars -mindepth 2 -maxdepth 3 -type f -name package.json ! -path 'grammars/asm/*' ! -path 'grammars/*/test-npm-package/*' -print0 | sort -z)
+          )
 
           if (( ${#manifests[@]} == 0 )); then
             echo "::error::No grammar package.json files were found under grammars/"
@@ -193,7 +217,31 @@ jobs:
         run: |
           set -Eeuo pipefail
           failed=()
-          mapfile -d '' manifests < <(find grammars -mindepth 2 -maxdepth 3 -type f -name package.json ! -path 'grammars/asm/*' ! -path 'grammars/*/test-npm-package/*' -print0 | sort -z)
+          # Install each npm workspace root exactly once. A workspace root installs
+          # its child grammar packages and creates local symlinks; installing those
+          # children independently races with npm and fails with EEXIST/MODULE_NOT_FOUND.
+          mapfile -d '' manifests < <(
+            while IFS= read -r -d '' manifest; do
+              dir_path="$(dirname "$manifest")"
+              ancestor="$(dirname "$dir_path")"
+              workspace_managed=false
+              while [[ "$ancestor" == grammars/* ]]; do
+                parent_manifest="$GITHUB_WORKSPACE/$ancestor/package.json"
+                if [[ -f "$parent_manifest" ]] && node -e 'const p=require(process.argv[1]); process.exit(p.workspaces ? 0 : 1)' "$parent_manifest"; then
+                  workspace_managed=true
+                  break
+                fi
+                next_ancestor="$(dirname "$ancestor")"
+                [[ "$next_ancestor" == "$ancestor" ]] && break
+                ancestor="$next_ancestor"
+              done
+              if [[ "$workspace_managed" == false ]]; then
+                printf '%s\0' "$manifest"
+              else
+                echo "::notice::Skipping workspace child package $dir_path; installed by $ancestor"
+              fi
+            done < <(find grammars -mindepth 2 -maxdepth 3 -type f -name package.json ! -path 'grammars/asm/*' ! -path 'grammars/*/test-npm-package/*' -print0 | sort -z)
+          )
           if (( ${#manifests[@]} == 0 )); then
             echo "::error::No grammar package.json files were found under grammars/"
             exit 1

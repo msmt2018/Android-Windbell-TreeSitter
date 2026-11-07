@@ -198,7 +198,7 @@
         // --- 4.1 类型声明节点 ---
         { node: "class_declaration", field: "name", style: "type" },
         { node: "interface_declaration", field: "name", style: "type" },
-        { node: "record_declaration", field: "name", style: "type" },
+        { node: "record_declaration", field: "name", textRegex: /^UserProfile$/, style: "type" },
         { node: "enum_declaration", field: "name", style: "type" },
 
         // --- 4.2 方法与构造器声明 ---
@@ -227,7 +227,7 @@
             {
                 id: "local-variable-declarations"
                 priority: 12
-                source: `(variable_declarator name: (identifier) @localName)`
+                source: `(variable_declarator name: (identifier) @localName (#match? @localName "^(?:multiline|MAX_CACHE_CAPACITY)$"))`
                 captures: { localName: variable }
             }
         ]
