@@ -981,7 +981,7 @@ class WindbellTshLinkageTest {
             it.styleId == methodId && it.priority == 70 && it.startByte == code.indexOf("rune") * 2
         }, "A match accepted by only the first regex predicate must be rejected.")
         assertFalse(spans.any {
-            it.styleId == methodId && it.priority == 50 && it.startByte == code.indexOf("other") * 2 * 2
+            it.styleId == methodId && it.priority == 50 && it.startByte == code.indexOf("other") * 2
         })
         assertFalse(spans.any {
             it.styleId == methodId && it.priority == 60 && it.startByte == code.indexOf("skip") * 2
