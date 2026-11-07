@@ -132,6 +132,12 @@ class WindbellTshEngine private constructor() {
         val success = nativeLoadTshSource(extension, tshSourceContent, language?.nativeObject ?: 0L)
         lastCompileDiagnostics = if (success) emptyList() else getCompileDiagnostics()
         if (success) {
+            // A newly compiled source replaces the grammar snapshot; never retain
+            // palette entries decoded from the previous source revision.
+            schemePaletteCache.keys
+                .filter { it.startsWith("$extension::") }
+                .forEach(schemePaletteCache::remove)
+            paletteCache.remove(extension)
             defaultAppearances[extension] = nativeGetDefaultIsDark(extension)
             val defaultScheme = nativeGetDefaultScheme(extension)
             if (defaultScheme != null) {
