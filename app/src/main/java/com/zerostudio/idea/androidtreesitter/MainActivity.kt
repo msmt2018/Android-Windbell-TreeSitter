@@ -619,7 +619,8 @@ class MainActivity : AppCompatActivity() {
                         "class_declaration", "interface_declaration", "enum_declaration",
                         "record_declaration", "annotation_type_declaration",
                         "method_declaration", "constructor_declaration",
-                        "field_declaration", "variable_declarator", "formal_parameter"
+                        "field_declaration", "local_variable_declaration",
+                        "formal_parameter", "enum_constant"
                     )
                     var symbolNode: TSNode? = cursorNode
                     while (symbolNode != null && symbolNode.type !in declarationTypes) {
