@@ -290,6 +290,14 @@ jobs:
         run: ./gradlew testDebug :editor:compileDebugAndroidTestKotlin :app:compileDebugAndroidTestKotlin --continue --parallel --stacktrace
         env:
           ANDROIDIDE_TEST: true
+      - name: Run Android rendering instrumentation tests
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 30
+          target: google_apis
+          arch: x86_64
+          disable-animations: true
+          script: ./gradlew :app:connectedDebugAndroidTest --stacktrace
       - name: Upload Test Reports
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
