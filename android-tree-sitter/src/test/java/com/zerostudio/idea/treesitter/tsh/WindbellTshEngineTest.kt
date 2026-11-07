@@ -411,7 +411,11 @@ class WindbellTshLinkageTest {
         assertTrue(engine.loadTshSource("stateful", source, null))
         val code = "IF foo \"bar\" baz"
         val spans = engine.computeHighlights(null, code, "stateful")
+        val diagnostics = engine.computePipelineDiagnostics(null, code, "stateful")
         assertTrue(spans.any { it.source == 1 }, "Monarch captures must retain their producer source through JNI.")
+        assertTrue((diagnostics.matchCounts[1] ?: 0) > 0,
+            "Monarch token match count must be reported independently of emitted captures.")
+        assertTrue(diagnostics.captures.any { it.source == 1 })
         val identifierId = engine.getStyleCatalog("stateful").first { it.name == "identifier.state" }.styleId
         val stringId = engine.getStyleCatalog("stateful").first { it.name == "string.state" }.styleId
         val keywordId = engine.getStyleCatalog("stateful").first { it.name == "keyword.state" }.styleId
@@ -1212,7 +1216,11 @@ class WindbellTshLinkageTest {
         assertTrue(engine.loadTshSource("regex", sourceDsl, null))
         val text = "/* TODO FIXME: verify named capture */"
         val spans = engine.computeHighlights(null, text, "regex")
+        val diagnostics = engine.computePipelineDiagnostics(null, text, "regex")
         assertTrue(spans.any { it.source == 0 }, "Oniguruma captures must retain their producer source through JNI.")
+        assertTrue((diagnostics.matchCounts[0] ?: 0) > 0,
+            "Oniguruma match count must include block and nested regex matches.")
+        assertTrue(diagnostics.captures.any { it.source == 0 })
         assertTrue(spans.isNotEmpty())
         val todoId = engine.getStyleCatalog("regex").first { it.name == "todo" }.styleId
         assertTrue(spans.any { it.styleId == todoId && it.priority == 100 })
