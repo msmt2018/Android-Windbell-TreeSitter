@@ -45,7 +45,9 @@ class TshEditorPipelineRenderingTest {
         assertTrue(engine.selectScheme("java", "darcula"))
         engine.setAppearance("java", false)
 
-        val source = "class RenderProbe { int value; }"
+        val source = "class OtherProbe { int first; }\nclass RenderProbe { int value; }"
+        val targetLineStart = source.indexOf("class RenderProbe")
+        val targetLine = source.substring(targetLineStart)
         val highlighter = TshSyntaxHighlighter(language, "java")
         val editor = EditorView(context)
         val bitmap = Bitmap.createBitmap(1200, 180, Bitmap.Config.ARGB_8888)
@@ -65,17 +67,17 @@ class TshEditorPipelineRenderingTest {
             }
 
             val deadline = SystemClock.uptimeMillis() + 10_000L
-            while (!highlighter.isStyleReady(1, 0, 0, source.length) &&
+            while (!highlighter.isStyleReady(2, targetLineStart, 0, targetLine.length) &&
                 SystemClock.uptimeMillis() < deadline) {
                 SystemClock.sleep(20L)
             }
-            assertTrue("TSH parse/highlight did not finish", highlighter.isStyleReady(1, 0, 0, source.length))
+            assertTrue("TSH parse/highlight did not finish", highlighter.isStyleReady(2, targetLineStart, 0, targetLine.length))
 
-            val nameStart = source.indexOf("RenderProbe")
+            val nameStart = targetLine.indexOf("RenderProbe")
             val nameEnd = nameStart + "RenderProbe".length
             var styledColor: Int? = null
             InstrumentationRegistry.getInstrumentation().runOnMainSync {
-                val styled = highlighter.styleLine(source, 1, 0, 0, source.length)
+                val styled = highlighter.styleLine(targetLine, 2, targetLineStart, 0, targetLine.length)
                 assertNotNull("Editor LineStyler must return an Android Spanned result", styled)
                 val colorSpan = styled!!.getSpans(nameStart, nameEnd, ForegroundColorSpan::class.java)
                     .firstOrNull {
@@ -83,6 +85,21 @@ class TshEditorPipelineRenderingTest {
                     }
                 assertNotNull("ATS class_declaration.name must produce a foreground color span", colorSpan)
                 styledColor = colorSpan!!.foregroundColor
+
+                // Deliberately supply a line key whose bucket contains unrelated
+                // captures. The document-range fallback must still find this line's ATS span.
+                val mismatchedKey = highlighter.styleLine(
+                    targetLine, 1, targetLineStart, 0, targetLine.length
+                )
+                assertNotNull("A stale line-index bucket must not suppress valid ATS captures", mismatchedKey)
+                val fallbackColor = mismatchedKey!!.getSpans(
+                    nameStart, nameEnd, ForegroundColorSpan::class.java
+                ).firstOrNull {
+                    mismatchedKey.getSpanStart(it) <= nameStart &&
+                        mismatchedKey.getSpanEnd(it) >= nameEnd
+                }
+                assertNotNull("Range fallback must recover the class-name foreground span", fallbackColor)
+                assertEquals(styledColor, fallbackColor!!.foregroundColor)
             }
 
             val expected = engine.getStylePalette("java", "type")
