@@ -25,8 +25,7 @@ env:
   # APT
   ATS_SUDO: sudo
   ATS_APT_UPDATE: apt-get update
-  ATS_APT_UPGRADE: apt-get upgrade -y
-  ATS_APT_INSTALL: apt-get install
+  ATS_APT_INSTALL: apt-get install -y --no-install-recommends
   ATS_APT_DEPS: build-essential cargo nodejs cmake ninja-build
 
 jobs:
@@ -62,7 +61,7 @@ jobs:
         with:
           ndk-version: r25
       - name: Install dependencies
-        run: $ATS_SUDO $ATS_APT_UPDATE && $ATS_SUDO $ATS_APT_UPGRADE && $ATS_SUDO $ATS_APT_INSTALL $ATS_APT_DEPS
+        run: $ATS_SUDO $ATS_APT_UPDATE && $ATS_SUDO $ATS_APT_INSTALL $ATS_APT_DEPS
       - name: Set up Python for native grammar builds
         uses: actions/setup-python@v5
         with:
@@ -203,7 +202,7 @@ jobs:
         with:
           ndk-version: r25
       - name: Install dependencies
-        run: $ATS_SUDO $ATS_APT_UPDATE && $ATS_SUDO $ATS_APT_UPGRADE && $ATS_SUDO $ATS_APT_INSTALL $ATS_APT_DEPS
+        run: $ATS_SUDO $ATS_APT_UPDATE && $ATS_SUDO $ATS_APT_INSTALL $ATS_APT_DEPS
       - name: Set up Python for native grammar builds
         uses: actions/setup-python@v5
         with:
