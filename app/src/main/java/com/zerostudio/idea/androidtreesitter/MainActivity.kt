@@ -73,6 +73,9 @@ class MainActivity : AppCompatActivity() {
     private var currentEditorRawText: String = ""
     @Volatile private var javaTshReady: Boolean = false
     private var activeTshHighlighter: TshSyntaxHighlighter? = null
+    private val tshConfigurationStates = java.util.concurrent.ConcurrentHashMap<String, String>()
+    private var restoredTshScheme: String? = null
+    private var restoredTshDark: Boolean? = null
 
     companion object {
         private const val TAG = "Windbell_MainActivity"
@@ -99,6 +102,10 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        restoredTshScheme = savedInstanceState?.getString("tsh.selectedScheme")
+        if (savedInstanceState?.containsKey("tsh.isDark") == true) {
+            restoredTshDark = savedInstanceState.getBoolean("tsh.isDark")
+        }
         _binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
         setSupportActionBar(binding.toolbar)
@@ -117,42 +124,77 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * 加载并编译原生 .tsh 语法配置
+     * Loads every packaged TSH configuration whose matching Tree-sitter language is registered.
+     * Parser availability and TSH configuration availability are tracked independently.
      */
     private fun initTshEngineConfigurations() {
+        val languages = linkedMapOf<String, TSLanguage>(
+            "java" to TSLanguageJava.getInstance(),
+            "json" to TSLanguageJson.getInstance(),
+            "kotlin" to TSLanguageKotlin.getInstance(),
+            "logcat" to TSLanguageLogcat.getInstance(),
+            "python" to TSLanguagePython.getInstance(),
+            "xml" to TSLanguageXml.getInstance()
+        )
+        loadAvailableTshConfigurations(languages)
+    }
+
+    private fun loadAvailableTshConfigurations(languages: Map<String, TSLanguage>) {
         activityScope.launch(Dispatchers.IO) {
-            runCatching {
-                assets.open("tsh/java.tsh").bufferedReader().use { it.readText() }
-            }.onSuccess { javaTshContent ->
-                val ok = WindbellTshEngine.instance.loadTshSource(
-                    "java",
-                    javaTshContent,
-                    TSLanguageJava.getInstance()
-                )
-                withContext(Dispatchers.Main) {
-                    javaTshReady = ok
-                    installTshHighlighterIfReady()
-                    applyTshThemeTokens()
-                    if (ok) {
-                        val styleCount = WindbellTshEngine.instance.getStyleCatalog("java").size
-                        val schemeNames = WindbellTshEngine.instance.listSchemes("java")
-                        Log.i(TAG, "Windbell-TSH [Java] ready: styles=$styleCount schemes=$schemeNames")
-                    } else {
-                        val diagnostics = WindbellTshEngine.instance.lastCompileDiagnostics
-                        if (diagnostics.isEmpty()) {
-                            Log.e(TAG, "Windbell-TSH [Java] compilation failed without native diagnostics")
-                        } else {
-                            diagnostics.forEach { diagnostic ->
-                                Log.e(TAG, "Windbell-TSH [Java] ${diagnostic.code} at ${diagnostic.line}:${diagnostic.column} (offset=${diagnostic.offset}): ${diagnostic.message}")
-                            }
-                        }
-                    }
-                    Log.d(TAG, "Windbell-TSH [Java] configuration compiled: $ok")
+            val availableAssets = runCatching { assets.list("tsh").orEmpty().toSet() }
+                .getOrElse {
+                    Log.e(TAG, "Unable to enumerate assets/tsh", it)
+                    emptySet()
                 }
-            }.onFailure {
-                Log.e(TAG, "Failed to load java.tsh from assets: ${it.message}")
+            languages.forEach { (extension, language) ->
+                val assetName = "$extension.tsh"
+                if (assetName !in availableAssets) {
+                    tshConfigurationStates[extension] = "MISSING"
+                    Log.i(TAG, "TSH config unavailable: assets/tsh/$assetName (Parser is registered; highlighting config is not)")
+                    return@forEach
+                }
+                val result = runCatching {
+                    val source = assets.open("tsh/$assetName").bufferedReader().use { it.readText() }
+                    val compiled = WindbellTshEngine.instance.loadTshSource(extension, source, language)
+                    if (!compiled) {
+                        val diagnostics = WindbellTshEngine.instance.lastCompileDiagnostics
+                        val message = diagnostics.joinToString { "${it.code}@${it.line}:${it.column}: ${it.message}" }
+                        error(message.ifBlank { "Native TSH compilation failed without diagnostics" })
+                    }
+                }
+                result.onSuccess {
+                    tshConfigurationStates[extension] = "READY"
+                    Log.i(TAG, "TSH config ready: .$extension")
+                }.onFailure { error ->
+                    tshConfigurationStates[extension] = "FAILED: ${error.message}"
+                    Log.e(TAG, "Failed to compile $assetName", error)
+                }
+            }
+            withContext(Dispatchers.Main) {
+                javaTshReady = tshConfigurationStates["java"] == "READY"
+                restoredTshScheme?.let { scheme ->
+                    val restored = WindbellTshEngine.instance.selectScheme("java", scheme)
+                    if (!restored) Log.w(TAG, "Saved TSH scheme no longer exists: $scheme")
+                }
+                restoredTshDark?.let { dark ->
+                    WindbellTshEngine.instance.setAppearance("java", dark)
+                    AppCompatDelegate.setDefaultNightMode(
+                        if (dark) AppCompatDelegate.MODE_NIGHT_YES else AppCompatDelegate.MODE_NIGHT_NO
+                    )
+                }
+                restoredTshScheme = null
+                restoredTshDark = null
+                installTshHighlighterIfReady()
+                applyTshThemeTokens()
+                languages.keys.forEach { extension ->
+                    Log.i(TAG, "TSH registration status .$extension: parser=READY config=${tshConfigurationStates[extension] ?: "UNKNOWN"}")
+                }
             }
         }
+    }
+
+    private fun loadExternalTshConfiguration(extension: String, language: TSLanguage) {
+        loadAvailableTshConfigurations(mapOf(extension to language))
     }
 
     private fun setupTabs() {
@@ -446,6 +488,7 @@ class MainActivity : AppCompatActivity() {
                     withContext(Dispatchers.Main) {
                         languageMap["C"] = cLang
                         (binding.contentConsole.languageChooser.adapter as? ArrayAdapter<*>)?.notifyDataSetChanged()
+                        loadExternalTshConfiguration("c", cLang)
                     }
                 }
             }
@@ -846,6 +889,12 @@ class MainActivity : AppCompatActivity() {
         parser = null
         editorTree?.close()
         editorTree = null
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        outState.putString("tsh.selectedScheme", WindbellTshEngine.instance.getSelectedScheme("java"))
+        outState.putBoolean("tsh.isDark", WindbellTshEngine.instance.isDark("java"))
+        super.onSaveInstanceState(outState)
     }
 
     override fun onDestroy() {
