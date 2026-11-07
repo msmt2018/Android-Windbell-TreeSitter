@@ -102,6 +102,9 @@ class WindbellTshEngine private constructor() {
     )
 
     private val paletteCache = ConcurrentHashMap<String, Map<Int, StylePalette>>()
+    // Keep every compiled scheme palette, not just the currently selected one. A scheme
+    // switch is then a map reference swap and does not cross JNI or recompile the DSL.
+    private val schemePaletteCache = ConcurrentHashMap<String, Map<Int, StylePalette>>()
     private val selectedSchemes = ConcurrentHashMap<String, String>()
     private val defaultAppearances = ConcurrentHashMap<String, Boolean>()
     private val appearanceOverrides = ConcurrentHashMap<String, Boolean>()
@@ -162,9 +165,41 @@ class WindbellTshEngine private constructor() {
         return decodePalette(flatPalette)
     }
 
+    private fun readSchemePalette(extension: String, schemeName: String): Map<Int, StylePalette> {
+        val flatPalette = nativeGetPalette(extension, schemeName) ?: return emptyMap()
+        val map = HashMap<Int, StylePalette>(flatPalette.size / 7)
+        val count = flatPalette.size / 7
+        for (i in 0 until count) {
+            val id = flatPalette[i * 7]
+            map[id] = StylePalette(
+                styleId = id,
+                lightColor = flatPalette[i * 7 + 1],
+                darkColor = flatPalette[i * 7 + 2],
+                lightFontFlags = flatPalette[i * 7 + 3],
+                darkFontFlags = flatPalette[i * 7 + 4],
+                hasLightColor = flatPalette[i * 7 + 5] != 0,
+                hasDarkColor = flatPalette[i * 7 + 6] != 0
+            )
+        }
+        return map
+    }
+
     private fun reloadPalette(extension: String, schemeName: String) {
-        val palette = getSchemePalette(extension, schemeName)
-        if (palette.isNotEmpty()) paletteCache[extension] = palette
+        val cacheKey = "$extension::$schemeName"
+        val schemePalette = schemePaletteCache[cacheKey]
+            ?: readSchemePalette(extension, schemeName).also { schemePaletteCache[cacheKey] = it }
+        paletteCache[extension] = schemePalette
+    }
+
+    /** Full Light/Dark palette for a scheme, in semantic-style declaration order. */
+    fun getSchemePalette(extension: String, schemeName: String): List<Pair<SemanticStyle, StylePalette>> {
+        if (schemeName !in listSchemes(extension)) return emptyList()
+        val cacheKey = "$extension::$schemeName"
+        val palette = schemePaletteCache[cacheKey]
+            ?: readSchemePalette(extension, schemeName).also { schemePaletteCache[cacheKey] = it }
+        return getStyleCatalog(extension).mapNotNull { style ->
+            palette[style.styleId]?.let { style to it }
+        }
     }
 
     fun matchesFirstLine(extension: String, line: String): Boolean =
@@ -331,7 +366,12 @@ class WindbellTshEngine private constructor() {
     /** Returns arbitrary DSL-defined UI colors (for example editor.background). */
     fun getThemeTokens(extension: String): Map<String, Int> {
         val scheme = selectedSchemes[extension] ?: getDefaultScheme(extension) ?: return emptyMap()
-        val raw = nativeGetThemeTokens(extension, scheme, isDark(extension)) ?: return emptyMap()
+        return getSchemeThemeTokens(extension, scheme, isDark(extension))
+    }
+
+    /** Reads Light or Dark UI tokens from a named scheme without changing selection. */
+    fun getSchemeThemeTokens(extension: String, schemeName: String, isDark: Boolean): Map<String, Int> {
+        val raw = nativeGetThemeTokens(extension, schemeName, isDark) ?: return emptyMap()
         val tokens = LinkedHashMap<String, Int>(raw.size / 2)
         var index = 0
         while (index + 1 < raw.size) {
