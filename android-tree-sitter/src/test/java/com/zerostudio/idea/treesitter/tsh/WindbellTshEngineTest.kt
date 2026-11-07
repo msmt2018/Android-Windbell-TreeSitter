@@ -411,6 +411,7 @@ class WindbellTshLinkageTest {
         assertTrue(engine.loadTshSource("stateful", source, null))
         val code = "IF foo \"bar\" baz"
         val spans = engine.computeHighlights(null, code, "stateful")
+        assertTrue(spans.any { it.source == 1 }, "Monarch captures must retain their producer source through JNI.")
         val identifierId = engine.getStyleCatalog("stateful").first { it.name == "identifier.state" }.styleId
         val stringId = engine.getStyleCatalog("stateful").first { it.name == "string.state" }.styleId
         val keywordId = engine.getStyleCatalog("stateful").first { it.name == "keyword.state" }.styleId
@@ -652,6 +653,7 @@ class WindbellTshLinkageTest {
         val code = "// 😀 prefix\nclass Demo { int value = 1 + 2; void run() {} }"
         val tree = parser.parseString(code)
         val spans = engine.computeHighlights(tree, code, "java-ast-node-flags")
+        assertTrue(spans.any { it.source == 2 }, "ATS captures must retain their producer source through JNI.")
         val styleId = engine.getStyleCatalog("java-ast-node-flags")
             .first { it.name == "declaration" }.styleId
         assertTrue(spans.any {
@@ -1139,6 +1141,7 @@ class WindbellTshLinkageTest {
         assertTrue(engine.loadTshSource("regex", sourceDsl, null))
         val text = "/* TODO FIXME: verify named capture */"
         val spans = engine.computeHighlights(null, text, "regex")
+        assertTrue(spans.any { it.source == 0 }, "Oniguruma captures must retain their producer source through JNI.")
         assertTrue(spans.isNotEmpty())
         val todoId = engine.getStyleCatalog("regex").first { it.name == "todo" }.styleId
         assertTrue(spans.any { it.styleId == todoId && it.priority == 100 })
