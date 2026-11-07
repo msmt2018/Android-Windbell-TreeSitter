@@ -960,6 +960,16 @@ class WindbellTshLinkageTest {
                             id: "combined-method-regex"
                             priority: 70
                             source: `(method_declaration name: (identifier) @method (#match? @method "^r") (#match? @method "n$"))`
+                        },
+                        {
+                            id: "all-captures-not-equal"
+                            priority: 80
+                            source: `(method_declaration name: (identifier) @method parameters: (formal_parameters (formal_parameter name: (identifier) @method)) (#not-eq? @method "skip"))`
+                        },
+                        {
+                            id: "all-captures-not-match"
+                            priority: 90
+                            source: `(method_declaration name: (identifier) @method parameters: (formal_parameters (formal_parameter name: (identifier) @method)) (#not-match? @method "^skip$"))`
                         }
                     ]
                 }
@@ -967,7 +977,7 @@ class WindbellTshLinkageTest {
         """.trimIndent()
         assertTrue(engine.loadTshSource("java-query-regex", source, language))
         val parser = TSParser.create().apply { setLanguage(language) }
-        val code = "class Demo { void run() {} void rune() {} void skip() {} void other() {} }"
+        val code = "class Demo { void run() {} void rune() {} void skip() {} void other() {} void multiOk(int value) {} void multiBad(int skip) {} }"
         val tree = parser.parseString(code)
         val spans = engine.computeHighlights(tree, code, "java-query-regex")
         val methodId = engine.getStyleCatalog("java-query-regex").first { it.name == "method" }.styleId
@@ -986,6 +996,20 @@ class WindbellTshLinkageTest {
         assertFalse(spans.any {
             it.styleId == methodId && it.priority == 60 && it.startByte == code.indexOf("skip") * 2
         })
+        val multiOkName = code.indexOf("multiOk") * 2
+        val multiOkParameter = code.indexOf("value") * 2
+        val multiBadName = code.indexOf("multiBad") * 2
+        val multiBadParameter = code.lastIndexOf("skip") * 2
+        assertTrue(spans.any { it.styleId == methodId && it.priority == 80 && it.startByte == multiOkName })
+        assertTrue(spans.any { it.styleId == methodId && it.priority == 80 && it.startByte == multiOkParameter })
+        assertFalse(spans.any { it.styleId == methodId && it.priority == 80 && it.startByte == multiBadName },
+            "#not-eq? must reject a match when any captured value equals the forbidden string.")
+        assertFalse(spans.any { it.styleId == methodId && it.priority == 80 && it.startByte == multiBadParameter })
+        assertTrue(spans.any { it.styleId == methodId && it.priority == 90 && it.startByte == multiOkName })
+        assertTrue(spans.any { it.styleId == methodId && it.priority == 90 && it.startByte == multiOkParameter })
+        assertFalse(spans.any { it.styleId == methodId && it.priority == 90 && it.startByte == multiBadName },
+            "#not-match? must require every captured value not to match.")
+        assertFalse(spans.any { it.styleId == methodId && it.priority == 90 && it.startByte == multiBadParameter })
         tree?.close()
         parser.close()
     }

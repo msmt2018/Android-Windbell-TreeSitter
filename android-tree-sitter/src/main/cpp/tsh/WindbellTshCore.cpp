@@ -132,7 +132,10 @@ static bool tshPredicateCaptureTexts(const TSQueryMatch& match, uint32_t capture
         if (!tshUtf8ToUtf16(utf8_source.substr(start, end - start), converted)) return false;
         texts.push_back(std::move(converted));
     }
-    return !texts.empty();
+    // A query may legitimately omit an optional capture. Negative predicates
+    // still evaluate successfully for an absent capture, matching Tree-sitter's
+    // predicate semantics; the operator decides the empty-set result.
+    return true;
 }
 
 static bool tshEvaluateNativePredicates(const NativeQueryProgram& program,
@@ -174,9 +177,11 @@ static bool tshEvaluateNativePredicates(const NativeQueryProgram& program,
         bool accepted = false;
         if (op == "eq?" || op == "not-eq?") {
             if (expected.size() != 1) return false;
-            const bool all_equal = std::all_of(actual.begin(), actual.end(),
+            const bool all_equal = !actual.empty() && std::all_of(actual.begin(), actual.end(),
                 [&](const std::vector<UChar>& value) { return value == expected.front(); });
-            accepted = op == "eq?" ? all_equal : !all_equal;
+            const bool all_not_equal = std::all_of(actual.begin(), actual.end(),
+                [&](const std::vector<UChar>& value) { return value != expected.front(); });
+            accepted = op == "eq?" ? all_equal : all_not_equal;
         } else if (op == "any-of?" || op == "not-any-of?") {
             const bool any_equal = std::any_of(actual.begin(), actual.end(),
                 [&](const std::vector<UChar>& value) {
@@ -194,19 +199,22 @@ static bool tshEvaluateNativePredicates(const NativeQueryProgram& program,
                 }
             }
             if (!compiled || !compiled->regex) return false;
-            const bool all_match = std::all_of(actual.begin(), actual.end(),
-                [&](const std::vector<UChar>& value) {
-                    if (value.empty()) return false;
-                    OnigRegion* region = onig_region_new();
-                    if (!region) return false;
-                    const UChar* begin = value.data();
-                    const UChar* end = begin + value.size();
-                    const int result = onig_search(compiled->regex, begin, end, begin, end,
-                        region, ONIG_OPTION_NONE);
-                    onig_region_free(region, 1);
-                    return result >= 0;
-                });
-            accepted = compiled->negate ? !all_match : all_match;
+            const auto matches_regex = [&](const std::vector<UChar>& value) {
+                if (value.empty()) return false;
+                OnigRegion* region = onig_region_new();
+                if (!region) return false;
+                const UChar* begin = value.data();
+                const UChar* end = begin + value.size();
+                const int result = onig_search(compiled->regex, begin, end, begin, end,
+                    region, ONIG_OPTION_NONE);
+                onig_region_free(region, 1);
+                return result >= 0;
+            };
+            const bool all_match = !actual.empty() &&
+                std::all_of(actual.begin(), actual.end(), matches_regex);
+            const bool all_not_match = std::all_of(actual.begin(), actual.end(),
+                [&](const std::vector<UChar>& value) { return !matches_regex(value); });
+            accepted = compiled->negate ? all_not_match : all_match;
         } else return false;
         if (!accepted) return false;
         ++predicate_index;
