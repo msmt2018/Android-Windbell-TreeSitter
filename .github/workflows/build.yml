@@ -103,7 +103,7 @@ jobs:
               if [[ "$workspace_managed" == false ]]; then
                 printf '%s\0' "$manifest"
               else
-                echo "::notice::Skipping workspace child package $dir_path; installed by $ancestor"
+                echo "::notice::Skipping workspace child package $dir_path; installed by $ancestor" >&2
               fi
             done < <(find grammars -mindepth 2 -maxdepth 3 -type f -name package.json ! -path 'grammars/asm/*' ! -path 'grammars/*/test-npm-package/*' -print0 | sort -z)
           )
@@ -238,7 +238,7 @@ jobs:
               if [[ "$workspace_managed" == false ]]; then
                 printf '%s\0' "$manifest"
               else
-                echo "::notice::Skipping workspace child package $dir_path; installed by $ancestor"
+                echo "::notice::Skipping workspace child package $dir_path; installed by $ancestor" >&2
               fi
             done < <(find grammars -mindepth 2 -maxdepth 3 -type f -name package.json ! -path 'grammars/asm/*' ! -path 'grammars/*/test-npm-package/*' -print0 | sort -z)
           )
