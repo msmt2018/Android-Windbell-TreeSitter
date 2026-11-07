@@ -1,8 +1,8 @@
 name: Build and test
 
 concurrency:
-  group: build-and-test-${{ github.ref }}-${{ github.run_id }}
-  cancel-in-progress: false
+  group: build-and-test-${{ github.ref }}-v2
+  cancel-in-progress: true
 
 on:
   push:
