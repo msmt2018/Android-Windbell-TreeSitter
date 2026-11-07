@@ -78,6 +78,8 @@ class JavaTshFullTest {
         val spans = WindbellTshEngine.instance.computeHighlights(tree, testSource, "java")
         assertNotNull(spans)
         assertTrue(spans.isNotEmpty(), "Highlight spans must not be empty.")
+        assertTrue(spans.any { it.source == 0 }, "Oniguruma regex rules must emit identifiable spans.")
+        assertTrue(spans.any { it.source == 2 }, "ATS selectors must emit identifiable spans.")
 
         // 2. 严格硬件边界与 UTF-16 Code Unit 偶数对齐断言
         for (span in spans) {
@@ -92,6 +94,11 @@ class JavaTshFullTest {
         assertTrue(schemes.contains("github"))
         assertEquals("darcula", WindbellTshEngine.instance.getDefaultScheme("java"))
         assertTrue(WindbellTshEngine.instance.selectScheme("java", "darcula"))
+        val darculaPalette = WindbellTshEngine.instance.getSchemePalette("java", "darcula")
+        val githubPalette = WindbellTshEngine.instance.getSchemePalette("java", "github")
+        assertTrue(darculaPalette.isNotEmpty(), "Every declared scheme must expose its compiled palette.")
+        assertTrue(githubPalette.isNotEmpty(), "Inactive schemes must also expose their compiled palette.")
+        assertTrue(darculaPalette.values.any { it.hasLightColor && it.hasDarkColor })
 
         // 5. 校验多态色彩应用 (Light / Dark 热切换上屏)
         val ssb = SpannableStringBuilder(testSource)
