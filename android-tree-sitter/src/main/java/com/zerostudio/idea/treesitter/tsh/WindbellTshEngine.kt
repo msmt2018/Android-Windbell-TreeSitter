@@ -104,6 +104,10 @@ class WindbellTshEngine private constructor() {
     )
 
     private val paletteCache = ConcurrentHashMap<String, Map<Int, StylePalette>>()
+    // Resolve scheme names/defaults once when a TSH grammar is loaded. Menu browsing
+    // and scheme selection must not cross JNI on the interactive theme-switch path.
+    private val schemeNamesCache = ConcurrentHashMap<String, List<String>>()
+    private val defaultSchemeCache = ConcurrentHashMap<String, String>()
     // Keep every compiled scheme palette, not just the currently selected one. A scheme
     // switch is then a map reference swap and does not cross JNI or recompile the DSL.
     private val schemePaletteCache = ConcurrentHashMap<String, Map<Int, StylePalette>>()
@@ -137,6 +141,8 @@ class WindbellTshEngine private constructor() {
         if (success) {
             // A newly compiled source replaces the grammar snapshot; never retain
             // palette entries decoded from the previous source revision.
+            schemeNamesCache.remove(extension)
+            defaultSchemeCache.remove(extension)
             schemePaletteCache.keys
                 .filter { it.startsWith("$extension::") }
                 .forEach { cacheKey -> schemePaletteCache.remove(cacheKey) }
@@ -145,7 +151,21 @@ class WindbellTshEngine private constructor() {
                 .forEach { cacheKey -> schemeThemeTokenCache.remove(cacheKey) }
             paletteCache.remove(extension)
             defaultAppearances[extension] = nativeGetDefaultIsDark(extension)
+
+            // Warm every scheme before the UI can open its picker. The hot path below
+            // becomes a pair of ConcurrentHashMap lookups and a palette reference swap.
+            val schemes = nativeGetSchemeNames(extension)?.toList().orEmpty()
+            schemeNamesCache[extension] = schemes
             val defaultScheme = nativeGetDefaultScheme(extension)
+            if (defaultScheme != null) defaultSchemeCache[extension] = defaultScheme
+            for (schemeName in schemes) {
+                schemePaletteCache["$extension::$schemeName"] =
+                    readSchemePalette(extension, schemeName)
+                schemeThemeTokenCache["$extension::$schemeName::light"] =
+                    readSchemeThemeTokens(extension, schemeName, false)
+                schemeThemeTokenCache["$extension::$schemeName::dark"] =
+                    readSchemeThemeTokens(extension, schemeName, true)
+            }
             if (defaultScheme != null) {
                 selectedSchemes[extension] = defaultScheme
                 reloadPalette(extension, defaultScheme)
@@ -356,10 +376,14 @@ class WindbellTshEngine private constructor() {
 
     /** Returns every scheme declared by the loaded .tsh document. */
     fun listSchemes(extension: String): List<String> =
-        nativeGetSchemeNames(extension)?.toList() ?: emptyList()
+        schemeNamesCache[extension] ?: nativeGetSchemeNames(extension)?.toList().orEmpty()
+            .also { schemeNamesCache[extension] = it }
 
     /** Returns the default scheme selected by the .tsh document. */
-    fun getDefaultScheme(extension: String): String? = nativeGetDefaultScheme(extension)
+    fun getDefaultScheme(extension: String): String? =
+        defaultSchemeCache[extension] ?: nativeGetDefaultScheme(extension)?.also {
+            defaultSchemeCache[extension] = it
+        }
 
     /** Switches only the palette; parsing and the Tree-sitter tree are retained. */
     fun selectScheme(extension: String, schemeName: String): Boolean {
@@ -380,16 +404,25 @@ class WindbellTshEngine private constructor() {
     /** Reads Light or Dark UI tokens from a named scheme without changing selection. */
     fun getSchemeThemeTokens(extension: String, schemeName: String, isDark: Boolean): Map<String, Int> {
         val cacheKey = "$extension::$schemeName::" + if (isDark) "dark" else "light"
-        return schemeThemeTokenCache[cacheKey] ?: run {
-            val raw = nativeGetThemeTokens(extension, schemeName, isDark)
-            val tokens = LinkedHashMap<String, Int>((raw?.size ?: 0) / 2)
-            var index = 0
-            while (raw != null && index + 1 < raw.size) {
-                tokens[raw[index]] = raw[index + 1].toLong().toInt()
-                index += 2
+        return schemeThemeTokenCache[cacheKey]
+            ?: readSchemeThemeTokens(extension, schemeName, isDark).also {
+                schemeThemeTokenCache[cacheKey] = it
             }
-            tokens.toMap().also { schemeThemeTokenCache[cacheKey] = it }
+    }
+
+    private fun readSchemeThemeTokens(
+        extension: String,
+        schemeName: String,
+        isDark: Boolean
+    ): Map<String, Int> {
+        val raw = nativeGetThemeTokens(extension, schemeName, isDark)
+        val tokens = LinkedHashMap<String, Int>((raw?.size ?: 0) / 2)
+        var index = 0
+        while (raw != null && index + 1 < raw.size) {
+            tokens[raw[index]] = raw[index + 1].toLong().toInt()
+            index += 2
         }
+        return tokens.toMap()
     }
 
     /** Explicitly overrides the DSL's default appearance for this extension. */

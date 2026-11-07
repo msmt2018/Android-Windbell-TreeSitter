@@ -396,13 +396,59 @@ class MainActivity : AppCompatActivity() {
 
     /** Applies only UI colors explicitly declared by the active .tsh scheme. */
     private fun applyTshThemeTokens() {
-        val view = editorView ?: return
-        val tokens = WindbellTshEngine.instance.getThemeTokens("java")
-        tokens["editor.background"]?.let(view::setBackgroundColor)
-        tokens["editor.foreground"]?.let(view::setTextColor)
-        tokens["editor.selection"]?.let(view::setSelectionColor)
-        tokens["editor.lineHighlight"]?.let(view::setCurrentLineColor)
-        tokens["editor.gutter"]?.let(view::setLineNumberColor)
+        val engine = WindbellTshEngine.instance
+        val tokens = engine.getThemeTokens("java")
+        editorView?.let { view ->
+            tokens["editor.background"]?.let(view::setBackgroundColor)
+            tokens["editor.foreground"]?.let(view::setTextColor)
+            tokens["editor.selection"]?.let(view::setSelectionColor)
+            tokens["editor.lineHighlight"]?.let(view::setCurrentLineColor)
+            tokens["editor.gutter"]?.let(view::setLineNumberColor)
+        }
+
+        // TSH UI tokens are the source of truth for the whole Activity, not only
+        // the editor canvas. Apply them in-place; no DSL compilation or reparsing.
+        tokens["activity.background"]?.let(binding.root::setBackgroundColor)
+        tokens["activity.surface"]?.let(binding.appBarLayout::setBackgroundColor)
+        tokens["activity.toolbar.background"]?.let(binding.toolbar::setBackgroundColor)
+        tokens["activity.toolbar.foreground"]?.let { color ->
+            binding.toolbar.setTitleTextColor(color)
+            binding.toolbar.setSubtitleTextColor(color)
+        }
+        tokens["activity.tabs.background"]?.let(binding.tabLayout::setBackgroundColor)
+        val normalTabColor = tokens["activity.tabs.foreground"]
+        val selectedTabColor = tokens["activity.tabs.selected"]
+        if (normalTabColor != null || selectedTabColor != null) {
+            val fallback = normalTabColor ?: selectedTabColor!!
+            binding.tabLayout.setTabTextColors(
+                normalTabColor ?: fallback,
+                selectedTabColor ?: fallback
+            )
+        }
+        tokens["activity.tabs.indicator"]?.let(binding.tabLayout::setSelectedTabIndicatorColor)
+        tokens["activity.statusBar"]?.let { window.statusBarColor = it }
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+            tokens["activity.navigationBar"]?.let { window.navigationBarColor = it }
+        }
+
+        // Match status/navigation icon contrast to the selected TSH appearance.
+        val lightSystemBars = !engine.isDark("java")
+        var flags = window.decorView.systemUiVisibility
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
+            flags = if (lightSystemBars) {
+                flags or View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
+            } else {
+                flags and View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR.inv()
+            }
+        }
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+            flags = if (lightSystemBars) {
+                flags or View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
+            } else {
+                flags and View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR.inv()
+            }
+        }
+        window.decorView.systemUiVisibility = flags
     }
 
     private fun setEditorContent(text: String) {

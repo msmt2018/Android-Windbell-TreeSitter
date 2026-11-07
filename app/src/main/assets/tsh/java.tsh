@@ -123,6 +123,16 @@
                     editor.lineHighlight: #F2F2F2
                     editor.gutter: #858585
                     editor.caret: #000000
+                    activity.background: #FFFFFF
+                    activity.surface: #F4F4F4
+                    activity.toolbar.background: #F4F4F4
+                    activity.toolbar.foreground: #202020
+                    activity.tabs.background: #F4F4F4
+                    activity.tabs.foreground: #666666
+                    activity.tabs.selected: #202020
+                    activity.tabs.indicator: #3F51B5
+                    activity.statusBar: #EAEAEA
+                    activity.navigationBar: #FFFFFF
                 }
                 dark {
                     editor.background: #2B2B2B
@@ -131,6 +141,16 @@
                     editor.lineHighlight: #323232
                     editor.gutter: #6B6B6B
                     editor.caret: #FFFFFF
+                    activity.background: #1E1E1E
+                    activity.surface: #252526
+                    activity.toolbar.background: #252526
+                    activity.toolbar.foreground: #E8E8E8
+                    activity.tabs.background: #252526
+                    activity.tabs.foreground: #9DA0A6
+                    activity.tabs.selected: #FFFFFF
+                    activity.tabs.indicator: #CC7832
+                    activity.statusBar: #1E1E1E
+                    activity.navigationBar: #1E1E1E
                 }
             }
         }
@@ -171,12 +191,42 @@
                 operator: #E6EDF3
             ]
             ui {
-                editor.background: #FFFFFF
-                editor.foreground: #24292F
-                editor.selection: #B6E3FF
-                editor.lineHighlight: #F6F8FA
-                editor.gutter: #6E7781
-                editor.caret: #24292F
+                light {
+                    editor.background: #FFFFFF
+                    editor.foreground: #24292F
+                    editor.selection: #B6E3FF
+                    editor.lineHighlight: #F6F8FA
+                    editor.gutter: #6E7781
+                    editor.caret: #24292F
+                    activity.background: #FFFFFF
+                    activity.surface: #F6F8FA
+                    activity.toolbar.background: #F6F8FA
+                    activity.toolbar.foreground: #24292F
+                    activity.tabs.background: #F6F8FA
+                    activity.tabs.foreground: #6E7781
+                    activity.tabs.selected: #24292F
+                    activity.tabs.indicator: #0969DA
+                    activity.statusBar: #F6F8FA
+                    activity.navigationBar: #FFFFFF
+                }
+                dark {
+                    editor.background: #0D1117
+                    editor.foreground: #E6EDF3
+                    editor.selection: #264F78
+                    editor.lineHighlight: #161B22
+                    editor.gutter: #8B949E
+                    editor.caret: #E6EDF3
+                    activity.background: #0D1117
+                    activity.surface: #161B22
+                    activity.toolbar.background: #161B22
+                    activity.toolbar.foreground: #E6EDF3
+                    activity.tabs.background: #161B22
+                    activity.tabs.foreground: #8B949E
+                    activity.tabs.selected: #E6EDF3
+                    activity.tabs.indicator: #2F81F7
+                    activity.statusBar: #0D1117
+                    activity.navigationBar: #0D1117
+                }
             }
         }
     },

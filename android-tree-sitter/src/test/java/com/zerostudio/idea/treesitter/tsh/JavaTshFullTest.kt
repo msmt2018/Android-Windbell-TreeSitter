@@ -147,6 +147,23 @@ class JavaTshFullTest {
         assertTrue(darculaPalette.isNotEmpty(), "Every declared scheme must expose its compiled palette.")
         assertTrue(githubPalette.isNotEmpty(), "Inactive schemes must also expose their compiled palette.")
         assertTrue(darculaPalette.values.any { it.hasLightColor && it.hasDarkColor })
+        val darculaLightTokens = WindbellTshEngine.instance.getSchemeThemeTokens("java", "darcula", false)
+        val darculaDarkTokens = WindbellTshEngine.instance.getSchemeThemeTokens("java", "darcula", true)
+        assertTrue(darculaLightTokens.containsKey("activity.toolbar.background"))
+        assertTrue(darculaDarkTokens.containsKey("activity.toolbar.background"))
+        assertSame(
+            "Selecting another scheme must reuse the already-decoded palette snapshot.",
+            darculaPalette,
+            WindbellTshEngine.instance.getSchemePalette("java", "darcula")
+        )
+        repeat(8) {
+            val selected = if (it % 2 == 0) "github" else "darcula"
+            assertTrue(WindbellTshEngine.instance.selectScheme("java", selected))
+            assertSame(
+                if (selected == "github") githubPalette else darculaPalette,
+                WindbellTshEngine.instance.getSchemePalette("java", selected)
+            )
+        }
 
         // 5. 校验多态色彩应用 (Light / Dark 热切换上屏)
         val ssb = SpannableStringBuilder(testSource)
