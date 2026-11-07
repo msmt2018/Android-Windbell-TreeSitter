@@ -46,7 +46,9 @@ class WindbellTshEngine private constructor() {
         val styleId: Int,
         val fontFlags: Int,
         val priority: Int,
-        val declarationOrder: Int
+        val declarationOrder: Int,
+        /** Native HighlightSource ordinal (ONIG_REGEX, MONARCH, AST_SELECTOR, NATIVE_QUERY). */
+        val source: Int = 255
     )
 
     data class AutoClosingPair(
