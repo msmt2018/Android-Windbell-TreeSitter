@@ -478,17 +478,19 @@ class WindbellTshEngine private constructor() {
 
     fun computeHighlights(tree: TSTree?, text: String, extension: String): List<HighlightSpan> {
         val flatData = nativeHighlight(tree?.nativeObject ?: 0L, text, extension) ?: return emptyList()
-        val count = flatData.size / 5
+        // JNI row layout: start, end, packed(styleId|flags), priority, order, source.
+        val count = flatData.size / 6
         val result = ArrayList<HighlightSpan>(count)
         for (i in 0 until count) {
-            val start = flatData[i * 5]
-            val end = flatData[i * 5 + 1]
-            val packedMeta = flatData[i * 5 + 2]
+            val start = flatData[i * 6]
+            val end = flatData[i * 6 + 1]
+            val packedMeta = flatData[i * 6 + 2]
             val styleId = packedMeta and 0xFFFF
             val flags = (packedMeta ushr 16) and 0xFFFF
-            val priority = flatData[i * 5 + 3]
-            val declarationOrder = flatData[i * 5 + 4]
-            result.add(HighlightSpan(start, end, styleId, flags, priority, declarationOrder))
+            val priority = flatData[i * 6 + 3]
+            val declarationOrder = flatData[i * 6 + 4]
+            val source = flatData[i * 6 + 5]
+            result.add(HighlightSpan(start, end, styleId, flags, priority, declarationOrder, source))
         }
         return result
     }
