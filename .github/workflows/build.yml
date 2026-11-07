@@ -96,11 +96,12 @@ jobs:
           for config_path in "${manifests[@]}"; do
             dir_path="$(dirname "$config_path")"
             echo "::group::📦 Installing grammar dependencies: $dir_path"
-            if [[ -f "$dir_path/package-lock.json" ]]; then
-              (cd "$dir_path" && npm ci --no-audit --no-fund) || failed+=("$dir_path")
-            else
-              (cd "$dir_path" && npm install --no-audit --no-fund) || failed+=("$dir_path")
-            fi
+            # Grammar submodules are independently maintained and some carry
+            # stale lockfiles or peer ranges for older tree-sitter runtimes.
+            # npm ci rejects lockfile drift; install refreshes the local lockfile.
+            # Legacy peer resolution is limited to peer-dependency conflicts and
+            # does not suppress native build scripts.
+            (cd "$dir_path" && npm install --legacy-peer-deps --no-audit --no-fund) || failed+=("$dir_path")
             echo "::endgroup::"
           done
 
