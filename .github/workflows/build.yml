@@ -103,11 +103,11 @@ jobs:
               return 0
             fi
             echo "::endgroup::"
-            printf '%s\\n' "$dir_path" >> "$failed_file"
+            printf '%s\n' "$dir_path" >> "$failed_file"
             return 1
           }
           export -f install_grammar
-          if ! printf '%s\\0' "${manifests[@]}" | xargs -0 -r -n 1 -P 4 bash -c 'install_grammar "$1"' _; then
+          if ! printf '%s\0' "${manifests[@]}" | xargs -0 -r -n 1 -P 4 bash -c 'install_grammar "$1"' _; then
             echo "One or more grammar dependency installations failed."
           fi
           if [[ -s "$failed_file" ]]; then
@@ -211,11 +211,11 @@ jobs:
               return 0
             fi
             echo "::endgroup::"
-            printf '%s\\n' "$dir_path" >> "$failed_file"
+            printf '%s\n' "$dir_path" >> "$failed_file"
             return 1
           }
           export -f install_grammar
-          if ! printf '%s\\0' "${manifests[@]}" | xargs -0 -r -n 1 -P 4 bash -c 'install_grammar "$1"' _; then
+          if ! printf '%s\0' "${manifests[@]}" | xargs -0 -r -n 1 -P 4 bash -c 'install_grammar "$1"' _; then
             echo "One or more grammar dependency installations failed."
           fi
           if [[ -s "$failed_file" ]]; then
