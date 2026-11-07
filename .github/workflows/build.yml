@@ -213,7 +213,7 @@ jobs:
       - name: Change Gradle wrapper permissions
         run: chmod +x ./gradlew
       - name: Run debug tests
-        run: ./gradlew testDebug --continue --parallel --stacktrace
+        run: ./gradlew testDebug :editor:compileDebugAndroidTestKotlin --continue --parallel --stacktrace
         env:
           ANDROIDIDE_TEST: true
       - name: Upload Test Reports
