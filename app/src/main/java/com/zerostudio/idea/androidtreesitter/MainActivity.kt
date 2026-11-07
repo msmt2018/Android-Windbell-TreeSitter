@@ -264,24 +264,31 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
+    /**
+     * The console language selector and the code editor are independent surfaces.
+     * Changing the console parser must never detach the editor's Java TSH styler.
+     * The editor currently owns a Java document, so install its grammar whenever
+     * that grammar has compiled successfully, regardless of currentLanguageKey.
+     */
     private fun installTshHighlighterIfReady() {
         val view = editorView ?: return
-        if (javaTshReady && editorLanguageKey.equals("java", ignoreCase = true)) {
+        if (javaTshReady) {
             if (activeTshHighlighter == null) {
                 activeTshHighlighter = TshSyntaxHighlighter(
                     language = TSLanguageJava.getInstance(),
                     extension = "java"
                 )
             }
-            view.setSyntaxHighlighter(activeTshHighlighter)
+            if (view.getSyntaxHighlighter() !== activeTshHighlighter) {
+                view.setSyntaxHighlighter(activeTshHighlighter)
+            }
             applyTshEditorMetadata()
             applyTshThemeTokens()
         } else {
-            view.setSyntaxHighlighter(null)
+            if (view.getSyntaxHighlighter() != null) view.setSyntaxHighlighter(null)
             view.setAutoPairs(emptyList())
             view.setAutoPairFilter(null)
             view.setBracketMatcher(null)
-            activeTshHighlighter = null
         }
     }
 
