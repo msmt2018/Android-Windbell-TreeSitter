@@ -558,6 +558,24 @@ class MainActivity : AppCompatActivity() {
     }
 
 
+    /** Find the deepest named Java Tree-sitter node containing a UTF-16LE byte range. */
+    private fun findSmallestNamedNode(root: TSNode, startByte: Int, endByte: Int): TSNode {
+        var current = root
+        while (true) {
+            var next: TSNode? = null
+            for (index in 0 until current.childCount) {
+                val child = current.getChild(index)
+                if (!child.isNull && child.isNamed &&
+                    child.startByte <= startByte && child.endByte >= endByte
+                ) {
+                    next = child
+                    break
+                }
+            }
+            current = next ?: return current
+        }
+    }
+
     /** Reparse the editor's current source and report parser, captures and Android spans. */
     private fun runCursorCaptureDiagnostic() {
         val view = editorView
@@ -596,7 +614,7 @@ class MainActivity : AppCompatActivity() {
                     val cursorByteStart = cursorOffset * 2
                     val cursorByteEnd = (cursorOffset + 1).coerceAtMost(source.length) * 2
                     val cursorNode = if (source.isEmpty()) root else
-                        root.namedDescendant(cursorByteStart.toUInt(), cursorByteEnd.toUInt()) ?: root
+                        findSmallestNamedNode(root, cursorByteStart, cursorByteEnd)
                     val declarationTypes = setOf(
                         "class_declaration", "interface_declaration", "enum_declaration",
                         "record_declaration", "annotation_type_declaration",
@@ -609,8 +627,8 @@ class MainActivity : AppCompatActivity() {
                     }
                     if (symbolNode == null) symbolNode = cursorNode
                     val selectedNode = checkNotNull(symbolNode)
-                    val symbolStart = (selectedNode.startByte / 2U).toInt().coerceIn(0, source.length)
-                    val symbolEnd = (selectedNode.endByte / 2U).toInt().coerceIn(symbolStart, source.length)
+                    val symbolStart = (selectedNode.startByte / 2).coerceIn(0, source.length)
+                    val symbolEnd = (selectedNode.endByte / 2).coerceIn(symbolStart, source.length)
                     val symbolText = source.substring(symbolStart, symbolEnd)
 
                     val queryStart = System.nanoTime()
