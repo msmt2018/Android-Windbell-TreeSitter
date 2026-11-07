@@ -19,6 +19,7 @@ import android.view.MenuItem
 import android.view.View
 import android.widget.ArrayAdapter
 import androidx.appcompat.app.AppCompatActivity
+import androidx.appcompat.app.AppCompatDelegate
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.tabs.TabLayout
 import com.zerostudio.idea.androidtreesitter.databinding.ActivityMainBinding
@@ -472,11 +473,15 @@ class MainActivity : AppCompatActivity() {
         val engine = WindbellTshEngine.instance
         val nextDark = !engine.isDark("java")
         engine.setAppearance("java", nextDark)
-        val currentThemeName = if (nextDark) "黑夜深色 (Dark)" else "白天浅色 (Light)"
+        AppCompatDelegate.setDefaultNightMode(
+            if (nextDark) AppCompatDelegate.MODE_NIGHT_YES else AppCompatDelegate.MODE_NIGHT_NO
+        )
         activeTshHighlighter?.refreshTheme()
+        applyTshThemeTokens()
+        val currentThemeName = if (nextDark) "黑夜深色 (Dark)" else "白天浅色 (Light)"
         MaterialAlertDialogBuilder(this)
-            .setTitle("🎨 TSH 多态调色板热切换")
-            .setMessage("当前调色板已瞬间切换为: $currentThemeName\n（验证：零重新分词开销，仅依赖 Native StyleID 调色板重新投射绘制）")
+            .setTitle("🎨 TSH / Activity 主题")
+            .setMessage("已请求切换为 $currentThemeName。TSH 复用已编译 palette，不重新编译规则或重新解析文档；Activity 主题由 AppCompatDelegate 同步切换。")
             .setPositiveButton(android.R.string.ok, null)
             .show()
     }
@@ -509,8 +514,17 @@ class MainActivity : AppCompatActivity() {
         report.append("=== 🎨 TSH 调色板映射测试 ===\n\n")
 
         val ext = "java"
-        val sampleCode = "public class Sample { int x = 100; }"
-        val spans = WindbellTshEngine.instance.computeHighlights(editorTree, sampleCode, ext)
+        // Never reuse editorTree here: it belongs to the console editor, not this sample.
+        val sampleCode = editorView?.getText()?.takeIf { it.isNotBlank() }
+            ?: "public class Sample { int x = 100; }"
+        val sampleParser = TSParser.create().also { it.setLanguage(TSLanguageJava.getInstance()) }
+        val sampleTree = sampleParser.parseString(sampleCode)
+        val spans = try {
+            WindbellTshEngine.instance.computeHighlights(sampleTree, sampleCode, ext)
+        } finally {
+            sampleTree?.close()
+            sampleParser.close()
+        }
 
         report.append("当前已加载语言扩展: $ext\n")
         report.append("生成 Span 数量: ${spans.size}\n\n")
