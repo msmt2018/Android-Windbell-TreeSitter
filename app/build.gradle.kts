@@ -30,33 +30,16 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
-    // Release signing is opt-in and must be supplied by the build environment.
-    // Never commit keystores or signing credentials to the repository.
-    val signingStorePath = providers.gradleProperty("ANDROID_SIGNING_STORE_FILE").orNull
-        ?: System.getenv("ANDROID_SIGNING_STORE_FILE")
-    val signingStorePassword = providers.gradleProperty("ANDROID_SIGNING_STORE_PASSWORD").orNull
-        ?: System.getenv("ANDROID_SIGNING_STORE_PASSWORD")
-    val signingKeyAlias = providers.gradleProperty("ANDROID_SIGNING_KEY_ALIAS").orNull
-        ?: System.getenv("ANDROID_SIGNING_KEY_ALIAS")
-    val signingKeyPassword = providers.gradleProperty("ANDROID_SIGNING_KEY_PASSWORD").orNull
-        ?: System.getenv("ANDROID_SIGNING_KEY_PASSWORD")
-    val releaseSigning = if (
-        !signingStorePath.isNullOrBlank() &&
-        !signingStorePassword.isNullOrBlank() &&
-        !signingKeyAlias.isNullOrBlank() &&
-        !signingKeyPassword.isNullOrBlank()
-    ) {
-        signingConfigs.create("releaseCredentials") {
-            storeFile = file(signingStorePath)
-            storePassword = signingStorePassword
-            keyAlias = signingKeyAlias
-            keyPassword = signingKeyPassword
-        }
-    } else null
+    val commonSigning = signingConfigs.create("common") {
+        storeFile = file("dev.keystore")
+        keyAlias = "androidide"
+        storePassword = "ed68424fb109e5aa8146e4b86caa72e3"
+        keyPassword = "ed68424fb109e5aa8146e4b86caa72e3"
+    }
 
     buildTypes {
+        forEach { it.signingConfig = commonSigning }
         release {
-            signingConfig = releaseSigning
             isMinifyEnabled = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
