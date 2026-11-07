@@ -94,7 +94,9 @@ class JavaTshFullTest {
 
         // Tree-sitter's Kotlin binding parses UTF-16LE. Prefixing the declarations
         // with CJK/Emoji text must not make ATS or native-query byte offsets drift.
-        val nativeQueryTexts = spans.filter { it.source == 3 }.map { span ->
+        val pipelineDiagnostics = WindbellTshEngine.instance
+            .computePipelineDiagnostics(tree, testSource, "java")
+        val nativeQueryTexts = pipelineDiagnostics.captures.filter { it.source == 3 }.map { span ->
             testSource.substring(
                 (span.startByte shr 1).coerceIn(0, testSource.length),
                 (span.endByte shr 1).coerceIn(0, testSource.length)
@@ -113,9 +115,11 @@ class JavaTshFullTest {
             nativeQueryTexts.all { it == "multiline" || it == "MAX_CACHE_CAPACITY" },
             "Native query regex predicate must reject identifiers outside its pattern; got $nativeQueryTexts"
         )
+        assertTrue(
+            spans.any { it.source == 3 },
+            "A native-query candidate must survive the final conflict-resolution pipeline."
+        )
 
-        val pipelineDiagnostics = WindbellTshEngine.instance
-            .computePipelineDiagnostics(tree, testSource, "java")
         assertTrue(
             (pipelineDiagnostics.matchCounts[2] ?: 0) > 0,
             "ATS selector matches must be counted against UTF-16LE Tree-sitter node offsets."
