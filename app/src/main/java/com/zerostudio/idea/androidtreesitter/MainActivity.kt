@@ -57,7 +57,6 @@ class MainActivity : AppCompatActivity() {
     // 解析与高亮作业句柄
     private var parser: TSParser? = null
     private var parseJob: Job? = null
-    private var editorHighlightJob: Job? = null
 
     private var parseCount = 0L
     private var avgParse = 0L
@@ -338,34 +337,19 @@ class MainActivity : AppCompatActivity() {
     /**
      * 驱动 TSH 引擎执行宏微双通道高亮与语义分析
      */
+    /**
+     * Refreshes the single highlighting pipeline that actually feeds EditorView.
+     *
+     * Do not parse a second tree here: the installed TshSyntaxHighlighter owns the
+     * parser, capture snapshot, line indexing and invalidation used by drawText().
+     */
     private fun triggerEditorFullHighlight() {
         installTshHighlighterIfReady()
-        val currentJob = editorHighlightJob
-
-        editorHighlightJob = activityScope.launch(Dispatchers.Default) {
-            currentJob?.cancel(CancellationException("New editor highlight requested"))
-
-            val rawText = currentEditorRawText
-            if (rawText.isEmpty()) return@launch
-
-            // 1. 宏观 AST 解析
-            val lang = currentLanguage ?: TSLanguageJava.getInstance()
-            val localParser = TSParser.create().apply { setLanguage(lang) }
-            val newTree = localParser.parseString(rawText)
-            localParser.close()
-
-            editorTree?.close()
-            editorTree = newTree
-
-            // 2. 调用 Windbell-TSH 核心引擎进行微观正则 + 宏观 AST 合成
-            val ext = if (currentLanguageKey.equals("Kotlin", ignoreCase = true)) "kt" else "java"
-            val spans = WindbellTshEngine.instance.computeHighlights(
-                tree = editorTree,
-                text = rawText,
-                extension = ext
-            )
-
-            Log.d(TAG, "TSH Highlighting complete: spans=${spans.size}")
+        val highlighter = activeTshHighlighter
+        if (javaTshReady && highlighter != null) {
+            highlighter.reparse()
+        } else {
+            Log.w(TAG, "Editor TSH renderer unavailable: ready=$javaTshReady highlighterInstalled=${editorView?.getSyntaxHighlighter() != null} language=$currentLanguageKey")
         }
     }
 
@@ -652,7 +636,6 @@ class MainActivity : AppCompatActivity() {
 
     private fun destroyParserResources() {
         parseJob?.cancel()
-        editorHighlightJob?.cancel()
         parser?.close()
         parser = null
         editorTree?.close()
