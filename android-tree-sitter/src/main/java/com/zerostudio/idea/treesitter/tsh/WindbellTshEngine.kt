@@ -161,8 +161,9 @@ class WindbellTshEngine private constructor() {
     /** Reads a scheme's compiled light/dark palette without changing the active scheme. */
     fun getSchemePalette(extension: String, schemeName: String): Map<Int, StylePalette> {
         if (schemeName !in listSchemes(extension)) return emptyMap()
-        val flatPalette = nativeGetPalette(extension, schemeName) ?: return emptyMap()
-        return decodePalette(flatPalette)
+        val cacheKey = "$extension::$schemeName"
+        return schemePaletteCache[cacheKey]
+            ?: readSchemePalette(extension, schemeName).also { schemePaletteCache[cacheKey] = it }
     }
 
     private fun readSchemePalette(extension: String, schemeName: String): Map<Int, StylePalette> {
@@ -189,17 +190,6 @@ class WindbellTshEngine private constructor() {
         val schemePalette = schemePaletteCache[cacheKey]
             ?: readSchemePalette(extension, schemeName).also { schemePaletteCache[cacheKey] = it }
         paletteCache[extension] = schemePalette
-    }
-
-    /** Full Light/Dark palette for a scheme, in semantic-style declaration order. */
-    fun getSchemePalette(extension: String, schemeName: String): List<Pair<SemanticStyle, StylePalette>> {
-        if (schemeName !in listSchemes(extension)) return emptyList()
-        val cacheKey = "$extension::$schemeName"
-        val palette = schemePaletteCache[cacheKey]
-            ?: readSchemePalette(extension, schemeName).also { schemePaletteCache[cacheKey] = it }
-        return getStyleCatalog(extension).mapNotNull { style ->
-            palette[style.styleId]?.let { style to it }
-        }
     }
 
     fun matchesFirstLine(extension: String, line: String): Boolean =
