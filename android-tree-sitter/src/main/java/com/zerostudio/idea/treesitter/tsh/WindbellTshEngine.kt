@@ -442,7 +442,7 @@ class WindbellTshEngine private constructor() {
                 for (old in oldSpans) spannable.removeSpan(old)
             }
 
-            for (span in spans) {
+            for ((spanIndex, span) in spans.withIndex()) {
                 val globalStart = span.startByte shr 1
                 val globalEnd = span.endByte shr 1
                 val localStart = globalStart - documentOffset
@@ -456,7 +456,14 @@ class WindbellTshEngine private constructor() {
                 val hasColor = if (darkMode) colorDef?.hasDarkColor == true else colorDef?.hasLightColor == true
                 val color = if (darkMode) colorDef?.darkColor ?: 0 else colorDef?.lightColor ?: 0
                 if (hasColor) {
-                    spannable.setSpan(ForegroundColorSpan(color), charStart, charEnd, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+                    // Native emits deterministic paint order: outer captures first,
+                    // then nested/high-priority captures. Encode that order in Android's
+                    // span priority instead of relying on incidental getSpans ordering.
+                    val precedence = (((spanIndex + 1L) * 255L) / spans.size.coerceAtLeast(1))
+                        .toInt().coerceIn(1, 255)
+                    val spanFlags = Spannable.SPAN_EXCLUSIVE_EXCLUSIVE or
+                        (precedence shl Spanned.SPAN_PRIORITY_SHIFT)
+                    spannable.setSpan(ForegroundColorSpan(color), charStart, charEnd, spanFlags)
                 }
 
                 val schemeFlags = if (darkMode) colorDef?.darkFontFlags ?: 0 else colorDef?.lightFontFlags ?: 0

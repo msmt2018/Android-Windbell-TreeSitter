@@ -45,6 +45,48 @@ class WindbellTshLinkageTest {
     }
 
     @Test
+    fun testOverlappingForegroundSpansCarryDeterministicPrecedence() {
+        val engine = WindbellTshEngine.instance
+        val source = """
+            tsh 2 {
+                language { id: "span-precedence" extensions: [".span-precedence"] }
+                styles {
+                    outer { scope: "meta.outer" }
+                    inner { scope: "entity.name.inner" }
+                }
+                schemes {
+                    test {
+                        light [ outer: #112233, inner: #AABBCC ]
+                        dark [ outer: #223344, inner: #BBCCDD ]
+                    }
+                }
+            }
+        """.trimIndent()
+        assertTrue(engine.loadTshSource("span-precedence", source, null))
+        assertTrue(engine.selectScheme("span-precedence", "test"))
+        engine.setAppearance("span-precedence", false)
+
+        val styles = engine.getStyleCatalog("span-precedence").associateBy { it.name }
+        val outerId = styles.getValue("outer").styleId
+        val innerId = styles.getValue("inner").styleId
+        val captures = listOf(
+            WindbellTshEngine.HighlightSpan(0, 8, outerId, 0, 0, 0, 2),
+            WindbellTshEngine.HighlightSpan(2, 6, innerId, 0, 10, 1, 3)
+        )
+        val styled = SpannableStringBuilder("abcdefgh")
+        engine.applyHighlightSpansToSpannable(captures, 0, "abcdefgh", "span-precedence", styled)
+
+        val innerColor = engine.getSchemePalette("span-precedence", "test").getValue(innerId).lightColor
+        val spans = styled.getSpans(2, 6, android.text.style.ForegroundColorSpan::class.java)
+        val winning = spans.maxByOrNull {
+            styled.getSpanFlags(it) and android.text.Spanned.SPAN_PRIORITY
+        }
+        assertEquals(innerColor, winning?.foregroundColor)
+        assertTrue(spans.size >= 2, "Both nested captures must remain available to the painter")
+        engine.clearAppearanceOverride("span-precedence")
+    }
+
+    @Test
     fun testCompileFailureExposesStructuredDiagnostic() {
         val engine = WindbellTshEngine.instance
         assertFalse(engine.loadTshSource("invalid", """
