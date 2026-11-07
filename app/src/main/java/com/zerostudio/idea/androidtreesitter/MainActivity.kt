@@ -493,12 +493,10 @@ class MainActivity : AppCompatActivity() {
             return
         }
         val source = view.getText()
-        val lineNumber = view.getCursorLine().coerceAtLeast(1)
-        val lines = source.split('\\n')
-        val lineIndex = (lineNumber - 1).coerceIn(0, (lines.size - 1).coerceAtLeast(0))
-        var lineStart = 0
-        for (index in 0 until lineIndex) lineStart += lines[index].length + 1
-        val lineText = lines.getOrElse(lineIndex) { "" }
+        val lineNumber = view.getCursorLine().coerceIn(1, view.getLineCount())
+        // Use the editor document's own offsets; manual newline counting breaks on CRLF.
+        val lineStart = view.getLineStartOffset(lineNumber)
+        val lineText = view.getLineText(lineNumber)
         val lineEnd = lineStart + lineText.length
         val engine = WindbellTshEngine.instance
         val report = StringBuilder()
@@ -533,6 +531,13 @@ class MainActivity : AppCompatActivity() {
                     val preview = android.text.SpannableStringBuilder(lineText)
                     engine.applyHighlightSpansToSpannable(lineCaptures, lineStart, lineText, "java", preview)
                     val foreground = preview.getSpans(0, preview.length, android.text.style.ForegroundColorSpan::class.java)
+                    // Probe the exact callback installed into EditorView.drawText().
+                    val editorLineSpans = activeTshHighlighter?.styleLine(
+                        lineText, lineNumber, lineStart, 0, lineText.length
+                    )
+                    val editorForeground = editorLineSpans?.getSpans(
+                        0, lineText.length, android.text.style.ForegroundColorSpan::class.java
+                    ) ?: emptyArray()
                     report.appendLine("1) Tree-sitter: OK root=" + it.rootNode.type + ", " + parserNanos / 1000000.0 + " ms")
                     report.appendLine("2) TSH: total=" + captures.size + ", cursor-line=" + lineCaptures.size + ", " + queryNanos / 1000000.0 + " ms")
                     val sourceNames = mapOf(0 to "Oniguruma Regex", 1 to "Monarch", 2 to "ATS", 3 to "Tree-sitter Query")
@@ -542,6 +547,8 @@ class MainActivity : AppCompatActivity() {
                     report.appendLine("3) Scheme=" + scheme + " dark=" + engine.isDark("java") + ", styles=" + styles.size + ", palette=" + palette.size + ", " + paletteNanos / 1000000.0 + " ms")
                     report.appendLine("4) Android preview ForegroundColorSpan=" + foreground.size)
                     report.appendLine("5) Editor highlighter attached=" + (view.getSyntaxHighlighter() === activeTshHighlighter))
+                    report.appendLine("6) Installed highlighter styleLine ForegroundColorSpan=" + editorForeground.size +
+                        " (null means async snapshot is not ready or this line has no styled capture)")
                     report.appendLine("Canvas pixels are not claimed; that requires device instrumentation.")
                     lineCaptures.forEachIndexed { index, span ->
                         val start = ((span.startByte shr 1) - lineStart).coerceIn(0, lineText.length)
