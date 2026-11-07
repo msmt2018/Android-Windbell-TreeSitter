@@ -535,6 +535,10 @@ class MainActivity : AppCompatActivity() {
                     val foreground = preview.getSpans(0, preview.length, android.text.style.ForegroundColorSpan::class.java)
                     report.appendLine("1) Tree-sitter: OK root=" + it.rootNode.type + ", " + parserNanos / 1000000.0 + " ms")
                     report.appendLine("2) TSH: total=" + captures.size + ", cursor-line=" + lineCaptures.size + ", " + queryNanos / 1000000.0 + " ms")
+                    val sourceNames = mapOf(0 to "Oniguruma Regex", 1 to "Monarch", 2 to "ATS", 3 to "Tree-sitter Query")
+                    captures.groupingBy { it.source }.eachCount().forEach { (sourceId, count) ->
+                        report.appendLine("   producer=" + (sourceNames[sourceId] ?: "Unknown(" + sourceId + ")") + ": " + count)
+                    }
                     report.appendLine("3) Scheme=" + scheme + " dark=" + engine.isDark("java") + ", styles=" + styles.size + ", palette=" + palette.size + ", " + paletteNanos / 1000000.0 + " ms")
                     report.appendLine("4) Android preview ForegroundColorSpan=" + foreground.size)
                     report.appendLine("5) Editor highlighter attached=" + (view.getSyntaxHighlighter() === activeTshHighlighter))
@@ -547,7 +551,9 @@ class MainActivity : AppCompatActivity() {
                         val light = if (colors?.hasLightColor == true) String.format(Locale.ROOT, "#%08X", colors.lightColor) else "MISSING"
                         val dark = if (colors?.hasDarkColor == true) String.format(Locale.ROOT, "#%08X", colors.darkColor) else "MISSING"
                         report.appendLine("[" + index + "] " + (style?.name ?: "UNKNOWN") + " id=" + span.styleId + " text=" + lineText.substring(start, end))
-                        report.appendLine("    scope=" + style?.scope + " light=" + light + " dark=" + dark + " priority=" + span.priority)
+                        report.appendLine("    scope=" + style?.scope + " light=" + light + " dark=" + dark +
+                            " producer=" + (sourceNames[span.source] ?: "Unknown(" + span.source + ")") +
+                            " priority=" + span.priority + " order=" + span.declarationOrder)
                     }
                     if (lineCaptures.isEmpty()) report.appendLine("NO CAPTURES: inspect AST selector / ATS query / regex stages.")
                 }
