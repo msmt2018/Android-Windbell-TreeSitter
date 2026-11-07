@@ -464,6 +464,7 @@ void WindbellEngine::matchBlockRecursive(
                                 ONIG_OPTION_NONE
                             );
                             if (inner_hit < 0) break;
+                            if (regex_match_count) ++(*regex_match_count);
 
                             auto append_nested_capture = [&](int group, uint16_t style_id) {
                                 if (group < 0 || group >= inner_region->num_regs ||
