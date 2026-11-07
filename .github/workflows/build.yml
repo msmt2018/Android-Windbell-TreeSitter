@@ -71,6 +71,8 @@ jobs:
         with:
           # tree-sitter@0.25 pulls node-gyp@13 / undici@8, which require Node >=22.19.
           node-version: '22.22.2'
+      - name: Set up Bun for grammar packages
+        uses: oven-sh/setup-bun@v2
       - name: Install Node packages for all grammar submodules
         shell: bash
         run: |
@@ -211,6 +213,8 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '22.22.2'
+      - name: Set up Bun for grammar packages
+        uses: oven-sh/setup-bun@v2
       - name: Install Node packages for all grammar submodules
         shell: bash
         run: |
