@@ -88,7 +88,21 @@ class TshSyntaxHighlighter(
         start: Int,
         end: Int
     ): Spanned? {
-        val snapshot = capturesByLine[bufferLine].orEmpty()
+        // EditorView's renderer is 1-based, but keep a defensive range lookup as
+        // well: custom LineStyler hosts and wrapped/incremental rows may supply a
+        // line key that differs from the precomputed index. Never silently drop
+        // valid native captures merely because the line-index cache misses.
+        val indexed = capturesByLine[bufferLine]
+        val snapshot = if (!indexed.isNullOrEmpty()) {
+            indexed
+        } else {
+            val lineEndOffset = lineStartOffset + text.length
+            allCaptures.filter { span ->
+                val captureStart = span.startByte shr 1
+                val captureEnd = span.endByte shr 1
+                captureStart < lineEndOffset && captureEnd > lineStartOffset
+            }
+        }
         if (start >= end) return null
         if (firstStyleCallLogged.compareAndSet(false, true)) {
             Log.i(TAG, "Editor renderer invoked styleLine: extension=.$extension line=$bufferLine range=$start..$end captures=${snapshot.size}")
