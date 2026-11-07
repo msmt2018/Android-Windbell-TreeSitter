@@ -62,7 +62,9 @@ class MainActivity : AppCompatActivity() {
     private var parseCount = 0L
     private var avgParse = 0L
 
+    // Console parser selection is independent from the editor active grammar.
     private var currentLanguageKey: String = "Java"
+    private var editorLanguageKey: String = "java"
     private var currentLanguage: TSLanguage? = null
 
     // 核心编辑器控件与文本缓存
@@ -74,7 +76,8 @@ class MainActivity : AppCompatActivity() {
 
     companion object {
         private const val TAG = "Windbell_MainActivity"
-        private val languageMap = hashMapOf<String, TSLanguage>()
+        // Keep Java first and make the console language spinner deterministic.
+        private val languageMap = linkedMapOf<String, TSLanguage>()
 
         init {
             TreeSitter.loadLibrary()
@@ -263,7 +266,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun installTshHighlighterIfReady() {
         val view = editorView ?: return
-        if (javaTshReady && currentLanguageKey.equals("Java", ignoreCase = true)) {
+        if (javaTshReady && editorLanguageKey.equals("java", ignoreCase = true)) {
             if (activeTshHighlighter == null) {
                 activeTshHighlighter = TshSyntaxHighlighter(
                     language = TSLanguageJava.getInstance(),
@@ -350,7 +353,7 @@ class MainActivity : AppCompatActivity() {
         if (javaTshReady && highlighter != null) {
             highlighter.reparse()
         } else {
-            Log.w(TAG, "Editor TSH renderer unavailable: ready=$javaTshReady highlighterInstalled=${editorView?.getSyntaxHighlighter() != null} language=$currentLanguageKey")
+            Log.w(TAG, "Editor TSH renderer unavailable: ready=$javaTshReady highlighterInstalled=${editorView?.getSyntaxHighlighter() != null} editorLanguage=$editorLanguageKey consoleLanguage=$currentLanguageKey")
         }
     }
 
