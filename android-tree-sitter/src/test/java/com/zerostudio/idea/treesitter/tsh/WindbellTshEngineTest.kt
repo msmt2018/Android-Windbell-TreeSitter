@@ -978,6 +978,46 @@ class WindbellTshLinkageTest {
     }
 
     @Test
+    fun testNativeQueryStylesJavaLocalVariableDeclaration() {
+        val engine = WindbellTshEngine.instance
+        val language = TSLanguageJava.getInstance()
+        val source = """
+            tsh 2 {
+                language { id: "java-local-variable-query" extensions: [".jlvq"] }
+                styles { variable { scope: "variable.other" } }
+                treeSitter {
+                    queries: [
+                        {
+                            id: "local-variable-declarations"
+                            priority: 12
+                            source: `(variable_declarator name: (identifier) @localName)`
+                            captures: { localName: variable }
+                        }
+                    ]
+                }
+            }
+        """.trimIndent()
+        assertTrue(engine.loadTshSource("java-local-variable-query", source, language))
+
+        val parser = TSParser.create().apply { setLanguage(language) }
+        val code = "class Demo { void run() { int count = 1; } }"
+        val tree = parser.parseString(code)
+        val spans = engine.computeHighlights(tree, code, "java-local-variable-query")
+        val variableId = engine.getStyleCatalog("java-local-variable-query")
+            .first { it.name == "variable" }.styleId
+        val variableSpan = spans.firstOrNull {
+            it.styleId == variableId &&
+                code.substring(it.startByte shr 1, it.endByte shr 1) == "count"
+        }
+        assertNotNull("Native Tree-sitter Query must capture the local variable name", variableSpan)
+        assertEquals(3, variableSpan?.source)
+        assertEquals(code.indexOf("count") * 2, variableSpan?.startByte)
+        assertEquals((code.indexOf("count") + "count".length) * 2, variableSpan?.endByte)
+        tree?.close()
+        parser.close()
+    }
+
+    @Test
     fun testNativeQueryCaptureBindingsSeparateNamesFromStyles() {
         val engine = WindbellTshEngine.instance
         val language = TSLanguageJava.getInstance()
