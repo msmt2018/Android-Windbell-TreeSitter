@@ -970,6 +970,16 @@ class WindbellTshLinkageTest {
                             id: "all-captures-not-match"
                             priority: 90
                             source: `(method_declaration name: (identifier) @method parameters: (formal_parameters (formal_parameter name: (identifier) @method)) (#not-match? @method "^skip$"))`
+                        },
+                        {
+                            id: "all-captures-any-of"
+                            priority: 100
+                            source: `(method_declaration name: (identifier) @method parameters: (formal_parameters (formal_parameter name: (identifier) @method)) (#any-of? @method "multiOk" "value"))`
+                        },
+                        {
+                            id: "all-captures-not-any-of"
+                            priority: 110
+                            source: `(method_declaration name: (identifier) @method parameters: (formal_parameters (formal_parameter name: (identifier) @method)) (#not-any-of? @method "skip"))`
                         }
                     ]
                 }
@@ -1010,6 +1020,16 @@ class WindbellTshLinkageTest {
         assertFalse(spans.any { it.styleId == methodId && it.priority == 90 && it.startByte == multiBadName },
             "#not-match? must require every captured value not to match.")
         assertFalse(spans.any { it.styleId == methodId && it.priority == 90 && it.startByte == multiBadParameter })
+        assertTrue(spans.any { it.styleId == methodId && it.priority == 100 && it.startByte == multiOkName })
+        assertTrue(spans.any { it.styleId == methodId && it.priority == 100 && it.startByte == multiOkParameter })
+        assertFalse(spans.any { it.styleId == methodId && it.priority == 100 && it.startByte == multiBadName },
+            "#any-of? requires every captured value to belong to the allowed set.")
+        assertFalse(spans.any { it.styleId == methodId && it.priority == 100 && it.startByte == multiBadParameter })
+        assertTrue(spans.any { it.styleId == methodId && it.priority == 110 && it.startByte == multiOkName })
+        assertTrue(spans.any { it.styleId == methodId && it.priority == 110 && it.startByte == multiOkParameter })
+        assertFalse(spans.any { it.styleId == methodId && it.priority == 110 && it.startByte == multiBadName },
+            "#not-any-of? rejects a match if any captured value belongs to the forbidden set.")
+        assertFalse(spans.any { it.styleId == methodId && it.priority == 110 && it.startByte == multiBadParameter })
         tree?.close()
         parser.close()
     }

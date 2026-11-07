@@ -183,11 +183,14 @@ static bool tshEvaluateNativePredicates(const NativeQueryProgram& program,
                 [&](const std::vector<UChar>& value) { return value != expected.front(); });
             accepted = op == "eq?" ? all_equal : all_not_equal;
         } else if (op == "any-of?" || op == "not-any-of?") {
-            const bool any_equal = std::any_of(actual.begin(), actual.end(),
+            const bool all_in_set = std::all_of(actual.begin(), actual.end(),
                 [&](const std::vector<UChar>& value) {
                     return std::find(expected.begin(), expected.end(), value) != expected.end();
                 });
-            accepted = op == "any-of?" ? any_equal : !any_equal;
+            accepted = op == "any-of?" ? all_in_set :
+                std::none_of(actual.begin(), actual.end(), [&](const std::vector<UChar>& value) {
+                    return std::find(expected.begin(), expected.end(), value) != expected.end();
+                });
         } else if (op == "match?" || op == "not-match?") {
             const NativeQueryProgram::PredicateRegex* compiled = nullptr;
             for (const auto& candidate : program.predicate_regexes) {
