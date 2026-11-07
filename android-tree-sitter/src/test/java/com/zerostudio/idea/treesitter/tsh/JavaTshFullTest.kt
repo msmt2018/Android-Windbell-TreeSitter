@@ -3,9 +3,9 @@ package com.zerostudio.idea.treesitter.tsh
 import android.text.SpannableStringBuilder
 import com.zerostudio.idea.treesitter.TSParser
 import com.zerostudio.idea.treesitter.java.TSLanguageJava
-import org.junit.Assert.*
-import org.junit.BeforeClass
-import org.junit.Test
+import org.junit.jupiter.api.Assertions.*
+import org.junit.jupiter.api.BeforeAll
+import org.junit.jupiter.api.Test
 import java.io.File
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
@@ -16,7 +16,7 @@ class JavaTshFullTest {
         private const val TSH_RESOURCE_PATH = "src/main/assets/tsh/java.tsh"
 
         @JvmStatic
-        @BeforeClass
+        @BeforeAll
         fun setup() {
             // The grammar lives in the app's asset source set; this test belongs
             // to the android-tree-sitter module, so resolve it from either Gradle
