@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?>
+<menu xmlns:android="http://schemas.android.com/apk/res/android"
+ xmlns:app="http://schemas.android.com/apk/res-auto">
+
+ <item
+  android:id="@+id/toggle_tsh_theme"
+  android:title="🎨 切换白天/黑夜主题"
+  app:showAsAction="ifRoom" />
+
+ <item
+  android:id="@+id/test_tsh_suite"
+  android:title="⚙️ TSH 核心测试套件"
+  app:showAsAction="never" />
+
+ <item
+  android:id="@+id/test_tsh_cursor_capture"
+  android:title="🔬 光标行 / 符号捕获诊断"
+  app:showAsAction="never" />
+
+ <item
+  android:id="@+id/show_tsh_schemes"
+  android:title="🎨 TSH Scheme 主题浏览器"
+  app:showAsAction="never" />
+
+ <item
+  android:id="@+id/reload_external"
+  android:title="🔄 重载外部语法库"
+  app:showAsAction="never" />
+
+ <item
+  android:id="@+id/action_open_file"
+  android:title="打开本地源码文件..."
+  app:showAsAction="ifRoom" />
+
+ <!-- <item -->
+  <!-- android:id="@+id/reload_external" -->
+  <!-- android:title="@string/reload_external" /> -->
+
+ <item
+  android:id="@+id/test_parser_performance"
+  android:title="@string/test_parser_performance" />
+
+ <item
+  android:id="@+id/test_string_performance"
+  android:title="@string/test_string_performance" />
+</menu>

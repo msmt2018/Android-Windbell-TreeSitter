@@ -1,0 +1,7 @@
+{
+  "name": "Android-Windbell-TreeSitter-root",
+  "private": true,
+  "workspaces": [
+    "grammars/*"
+  ]
+}

@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="x.github.module.editor.render.RowCacheTest" tests="12" skipped="0" failures="0" errors="0" timestamp="2026-11-07T07:35:19" hostname="localhost" time="1.099">
+  <properties/>
+  <testcase name="rowsOfEditsNotDrawnYetMoveAlong()" classname="x.github.module.editor.render.RowCacheTest" time="0.018"/>
+  <testcase name="invalidatingAllTextStylesEveryRowAtOnce()" classname="x.github.module.editor.render.RowCacheTest" time="0.001"/>
+  <testcase name="aNewRowMayWaitAndIsStyledLater()" classname="x.github.module.editor.render.RowCacheTest" time="0.0"/>
+  <testcase name="enterMovesTheRowsBelowWithTheirRecordings()" classname="x.github.module.editor.render.RowCacheTest" time="0.001"/>
+  <testcase name="aLostRecordingIsRecordedAgain()" classname="x.github.module.editor.render.RowCacheTest" time="0.001"/>
+  <testcase name="newStylesKeepWhatIsShownUntilThereIsTime()" classname="x.github.module.editor.render.RowCacheTest" time="0.0"/>
+  <testcase name="recordingsOfRowsOffScreenAreReused()" classname="x.github.module.editor.render.RowCacheTest" time="0.003"/>
+  <testcase name="clearForgetsEverything()" classname="x.github.module.editor.render.RowCacheTest" time="0.001"/>
+  <testcase name="anEditedStyledRowIsStyledAtOnce()" classname="x.github.module.editor.render.RowCacheTest" time="0.001"/>
+  <testcase name="aPlainRowWhoseTextChangedMayStillWait()" classname="x.github.module.editor.render.RowCacheTest" time="0.0"/>
+  <testcase name="joiningLinesMovesTheRowsBelowUp()" classname="x.github.module.editor.render.RowCacheTest" time="0.001"/>
+  <testcase name="styledRowsNeverFlickerAndRowsShowTheirText()" classname="x.github.module.editor.render.RowCacheTest" time="1.07"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

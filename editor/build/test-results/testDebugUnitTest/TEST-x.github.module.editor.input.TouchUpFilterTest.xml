@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="x.github.module.editor.input.TouchUpFilterTest" tests="4" skipped="0" failures="0" errors="0" timestamp="2026-11-07T07:35:16" hostname="localhost" time="0.005">
+  <properties/>
+  <testcase name="aHandleThatRestedBeforeLiftingStays()" classname="x.github.module.editor.input.TouchUpFilterTest" time="0.001"/>
+  <testcase name="withoutAnyMoveThereIsNothingToTakeBack()" classname="x.github.module.editor.input.TouchUpFilterTest" time="0.002"/>
+  <testcase name="aHandleStillMovingWhenLiftedStays()" classname="x.github.module.editor.input.TouchUpFilterTest" time="0.001"/>
+  <testcase name="aStepRightBeforeLiftingAfterARestIsTakenBack()" classname="x.github.module.editor.input.TouchUpFilterTest" time="0.001"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

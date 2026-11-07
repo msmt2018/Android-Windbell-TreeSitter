@@ -1,0 +1,475 @@
+[
+  {
+    "name": "aidl",
+    "composite": false,
+    "entry": "tree_sitter_aidl",
+    "src.extra": []
+  },
+  {
+    "name": "arm64",
+    "composite": false,
+    "entry": "tree_sitter_arm64",
+    "src.extra": []
+  },
+  {
+    "name": "asciidoc",
+    "composite": true,
+    "sub.paths": [
+      "tree-sitter-asciidoc",
+      "tree-sitter-asciidoc_inline"
+    ],
+    "sub.entries": [
+      "tree_sitter_asciidoc",
+      "tree_sitter_asciidoc_inline"
+    ],
+    "src.extra": []
+  },
+  {
+    "name": "asm",
+    "composite": false,
+    "entry": "tree_sitter_asm",
+    "src.extra": []
+  },
+  {
+    "name": "bash",
+    "composite": false,
+    "entry": "tree_sitter_bash",
+    "src.extra": [
+      "src/scanner.c"
+    ]
+  },
+  {
+    "name": "c",
+    "composite": false,
+    "entry": "tree_sitter_c",
+    "src.extra": []
+  },
+  {
+    "name": "cmake",
+    "composite": false,
+    "entry": "tree_sitter_cmake",
+    "src.extra": [
+      "src/scanner.c"
+    ]
+  },
+  {
+    "name": "containerfile",
+    "composite": false,
+    "entry": "tree_sitter_containerfile",
+    "src.extra": [
+      "src/scanner.c"
+    ]
+  },
+  {
+    "name": "cpp",
+    "composite": false,
+    "entry": "tree_sitter_cpp",
+    "src.extra": [
+      "src/scanner.c"
+    ]
+  },
+  {
+    "name": "csharp",
+    "composite": false,
+    "entry": "tree_sitter_c_sharp",
+    "src.extra": [
+      "src/scanner.c"
+    ]
+  },
+  {
+    "name": "csv",
+    "composite": true,
+    "sub.paths": [
+      "csv",
+      "psv",
+      "tsv"
+    ],
+    "sub.entries": [
+      "tree_sitter_csv",
+      "tree_sitter_psv",
+      "tree_sitter_tsv"
+    ],
+    "src.extra": []
+  },
+  {
+    "name": "dart",
+    "composite": false,
+    "entry": "tree_sitter_dart",
+    "src.extra": [
+      "src/scanner.c"
+    ]
+  },
+  {
+    "name": "diff",
+    "composite": false,
+    "entry": "tree_sitter_diff",
+    "src.extra": []
+  },
+  {
+    "name": "disassembly",
+    "composite": false,
+    "entry": "tree_sitter_disassembly",
+    "src.extra": [
+      "src/scanner.c"
+    ]
+  },
+  {
+    "name": "dockerfile",
+    "composite": false,
+    "entry": "tree_sitter_dockerfile",
+    "src.extra": [
+      "src/scanner.c"
+    ]
+  },
+  {
+    "name": "gdb",
+    "composite": false,
+    "entry": "tree_sitter_gdb",
+    "src.extra": [
+      "src/scanner.c"
+    ]
+  },
+  {
+    "name": "git_rebase",
+    "composite": false,
+    "entry": "tree_sitter_git_rebase",
+    "src.extra": []
+  },
+  {
+    "name": "gitattributes",
+    "composite": false,
+    "entry": "tree_sitter_gitattributes",
+    "src.extra": []
+  },
+  {
+    "name": "gitcommit",
+    "composite": false,
+    "entry": "tree_sitter_gitcommit",
+    "src.extra": [
+      "src/scanner.c"
+    ]
+  },
+  {
+    "name": "gitignore",
+    "composite": false,
+    "entry": "tree_sitter_gitignore",
+    "src.extra": [
+      "src/scanner.c"
+    ]
+  },
+  {
+    "name": "go",
+    "composite": false,
+    "entry": "tree_sitter_go",
+    "src.extra": []
+  },
+  {
+    "name": "gomod",
+    "composite": false,
+    "entry": "tree_sitter_gomod",
+    "src.extra": []
+  },
+  {
+    "name": "graphql",
+    "composite": false,
+    "entry": "tree_sitter_graphql",
+    "src.extra": []
+  },
+  {
+    "name": "groovy",
+    "composite": false,
+    "entry": "tree_sitter_groovy",
+    "src.extra": [
+      "src/scanner.c"
+    ]
+  },
+  {
+    "name": "ini",
+    "composite": false,
+    "entry": "tree_sitter_ini",
+    "src.extra": []
+  },
+  {
+    "name": "java",
+    "composite": false,
+    "entry": "tree_sitter_java",
+    "src.extra": []
+  },
+  {
+    "name": "javascript",
+    "composite": false,
+    "entry": "tree_sitter_javascript",
+    "src.extra": [
+      "src/scanner.c"
+    ]
+  },
+  {
+    "name": "jsdoc",
+    "composite": false,
+    "entry": "tree_sitter_jsdoc",
+    "src.extra": [
+      "src/scanner.c"
+    ]
+  },
+  {
+    "name": "json",
+    "composite": false,
+    "entry": "tree_sitter_json",
+    "src.extra": []
+  },
+  {
+    "name": "kotlin",
+    "composite": false,
+    "entry": "tree_sitter_kotlin",
+    "src.extra": [
+      "src/scanner.c"
+    ]
+  },
+  {
+    "name": "llvm",
+    "composite": false,
+    "entry": "tree_sitter_llvm",
+    "src.extra": []
+  },
+  {
+    "name": "llvm_mir",
+    "composite": false,
+    "entry": "tree_sitter_llvm_mir",
+    "src.extra": []
+  },
+  {
+    "name": "logcat",
+    "composite": false,
+    "entry": "tree_sitter_log",
+    "src.extra": []
+  },
+  {
+    "name": "lua",
+    "composite": false,
+    "entry": "tree_sitter_lua",
+    "src.extra": [
+      "src/scanner.c"
+    ]
+  },
+  {
+    "name": "make",
+    "composite": false,
+    "entry": "tree_sitter_make",
+    "src.extra": []
+  },
+  {
+    "name": "markdwon",
+    "composite": true,
+    "sub.paths": [
+      "tree-sitter-markdown",
+      "tree-sitter-markdown-inline"
+    ],
+    "sub.entries": [
+      "tree_sitter_markdown",
+      "tree_sitter_markdown_inline"
+    ],
+    "src.extra": []
+  },
+  {
+    "name": "php",
+    "composite": true,
+    "sub.paths": [
+      "php",
+      "php_only"
+    ],
+    "sub.entries": [
+      "tree_sitter_php",
+      "tree_sitter_php_only"
+    ],
+    "src.extra": []
+  },
+  {
+    "name": "properties",
+    "composite": false,
+    "entry": "tree_sitter_properties",
+    "src.extra": [
+      "src/scanner.c"
+    ]
+  },
+  {
+    "name": "proto",
+    "composite": false,
+    "entry": "tree_sitter_proto",
+    "src.extra": []
+  },
+  {
+    "name": "python",
+    "composite": false,
+    "entry": "tree_sitter_python",
+    "src.extra": [
+      "src/scanner.c"
+    ]
+  },
+  {
+    "name": "regex",
+    "composite": true,
+    "sub.paths": [
+      "ecmascript/ecmaregex",
+      "ecmascript/ecmaregex_u",
+      "ecmascript/ecmaregex_v",
+      "pcre2",
+      "posix/bre",
+      "posix/ere",
+      "python/pyregex",
+      "python/pyregex_verbose"
+    ],
+    "sub.entries": [
+      "tree_sitter_ecmaregex",
+      "tree_sitter_ecmaregex_u",
+      "tree_sitter_ecmaregex_v",
+      "tree_sitter_pcre2",
+      "tree_sitter_posix_bre",
+      "tree_sitter_posix_ere",
+      "tree_sitter_pyregex",
+      "tree_sitter_pyregex_verbose"
+    ],
+    "src.extra": []
+  },
+  {
+    "name": "requirements",
+    "composite": false,
+    "entry": "tree_sitter_requirements",
+    "src.extra": []
+  },
+  {
+    "name": "rst",
+    "composite": false,
+    "entry": "tree_sitter_rst",
+    "src.extra": [
+      "src/scanner.c"
+    ]
+  },
+  {
+    "name": "ruby",
+    "composite": false,
+    "entry": "tree_sitter_ruby",
+    "src.extra": [
+      "src/scanner.c"
+    ]
+  },
+  {
+    "name": "rust",
+    "composite": false,
+    "entry": "tree_sitter_rust",
+    "src.extra": [
+      "src/scanner.c"
+    ]
+  },
+  {
+    "name": "scss",
+    "composite": false,
+    "entry": "tree_sitter_scss",
+    "src.extra": [
+      "src/scanner.c"
+    ]
+  },
+  {
+    "name": "smali",
+    "composite": false,
+    "entry": "tree_sitter_smali",
+    "src.extra": [
+      "src/scanner.c"
+    ]
+  },
+  {
+    "name": "sql",
+    "composite": false,
+    "entry": "tree_sitter_sql",
+    "src.extra": [
+      "src/scanner.c"
+    ]
+  },
+  {
+    "name": "ssh",
+    "composite": false,
+    "entry": "tree_sitter_ssh_client_config",
+    "src.extra": []
+  },
+  {
+    "name": "starlark",
+    "composite": false,
+    "entry": "tree_sitter_starlark",
+    "src.extra": [
+      "src/scanner.c"
+    ]
+  },
+  {
+    "name": "svelte",
+    "composite": false,
+    "entry": "tree_sitter_svelte",
+    "src.extra": [
+      "src/scanner.c"
+    ]
+  },
+  {
+    "name": "swift",
+    "composite": false,
+    "entry": "tree_sitter_swift",
+    "src.extra": [
+      "src/scanner.c"
+    ]
+  },
+  {
+    "name": "toml",
+    "composite": false,
+    "entry": "tree_sitter_toml",
+    "src.extra": [
+      "src/scanner.c"
+    ]
+  },
+  {
+    "name": "typescript",
+    "composite": true,
+    "sub.paths": [
+      "tsx",
+      "typescript"
+    ],
+    "sub.entries": [
+      "tree_sitter_tsx",
+      "tree_sitter_typescript"
+    ],
+    "src.extra": []
+  },
+  {
+    "name": "vue",
+    "composite": false,
+    "entry": "tree_sitter_vue",
+    "src.extra": [
+      "src/scanner.c"
+    ]
+  },
+  {
+    "name": "xml",
+    "composite": true,
+    "sub.paths": [
+      "dtd",
+      "xml"
+    ],
+    "sub.entries": [
+      "tree_sitter_dtd",
+      "tree_sitter_xml"
+    ],
+    "src.extra": []
+  },
+  {
+    "name": "yaml",
+    "composite": false,
+    "entry": "tree_sitter_yaml",
+    "src.extra": [
+      "src/scanner.c"
+    ]
+  },
+  {
+    "name": "zsh",
+    "composite": false,
+    "entry": "tree_sitter_zsh",
+    "src.extra": [
+      "src/scanner.c"
+    ]
+  }
+]

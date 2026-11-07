@@ -1,0 +1,3 @@
+ÑÕ<PieceTreeStress: 2000 edits on a 20k-line document in 11 ms
+ÑÖ,PieceTreeStress: build 538890 chars in 2 ms
+ÑÖ6PieceTreeStress: 20000 random getLineContent in 13 ms

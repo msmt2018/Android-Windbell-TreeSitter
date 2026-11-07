@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.zerostudio.idea.piecetable.PieceTreeTextBufferApiTest" tests="23" skipped="0" failures="0" errors="0" timestamp="2026-11-07T08:09:21" hostname="localhost" time="0.044">
+  <properties/>
+  <testcase name="applyEditsReplace()" classname="com.zerostudio.idea.piecetable.PieceTreeTextBufferApiTest" time="0.001"/>
+  <testcase name="applyEditsDelete()" classname="com.zerostudio.idea.piecetable.PieceTreeTextBufferApiTest" time="0.0"/>
+  <testcase name="buffersWithDifferentChunkingAreEqual()" classname="com.zerostudio.idea.piecetable.PieceTreeTextBufferApiTest" time="0.0"/>
+  <testcase name="applyEditsInsert()" classname="com.zerostudio.idea.piecetable.PieceTreeTextBufferApiTest" time="0.001"/>
+  <testcase name="reverseEditsUndoAnInsert()" classname="com.zerostudio.idea.piecetable.PieceTreeTextBufferApiTest" time="0.004"/>
+  <testcase name="applyEditsOverlappingRangesThrow()" classname="com.zerostudio.idea.piecetable.PieceTreeTextBufferApiTest" time="0.001"/>
+  <testcase name="applyEditsReportsContentChanges()" classname="com.zerostudio.idea.piecetable.PieceTreeTextBufferApiTest" time="0.0"/>
+  <testcase name="textChangeCarriesOldAndNewText()" classname="com.zerostudio.idea.piecetable.PieceTreeTextBufferApiTest" time="0.0"/>
+  <testcase name="reverseEditsUndoMultipleOperations()" classname="com.zerostudio.idea.piecetable.PieceTreeTextBufferApiTest" time="0.003"/>
+  <testcase name="setEolOnBufferKeepsContent()" classname="com.zerostudio.idea.piecetable.PieceTreeTextBufferApiTest" time="0.001"/>
+  <testcase name="getValueLengthAndCharacterCount()" classname="com.zerostudio.idea.piecetable.PieceTreeTextBufferApiTest" time="0.0"/>
+  <testcase name="getValueInRangeWithExplicitEol()" classname="com.zerostudio.idea.piecetable.PieceTreeTextBufferApiTest" time="0.0"/>
+  <testcase name="lineColumnHelpers()" classname="com.zerostudio.idea.piecetable.PieceTreeTextBufferApiTest" time="0.001"/>
+  <testcase name="applyEditsTouchingRangesAreAllowed()" classname="com.zerostudio.idea.piecetable.PieceTreeTextBufferApiTest" time="0.0"/>
+  <testcase name="getRangeAtAndOffsetAt()" classname="com.zerostudio.idea.piecetable.PieceTreeTextBufferApiTest" time="0.0"/>
+  <testcase name="reverseEditsUndoAMultilineReplace()" classname="com.zerostudio.idea.piecetable.PieceTreeTextBufferApiTest" time="0.0"/>
+  <testcase name="applyEditsMultilineReplace()" classname="com.zerostudio.idea.piecetable.PieceTreeTextBufferApiTest" time="0.0"/>
+  <testcase name="flagsAreUpdatedAfterEdits()" classname="com.zerostudio.idea.piecetable.PieceTreeTextBufferApiTest" time="0.001"/>
+  <testcase name="applyEditsWithoutUndoReturnsNoReverseEdits()" classname="com.zerostudio.idea.piecetable.PieceTreeTextBufferApiTest" time="0.001"/>
+  <testcase name="readPiecesContentMatchesToString()" classname="com.zerostudio.idea.piecetable.PieceTreeTextBufferApiTest" time="0.014"/>
+  <testcase name="applyEditsMultipleDisjointOperations()" classname="com.zerostudio.idea.piecetable.PieceTreeTextBufferApiTest" time="0.001"/>
+  <testcase name="applyEditsNormalizesEolOfInsertedText()" classname="com.zerostudio.idea.piecetable.PieceTreeTextBufferApiTest" time="0.001"/>
+  <testcase name="charSequenceContractForAscii()" classname="com.zerostudio.idea.piecetable.PieceTreeTextBufferApiTest" time="0.001"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

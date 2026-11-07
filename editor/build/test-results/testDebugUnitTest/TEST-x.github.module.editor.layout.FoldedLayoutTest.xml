@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="x.github.module.editor.layout.FoldedLayoutTest" tests="7" skipped="0" failures="0" errors="0" timestamp="2026-11-07T07:35:16" hostname="localhost" time="0.059">
+  <properties/>
+  <testcase name="unfoldingBringsTheRowsBack()" classname="x.github.module.editor.layout.FoldedLayoutTest" time="0.037"/>
+  <testcase name="itFollowsEditsOfTheText()" classname="x.github.module.editor.layout.FoldedLayoutTest" time="0.001"/>
+  <testcase name="aRowNumberPastTheEndIsTheLastRow()" classname="x.github.module.editor.layout.FoldedLayoutTest" time="0.001"/>
+  <testcase name="foldedLinesHaveNoRows()" classname="x.github.module.editor.layout.FoldedLayoutTest" time="0.001"/>
+  <testcase name="aHiddenLineBelongsToTheRowOfTheFoldStart()" classname="x.github.module.editor.layout.FoldedLayoutTest" time="0.001"/>
+  <testcase name="withNothingFoldedItIsTheInnerLayout()" classname="x.github.module.editor.layout.FoldedLayoutTest" time="0.001"/>
+  <testcase name="withWordWrapEveryRowOfAFoldedLineIsHidden()" classname="x.github.module.editor.layout.FoldedLayoutTest" time="0.015"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

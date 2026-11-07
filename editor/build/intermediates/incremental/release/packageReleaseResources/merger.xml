@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="utf-8"?>
+<merger version="3"><dataSet aapt-namespace="http://schemas.android.com/apk/res-auto" config="main$Generated" generated="true" ignore_pattern="!.svn:!.git:!.ds_store:!*.scc:.*:&lt;dir>_*:!CVS:!thumbs.db:!picasa.ini:!*~"><source path="/root/Android-Windbell-TreeSitter/editor/src/main/res"/></dataSet><dataSet aapt-namespace="http://schemas.android.com/apk/res-auto" config="main" generated-set="main$Generated" ignore_pattern="!.svn:!.git:!.ds_store:!*.scc:.*:&lt;dir>_*:!CVS:!thumbs.db:!picasa.ini:!*~"><source path="/root/Android-Windbell-TreeSitter/editor/src/main/res"><file name="ic_horiz_scrollbar_thumb" path="/root/Android-Windbell-TreeSitter/editor/src/main/res/drawable/ic_horiz_scrollbar_thumb.xml" qualifiers="" type="drawable"/><file name="ic_floating_bar_back" path="/root/Android-Windbell-TreeSitter/editor/src/main/res/drawable/ic_floating_bar_back.xml" qualifiers="" type="drawable"/><file name="ic_floating_bar_more" path="/root/Android-Windbell-TreeSitter/editor/src/main/res/drawable/ic_floating_bar_more.xml" qualifiers="" type="drawable"/><file name="ic_scrollbar_track" path="/root/Android-Windbell-TreeSitter/editor/src/main/res/drawable/ic_scrollbar_track.xml" qualifiers="" type="drawable"/><file name="ic_magnifier_overlay" path="/root/Android-Windbell-TreeSitter/editor/src/main/res/drawable/ic_magnifier_overlay.xml" qualifiers="" type="drawable"/><file name="ic_text_cursor_material" path="/root/Android-Windbell-TreeSitter/editor/src/main/res/drawable/ic_text_cursor_material.xml" qualifiers="" type="drawable"/><file name="ic_text_select_handle_left" path="/root/Android-Windbell-TreeSitter/editor/src/main/res/drawable/ic_text_select_handle_left.xml" qualifiers="" type="drawable"/><file name="ic_text_select_handle_right" path="/root/Android-Windbell-TreeSitter/editor/src/main/res/drawable/ic_text_select_handle_right.xml" qualifiers="" type="drawable"/><file name="ic_text_select_handle_middle" path="/root/Android-Windbell-TreeSitter/editor/src/main/res/drawable/ic_text_select_handle_middle.xml" qualifiers="" type="drawable"/><file name="ic_vert_scrollbar_thumb" path="/root/Android-Windbell-TreeSitter/editor/src/main/res/drawable/ic_vert_scrollbar_thumb.xml" qualifiers="" type="drawable"/><file name="scrollbar_state_lists" path="/root/Android-Windbell-TreeSitter/editor/src/main/res/drawable/scrollbar_state_lists.xml" qualifiers="" type="drawable"/><file path="/root/Android-Windbell-TreeSitter/editor/src/main/res/values/colors.xml" qualifiers=""><color name="purple_200">#FFBB86FC</color><color name="purple_500">#FF6200EE</color><color name="purple_700">#FF3700B3</color><color name="teal_200">#FF03DAC5</color><color name="teal_700">#FF018786</color><color name="black">#FF000000</color><color name="white">#FFFFFFFF</color></file><file path="/root/Android-Windbell-TreeSitter/editor/src/main/res/values/editor_view_attrs.xml" qualifiers=""><declare-styleable name="EditorView">
+        
+        <attr name="android:textSize"/>
+        
+        <attr name="android:textColor"/>
+        
+        <attr name="android:textColorHighlight"/>
+        
+        <attr name="android:fontFamily"/>
+        
+        <attr name="android:typeface"/>
+        
+        <attr name="android:textStyle"/>
+        
+        <attr name="android:text"/>
+
+        
+        <attr format="boolean" name="editable"/>
+        
+        <attr format="boolean" name="wordwrap"/>
+        
+        <attr format="color" name="lineNumberColor"/>
+        
+        <attr format="color" name="currentLineColor"/>
+        
+        <attr format="color" name="searchMatchColor"/>
+        
+        <attr format="color" name="currentMatchColor"/>
+    </declare-styleable></file><file path="/root/Android-Windbell-TreeSitter/editor/src/main/res/values/strings.xml" qualifiers=""><string name="floating_bar_more_options">More options</string><string name="floating_bar_back">Back</string></file><file path="/root/Android-Windbell-TreeSitter/editor/src/main/res/values-zh/strings.xml" qualifiers="zh"><string name="floating_bar_more_options">更多选项</string><string name="floating_bar_back">返回</string></file></source></dataSet><dataSet aapt-namespace="http://schemas.android.com/apk/res-auto" config="release$Generated" generated="true" ignore_pattern="!.svn:!.git:!.ds_store:!*.scc:.*:&lt;dir>_*:!CVS:!thumbs.db:!picasa.ini:!*~"><source path="/root/Android-Windbell-TreeSitter/editor/src/release/res"/></dataSet><dataSet aapt-namespace="http://schemas.android.com/apk/res-auto" config="release" generated-set="release$Generated" ignore_pattern="!.svn:!.git:!.ds_store:!*.scc:.*:&lt;dir>_*:!CVS:!thumbs.db:!picasa.ini:!*~"><source path="/root/Android-Windbell-TreeSitter/editor/src/release/res"/></dataSet><dataSet aapt-namespace="http://schemas.android.com/apk/res-auto" config="generated$Generated" generated="true" ignore_pattern="!.svn:!.git:!.ds_store:!*.scc:.*:&lt;dir>_*:!CVS:!thumbs.db:!picasa.ini:!*~"><source path="/root/Android-Windbell-TreeSitter/editor/build/generated/res/resValues/release"/></dataSet><dataSet aapt-namespace="http://schemas.android.com/apk/res-auto" config="generated" generated-set="generated$Generated" ignore_pattern="!.svn:!.git:!.ds_store:!*.scc:.*:&lt;dir>_*:!CVS:!thumbs.db:!picasa.ini:!*~"><source path="/root/Android-Windbell-TreeSitter/editor/build/generated/res/resValues/release"/></dataSet><mergedItems><configuration qualifiers=""><declare-styleable name="EditorView">
+        
+        <attr name="android:textSize"/>
+        
+        <attr name="android:textColor"/>
+        
+        <attr name="android:textColorHighlight"/>
+        
+        <attr name="android:fontFamily"/>
+        
+        <attr name="android:typeface"/>
+        
+        <attr name="android:textStyle"/>
+        
+        <attr name="android:text"/>
+
+        
+        <attr format="boolean" name="editable"/>
+        
+        <attr format="boolean" name="wordwrap"/>
+        
+        <attr format="color" name="lineNumberColor"/>
+        
+        <attr format="color" name="currentLineColor"/>
+        
+        <attr format="color" name="searchMatchColor"/>
+        
+        <attr format="color" name="currentMatchColor"/>
+    </declare-styleable></configuration></mergedItems></merger>
