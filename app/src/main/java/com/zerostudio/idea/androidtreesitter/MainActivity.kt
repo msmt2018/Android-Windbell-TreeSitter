@@ -155,7 +155,10 @@ class MainActivity : AppCompatActivity() {
                 }
                 val result = runCatching {
                     val source = assets.open("tsh/$assetName").bufferedReader().use { it.readText() }
-                    val compiled = WindbellTshEngine.instance.loadTshSource(extension, source, language)
+                    val engine = WindbellTshEngine.instance
+                    val compiled = synchronized(engine) {
+                        engine.loadTshSource(extension, source, language)
+                    }
                     if (!compiled) {
                         val diagnostics = WindbellTshEngine.instance.lastCompileDiagnostics
                         val message = diagnostics.joinToString { "${it.code}@${it.line}:${it.column}: ${it.message}" }
@@ -171,21 +174,23 @@ class MainActivity : AppCompatActivity() {
                 }
             }
             withContext(Dispatchers.Main) {
-                javaTshReady = tshConfigurationStates["java"] == "READY"
-                restoredTshScheme?.let { scheme ->
-                    val restored = WindbellTshEngine.instance.selectScheme("java", scheme)
-                    if (!restored) Log.w(TAG, "Saved TSH scheme no longer exists: $scheme")
+                if ("java" in languages) {
+                    javaTshReady = tshConfigurationStates["java"] == "READY"
+                    restoredTshScheme?.let { scheme ->
+                        val restored = WindbellTshEngine.instance.selectScheme("java", scheme)
+                        if (!restored) Log.w(TAG, "Saved TSH scheme no longer exists: $scheme")
+                    }
+                    restoredTshDark?.let { dark ->
+                        WindbellTshEngine.instance.setAppearance("java", dark)
+                        AppCompatDelegate.setDefaultNightMode(
+                            if (dark) AppCompatDelegate.MODE_NIGHT_YES else AppCompatDelegate.MODE_NIGHT_NO
+                        )
+                    }
+                    restoredTshScheme = null
+                    restoredTshDark = null
+                    installTshHighlighterIfReady()
+                    applyTshThemeTokens()
                 }
-                restoredTshDark?.let { dark ->
-                    WindbellTshEngine.instance.setAppearance("java", dark)
-                    AppCompatDelegate.setDefaultNightMode(
-                        if (dark) AppCompatDelegate.MODE_NIGHT_YES else AppCompatDelegate.MODE_NIGHT_NO
-                    )
-                }
-                restoredTshScheme = null
-                restoredTshDark = null
-                installTshHighlighterIfReady()
-                applyTshThemeTokens()
                 languages.keys.forEach { extension ->
                     Log.i(TAG, "TSH registration status .$extension: parser=READY config=${tshConfigurationStates[extension] ?: "UNKNOWN"}")
                 }
