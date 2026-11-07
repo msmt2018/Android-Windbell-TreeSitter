@@ -901,10 +901,12 @@ class MainActivity : AppCompatActivity() {
                 package com.demo;
                 /** Javadoc comment with @param target */
                 public class TestClass {
+                    private static final int MAX_CACHE_CAPACITY = 1024;
                     // Single line comment
                     private String message = "Hello \"Escaped\" World";
                     public void doWork() {
                         int value = 0xABCD;
+                        String multiline = "native query probe";
                     }
                 }
             """.trimIndent()
