@@ -295,7 +295,8 @@ public:
         TSTree* tree,
         const uint16_t* input_chars,
         uint32_t length_chars,
-        const std::string& extension
+        const std::string& extension,
+        std::vector<HighlightSpan>* diagnostic_spans = nullptr
     );
 
 private:

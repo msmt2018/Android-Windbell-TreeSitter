@@ -492,7 +492,7 @@ class WindbellTshEngine private constructor() {
     }
 
     fun computeHighlights(tree: TSTree?, text: String, extension: String): List<HighlightSpan> {
-        val flatData = nativeHighlight(tree?.nativeObject ?: 0L, text, extension) ?: return emptyList()
+        val flatData = nativeHighlight(tree?.nativeObject ?: 0L, text, extension, false) ?: return emptyList()
         // JNI row layout: start, end, packed(styleId|flags), priority, order, source.
         val count = flatData.size / 6
         val result = ArrayList<HighlightSpan>(count)
@@ -508,6 +508,29 @@ class WindbellTshEngine private constructor() {
             result.add(HighlightSpan(start, end, styleId, flags, priority, declarationOrder, source))
         }
         return result
+    }
+
+    /**
+     * Returns raw capture candidates emitted by each producer before final
+     * overlap resolution. Intended for diagnostics, not editor rendering.
+     */
+    fun computeDiagnosticCandidates(tree: TSTree?, text: String, extension: String): List<HighlightSpan> {
+        val flatData = nativeHighlight(tree?.nativeObject ?: 0L, text, extension, true) ?: return emptyList()
+        val count = flatData.size / 6
+        return ArrayList<HighlightSpan>(count).apply {
+            for (i in 0 until count) {
+                val packedMeta = flatData[i * 6 + 2]
+                add(HighlightSpan(
+                    startByte = flatData[i * 6],
+                    endByte = flatData[i * 6 + 1],
+                    styleId = packedMeta and 0xFFFF,
+                    fontFlags = (packedMeta ushr 16) and 0xFFFF,
+                    priority = flatData[i * 6 + 3],
+                    declarationOrder = flatData[i * 6 + 4],
+                    source = flatData[i * 6 + 5]
+                ))
+            }
+        }
     }
 
     @FastNative
@@ -544,7 +567,7 @@ class WindbellTshEngine private constructor() {
     private external fun nativeGetPalette(extension: String, schemeName: String): IntArray?
 
     @FastNative
-    private external fun nativeHighlight(treePtr: Long, text: String, extension: String): IntArray?
+    private external fun nativeHighlight(treePtr: Long, text: String, extension: String, diagnostics: Boolean): IntArray?
 
 
 }
