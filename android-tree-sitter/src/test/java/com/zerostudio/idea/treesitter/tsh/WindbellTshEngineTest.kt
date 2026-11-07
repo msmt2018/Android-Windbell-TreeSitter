@@ -793,6 +793,7 @@ class WindbellTshLinkageTest {
         val code = "class Demo { void run() {} }"
         val tree = parser.parseString(code)
         val spans = engine.computeHighlights(tree, code, "java-unified-span-sources")
+        val rawCandidates = engine.computeDiagnosticCandidates(tree, code, "java-unified-span-sources")
         val catalog = engine.getStyleCatalog("java-unified-span-sources")
         val astId = catalog.first { it.name == "astName" }.styleId
         val queryId = catalog.first { it.name == "queryName" }.styleId
@@ -807,6 +808,16 @@ class WindbellTshLinkageTest {
             "Native query candidates must join the same resolved output.")
         assertEquals(queryId, sameRange.first().styleId,
             "Higher-priority spans must be ordered first for identical ranges.")
+
+        val rawSameRange = rawCandidates.filter {
+            it.startByte == runStart && it.endByte == runStart + 6
+        }
+        assertTrue(rawSameRange.any { it.source == 2 && it.styleId == astId },
+            "Diagnostic mode must preserve AST selector candidates before resolver processing.")
+        assertTrue(rawSameRange.any { it.source == 3 && it.styleId == queryId },
+            "Diagnostic mode must preserve native query candidates before resolver processing.")
+        assertTrue(rawCandidates.size >= spans.size,
+            "Raw producer diagnostics must not lose candidates during final conflict resolution.")
 
         tree?.close()
         parser.close()

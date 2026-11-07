@@ -566,9 +566,7 @@ class MainActivity : AppCompatActivity() {
             } else {
                 tree.use {
                     val queryStart = System.nanoTime()
-                    // Diagnostic mode reports producer candidates before the final
-                    // renderer overlap/duplicate resolution pass.
-                    val captures = engine.computeDiagnosticCandidates(it, source, "java")
+                    val captures = engine.computeHighlights(it, source, "java")
                     val queryNanos = System.nanoTime() - queryStart
                     val lineCaptures = captures.filter { span ->
                         (span.startByte shr 1) < lineEnd && (span.endByte shr 1) > lineStart

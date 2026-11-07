@@ -511,8 +511,7 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlight(
     jobject /* thiz */,
     jlong tree_ptr,
     jstring text_jstr,
-    jstring extension_jstr,
-    jboolean diagnostics
+    jstring extension_jstr
 ) {
     if (!text_jstr || !extension_jstr) {
         throw_npe(env, "text or extension cannot be null");
@@ -537,16 +536,13 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlight(
     std::vector<uint16_t> buffer(len);
     env->GetStringRegion(text_jstr, 0, len, reinterpret_cast<jchar*>(buffer.data()));
 
-    std::vector<HighlightSpan> raw_candidates;
     std::vector<HighlightSpan> spans = WindbellEngine::getInstance().highlightHybrid(
         tree ? ts_tree_language(tree) : nullptr,
         tree,
         buffer.data(),
         static_cast<uint32_t>(len),
-        ext_str,
-        diagnostics == JNI_TRUE ? &raw_candidates : nullptr
+        ext_str
     );
-    if (diagnostics == JNI_TRUE) spans = std::move(raw_candidates);
 
     const jsize out_size = static_cast<jsize>(spans.size() * 6);
     jintArray result = env->NewIntArray(out_size);

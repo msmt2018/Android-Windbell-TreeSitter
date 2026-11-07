@@ -526,8 +526,7 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
     TSTree* tree,
     const uint16_t* input_chars,
     uint32_t length_chars,
-    const std::string& extension,
-    std::vector<HighlightSpan>* diagnostic_spans
+    const std::string& extension
 ) {
     std::vector<HighlightSpan> final_spans;
     if (length_chars != 0 && input_chars == nullptr) return final_spans;
@@ -1048,16 +1047,6 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
     }
     for (size_t i = native_query_span_begin; i < macro_spans.size(); ++i) {
         macro_spans[i].source = static_cast<uint8_t>(HighlightSource::NATIVE_QUERY);
-    }
-
-    // Preserve producer candidates before overlap resolution, duplicate collapse,
-    // clipping and adjacent-fragment merging. These are the actual captures
-    // emitted by each pipeline, not merely the surviving renderer spans.
-    if (diagnostic_spans) {
-        diagnostic_spans->clear();
-        diagnostic_spans->reserve(macro_spans.size() + micro_spans.size());
-        diagnostic_spans->insert(diagnostic_spans->end(), macro_spans.begin(), macro_spans.end());
-        diagnostic_spans->insert(diagnostic_spans->end(), micro_spans.begin(), micro_spans.end());
     }
 
     if (macro_spans.empty()) {
