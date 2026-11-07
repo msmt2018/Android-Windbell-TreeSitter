@@ -840,7 +840,9 @@ class MainActivity : AppCompatActivity() {
             val configState = tshConfigurationStates[extension] ?: "NOT_CHECKED"
             val schemes = if (configState == "READY") WindbellTshEngine.instance.listSchemes(extension) else emptyList()
             val styles = if (configState == "READY") WindbellTshEngine.instance.getStyleCatalog(extension).size else 0
-            report.appendLine("$name (.$extension): parser=$parserState · tsh=$configState · schemes=${schemes.size} · styles=$styles")
+            val bindingClass = if (name == "C") "TSLanguage.loadLanguage" else "TSLanguage$name"
+            val nativeLibrary = "libtree-sitter-$extension.so"
+            report.appendLine("$name (.$extension): parser=$parserState · binding=$bindingClass · native=$nativeLibrary · tsh=$configState · schemes=${schemes.size} · styles=$styles")
             if (schemes.isNotEmpty()) report.appendLine("   " + schemes.joinToString())
         }
         report.appendLine()
