@@ -8,6 +8,16 @@
   app:showAsAction="ifRoom" />
 
  <item
+  android:id="@+id/test_tsh_cursor"
+  android:title="🔬 光标行 / 符号捕获诊断"
+  app:showAsAction="never" />
+
+ <item
+  android:id="@+id/manage_tsh_schemes"
+  android:title="🎨 TSH Scheme 主题浏览器"
+  app:showAsAction="never" />
+
+ <item
   android:id="@+id/test_tsh_suite"
   android:title="⚙️ TSH 核心测试套件"
   app:showAsAction="never" />
