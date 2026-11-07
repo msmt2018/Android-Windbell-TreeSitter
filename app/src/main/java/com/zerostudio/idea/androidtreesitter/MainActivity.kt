@@ -509,6 +509,9 @@ class MainActivity : AppCompatActivity() {
 
     private fun loadExternalLanguages() {
         activityScope.launch(Dispatchers.IO) {
+            // The language registry and native TSH engine outlive Activity recreation.
+            // Do not reopen the same C grammar library on every Light/Dark switch.
+            if (languageMap.containsKey("C")) return@launch
             runCatching {
                 val cLang = TSLanguage.loadLanguage(this@MainActivity, "c")
                 if (cLang != null) {
