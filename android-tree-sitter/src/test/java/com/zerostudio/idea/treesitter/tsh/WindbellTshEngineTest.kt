@@ -3,9 +3,13 @@ package com.zerostudio.idea.treesitter
 import com.zerostudio.idea.treesitter.TSParser
 import com.zerostudio.idea.treesitter.java.TSLanguageJava
 import com.zerostudio.idea.treesitter.tsh.WindbellTshEngine
-import org.junit.Assert.*
-import org.junit.BeforeClass
-import org.junit.Test
+import org.junit.jupiter.api.Assertions.assertDoesNotThrow
+import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNotNull
+import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.BeforeAll
+import org.junit.jupiter.api.Test
 import android.text.SpannableStringBuilder
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -14,7 +18,7 @@ class WindbellTshLinkageTest {
 
     companion object {
         @JvmStatic
-        @BeforeClass
+        @BeforeAll
         fun setUp() {
             // 确保测试环境装载 Native 动态库
             System.loadLibrary("android_tree_sitter")
@@ -199,8 +203,10 @@ class WindbellTshLinkageTest {
         val tshDsl = javaTestDsl()
 
         // 断言 nativeLoadTshSource 绝不产生 UnsatisfiedLinkError
-        val loaded = engine.loadTshSource("java-test", tshDsl, null)
-        assertTrue("TSH DSL source parsing and compilation should succeed.", loaded)
+        assertDoesNotThrow {
+            val loaded = engine.loadTshSource("java-test", tshDsl, null)
+            assertTrue(loaded, "TSH DSL source parsing and compilation should succeed.")
+        }
     }
 
     @Test
