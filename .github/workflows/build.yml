@@ -300,7 +300,33 @@ jobs:
           target: google_apis
           arch: x86_64
           disable-animations: true
-          script: ./gradlew :app:connectedDebugAndroidTest --stacktrace
+          script: |
+            set -Eeuo pipefail
+
+            # The emulator action normally waits for boot. Keep an explicit ADB
+            # readiness check here so Gradle never starts instrumentation with an
+            # empty device list (which otherwise reports "No connected devices").
+            adb start-server
+            device_serial=""
+            for attempt in $(seq 1 60); do
+              adb devices -l
+              device_serial="$(adb devices | awk 'NR > 1 && $2 == "device" { print $1; exit }')"
+              if [[ -n "$device_serial" ]]; then
+                break
+              fi
+              echo "Waiting for Android emulator to appear in ADB ($attempt/60)..."
+              sleep 2
+            done
+
+            if [[ -z "$device_serial" ]]; then
+              echo "::error::Android emulator did not register as an ADB device."
+              adb devices -l
+              exit 1
+            fi
+
+            adb -s "$device_serial" shell 'while [ "$(getprop sys.boot_completed)" != "1" ]; do sleep 1; done'
+            adb -s "$device_serial" shell getprop sys.boot_completed
+            ./gradlew :app:connectedDebugAndroidTest --stacktrace
       - name: Upload Test Reports
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
