@@ -67,27 +67,50 @@ jobs:
           ndk-version: r25
       - name: Install dependencies
         run: $ATS_SUDO $ATS_APT_UPDATE && $ATS_SUDO $ATS_APT_UPGRADE && $ATS_SUDO $ATS_APT_INSTALL $ATS_APT_DEPS
-      - name: Set up Node.js 20 for legacy tree-sitter grammar bindings
+      - name: Set up Python for native grammar builds
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Set up Node.js for native grammar bindings
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
-      - name: Install Node packages
+          # tree-sitter@0.25 pulls node-gyp@13 / undici@8, which require Node >=22.19.
+          node-version: '22.22.2'
+      - name: Install Node packages for all grammar submodules
+        shell: bash
         run: |
-          # 1. 寻找 grammars 目录下所有包含 package.json 的子目录
-          # 2. 自动进入每个目录执行 npm install
-          find grammars -maxdepth 2 -name "package.json" | while read -r config_path; do
-              dir_path=$(dirname "$config_path")
-              echo "📦 正在为子模块安装依赖: $dir_path"
-              # 使用 () 子 Shell 隔离环境，无需担心 cd 路径错乱，且能支持路径带空格
-              (
-              cd "$dir_path" || exit 1
-             # 优先使用正常安装，如果报错 (&& 后续失败)，则自动执行 || 后面的容错安装
-              npm install || {
-                   echo "⚠️ 正常安装失败，正在尝试使用 --legacy-peer-deps..."
-                   npm install --legacy-peer-deps
-                 }
-              )
+          set -Eeuo pipefail
+
+          echo "Node: $(node --version)"
+          echo "npm:  $(npm --version)"
+          echo "Python: $(python --version)"
+
+          failed=()
+          mapfile -d '' manifests < <(find grammars -mindepth 2 -maxdepth 3 -type f -name package.json -print0 | sort -z)
+
+          if (( ${#manifests[@]} == 0 )); then
+            echo "::error::No grammar package.json files were found under grammars/"
+            exit 1
+          fi
+
+          for config_path in "${manifests[@]}"; do
+            dir_path="$(dirname "$config_path")"
+            echo "::group::📦 Installing grammar dependencies: $dir_path"
+            if [[ -f "$dir_path/package-lock.json" ]]; then
+              (cd "$dir_path" && npm ci --no-audit --no-fund) || failed+=("$dir_path")
+            else
+              (cd "$dir_path" && npm install --no-audit --no-fund) || failed+=("$dir_path")
+            fi
+            echo "::endgroup::"
           done
+
+          if (( ${#failed[@]} > 0 )); then
+            printf '\n::error::Dependency installation failed for %d grammar(s):\n' "${#failed[@]}"
+            printf ' - %s\n' "${failed[@]}"
+            exit 1
+          fi
+
+          echo "✅ Installed dependencies for all ${#manifests[@]} grammar packages."
           
       - name: Restore cache
         uses: actions/cache@v4
@@ -149,13 +172,40 @@ jobs:
           ndk-version: r25
       - name: Install dependencies
         run: $ATS_SUDO $ATS_APT_UPDATE && $ATS_SUDO $ATS_APT_UPGRADE && $ATS_SUDO $ATS_APT_INSTALL $ATS_APT_DEPS
-      - name: Set up Node.js 20 for legacy tree-sitter grammar bindings
+      - name: Set up Python for native grammar builds
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Set up Node.js for native grammar bindings
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
-      - name: Install Node packages
+          node-version: '22.22.2'
+      - name: Install Node packages for all grammar submodules
+        shell: bash
         run: |
-          cd grammars/cpp && npm install && cd -
+          set -Eeuo pipefail
+          failed=()
+          mapfile -d '' manifests < <(find grammars -mindepth 2 -maxdepth 3 -type f -name package.json -print0 | sort -z)
+          if (( ${#manifests[@]} == 0 )); then
+            echo "::error::No grammar package.json files were found under grammars/"
+            exit 1
+          fi
+          for config_path in "${manifests[@]}"; do
+            dir_path="$(dirname "$config_path")"
+            echo "::group::📦 Installing grammar dependencies: $dir_path"
+            if [[ -f "$dir_path/package-lock.json" ]]; then
+              (cd "$dir_path" && npm ci --no-audit --no-fund) || failed+=("$dir_path")
+            else
+              (cd "$dir_path" && npm install --no-audit --no-fund) || failed+=("$dir_path")
+            fi
+            echo "::endgroup::"
+          done
+          if (( ${#failed[@]} > 0 )); then
+            printf '\n::error::Dependency installation failed for %d grammar(s):\n' "${#failed[@]}"
+            printf ' - %s\n' "${failed[@]}"
+            exit 1
+          fi
+          echo "✅ Installed dependencies for all ${#manifests[@]} grammar packages."
       - name: Restore cache
         uses: actions/cache@v4
         with:
