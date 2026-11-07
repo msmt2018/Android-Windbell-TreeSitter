@@ -541,8 +541,21 @@ class MainActivity : AppCompatActivity() {
                     report.appendLine("1) Tree-sitter: OK root=" + it.rootNode.type + ", " + parserNanos / 1000000.0 + " ms")
                     report.appendLine("2) TSH: total=" + captures.size + ", cursor-line=" + lineCaptures.size + ", " + queryNanos / 1000000.0 + " ms")
                     val sourceNames = mapOf(0 to "Oniguruma Regex", 1 to "Monarch", 2 to "ATS", 3 to "Tree-sitter Query")
-                    captures.groupingBy { it.source }.eachCount().forEach { (sourceId, count) ->
-                        report.appendLine("   producer=" + (sourceNames[sourceId] ?: "Unknown(" + sourceId + ")") + ": " + count)
+                    captures.groupBy { it.source }.toSortedMap().forEach { (sourceId, producerSpans) ->
+                        val producerStart = producerSpans.minOf { it.startByte shr 1 }
+                        val producerEnd = producerSpans.maxOf { it.endByte shr 1 }
+                        val lineCount = lineCaptures.count { it.source == sourceId }
+                        val ranges = producerSpans.take(12).joinToString { span ->
+                            "[${span.startByte shr 1},${span.endByte shr 1})"
+                        }
+                        report.appendLine(
+                            "   producer=" + (sourceNames[sourceId] ?: "Unknown(" + sourceId + ")") +
+                                " matches=" + producerSpans.size +
+                                " cursor-line=" + lineCount +
+                                " UTF16-range=[" + producerStart + "," + producerEnd + ")" +
+                                " captures=" + ranges +
+                                if (producerSpans.size > 12) " … +${producerSpans.size - 12}" else ""
+                        )
                     }
                     report.appendLine("3) Scheme=" + scheme + " dark=" + engine.isDark("java") + ", styles=" + styles.size + ", palette=" + palette.size + ", " + paletteNanos / 1000000.0 + " ms")
                     report.appendLine("4) Android preview ForegroundColorSpan=" + foreground.size)
@@ -614,6 +627,17 @@ class MainActivity : AppCompatActivity() {
                     detail.appendLine((style?.name ?: "style#" + entry.styleId) + " (" + (style?.scope ?: "unknown") + ")")
                     detail.appendLine("  Light: " + light)
                     detail.appendLine("  Dark:  " + dark)
+                }
+                val lightTokens = engine.getSchemeThemeTokens("java", scheme, false)
+                val darkTokens = engine.getSchemeThemeTokens("java", scheme, true)
+                detail.appendLine()
+                detail.appendLine("UI Theme Tokens · Light (${lightTokens.size})")
+                lightTokens.toSortedMap().forEach { (key, color) ->
+                    detail.appendLine("  " + key + ": " + String.format(Locale.ROOT, "#%08X", color))
+                }
+                detail.appendLine("UI Theme Tokens · Dark (${darkTokens.size})")
+                darkTokens.toSortedMap().forEach { (key, color) ->
+                    detail.appendLine("  " + key + ": " + String.format(Locale.ROOT, "#%08X", color))
                 }
                 MaterialAlertDialogBuilder(this)
                     .setTitle(scheme + " · Light / Dark")
