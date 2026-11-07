@@ -80,7 +80,7 @@ class MainActivity : AppCompatActivity() {
     companion object {
         private const val TAG = "Windbell_MainActivity"
         // Keep Java first and make the console language spinner deterministic.
-        private val languageMap = linkedMapOf<String, TSLanguage>()
+        private val languageMap = java.util.Collections.synchronizedMap(linkedMapOf<String, TSLanguage>())
 
         init {
             TreeSitter.loadLibrary()
