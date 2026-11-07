@@ -130,6 +130,20 @@ class MainActivity : AppCompatActivity() {
                     javaTshReady = ok
                     installTshHighlighterIfReady()
                     applyTshThemeTokens()
+                    if (ok) {
+                        val styleCount = WindbellTshEngine.instance.getStyleCatalog("java").size
+                        val schemeNames = WindbellTshEngine.instance.listSchemes("java")
+                        Log.i(TAG, "Windbell-TSH [Java] ready: styles=$styleCount schemes=$schemeNames")
+                    } else {
+                        val diagnostics = WindbellTshEngine.instance.lastCompileDiagnostics
+                        if (diagnostics.isEmpty()) {
+                            Log.e(TAG, "Windbell-TSH [Java] compilation failed without native diagnostics")
+                        } else {
+                            diagnostics.forEach { diagnostic ->
+                                Log.e(TAG, "Windbell-TSH [Java] ${diagnostic.code} at ${diagnostic.line}:${diagnostic.column} (offset=${diagnostic.offset}): ${diagnostic.message}")
+                            }
+                        }
+                    }
                     Log.d(TAG, "Windbell-TSH [Java] configuration compiled: $ok")
                 }
             }.onFailure {
