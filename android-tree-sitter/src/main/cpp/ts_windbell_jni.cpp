@@ -18,6 +18,7 @@
 #include "tsh/WindbellTshCompiler.h"
 #include "tsh/NativeHighlightCache.h"
 #include "largefile/MappedFileSource.h"
+#include "largefile/TextPartitionIndex.h"
 #include <cerrno>
 #include <cstdlib>
 #include <memory>
@@ -43,6 +44,7 @@ struct NativeTshDocument {
     uint32_t length_chars = 0;
     uint64_t version = 0;
     NativeHighlightCache highlight_cache{16u * 1024u * 1024u};
+    windbell::largefile::TextPartitionIndex partition_index{256};
     std::mutex mutex;
 
     ~NativeTshDocument() {
@@ -1045,6 +1047,15 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeApplyDocumentEdi
         return JNI_FALSE;
     }
 
+    // Preserve unaffected native line checkpoints and shift the suffix by
+    // the edit's byte/line deltas. If the sparse index cannot update, reset it;
+    // correctness never depends on the optional index.
+    if (!document->partition_index.applyEdit(
+            *document->source, static_cast<uint64_t>(start_byte),
+            static_cast<uint64_t>(old_end_byte),
+            inserted_for_points.data(), static_cast<uint64_t>(inserted_size))) {
+        document->partition_index.reset();
+    }
     ts_tree_delete(document->tree);
     document->tree = next_tree;
     document->source = std::move(next_source);

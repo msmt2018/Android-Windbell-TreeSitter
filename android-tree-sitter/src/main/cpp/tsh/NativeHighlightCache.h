@@ -45,19 +45,34 @@ public:
         if (!out) return false;
         auto found = entries_.find(key);
         if (found == entries_.end()) return false;
-        lru_.splice(lru_.begin(), lru_, found->second.position);
-        *out = found->second.value;
-        return true;
+        try {
+            *out = found->second.value;
+            lru_.splice(lru_.begin(), lru_, found->second.position);
+            return true;
+        } catch (...) {
+            return false;
+        }
     }
 
     void put(Key key, Value value) {
+        if (value.spans.size() >
+            (static_cast<size_t>(-1) - sizeof(Value)) / sizeof(HighlightSpan)) return;
         const size_t bytes = value.spans.size() * sizeof(HighlightSpan) + sizeof(Value);
         if (budget_bytes_ == 0 || bytes > budget_bytes_) return;
         auto existing = entries_.find(key);
         if (existing != entries_.end()) erase(existing);
 
-        lru_.push_front(key);
-        entries_.emplace(key, Entry{std::move(value), lru_.begin(), bytes});
+        try {
+            lru_.push_front(key);
+            try {
+                entries_.emplace(key, Entry{std::move(value), lru_.begin(), bytes});
+            } catch (...) {
+                lru_.pop_front();
+                return;
+            }
+        } catch (...) {
+            return;
+        }
         used_bytes_ += bytes;
         while (used_bytes_ > budget_bytes_ && !lru_.empty()) {
             auto victim = entries_.find(lru_.back());
