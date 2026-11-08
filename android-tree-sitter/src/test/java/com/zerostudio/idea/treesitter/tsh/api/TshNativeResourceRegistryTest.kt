@@ -50,4 +50,28 @@ class TshNativeResourceRegistryTest {
         lease!!.close()
         assertTrue(registry.retire(registration.descriptor.id))
     }
+    @Test
+    fun retireAllOnlyRetiresResourcesOwnedByThisCoordinator() {
+        val objects = TshObjectRegistry()
+        val leases = TshNativeResourceLeaseStore()
+        val firstRegistry = TshNativeResourceRegistry(objects, leases)
+        val secondRegistry = TshNativeResourceRegistry(objects, leases)
+        val first = FakeTree()
+        val second = FakeTree()
+        val firstRegistration = firstRegistry.register(first, "syntax-tree")
+        val secondRegistration = secondRegistry.register(second, "syntax-tree")
+        val active = secondRegistry.acquire(secondRegistration.descriptor.id, TSTree::class.java)!!
+
+        assertEquals(1, firstRegistry.retireAll())
+        assertNull(objects.find(firstRegistration.descriptor.id))
+        assertNotNull(objects.find(secondRegistration.descriptor.id))
+        assertEquals(1, first.closeCalls)
+        assertEquals(0, second.closeCalls)
+
+        active.close()
+        assertEquals(0, second.closeCalls)
+        assertTrue(secondRegistry.retire(secondRegistration.descriptor.id))
+        assertEquals(1, second.closeCalls)
+    }
+
 }
