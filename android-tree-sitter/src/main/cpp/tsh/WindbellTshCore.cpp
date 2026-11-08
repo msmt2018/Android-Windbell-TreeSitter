@@ -123,7 +123,7 @@ static bool tshPredicateCaptureTexts(const TSQueryMatch& match, uint32_t capture
         const uint32_t start = ts_node_start_byte(match.captures[i].node);
         const uint32_t end = ts_node_end_byte(match.captures[i].node);
         if (start > end || end > source_bytes || (start & 1u) || (end & 1u) ||
-            (!utf16_source && end != start)) return false;
+            (!utf16_source && !text_source && end != start)) return false;
         std::vector<UChar> converted;
         if (end > start) {
             converted.resize((end - start) / sizeof(UChar));
