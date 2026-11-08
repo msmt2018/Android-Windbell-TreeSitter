@@ -289,6 +289,18 @@ jobs:
             ${{ runner.os }}-gradle-
       - name: Change Gradle wrapper permissions
         run: chmod +x ./gradlew
+      - name: Run native large-file storage tests (ASan/UBSan)
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cmake -S android-tree-sitter/src/main/cpp/largefile/tests \
+            -B /tmp/windbell-largefile-tests \
+            -DCMAKE_BUILD_TYPE=Debug
+          cmake --build /tmp/windbell-largefile-tests --parallel 2
+          ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 \
+          UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+            ctest --test-dir /tmp/windbell-largefile-tests --output-on-failure
+
       - name: Run debug tests
         run: ./gradlew testDebug :editor:compileDebugAndroidTestKotlin :app:compileDebugAndroidTestKotlin --continue --parallel --stacktrace
         env:
