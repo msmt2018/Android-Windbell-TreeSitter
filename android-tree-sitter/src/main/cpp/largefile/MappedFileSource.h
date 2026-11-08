@@ -35,6 +35,7 @@ public:
 private:
     void *mapping_ = nullptr;
     uint64_t size_bytes_ = 0;
+    bool open_ = false;
 };
 
 } // namespace windbell::largefile
