@@ -194,6 +194,7 @@ private class StringEditorTextSnapshot(private val text: String) : EditorTextSna
     override fun get(index: Int): Char = text[index]
     override fun subSequence(startIndex: Int, endIndex: Int): CharSequence = text.subSequence(startIndex, endIndex)
     override fun substring(startIndex: Int, endIndex: Int): String = text.substring(startIndex, endIndex)
+    override fun toString(): String = text
     override fun getNearestChunk(offset: Int, maxLength: Int): String {
         require(offset >= 0) { "offset must be non-negative" }
         if (offset >= length) return ""
