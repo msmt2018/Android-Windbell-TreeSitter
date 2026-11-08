@@ -176,12 +176,12 @@ public:
                     }
                 }
                 if (intersectsDirty) continue;
-                Value value = found->second.value;
-                // Preserve the original capacity so retained entries do not
-                // silently exceed the cache's recorded/shared memory budget after
-                // the transactional copy. The temporary copy is bounded by the
-                // existing per-document cache limit.
-                value.spans.reserve(found->second.value.spans.capacity());
+                // Move the cached value into the candidate map. Copying this
+                // vector here doubled peak span memory during every edit; moving
+                // preserves its allocation and keeps migration within the existing
+                // cache budget. If candidate construction fails, the catch path
+                // clears the cache rather than exposing partially rebased entries.
+                Value value = std::move(found->second.value);
                 bool spansValid = true;
                 for (auto &span : value.spans) {
                     if (span.end_byte <= editStart) continue;
