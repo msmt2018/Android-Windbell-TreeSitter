@@ -68,6 +68,22 @@ class TshEngine private constructor(val options: TshEngineOptions) : AutoCloseab
         )
     }
 
+    /** Opens a Parser whose Grammar dependency is managed by this Engine's resource coordinator. */
+    fun openTreeSitterParser(
+        languageHandle: TshNativeResourceLeaseStore.Handle<com.zerostudio.idea.treesitter.TSLanguage>,
+        grammar: TshGrammarDescriptor
+    ): TshResult<TshTreeSitterParserOwner> {
+        if (state == TshEngineState.CLOSED) {
+            return TshResult.Failure(listOf(TshDiagnostic(
+                code = "TSH-ENGINE-003",
+                severity = TshDiagnosticSeverity.ERROR,
+                stage = TshDiagnosticStage.LIFECYCLE,
+                message = "Cannot open a Tree-sitter parser from a closed TSH engine"
+            )))
+        }
+        return TshTreeSitterParserOwner.open(nativeResources, languageHandle, grammar)
+    }
+
     /** Creates an executor sharing the exact Native query/resource stores owned by this Engine. */
     fun createTreeSitterQueryExecutor(
         predicateHandlers: List<com.zerostudio.idea.treesitter.predicate.TSPredicateHandler> = emptyList()
