@@ -51,7 +51,26 @@ enum class RegexRuleType : uint8_t {
     BLOCK
 };
 
+enum class RegexExecutionCapability : uint8_t {
+    // The compiler proved a finite maximum match width for the supported
+    // regular-expression subset. This is necessary, but not by itself
+    // sufficient, for bounded-window execution (context/anchor rules add
+    // separate constraints).
+    BOUNDED_WINDOW = 0,
+    // The pattern is valid Oniguruma but its window requirements cannot be
+    // proven by the conservative analyzer. It must not be silently skipped.
+    DOCUMENT_CONTEXT_REQUIRED = 1
+};
+
 struct CompiledRegexRule {
+    // Expanded source patterns are retained so diagnostics and future
+    // execution strategies never need to reconstruct source from regex_t.
+    std::string raw_match_pattern;
+    std::string raw_start_pattern;
+    std::string raw_end_pattern;
+    RegexExecutionCapability execution_capability =
+        RegexExecutionCapability::DOCUMENT_CONTEXT_REQUIRED;
+    uint64_t maximum_match_bytes = 0;
     RegexRuleType type = RegexRuleType::MATCH;
     uint16_t style_id = 0;
     bool has_style = false;
@@ -82,6 +101,10 @@ struct RegexStateCase {
 };
 
 struct RegexStateRule {
+    std::string raw_pattern;
+    RegexExecutionCapability execution_capability =
+        RegexExecutionCapability::DOCUMENT_CONTEXT_REQUIRED;
+    uint64_t maximum_match_bytes = 0;
     regex_t* pattern = nullptr;
     uint16_t style_id = 0;
     std::string token_name;

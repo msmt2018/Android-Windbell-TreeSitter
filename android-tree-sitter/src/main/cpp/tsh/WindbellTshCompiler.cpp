@@ -28,9 +28,138 @@
 #include <cmath>
 #include <limits>
 #include <unordered_set>
+#include <cstdint>
+#include <limits>
 #include "ts__log.h"
 
 namespace windbell::tsh {
+
+
+namespace {
+
+// Proves a deliberately small, unambiguous subset of Oniguruma patterns has
+// a finite maximum width. Unsupported constructs are valid patterns, but are
+// conservatively marked as requiring document context. This is metadata only;
+// it does not alter current matching behavior.
+static bool analyzeBoundedRegexWidth(
+    const std::string& pattern,
+    uint64_t* maximum_utf16_units
+) {
+    if (!maximum_utf16_units || pattern.empty()) return false;
+    uint64_t total = 0;
+    size_t i = 0;
+    const auto add_width = [&](uint64_t width, uint64_t repeat,
+                               uint64_t& target) -> bool {
+        if (repeat && width > (std::numeric_limits<uint64_t>::max() - target) / repeat)
+            return false;
+        target += width * repeat;
+        return true;
+    };
+
+    while (i < pattern.size()) {
+        uint64_t atom_width = 1;
+        const unsigned char c = static_cast<unsigned char>(pattern[i++]);
+        if (c == '(' || c == ')' || c == '|' || c == '^' || c == '$')
+            return false; // groups, alternatives and anchors need richer analysis
+        if (c == '[') {
+            bool closed = false;
+            bool first = true;
+            while (i < pattern.size()) {
+                const char member = pattern[i++];
+                if (member == ']' && !first) { closed = true; break; }
+                first = false;
+                if (member == '[') return false; // nested/intersection classes
+                if (member == '\\\\') {
+                    if (i >= pattern.size()) return false;
+                    const char escaped = pattern[i++];
+                    if (escaped == 'p' || escaped == 'P' || escaped == 'x' ||
+                        escaped == 'u' || escaped == 'c' || escaped == 'M')
+                        return false;
+                }
+            }
+            if (!closed) return false;
+        } else if (c == '\\\\') {
+            if (i >= pattern.size()) return false;
+            const char escaped = pattern[i++];
+            if (escaped == 'A' || escaped == 'z' || escaped == 'Z' ||
+                escaped == 'G' || escaped == 'b' || escaped == 'B' ||
+                escaped == 'K' || escaped == 'k' || escaped == 'g' ||
+                escaped == 'R' || escaped == 'X' || escaped == 'Q' ||
+                escaped == 'E' || escaped >= '1' && escaped <= '9')
+                return false;
+            if (escaped == 'x' || escaped == 'u') {
+                if (i < pattern.size() && pattern[i] == '{') {
+                    ++i;
+                    const size_t close = pattern.find('}', i);
+                    if (close == std::string::npos || close == i) return false;
+                    for (; i < close; ++i) {
+                        const char digit = pattern[i];
+                        if (!std::isxdigit(static_cast<unsigned char>(digit))) return false;
+                    }
+                    i = close + 1;
+                } else {
+                    const size_t digits = escaped == 'x' ? 2 : 4;
+                    if (i + digits > pattern.size()) return false;
+                    for (size_t n = 0; n < digits; ++n) {
+                        if (!std::isxdigit(static_cast<unsigned char>(pattern[i + n]))) return false;
+                    }
+                    i += digits;
+                }
+            } else if (escaped == 'c' || escaped == 'C' || escaped == 'M') {
+                return false;
+            }
+        } else if (c == '*' || c == '+' || c == '?' || c == '{' || c == '}') {
+            return false; // quantifier without a preceding atom / malformed sequence
+        }
+
+        uint64_t minimum_repeat = 1;
+        uint64_t maximum_repeat = 1;
+        if (i < pattern.size() && pattern[i] == '?') {
+            maximum_repeat = 1;
+            minimum_repeat = 0;
+            ++i;
+        } else if (i < pattern.size() && pattern[i] == '{') {
+            const size_t close = pattern.find('}', i + 1);
+            if (close == std::string::npos) return false;
+            const std::string bounds = pattern.substr(i + 1, close - i - 1);
+            const size_t comma = bounds.find(',');
+            try {
+                size_t consumed = 0;
+                minimum_repeat = std::stoull(bounds.substr(0, comma), &consumed);
+                if (consumed != (comma == std::string::npos ? bounds.size() : comma))
+                    return false;
+                if (comma == std::string::npos) maximum_repeat = minimum_repeat;
+                else {
+                    const std::string upper = bounds.substr(comma + 1);
+                    if (upper.empty()) return false; // {m,} is unbounded
+                    consumed = 0;
+                    maximum_repeat = std::stoull(upper, &consumed);
+                    if (consumed != upper.size()) return false;
+                }
+            } catch (...) { return false; }
+            if (maximum_repeat < minimum_repeat) return false;
+            i = close + 1;
+        }
+        if (i < pattern.size() && (pattern[i] == '?' || pattern[i] == '+'))
+            return false; // lazy/possessive suffix not in the proven subset
+        if (!add_width(atom_width, maximum_repeat, total)) return false;
+    }
+    *maximum_utf16_units = total;
+    return true;
+}
+
+static void annotateRegexRuleExecution(CompiledRegexRule& rule) {
+    uint64_t width = 0;
+    const bool bounded = rule.type == RegexRuleType::MATCH &&
+        analyzeBoundedRegexWidth(rule.raw_match_pattern, &width);
+    rule.execution_capability = bounded ?
+        RegexExecutionCapability::BOUNDED_WINDOW :
+        RegexExecutionCapability::DOCUMENT_CONTEXT_REQUIRED;
+    rule.maximum_match_bytes = bounded ? width * sizeof(UChar) : 0;
+    for (auto& nested : rule.nested_rules) annotateRegexRuleExecution(nested);
+}
+
+} // namespace
 
 static thread_local uint32_t g_tsh_last_source_offset = 0;
 static thread_local std::string g_tsh_last_error_detail;
@@ -1199,6 +1328,9 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
 
         if (!expand_pattern(raw_match_pattern) || !expand_pattern(raw_start_pattern) ||
             !expand_pattern(raw_end_pattern)) return false;
+        rule.raw_match_pattern = raw_match_pattern;
+        rule.raw_start_pattern = raw_start_pattern;
+        rule.raw_end_pattern = raw_end_pattern;
         if (!raw_match_pattern.empty()) {
             rule.onig_start = compileOnigurumaUtf16(raw_match_pattern, rule.regex_options);
             if (!rule.onig_start) return false;
@@ -1247,7 +1379,10 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
             ((rule.has_style || rule.has_content_style || has_delimiter_captures) &&
              rule.onig_start && rule.onig_end) :
             (rule.onig_start != nullptr && !rule.has_content_style && !has_delimiter_captures);
-        if (valid) rule_guard.release();
+        if (valid) {
+            annotateRegexRuleExecution(rule);
+            rule_guard.release();
+        }
         return valid;
     };
 
@@ -2009,6 +2144,12 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                                     std::string expanded_pattern;
                                     if (!expandRegexVariables(pattern, grammar->regex_variables,
                                             active_variables, expanded_pattern)) return nullptr;
+                                    rule.raw_pattern = expanded_pattern;
+                                    uint64_t maximum_width = 0;
+                                    if (analyzeBoundedRegexWidth(expanded_pattern, &maximum_width)) {
+                                        rule.execution_capability = RegexExecutionCapability::BOUNDED_WINDOW;
+                                        rule.maximum_match_bytes = maximum_width * sizeof(UChar);
+                                    }
                                     rule.pattern = compileOnigurumaUtf16(expanded_pattern, options);
                                     if (!rule.pattern) return nullptr;
                                 }
