@@ -722,8 +722,20 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
             if (monarch_checkpoints->empty() ||
                 monarch_checkpoints->back().byte_offset < position) {
                 monarch_checkpoints->push_back(std::move(checkpoint));
+                // Bound persistent tokenizer metadata independently from the
+                // source size. 8192 checkpoints cover 512 MiB at 64 KiB spacing;
+                // older viewports safely fall back to the root state.
+                constexpr size_t kMaxMonarchCheckpoints = 8192;
+                if (monarch_checkpoints->size() > kMaxMonarchCheckpoints) {
+                    monarch_checkpoints->erase(
+                        monarch_checkpoints->begin(),
+                        monarch_checkpoints->begin() +
+                            (monarch_checkpoints->size() - kMaxMonarchCheckpoints));
+                }
             }
-            next_checkpoint = ((position / (64u * 1024u)) + 1u) * (64u * 1024u);
+            next_checkpoint =
+                ((static_cast<uint64_t>(position) / (64u * 1024u)) + 1u) *
+                (64u * 1024u);
         };
         OnigRegion* monarch_region = onig_region_new();
         OnigRegion* monarch_case_region = onig_region_new();
