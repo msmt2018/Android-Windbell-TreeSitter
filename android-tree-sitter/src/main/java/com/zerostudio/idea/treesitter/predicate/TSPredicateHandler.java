@@ -41,7 +41,9 @@ public interface TSPredicateHandler {
    * @param match The query match.
    * @param args  The arguments provided to the predicate (the first element is always name of the
    *              predicate).
-   * @return Whether the predicate was handled.
+   * @return OK accepts the match and stops handler dispatch; ERR rejects the match;
+   *         UNHANDLED delegates to the next registered handler. If every handler returns
+   *         UNHANDLED, the match is rejected when predicate evaluation is enabled.
    */
   Result handle(
     TSQuery query,
@@ -75,6 +77,11 @@ public interface TSPredicateHandler {
    * Result of a predicate.
    */
   enum Result {
-    OK, ERR, UNHANDLED
+    /** Predicate evaluated successfully; accept the match. */
+    OK,
+    /** Predicate evaluated and rejected the match. */
+    ERR,
+    /** This handler does not implement the predicate; try the next handler. */
+    UNHANDLED
   }
 }
