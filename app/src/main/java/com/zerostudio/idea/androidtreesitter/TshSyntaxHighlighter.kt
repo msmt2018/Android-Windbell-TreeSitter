@@ -14,6 +14,7 @@ import com.zerostudio.idea.treesitter.largefile.PartitionAstCache
 import com.zerostudio.idea.treesitter.largefile.PartitionParseRequest
 import com.zerostudio.idea.treesitter.largefile.TreeSitterPartitionScheduler
 import com.zerostudio.idea.treesitter.tsh.WindbellTshEngine
+import com.zerostudio.idea.treesitter.tsh.NativeTextWindowReader
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -30,6 +31,7 @@ import x.github.module.editor.model.EditorBuffer
 import x.github.module.editor.model.EditorDocument
 import x.github.module.editor.model.EditorTextSnapshot
 import x.github.module.editor.structure.PlainBracketMatcher
+import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 
@@ -61,9 +63,8 @@ class TshSyntaxHighlighter(
         val snapshot: EditorTextSnapshot,
         val source: CharSequenceUtf16DocumentSource,
         val partitions: DocumentPartitionManager,
-        val parser: TSParser,
-        val astCache: PartitionAstCache,
-        val scheduler: TreeSitterPartitionScheduler,
+        /** Native-owned PieceTreeSource + incremental Tree-sitter tree. */
+        val nativeHandle: Long,
         val captureIndexes: ByteBudgetLruCache<Int, CaptureIntervalIndex>,
         val ticket: Long
     )
@@ -283,13 +284,9 @@ class TshSyntaxHighlighter(
     }
 
     private suspend fun initializeLargeSession(snapshot: EditorTextSnapshot, ticket: Long) {
-        var parser: TSParser? = null
-        var astCache: PartitionAstCache? = null
-        var scheduler: TreeSitterPartitionScheduler? = null
+        var nativeHandle = 0L
         var captureIndexes: ByteBudgetLruCache<Int, CaptureIntervalIndex>? = null
         try {
-            val createdParser = TSParser.create().also { it.setLanguage(language) }
-            parser = createdParser
             val initJob = currentCoroutineContext()[Job]
             val source = CharSequenceUtf16DocumentSource(snapshot, snapshot.version) { start, count ->
                 if (initJob?.isActive == false) {
@@ -301,54 +298,57 @@ class TshSyntaxHighlighter(
                 targetPartitionChars = PARTITION_CHARS,
                 prefetchPartitions = 0
             )
-            // Full-file indexing is linear and chunked, never a full String/byte-array copy.
+            // Keep only sparse viewport metadata in Kotlin. The actual document,
+            // Piece Tree edits, Tree-sitter tree and TSH captures live in JNI.
             manager.rebuild(source)
             currentCoroutineContext().ensureActive()
             if (generation.get() != ticket) throw CancellationException("Stale document snapshot")
 
-            val createdAstCache = PartitionAstCache(AST_CACHE_BYTES) { length ->
-                maxOf(128L * 1024L, length * 64L)
+            val temporaryDirectory = File(System.getProperty("java.io.tmpdir") ?: "")
+            check(temporaryDirectory.isDirectory && temporaryDirectory.canWrite()) {
+                "No writable app-private temporary directory for native TSH document"
             }
-            astCache = createdAstCache
-            val createdScheduler = TreeSitterPartitionScheduler(
-                partitionManager = manager,
-                astCache = createdAstCache,
-                contextChars = CONTEXT_CHARS,
-                parallelism = 1,
-                onFailure = { request, error ->
-                    Log.e(TAG, "Partition parse failed: extension=.$extension partition=${request.partition.index}", error)
-                    if (generation.get() == ticket) host?.invalidateStyles()
+            val reader = NativeTextWindowReader { byteOffset, maxBytes ->
+                require(byteOffset >= 0L && (byteOffset and 1L) == 0L && maxBytes >= 2)
+                val start = (byteOffset / 2L).toInt()
+                val text = snapshot.getNearestChunk(start, maxBytes / 2)
+                ByteArray(text.length * 2).also { bytes ->
+                    for (index in text.indices) {
+                        val codeUnit = text[index].code
+                        bytes[index * 2] = (codeUnit and 0xFF).toByte()
+                        bytes[index * 2 + 1] = (codeUnit ushr 8).toByte()
+                    }
                 }
+            }
+            nativeHandle = engine.createNativeDocument(
+                language = language,
+                extension = extension,
+                byteLength = snapshot.length.toLong() * 2L,
+                temporaryDirectory = temporaryDirectory,
+                reader = reader
             )
-            scheduler = createdScheduler
+            check(nativeHandle != 0L) { "Native TSH document creation returned a null handle" }
+            currentCoroutineContext().ensureActive()
+            if (generation.get() != ticket) throw CancellationException("Stale native document")
+
             val createdCaptureIndexes = ByteBudgetLruCache<Int, CaptureIntervalIndex>(
                 CAPTURE_CACHE_BYTES,
                 { index -> 96L + index.size.toLong() * 96L }
             )
             captureIndexes = createdCaptureIndexes
-
             val active = LargeSession(
-                snapshot,
-                source,
-                manager,
-                createdParser,
-                createdAstCache,
-                createdScheduler,
-                createdCaptureIndexes,
-                ticket
+                snapshot, source, manager, nativeHandle, createdCaptureIndexes, ticket
             )
             if (generation.get() == ticket) {
                 largeSession = active
-                parser = null
-                astCache = null
-                scheduler = null
+                nativeHandle = 0L
                 captureIndexes = null
                 parsing = false
                 Log.i(
                     TAG,
-                    "Large-file TSH index ready: extension=.$extension version=${snapshot.version} " +
+                    "Native large-file TSH ready: extension=.$extension version=${snapshot.version} " +
                         "utf16Length=${snapshot.length} partitions=${manager.snapshot().size} " +
-                        "source=PieceTreeSnapshot mode=viewport-partitioned"
+                        "source=PieceTreeSnapshot->NativePieceTree"
                 )
                 host?.invalidateStyles()
                 host?.invalidateStructure()
@@ -357,13 +357,12 @@ class TshSyntaxHighlighter(
             throw cancelled
         } catch (error: Throwable) {
             if (generation.get() == ticket) {
-                Log.e(TAG, "Large-file TSH initialization failed: extension=.$extension length=${snapshot.length}", error)
+                Log.e(TAG, "Native large-file TSH initialization failed: extension=.$extension length=${snapshot.length}", error)
                 parsing = false
                 host?.invalidateStyles()
             }
         } finally {
-            scheduler?.close() ?: astCache?.close()
-            parser?.close()
+            if (nativeHandle != 0L) engine.closeNativeDocument(nativeHandle)
             captureIndexes?.close()
         }
     }
@@ -444,67 +443,51 @@ class TshSyntaxHighlighter(
         )
         if (active.captureIndexes.get(partition.index) != null) return
 
-        // A capture page may have been evicted while its AST remains cached. Invalidate
-        // that AST key so the scheduler reruns the bounded TSH capture pass for this page.
-        active.astCache.invalidate { it.partitionIndex == partition.index }
-        try {
-            active.scheduler.requestViewport(
-                active.source,
-                partition.start,
-                partition.endExclusive,
-                active.ticket
-            ) { request ->
-                parseLargePartition(active, request)
-            }
-        } catch (error: IllegalStateException) {
-            if (generation.get() == active.ticket) {
-                Log.w(TAG, "Unable to queue large-file viewport parse", error)
+        // The native document owns one persistent parse session. A viewport request
+        // executes TSH against its absolute byte range; no partition-local parser/tree
+        // is created and tokenizer checkpoints remain owned by the native document.
+        scope.launch(Dispatchers.IO) {
+            if (generation.get() != active.ticket || largeSession !== active) return@launch
+            try {
+                val flat = engine.highlightNativeDocument(
+                    documentHandle = active.nativeHandle,
+                    startByte = partition.start * 2L,
+                    endByte = partition.endExclusive * 2L
+                ) ?: return@launch
+                val spans = decodeNativeSpans(flat)
+                if (generation.get() == active.ticket && largeSession === active) {
+                    active.captureIndexes.put(
+                        partition.index,
+                        CaptureIntervalIndex(spans)
+                    )
+                    host?.invalidateStyles()
+                    host?.invalidateStructure()
+                }
+            } catch (error: Throwable) {
+                if (generation.get() == active.ticket) {
+                    Log.e(TAG, "Native viewport TSH failed: extension=.$extension partition=${partition.index}", error)
+                }
             }
         }
     }
 
-    private fun parseLargePartition(
-        active: LargeSession,
-        request: PartitionParseRequest
-    ): TSTree? {
-        if (generation.get() != active.ticket || largeSession !== active) return null
-        val contextStart = request.contextStartUtf16.toInt()
-        val contextEnd = request.contextEndUtf16.toInt()
-        // Only this bounded context becomes a String. The complete Piece Tree snapshot
-        // remains chunk-backed and is never flattened by the large-file pipeline.
-        val contextText = active.snapshot.substring(contextStart, contextEnd)
-        val tree = active.parser.parseString(contextText) ?: return null
-        try {
-            val localSpans = engine.computeHighlights(tree, contextText, extension)
-            val baseByte = request.contextStartUtf16 * 2L
-            val partitionStartByte = request.partition.start * 2L
-            val partitionEndByte = request.partition.endExclusive * 2L
-            val absoluteSpans = localSpans.mapNotNull { span ->
-                val absoluteStart = baseByte + span.startByte.toLong()
-                val absoluteEnd = baseByte + span.endByte.toLong()
-                val clippedStart = maxOf(absoluteStart, partitionStartByte)
-                val clippedEnd = minOf(absoluteEnd, partitionEndByte)
-                if (clippedStart >= clippedEnd || clippedEnd > Int.MAX_VALUE) {
-                    null
-                } else {
-                    span.copy(
-                        startByte = clippedStart.toInt(),
-                        endByte = clippedEnd.toInt()
-                    )
-                }
-            }
-            if (generation.get() == active.ticket && largeSession === active) {
-                active.captureIndexes.put(
-                    request.partition.index,
-                    CaptureIntervalIndex(absoluteSpans)
+    private fun decodeNativeSpans(flat: IntArray): List<WindbellTshEngine.HighlightSpan> {
+        val count = flat.size / 6
+        if (count == 0) return emptyList()
+        return ArrayList<WindbellTshEngine.HighlightSpan>(count).also { spans ->
+            for (index in 0 until count) {
+                val offset = index * 6
+                val packed = flat[offset + 2]
+                spans += WindbellTshEngine.HighlightSpan(
+                    startByte = flat[offset],
+                    endByte = flat[offset + 1],
+                    styleId = packed and 0xFFFF,
+                    fontFlags = (packed ushr 16) and 0xFFFF,
+                    priority = flat[offset + 3],
+                    declarationOrder = flat[offset + 4],
+                    source = flat[offset + 5]
                 )
-                host?.invalidateStyles()
-                host?.invalidateStructure()
             }
-            return tree
-        } catch (error: Throwable) {
-            tree.close()
-            throw error
         }
     }
 
@@ -524,12 +507,10 @@ class TshSyntaxHighlighter(
 
     private fun disposeSession(active: LargeSession) {
         scope.launch(Dispatchers.IO) {
-            runCatching { active.scheduler.close() }
-                .onFailure { Log.w(TAG, "Failed to close large-file partition scheduler", it) }
-            runCatching { active.parser.close() }
-                .onFailure { Log.w(TAG, "Failed to close large-file Tree-sitter parser", it) }
+            runCatching { engine.closeNativeDocument(active.nativeHandle) }
+                .onFailure { Log.w(TAG, "Failed to close native TSH document", it) }
             runCatching { active.captureIndexes.close() }
-                .onFailure { Log.w(TAG, "Failed to close large-file capture cache", it) }
+                .onFailure { Log.w(TAG, "Failed to close native TSH capture cache", it) }
         }
     }
 }
