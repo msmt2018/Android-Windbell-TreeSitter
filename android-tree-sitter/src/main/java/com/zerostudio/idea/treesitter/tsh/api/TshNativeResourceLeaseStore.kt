@@ -75,6 +75,24 @@ class TshNativeResourceLeaseStore {
         return true
     }
 
+    /** Retires all resources; active leases defer close until their final release. */
+    fun retireAll(): Int {
+        val closeNow = ArrayList<Entry<out TSNativeObject>>()
+        val retiredCount = synchronized(lock) {
+            var count = 0
+            for (entry in entries.values.toList()) {
+                if (!entry.retired) {
+                    entry.retired = true
+                    count++
+                }
+                takeForCloseIfReady(entry)?.let(closeNow::add)
+            }
+            count
+        }
+        closeNow.forEach { it.closeSafely() }
+        return retiredCount
+    }
+
     fun activeLeaseCount(objectId: TshObjectId): Int = synchronized(lock) {
         entries[objectId]?.leases ?: 0
     }
