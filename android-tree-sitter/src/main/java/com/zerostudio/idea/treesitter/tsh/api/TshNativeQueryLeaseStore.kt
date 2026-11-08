@@ -49,22 +49,36 @@ class TshNativeQueryLeaseStore {
         query: TSQuery,
         dependencies: List<AutoCloseable> = emptyList()
     ) {
+        registerDeferred(queryId, objectId, query, dependencies)?.close()
+    }
+
+    /**
+     * Publishes a revision and returns a deferred close action for an immediately-retirable
+     * previous revision. Callers coordinating a higher-level transaction must invoke the action
+     * only after leaving that transaction's lock.
+     */
+    internal fun registerDeferred(
+        queryId: String,
+        objectId: TshObjectId,
+        query: TSQuery,
+        dependencies: List<AutoCloseable> = emptyList()
+    ): AutoCloseable? {
         require(queryId.isNotBlank())
         require(query.canAccess()) { "Cannot register a closed native query" }
-        var closeNow: Entry? = null
-        synchronized(lock) {
+        val closeNow = synchronized(lock) {
             check(byObjectId[objectId] == null) { "Native object ID is already leased" }
             val current = byQueryId[queryId]
-            if (current != null) {
+            val retired = if (current != null) {
                 current.retired = true
                 byQueryId.remove(queryId)
-                closeNow = takeForCloseIfReady(current)
-            }
+                takeForCloseIfReady(current)
+            } else null
             val entry = Entry(queryId, objectId, query, dependencies.toList())
             byObjectId[objectId] = entry
             byQueryId[queryId] = entry
+            retired
         }
-        closeNow?.closeSafely()
+        return closeNow?.let { entry -> AutoCloseable { entry.closeSafely() } }
     }
 
     /** Atomically obtains a strong execution lease unless the query has begun retirement. */
@@ -81,15 +95,21 @@ class TshNativeQueryLeaseStore {
      * Returns false when no active entry exists for this query ID.
      */
     fun retire(queryId: String): Boolean {
+        val (retired, closeAction) = retireDeferred(queryId)
+        closeAction?.close()
+        return retired
+    }
+
+    /** Marks a query retired without running its Native close action in the caller's lock scope. */
+    internal fun retireDeferred(queryId: String): Pair<Boolean, AutoCloseable?> {
         val closeNow = synchronized(lock) {
-            val entry = byQueryId[queryId] ?: return false
-            if (entry.retired) return false
+            val entry = byQueryId[queryId] ?: return false to null
+            if (entry.retired) return false to null
             entry.retired = true
             if (byQueryId[queryId] === entry) byQueryId.remove(queryId)
             takeForCloseIfReady(entry)
         }
-        closeNow?.closeSafely()
-        return true
+        return true to closeNow?.let { entry -> AutoCloseable { entry.closeSafely() } }
     }
 
     /** Retires every query. Entries with active leases close when their final lease is released. */
