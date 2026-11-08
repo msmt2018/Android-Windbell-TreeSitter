@@ -5,7 +5,10 @@ import android.text.Spanned
 import android.text.style.CharacterStyle
 import android.util.Log
 import com.zerostudio.idea.treesitter.TSLanguage
+import com.zerostudio.idea.treesitter.TSParser
+import com.zerostudio.idea.treesitter.TSTree
 import com.zerostudio.idea.treesitter.largefile.ByteBudgetLruCache
+import com.zerostudio.idea.treesitter.largefile.DocumentPartition
 import com.zerostudio.idea.treesitter.tsh.WindbellTshEngine
 import com.zerostudio.idea.treesitter.tsh.NativeTextWindowReader
 import kotlinx.coroutines.CancellationException
@@ -46,8 +49,6 @@ class TshSyntaxHighlighter(
         private const val TAG = "WindbellTSH"
         private const val LARGE_DOCUMENT_THRESHOLD_CHARS = 1 * 1024 * 1024
         private const val PARTITION_CHARS = 64L * 1024L
-        private const val CONTEXT_CHARS = 128L * 1024L
-        private const val AST_CACHE_BYTES = 16L * 1024L * 1024L
         private const val CAPTURE_CACHE_BYTES = 32L * 1024L * 1024L
     }
 
@@ -70,6 +71,7 @@ class TshSyntaxHighlighter(
 
     private val nativeEditLock = Any()
     private val pendingNativeEdits = ArrayList<NativeEdit>()
+    private var nativeEditJob: Job? = null
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val generation = AtomicLong()
@@ -138,6 +140,7 @@ class TshSyntaxHighlighter(
                 // Large-document initialization may still be consuming its original
                 // immutable snapshot. Keep transactions queued for it to replay.
                 if (host?.buffer?.length?.let { it < LARGE_DOCUMENT_THRESHOLD_CHARS } == true || !parsing) {
+                    pendingNativeEdits.clear()
                     host?.buffer?.let(::scheduleParse)
                 }
                 return
@@ -536,7 +539,9 @@ class TshSyntaxHighlighter(
     }
 
     private fun applyNativeEdits(active: LargeSession, edits: List<NativeEdit>) {
-        scope.launch(Dispatchers.IO) {
+        val previous = synchronized(nativeEditLock) { nativeEditJob }
+        val job = scope.launch(Dispatchers.IO) {
+            previous?.join()
             if (generation.get() != active.ticket || largeSession !== active) return@launch
             try {
                 var earliestOffset = Long.MAX_VALUE
@@ -563,6 +568,7 @@ class TshSyntaxHighlighter(
                 if (generation.get() == active.ticket) host?.buffer?.let(::scheduleParse)
             }
         }
+        synchronized(nativeEditLock) { nativeEditJob = job }
     }
 
     private fun decodeNativeSpans(flat: IntArray): List<WindbellTshEngine.HighlightSpan> {
