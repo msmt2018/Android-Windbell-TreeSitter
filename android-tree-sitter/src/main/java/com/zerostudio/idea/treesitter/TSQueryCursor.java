@@ -37,6 +37,7 @@ public class TSQueryCursor extends TSNativeObject implements Iterable<TSQueryMat
 
   protected boolean isExecuted = false;
   private boolean allowChangedNodes = false;
+  private boolean predicateEvaluationEnabled = true;
   protected TSNode targetNode = null;
   protected TSQuery execQuery = null;
   protected final Set<TSPredicateHandler> predicateHandlers = new HashSet<>();
@@ -214,25 +215,43 @@ public class TSQueryCursor extends TSNativeObject implements Iterable<TSQueryMat
     Native.setPointRange(getNativeObject(), start, end);
   }
 
+  /**
+   * Enable or disable Java-side predicate evaluation for subsequent matches.
+   * When disabled, matches are returned without invoking registered handlers.
+   */
+  public void setPredicateEvaluationEnabled(boolean enabled) {
+    checkAccess();
+    predicateEvaluationEnabled = enabled;
+  }
+
   public TSQueryMatch nextMatch() {
     checkAccess();
     checkExecuted("nextMatch");
-    final var match = Native.nextMatch(getNativeObject());
-    if (match != null) {
-      applyPredicates(match);
+    while (true) {
+      final var match = Native.nextMatch(getNativeObject());
+      if (match == null || !predicateEvaluationEnabled || applyPredicates(match)) {
+        return match;
+      }
     }
-    return match;
   }
 
-  private void applyPredicates(TSQueryMatch match) {
+  /**
+   * @return true when the match passes all predicates, false when a predicate rejects it or
+   *         no handler accepts a predicate.
+   */
+  private boolean applyPredicates(TSQueryMatch match) {
     if (match == null || execQuery == null) {
-      return;
+      return true;
     }
 
     final var predicates = execQuery.getPredicatesForPattern(match.getPatternIndex());
     final var steps = new ArrayList<PredicateStep>(predicates.length);
 
+    boolean hasPredicate = false;
     for (final var predicate : predicates) {
+      if (predicate.getType() != TSQueryPredicateStep.Type.Done) {
+        hasPredicate = true;
+      }
       final PredicateStep step;
       switch (predicate.getType()) {
         case Capture:
@@ -251,11 +270,20 @@ public class TSQueryCursor extends TSNativeObject implements Iterable<TSQueryMat
       steps.add(step);
     }
 
+    if (!hasPredicate) {
+      return true;
+    }
+
     for (final var handler : predicateHandlers) {
-      if (handler.handle(execQuery, match, steps) == Result.OK) {
-        break;
+      final Result result = handler.handle(execQuery, match, steps);
+      if (result == Result.OK) {
+        return true;
+      }
+      if (result == Result.ERR) {
+        return false;
       }
     }
+    return false;
   }
 
   public void removeMatch(int id) {
