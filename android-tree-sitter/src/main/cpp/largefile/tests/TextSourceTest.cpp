@@ -205,6 +205,18 @@ static void testPieceTreeEditsDoNotCopyUnchangedText() {
     assert(source.sizeBytes() == utf16.size() + sizeof(insert));
     assert(source.pieceCount() <= beforePieces + 2);
     assert(source.allocatedBytes() < 256u * 1024u);
+
+    // An insertion rejected by the document memory budget must not consume
+    // append-arena capacity or alter the visible source/version.
+    const uint64_t beforeFailedSize = source.sizeBytes();
+    const uint64_t beforeFailedAllocation = source.allocatedBytes();
+    const uint64_t beforeFailedVersion = source.version();
+    std::vector<char> oversized(3u * 1024u * 1024u, 0);
+    assert(!source.replace(0, 0, oversized.data(), oversized.size()));
+    assert(source.sizeBytes() == beforeFailedSize);
+    assert(source.allocatedBytes() == beforeFailedAllocation);
+    assert(source.version() == beforeFailedVersion);
+
     TextChunkView view{};
     assert(source.read(0, 64, &view));
     assert(view.size >= sizeof(insert));

@@ -287,10 +287,17 @@ bool PieceTreeSource::replace(uint64_t startByte, uint64_t oldEndByte,
     const uint64_t tailCapacity = added_allocated_ - added_size_;
     const uint64_t bytesBeyondTail = insertedBytes > tailCapacity
         ? insertedBytes - tailCapacity : 0;
-    const uint64_t additionalChunks = bytesBeyondTail == 0 ? 0 :
-        ((bytesBeyondTail + chunkBytes - 1u) / chunkBytes) * chunkBytes;
+    if (bytesBeyondTail > std::numeric_limits<uint64_t>::max() - (chunkBytes - 1u))
+        return false;
+    const uint64_t requiredChunks = bytesBeyondTail == 0 ? 0 :
+        (bytesBeyondTail + chunkBytes - 1u) / chunkBytes;
+    if (requiredChunks > std::numeric_limits<uint64_t>::max() / chunkBytes)
+        return false;
+    const uint64_t additionalChunks = requiredChunks * chunkBytes;
     if (additionalChunks > memory_limit_bytes_ -
-        std::min(memory_limit_bytes_, added_allocated_)) return false;
+        std::min(memory_limit_bytes_, added_allocated_) ||
+        additionalChunks > std::numeric_limits<uint64_t>::max() - added_allocated_)
+        return false;
     const uint64_t projectedAdded = added_allocated_ + additionalChunks;
     const uint64_t maximumPieces = (memory_limit_bytes_ - projectedAdded) / sizeof(Node);
     const uint64_t splitNodes = insertedBytes ? 3u : 2u;
