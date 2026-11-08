@@ -1073,13 +1073,50 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
     }
     windbell::largefile::TextChunkView view{};
     const uint16_t *input = nullptr;
+    std::vector<uint16_t> compatibility_window;
     if (total_bytes != 0) {
         if (!document->source->read(0, UINT32_MAX, &view) ||
-            !view.data || view.size != total_bytes) {
-            throw_illegal_state(env, "Mapped native document cannot expose its contiguous source view");
+            !view.data || view.size == 0) {
+            throw_illegal_state(env, "Native Piece Tree cannot provide its first input window");
             return nullptr;
         }
-        input = reinterpret_cast<const uint16_t *>(view.data);
+        if (view.size == total_bytes) {
+            // Unedited mmap-backed documents remain zero-copy.
+            input = reinterpret_cast<const uint16_t *>(view.data);
+        } else {
+            // Transitional compatibility path: the legacy TSH entry point still
+            // accepts one contiguous UTF-16 buffer. Keep edited documents working
+            // until the source-native Regex/Monarch/AST scanners are wired in.
+            // This is deliberately isolated here so it can be removed when the
+            // TextSource-based TSH API lands; edits themselves remain Piece Tree
+            // transactions and never rewrite unchanged source bytes.
+            if ((total_bytes / 2u) > static_cast<uint64_t>(
+                    std::numeric_limits<size_t>::max() / sizeof(uint16_t))) {
+                throw_illegal_args(env, "Native TSH compatibility buffer exceeds addressable memory");
+                return nullptr;
+            }
+            try {
+                compatibility_window.resize(static_cast<size_t>(total_bytes / 2u));
+            } catch (...) {
+                throw_illegal_state(env, "Unable to allocate temporary TSH compatibility buffer");
+                return nullptr;
+            }
+            uint64_t copied = 0;
+            while (copied < total_bytes) {
+                windbell::largefile::TextChunkView chunk{};
+                const uint32_t request = static_cast<uint32_t>(std::min<uint64_t>(
+                    windbell::largefile::kTreeSitterInputChunkBytes, total_bytes - copied));
+                if (!document->source->read(copied, request, &chunk) ||
+                    !chunk.data || chunk.size == 0 || chunk.size > total_bytes - copied) {
+                    throw_illegal_state(env, "Failed to stream edited Piece Tree into legacy TSH input");
+                    return nullptr;
+                }
+                std::memcpy(reinterpret_cast<uint8_t *>(compatibility_window.data()) + copied,
+                    chunk.data, chunk.size);
+                copied += chunk.size;
+            }
+            input = compatibility_window.data();
+        }
     }
     std::vector<HighlightSpan> candidates;
     uint32_t counts[4] = {};
