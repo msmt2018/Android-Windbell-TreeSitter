@@ -4,11 +4,13 @@ import com.zerostudio.idea.treesitter.TSParser
 import com.zerostudio.idea.treesitter.java.TSLanguageJava
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
 class TreeSitterPartitionSchedulerTest {
-    private class Source(private val text: String, override val version: Long = 7L) : Utf16DocumentSource {
+    private class Source(val text: String, override val version: Long = 7L) : Utf16DocumentSource {
         override val length = text.length.toLong()
         override fun get(offset: Long) = text[offset.toInt()]
     }
@@ -20,8 +22,14 @@ class TreeSitterPartitionSchedulerTest {
         val cache = PartitionAstCache(1024 * 1024) { length -> maxOf(1024L, length * 8L) }
         val scheduler = TreeSitterPartitionScheduler(manager, cache, contextChars = 32)
         val latch = CountDownLatch(1)
-        val requests = scheduler.requestViewport(source, 300, 500, 1) {
-            val tree = parser.parseString("class Partition {}")
+        val requests = scheduler.requestViewport(source, 300, 500, 1) { request ->
+            val bytes = ByteBuffer.allocateDirect(source.text.length * 2).order(ByteOrder.LITTLE_ENDIAN)
+            source.text.forEach(bytes::putChar)
+            bytes.flip()
+            val included = manager.treeSitterRange(
+                source, request.contextStartUtf16, request.contextEndUtf16
+            )
+            val tree = parser.parseBuffers(null, arrayOf(bytes), arrayOf(included))
             latch.countDown()
             tree
         }
