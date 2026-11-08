@@ -1189,7 +1189,7 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeApplyDocumentEdi
             catch (...) { dirty_ranges_ok = false; }
         }
     }
-    ts_free(changed_ranges);
+    std::free(changed_ranges); // Tree-sitter 0.28 documents malloc/free ownership.
     const uint64_t insertedEnd = static_cast<uint64_t>(start_byte) +
         static_cast<uint64_t>(inserted_size);
     if (dirty_ranges_ok) {
