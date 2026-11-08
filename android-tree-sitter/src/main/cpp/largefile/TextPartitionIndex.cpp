@@ -59,16 +59,19 @@ bool TextPartitionIndex::countNewlines(const TextSource &source,
 bool TextPartitionIndex::scan(const TextSource &source, uint64_t startByte,
                               uint64_t startLine, uint64_t targetByte,
                               uint64_t targetLine, bool stopByLine,
-                              uint64_t *result, uint64_t *resultLine) noexcept {
+                              uint64_t *result, uint64_t *resultLine,
+                              uint64_t *resultLineStart) noexcept {
     if (!result || (startByte & 1u) || startByte > source.sizeBytes()) return false;
     uint64_t offset = startByte;
     uint64_t line = startLine;
+    uint64_t lineStart = startByte;
     if (!stopByLine && targetByte < startByte) return false;
     while (offset < source.sizeBytes()) {
         if ((!stopByLine && offset >= targetByte) ||
             (stopByLine && line >= targetLine)) {
             *result = offset;
             if (resultLine) *resultLine = line;
+            if (resultLineStart) *resultLineStart = lineStart;
             return true;
         }
         TextChunkView chunk{};
@@ -81,23 +84,27 @@ bool TextPartitionIndex::scan(const TextSource &source, uint64_t startByte,
             offset += 2;
             if (unit == '\n') {
                 ++line;
+                lineStart = offset;
                 if (line % stride_lines_ == 0) addCheckpoint(offset, line);
                 if ((!stopByLine && offset >= targetByte) ||
                     (stopByLine && line >= targetLine)) {
                     *result = offset;
                     if (resultLine) *resultLine = line;
+                    if (resultLineStart) *resultLineStart = lineStart;
                     return true;
                 }
             }
             if (!stopByLine && offset >= targetByte) {
                 *result = offset;
                 if (resultLine) *resultLine = line;
+                if (resultLineStart) *resultLineStart = lineStart;
                 return true;
             }
         }
     }
     *result = offset;
     if (resultLine) *resultLine = line;
+    if (resultLineStart) *resultLineStart = lineStart;
     return !stopByLine || line >= targetLine;
 }
 
@@ -121,6 +128,30 @@ bool TextPartitionIndex::lineForByte(const TextSource &source,
     // scan() already counted line feeds while traversing the requested range.
     // Do not reread the same source window just to recover the resulting row.
     *line = resolvedLine;
+    return true;
+}
+
+bool TextPartitionIndex::pointForByte(const TextSource &source,
+                                      uint64_t byteOffset,
+                                      uint64_t *line,
+                                      uint64_t *lineStartByte) noexcept {
+    if (!line || !lineStartByte || checkpoints_.empty() ||
+        (byteOffset & 1u) || byteOffset > source.sizeBytes()) return false;
+    auto it = std::upper_bound(checkpoints_.begin(), checkpoints_.end(), byteOffset,
+        [](uint64_t value, const Checkpoint &checkpoint) {
+            return value < checkpoint.byte_offset;
+        });
+    if (it != checkpoints_.begin()) --it;
+    // Copy checkpoint values before scan(), which may append and reallocate.
+    const uint64_t checkpointByte = it->byte_offset;
+    const uint64_t checkpointLine = it->line;
+    uint64_t ignored = 0;
+    uint64_t resolvedLine = checkpointLine;
+    uint64_t resolvedLineStart = checkpointByte;
+    if (!scan(source, checkpointByte, checkpointLine, byteOffset, 0, false,
+              &ignored, &resolvedLine, &resolvedLineStart)) return false;
+    *line = resolvedLine;
+    *lineStartByte = resolvedLineStart;
     return true;
 }
 

@@ -421,8 +421,10 @@ static void testSparsePartitionIndexSurvivesEdits() {
     const uint64_t resultingLines = 692;
     for (uint64_t expectedLine = 0; expectedLine < resultingLines; ++expectedLine) {
         const uint64_t lineStart = utf16LineStart(expected, expectedLine);
-        assert(index.lineForByte(source, lineStart, &line));
+        uint64_t resolvedLineStart = UINT64_MAX;
+        assert(index.pointForByte(source, lineStart, &line, &resolvedLineStart));
         assert(line == expectedLine);
+        assert(resolvedLineStart == lineStart);
         assert(index.byteForLine(source, expectedLine, &byte));
         assert(byte == lineStart);
     }

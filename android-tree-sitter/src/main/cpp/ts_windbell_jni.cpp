@@ -136,8 +136,7 @@ static bool nativePointAt(
     if (!point || (byte_offset & 1u) || byte_offset > source.sizeBytes()) return false;
     uint64_t row = 0;
     uint64_t line_start = 0;
-    if (!line_index.lineForByte(source, byte_offset, &row) ||
-        !line_index.byteForLine(source, row, &line_start) ||
+    if (!line_index.pointForByte(source, byte_offset, &row, &line_start) ||
         line_start > byte_offset ||
         byte_offset - line_start > std::numeric_limits<uint32_t>::max()) return false;
     point->row = static_cast<uint32_t>(std::min<uint64_t>(

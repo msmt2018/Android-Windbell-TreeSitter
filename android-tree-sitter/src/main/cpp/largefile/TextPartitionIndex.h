@@ -29,6 +29,8 @@ public:
     void reset() noexcept;
     bool lineForByte(const TextSource &source, uint64_t byteOffset,
                      uint64_t *line) noexcept;
+    bool pointForByte(const TextSource &source, uint64_t byteOffset,
+                      uint64_t *line, uint64_t *lineStartByte) noexcept;
     bool byteForLine(const TextSource &source, uint64_t line,
                      uint64_t *byteOffset) noexcept;
 
@@ -44,7 +46,8 @@ private:
     bool scan(const TextSource &source, uint64_t startByte, uint64_t startLine,
               uint64_t targetByte, uint64_t targetLine,
               bool stopByLine, uint64_t *result,
-              uint64_t *resultLine = nullptr) noexcept;
+              uint64_t *resultLine = nullptr,
+              uint64_t *resultLineStart = nullptr) noexcept;
     bool countNewlines(const TextSource &source, uint64_t startByte,
                        uint64_t endByte, uint64_t *count) noexcept;
     void addCheckpoint(uint64_t byteOffset, uint64_t line) noexcept;
