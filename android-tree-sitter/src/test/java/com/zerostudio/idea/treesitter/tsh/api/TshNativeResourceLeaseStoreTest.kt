@@ -45,4 +45,22 @@ class TshNativeResourceLeaseStoreTest {
         assertFalse(store.retire(handle.objectId))
         assertEquals(1, first.closeCalls)
     }
+
+    @Test
+    fun retireAllClosesIdleResourcesAndDefersActiveResources() {
+        val store = TshNativeResourceLeaseStore()
+        val active = FakeTree()
+        val idle = FakeTree()
+        val activeHandle = store.register(TshObjectId(201L), active)
+        store.register(TshObjectId(202L), idle)
+        val lease = store.acquire(activeHandle)!!
+
+        assertEquals(2, store.retireAll())
+        assertEquals(0, active.closeCalls)
+        assertEquals(1, idle.closeCalls)
+        assertNull(store.acquire(activeHandle))
+
+        lease.close()
+        assertEquals(1, active.closeCalls)
+    }
 }
