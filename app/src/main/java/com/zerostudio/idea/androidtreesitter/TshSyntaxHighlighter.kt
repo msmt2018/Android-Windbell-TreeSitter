@@ -181,7 +181,7 @@ class TshSyntaxHighlighter(
         val queryStart = lineStartOffset.toLong() + start.toLong()
         val queryEnd = lineStartOffset.toLong() + end.toLong()
         if (queryStart >= active.source.length) return true
-        if (queryStart > Int.MAX_VALUE || queryEnd < queryStart) return false
+        if (queryStart > Int.MAX_VALUE || queryEnd > Int.MAX_VALUE || queryEnd < queryStart) return false
         val boundedStart = queryStart.coerceAtLeast(0L)
         val boundedEnd = queryEnd.coerceAtMost(active.source.length)
         if (boundedStart >= boundedEnd) return true
