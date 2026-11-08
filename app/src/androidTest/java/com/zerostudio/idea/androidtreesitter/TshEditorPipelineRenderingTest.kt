@@ -6,6 +6,7 @@ import android.graphics.Color
 import android.os.SystemClock
 import android.view.View
 import android.text.SpannableStringBuilder
+import android.text.Spanned
 import android.text.style.ForegroundColorSpan
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
