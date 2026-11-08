@@ -328,10 +328,10 @@ class TshTreeSitterQueryExecutor(
             runCatching { cursor.close() }
         }
         } finally {
-            queryLease.close()
+            treeLease.close()
         }
         } finally {
-            treeLease.close()
+            queryLease.close()
         }
     }
 }
