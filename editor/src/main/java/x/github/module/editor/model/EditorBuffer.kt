@@ -197,6 +197,7 @@ private class StringEditorTextSnapshot(private val text: String) : EditorTextSna
     override fun getNearestChunk(offset: Int, maxLength: Int): String {
         require(offset >= 0) { "offset must be non-negative" }
         if (offset >= length) return ""
-        return text.substring(offset, minOf(length, offset + maxLength.coerceAtLeast(1)))
+        val end = minOf(length.toLong(), offset.toLong() + maxLength.coerceAtLeast(1).toLong()).toInt()
+        return text.substring(offset, end)
     }
 }
