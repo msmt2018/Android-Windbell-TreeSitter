@@ -41,6 +41,7 @@ class TshNativeQueryLeaseStore {
     private val lock = Any()
     private val byObjectId = LinkedHashMap<TshObjectId, Entry>()
     private val byQueryId = LinkedHashMap<String, Entry>()
+    private var closed = false
 
     /** Registers a newly-created query. The same query ID may replace a retired entry only. */
     fun register(
@@ -66,6 +67,7 @@ class TshNativeQueryLeaseStore {
         require(queryId.isNotBlank())
         require(query.canAccess()) { "Cannot register a closed native query" }
         val closeNow = synchronized(lock) {
+            check(!closed) { "Native query lease store is closed" }
             check(byObjectId[objectId] == null) { "Native object ID is already leased" }
             val current = byQueryId[queryId]
             val retired = if (current != null) {
@@ -110,6 +112,18 @@ class TshNativeQueryLeaseStore {
             takeForCloseIfReady(entry)
         }
         return true to closeNow?.let { entry -> AutoCloseable { entry.closeSafely() } }
+    }
+
+
+    /** Permanently closes the store and retires all registered native queries. */
+    fun close() {
+        val shouldClose = synchronized(lock) {
+            if (closed) false else {
+                closed = true
+                true
+            }
+        }
+        if (shouldClose) retireAll()
     }
 
     /** Retires every query. Entries with active leases close when their final lease is released. */
