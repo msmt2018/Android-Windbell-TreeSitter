@@ -54,6 +54,7 @@ class TshTreeSitterQueryCompiler(
             languageLeases.acquire(languageHandle)
         } ?: return failure("TSH-QUERY-GRAMMAR-003", "Resolved Tree-sitter language is retired, closed, or not registered")
         var languageLeaseTransferred = false
+        var nativeQueryTransferred = false
         try {
             val language = languageLease.resource
             val nativeQuery = try {
@@ -111,6 +112,7 @@ class TshTreeSitterQueryCompiler(
                         nativeQuery,
                         dependencies = listOf(languageLease)
                     )?.let(deferredCloseActions::add)
+                    nativeQueryTransferred = true
                     languageLeaseTransferred = true
                 } catch (error: Throwable) {
                     objects.unregister(nativeQuery)
@@ -148,6 +150,9 @@ class TshTreeSitterQueryCompiler(
             deferredCloseActions.forEach { runCatching { it.close() } }
         }
         } finally {
+            if (!nativeQueryTransferred) {
+                runCatching { nativeQuery.close() }
+            }
             if (!languageLeaseTransferred) {
                 languageLease.close()
             }
