@@ -1123,7 +1123,7 @@ class WindbellTshLinkageTest {
             it.styleId == variableId &&
                 code.substring(it.startByte shr 1, it.endByte shr 1) == "count"
         }
-        assertNotNull("Native Tree-sitter Query must capture the local variable name", variableSpan)
+        assertNotNull(variableSpan, "Native Tree-sitter Query must capture the local variable name")
         assertEquals(3, variableSpan?.source)
         assertEquals(code.indexOf("count") * 2, variableSpan?.startByte)
         assertEquals((code.indexOf("count") + "count".length) * 2, variableSpan?.endByte)
