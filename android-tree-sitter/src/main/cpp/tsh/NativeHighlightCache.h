@@ -95,9 +95,12 @@ public:
     }
 
     void put(Key key, Value value) {
+        constexpr size_t kEntryOverhead =
+            sizeof(Value) + sizeof(Key) + 6u * sizeof(void *);
         if (value.spans.capacity() >
-            (static_cast<size_t>(-1) - sizeof(Value)) / sizeof(HighlightSpan)) return;
-        const size_t bytes = value.spans.capacity() * sizeof(HighlightSpan) + sizeof(Value);
+            (static_cast<size_t>(-1) - kEntryOverhead) / sizeof(HighlightSpan)) return;
+        const size_t bytes =
+            value.spans.capacity() * sizeof(HighlightSpan) + kEntryOverhead;
         if (budget_bytes_ == 0 || bytes > budget_bytes_) return;
         auto existing = entries_.find(key);
         if (existing != entries_.end()) erase(existing);
