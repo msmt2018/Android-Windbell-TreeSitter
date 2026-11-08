@@ -95,7 +95,7 @@ public class ParserTest extends TreeSitterTest {
       }
       first.flip();
 
-      final ByteBuffer second = ByteBuffer.allocateDirect(32).order(ByteOrder.LITTLE_ENDIAN);
+      final ByteBuffer second = ByteBuffer.allocateDirect(64).order(ByteOrder.LITTLE_ENDIAN);
       for (char ch : "{ int value = 42; }".toCharArray()) {
         second.putChar(ch);
       }
