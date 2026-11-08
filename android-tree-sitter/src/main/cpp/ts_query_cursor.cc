@@ -55,17 +55,26 @@ bool queryProgressCallback(TSQueryCursorState *state) {
   return env->ExceptionCheck() || cancel == JNI_TRUE;
 }
 
-void releaseQueryProgressCallback(JNIEnv *env, TSQueryCursor *cursor) {
+void throwIllegalState(JNIEnv *env, const char *message);
+
+bool releaseQueryProgressCallback(JNIEnv *env, TSQueryCursor *cursor) {
   QueryProgressCallbackState *state = nullptr;
   {
     std::lock_guard<std::mutex> lock(g_query_progress_lock);
     auto found = g_query_progress_callbacks.find(cursor);
-    if (found == g_query_progress_callbacks.end()) return;
+    if (found == g_query_progress_callbacks.end()) return true;
     state = found->second;
+    // The callback is currently using this options payload. Releasing it
+    // re-entrantly would invalidate Tree-sitter's active callback stack.
+    if (state->active_env != nullptr) {
+      throwIllegalState(env, "Cannot re-enter or close a query cursor from its progress callback");
+      return false;
+    }
     g_query_progress_callbacks.erase(found);
   }
   if (state->callback) env->DeleteGlobalRef(state->callback);
   delete state;
+  return true;
 }
 #endif
 
@@ -102,7 +111,7 @@ static jlong TSQueryCursor_newCursor(JNIEnv *env, jclass self) {
 static void TSQueryCursor_delete(JNIEnv *env, jclass self, jlong cursor) {
   req_nnp(env, cursor);
 #if defined(TSH_TREE_SITTER_HAS_QUERY_CURSOR_OPTIONS)
-  releaseQueryProgressCallback(env, (TSQueryCursor *) cursor);
+  if (!releaseQueryProgressCallback(env, (TSQueryCursor *) cursor)) return;
 #endif
   ts_query_cursor_delete((TSQueryCursor *) cursor);
 }
@@ -115,7 +124,7 @@ static void TSQueryCursor_exec(JNIEnv *env,
   req_nnp(env, cursor);
 #if defined(TSH_TREE_SITTER_HAS_QUERY_CURSOR_OPTIONS)
   // A regular exec resets Tree-sitter's retained options pointer.
-  releaseQueryProgressCallback(env, (TSQueryCursor *) cursor);
+  if (!releaseQueryProgressCallback(env, (TSQueryCursor *) cursor)) return;
 #endif
   ts_query_cursor_exec((TSQueryCursor *) cursor,
                        (TSQuery *) query,
@@ -139,7 +148,7 @@ static void TSQueryCursor_execWithOptions(JNIEnv *env,
   TSNode native_node = _unmarshalNode(env, node);
   if (env->ExceptionCheck()) return;
 
-  releaseQueryProgressCallback(env, native_cursor);
+  if (!releaseQueryProgressCallback(env, native_cursor)) return;
 
   std::unique_ptr<QueryProgressCallbackState> state(
       new (std::nothrow) QueryProgressCallbackState());
@@ -238,6 +247,10 @@ static jobject TSQueryCursor_nextMatch(JNIEnv *env, jclass self, jlong cursor) {
     auto found = g_query_progress_callbacks.find((TSQueryCursor *) cursor);
     if (found != g_query_progress_callbacks.end()) {
       callback_state = found->second;
+      if (callback_state->active_env != nullptr) {
+        throwIllegalState(env, "Cannot re-enter a query cursor from its progress callback");
+        return nullptr;
+      }
       callback_state->active_env = env;
     }
   }
