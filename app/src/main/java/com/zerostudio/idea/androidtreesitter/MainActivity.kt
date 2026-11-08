@@ -670,10 +670,16 @@ class MainActivity : AppCompatActivity() {
                         "formal_parameter", "enum_constant"
                     )
                     var symbolNode: TSNode? = cursorNode
-                    while (symbolNode != null && symbolNode.type !in declarationTypes) {
-                        symbolNode = symbolNode.parent
+                    // Tree-sitter's Java binding represents a null TSNode as a
+                    // non-null wrapper whose native node id is zero. Stop before
+                    // asking that wrapper for getType(), otherwise diagnostics
+                    // fail with "Cannot access native object" at the root boundary.
+                    while (symbolNode != null && !symbolNode.isNull &&
+                        symbolNode.type !in declarationTypes
+                    ) {
+                        symbolNode = symbolNode.parent.takeUnless { it.isNull }
                     }
-                    if (symbolNode == null) symbolNode = cursorNode
+                    if (symbolNode == null || symbolNode.isNull) symbolNode = cursorNode
                     val selectedNode = checkNotNull(symbolNode)
                     val symbolStart = (selectedNode.startByte / 2).coerceIn(0, source.length)
                     val symbolEnd = (selectedNode.endByte / 2).coerceIn(symbolStart, source.length)
@@ -738,8 +744,9 @@ class MainActivity : AppCompatActivity() {
                     }
                     report.appendLine()
                     report.appendLine("3) Cursor AST node: " + cursorNode.type)
-                    report.appendLine("   Ancestors: " + generateSequence(cursorNode) { it.parent }
-                        .take(8).joinToString(" <- ") { it.type })
+                    report.appendLine("   Ancestors: " + generateSequence(cursorNode) {
+                        it.parent.takeUnless { parent -> parent.isNull }
+                    }.take(8).joinToString(" <- ") { it.type })
                     report.appendLine("4) Selected symbol block: " + selectedNode.type +
                         " UTF16=[" + symbolStart + "," + symbolEnd + ") chars=" + symbolText.length)
                     report.appendLine(symbolText.take(12000))
