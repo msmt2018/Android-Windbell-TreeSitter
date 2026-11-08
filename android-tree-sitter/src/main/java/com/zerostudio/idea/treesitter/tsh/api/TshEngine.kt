@@ -13,6 +13,10 @@ class TshEngine private constructor(val options: TshEngineOptions) : AutoCloseab
 
     val objects: TshObjectRegistry = TshObjectRegistry()
     val providers: TshProviderRegistry = TshProviderRegistry()
+    private val nativeResourceLeases = TshNativeResourceLeaseStore()
+    /** Engine-owned coordinator; resources registered here are retired when the engine closes. */
+    val nativeResources: TshNativeResourceRegistry =
+        TshNativeResourceRegistry(objects, nativeResourceLeases)
 
     val state: TshEngineState
         get() = stateRef.get()
@@ -59,6 +63,8 @@ class TshEngine private constructor(val options: TshEngineOptions) : AutoCloseab
     override fun close() {
         val previous = stateRef.getAndSet(TshEngineState.CLOSED)
         if (previous != TshEngineState.CLOSED) {
+            // Retire Native resources before clearing the strong object index.
+            nativeResources.close()
             providers.clear()
             objects.clear()
         }
