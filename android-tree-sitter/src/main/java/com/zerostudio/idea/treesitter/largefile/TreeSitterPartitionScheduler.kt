@@ -75,6 +75,7 @@ class TreeSitterPartitionScheduler(
                 executor.remove(previous)
                 previous.cancel()
             }
+            var created: PrioritizedTask? = null
             PrioritizedTask(Long.MIN_VALUE) {
                 try {
                     if (closed.get() || source.version != identity.documentVersion) return@PrioritizedTask
@@ -85,9 +86,16 @@ class TreeSitterPartitionScheduler(
                 } catch (error: Throwable) {
                     onPlanningFailure(error)
                 } finally {
-                    synchronized(lock) { pendingViewportPlans.remove(identity) }
+                    synchronized(lock) {
+                        if (pendingViewportPlans[identity] === created) {
+                            pendingViewportPlans.remove(identity)
+                        }
+                    }
                 }
-            }.also { pendingViewportPlans[identity] = it }
+            }.also {
+                created = it
+                pendingViewportPlans[identity] = it
+            }
         }
         synchronized(lock) {
             if (closed.get()) {
