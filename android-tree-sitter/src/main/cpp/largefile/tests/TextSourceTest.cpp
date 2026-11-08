@@ -163,6 +163,48 @@ static void testSparseFilesFromOneToThreeHundredMegabytesUseBoundedWindow() {
 }
 
 
+static void testPieceTreeHandlesThreeHundredMegabytesWithoutMaterializingDocument() {
+    char path[] = "/tmp/windbell-piece-300mb-XXXXXX";
+    const int fd = ::mkstemp(path);
+    assert(fd >= 0);
+    constexpr uint64_t documentBytes = 300ULL * 1024ULL * 1024ULL;
+    assert((documentBytes & 1u) == 0);
+    assert(::ftruncate(fd, static_cast<off_t>(documentBytes)) == 0);
+    const char marker[] = {'O', 0, 'K', 0};
+    assert(::pwrite(fd, marker, sizeof(marker),
+                    static_cast<off_t>(documentBytes - sizeof(marker))) ==
+           static_cast<ssize_t>(sizeof(marker)));
+    ::close(fd);
+
+    auto window = std::make_shared<FileWindowSource>(path, 64u * 1024u);
+    assert(window->isOpen());
+    PieceTreeSource source(
+        std::static_pointer_cast<const TextSource>(window), 2u * 1024u * 1024u);
+    assert(source.isValid());
+    assert(source.sizeBytes() == documentBytes);
+    assert(source.pieceCount() == 1);
+    assert(source.allocatedBytes() < 64u * 1024u);
+
+    TextChunkView view{};
+    assert(source.read(documentBytes - sizeof(marker), 64u * 1024u, &view));
+    assert(view.size == sizeof(marker));
+    assert(std::memcmp(view.data, marker, sizeof(marker)) == 0);
+
+    // A small tail edit must allocate only a new piece and append chunk; the
+    // 300 MiB unchanged backing file remains a bounded pread() source.
+    const char inserted[] = {'!', 0};
+    assert(source.replace(documentBytes, documentBytes, inserted, sizeof(inserted)));
+    assert(source.sizeBytes() == documentBytes + sizeof(inserted));
+    assert(source.pieceCount() <= 3);
+    assert(source.allocatedBytes() < 256u * 1024u);
+    assert(source.read(documentBytes, 64u, &view));
+    assert(view.size == sizeof(inserted));
+    assert(std::memcmp(view.data, inserted, sizeof(inserted)) == 0);
+
+    window.reset();
+    ::unlink(path);
+}
+
 static std::string readAll(TextSource &source) {
     std::string result;
     uint64_t offset = 0;
@@ -453,6 +495,7 @@ int main() {
     testPieceTreeRandomEditsMatchReferenceBuffer();
     testPieceTreeSnapshotIsolatedAndSharesBacking();
     testPieceTreeUsesBoundedFileWindowAfterUnlink();
+    testPieceTreeHandlesThreeHundredMegabytesWithoutMaterializingDocument();
     testCopyTextRangeAcrossPieceBoundaries();
     testSparsePartitionIndexSurvivesEdits();
     testSparseFilesFromOneToThreeHundredMegabytesUseBoundedWindow();

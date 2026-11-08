@@ -134,7 +134,6 @@ add_library(android-tree-sitter SHARED
 
     # Native large-text source adapters and bounded storage
     largefile/TextSource.cpp
-    largefile/ChunkedTextStore.cpp
     largefile/FileWindowSource.cpp
     largefile/PieceTreeSource.cpp
     largefile/TextPartitionIndex.cpp
