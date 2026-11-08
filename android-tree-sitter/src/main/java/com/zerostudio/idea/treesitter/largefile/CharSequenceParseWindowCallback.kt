@@ -86,13 +86,15 @@ class CharSequenceUtf16DocumentSource(
 fun TSParser.parseWindowed(
     oldTree: TSTree?,
     source: CharSequence,
-    includedRanges: Array<TSRange>? = null
+    includedRanges: Array<TSRange>? = null,
+    chunkReader: ((startUtf16: Int, maxChars: Int) -> CharSequence)? = null
 ): TSTree? {
     val byteLength = source.length.toLong() * 2L
     return parseWindowed(
         oldTree,
         byteLength,
         includedRanges,
-        CharSequenceParseWindowCallback(source)
+        if (chunkReader == null) CharSequenceParseWindowCallback(source)
+        else CharSequenceParseWindowCallback(source, chunkReader)
     )
 }

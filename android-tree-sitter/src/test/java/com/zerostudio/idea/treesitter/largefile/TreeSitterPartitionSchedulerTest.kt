@@ -97,20 +97,14 @@ class TreeSitterPartitionSchedulerTest {
         val text = ("class A { int value; String emoji = \"😀\"; }\\n").repeat(12000)
         val parser = TSParser.create().apply { setLanguage(TSLanguageJava.getInstance()) }
         var maxRead = 0
-        val callback = TSParser.ParseWindowCallback { offset, maxBytes ->
-            val start = (offset / 2L).toInt()
-            val count = minOf(maxBytes / 2, text.length - start)
-            var end = start + count
-            if (end < text.length && Character.isHighSurrogate(text[end - 1]) &&
-                Character.isLowSurrogate(text[end])) end--
-            val bytes = ByteArray((end - start) * 2)
-            for (index in start until end) {
-                val code = text[index].code
-                bytes[(index - start) * 2] = code.toByte()
-                bytes[(index - start) * 2 + 1] = (code ushr 8).toByte()
+        val callback = CharSequenceParseWindowCallback(text) { start, maxChars ->
+            val end = minOf(text.length, start + maxChars)
+            val chunkEnd = if (end < text.length && end > start &&
+                Character.isHighSurrogate(text[end - 1]) &&
+                Character.isLowSurrogate(text[end])) end - 1 else end
+            text.substring(start, chunkEnd).also {
+                maxRead = maxOf(maxRead, it.length * 2)
             }
-            maxRead = maxOf(maxRead, bytes.size)
-            bytes
         }
         val tree = parser.parseWindowed(null, text.length.toLong() * 2L, emptyArray(), callback)
         assertNotNull(tree)
