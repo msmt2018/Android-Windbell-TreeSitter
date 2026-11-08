@@ -142,6 +142,30 @@ public final class TSHighlight {
         maxResults, maxPendingMatches, styleIds, maxSpans);
   }
 
+  /** Materialize the compact native span buffer as immutable Java span objects. */
+  public static List<TSHighlightSpan> unpackSpans(long[] packed) {
+    Objects.requireNonNull(packed, "packed");
+    if (packed.length % 6 != 0) {
+      throw new IllegalArgumentException("Packed highlight spans must contain six values per record");
+    }
+    final List<TSHighlightSpan> spans = new ArrayList<>(packed.length / 6);
+    for (int i = 0; i < packed.length; i += 6) {
+      spans.add(new TSHighlightSpan(
+          packed[i], packed[i + 1], Math.toIntExact(packed[i + 2]),
+          Math.toIntExact(packed[i + 3]), Math.toIntExact(packed[i + 4]),
+          Math.toIntExact(packed[i + 5])));
+    }
+    return Collections.unmodifiableList(spans);
+  }
+
+  /** Convenience API for callers that need objects instead of the packed buffer. */
+  public static List<TSHighlightSpan> extractSpans(
+      TSQuery query, TSNode root, long startByte, long endByte,
+      int maxResults, int maxPendingMatches, int[] styleIds, int maxSpans) {
+    return unpackSpans(extractPackedSpans(query, root, startByte, endByte,
+        maxResults, maxPendingMatches, styleIds, maxSpans));
+  }
+
   @GenerateNativeHeaders(fileName = "highlight")
   private static final class Native {
     static native TSQueryMatch[] extract(
