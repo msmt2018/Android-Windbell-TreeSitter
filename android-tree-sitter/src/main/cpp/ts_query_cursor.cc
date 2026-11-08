@@ -49,7 +49,7 @@ bool queryProgressCallback(TSQueryCursorState *state) {
   if (!env || !callback_state->callback || !callback_state->method) return true;
   const jboolean cancel = env->CallBooleanMethod(
       callback_state->callback, callback_state->method,
-      static_cast<jint>(state->current_byte_offset));
+      static_cast<jlong>(state->current_byte_offset));
   // Preserve a Java exception and stop native work. JNI will propagate the
   // pending exception when nextMatch returns to Java.
   return env->ExceptionCheck() || cancel == JNI_TRUE;
@@ -148,7 +148,7 @@ static void TSQueryCursor_execWithOptions(JNIEnv *env,
     env->DeleteGlobalRef(state->callback);
     return;
   }
-  state->method = env->GetMethodID(callback_class, "onProgress", "(I)Z");
+  state->method = env->GetMethodID(callback_class, "onProgress", "(J)Z");
   env->DeleteLocalRef(callback_class);
   if (!state->method) {
     env->DeleteGlobalRef(state->callback);

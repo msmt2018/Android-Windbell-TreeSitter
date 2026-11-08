@@ -119,7 +119,7 @@ public class TSQueryCursor extends TSNativeObject implements Iterable<TSQueryMat
      * <p>The callback runs synchronously from {@link #nextMatch()}. It must not re-enter,
      * close, or otherwise access the same query cursor.
      */
-    boolean onProgress(int currentByteOffset);
+    boolean onProgress(long currentByteOffset);
   }
 
   public void exec(TSQuery query, TSNode node) {
