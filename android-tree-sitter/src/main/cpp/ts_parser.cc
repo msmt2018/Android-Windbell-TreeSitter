@@ -266,9 +266,12 @@ static jlong TSParser_parse(JNIEnv *env,
     return 0;
   }
 
-  const char *src_cstring = source->to_cstring();
+  // UTF16String already owns the exact UTF-16LE byte sequence expected by
+  // Tree-sitter. Read it directly instead of allocating and copying another
+  // full-document buffer for every parse (especially costly for large files).
+  const char *src_bytes = reinterpret_cast<const char *>(source->data());
   TSParserInput inputPayload{
-      src_cstring,
+      src_bytes,
       static_cast<uint32_t>(source->byte_length()),
   };
   TSInput input{
@@ -288,7 +291,6 @@ static jlong TSParser_parse(JNIEnv *env,
   auto tree = ts_parser_parse_with_options(ts_parser, old_tree, input, options);
 
   ts_parser_internal->endRound();
-  delete[] src_cstring;
   return (jlong) tree;
 }
 
