@@ -38,6 +38,7 @@ struct NativeTshDocument {
     TSParser *parser = nullptr;
     TSTree *tree = nullptr;
     std::string extension;
+    std::string backing_directory;
     uint32_t length_chars = 0;
     std::mutex mutex;
 
@@ -82,6 +83,54 @@ static bool writeAllAt(int fd, const uint8_t *data, size_t length, uint64_t offs
     }
     return true;
 }
+static bool copySourceRange(
+    const windbell::largefile::TextSource &source,
+    int destination_fd,
+    uint64_t source_offset,
+    uint64_t length,
+    uint64_t destination_offset
+) {
+    uint64_t copied = 0;
+    while (copied < length) {
+        windbell::largefile::TextChunkView chunk{};
+        const uint32_t request = static_cast<uint32_t>(std::min<uint64_t>(
+            windbell::largefile::kTreeSitterInputChunkBytes, length - copied));
+        if (!source.read(source_offset + copied, request, &chunk) ||
+            !chunk.data || chunk.size == 0 || chunk.size > length - copied) return false;
+        if (!writeAllAt(destination_fd,
+                reinterpret_cast<const uint8_t *>(chunk.data), chunk.size,
+                destination_offset + copied)) return false;
+        copied += chunk.size;
+    }
+    return true;
+}
+
+static TSPoint nativePointAt(
+    const windbell::largefile::TextSource &source, uint32_t byte_offset
+) {
+    TSPoint point{0, 0};
+    uint32_t offset = 0;
+    while (offset < byte_offset) {
+        windbell::largefile::TextChunkView chunk{};
+        const uint32_t request = std::min<uint32_t>(
+            windbell::largefile::kTreeSitterInputChunkBytes, byte_offset - offset);
+        if (!source.read(offset, request, &chunk) || !chunk.data || chunk.size == 0) break;
+        const auto *units = reinterpret_cast<const uint8_t *>(chunk.data);
+        for (uint32_t i = 0; i + 1 < chunk.size; i += 2) {
+            const uint16_t unit = static_cast<uint16_t>(units[i]) |
+                (static_cast<uint16_t>(units[i + 1]) << 8);
+            if (unit == '\\n') {
+                ++point.row;
+                point.column = 0;
+            } else {
+                point.column += 2;
+            }
+        }
+        offset += chunk.size;
+    }
+    return point;
+}
+
 
 static jintArray encodeNativeHighlightResult(
     JNIEnv *env,
@@ -848,6 +897,7 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeCreateDocument(
     }
     ::unlink(backing_path.c_str());
     document->extension = extension;
+    document->backing_directory = directory;
     document->length_chars = static_cast<uint32_t>(static_cast<uint64_t>(byte_length) / 2u);
     document->parser = ts_parser_new();
     if (!document->parser || !ts_parser_set_language(
@@ -863,6 +913,140 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeCreateDocument(
         return 0;
     }
     return reinterpret_cast<jlong>(document.release());
+}
+
+/**
+ * Applies one UTF-16LE edit to the native document and incrementally reparses
+ * from the edited Tree-sitter tree. The immutable old mapping remains alive
+ * until the new mapping and tree have both been created successfully.
+ */
+JNIEXPORT jboolean JNICALL
+Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeApplyDocumentEdit(
+    JNIEnv *env, jobject, jlong document_pointer,
+    jlong start_byte, jlong old_end_byte, jbyteArray inserted_bytes
+) {
+    auto *document = reinterpret_cast<NativeTshDocument *>(document_pointer);
+    if (!document || !inserted_bytes) {
+        throw_npe(env, "Native document and inserted UTF-16LE bytes are required");
+        return JNI_FALSE;
+    }
+    std::lock_guard<std::mutex> lock(document->mutex);
+    const uint64_t old_size = document->source->sizeBytes();
+    const jsize inserted_size = env->GetArrayLength(inserted_bytes);
+    if (start_byte < 0 || old_end_byte < start_byte ||
+        static_cast<uint64_t>(old_end_byte) > old_size ||
+        (start_byte & 1LL) || (old_end_byte & 1LL) || (inserted_size & 1) != 0) {
+        throw_illegal_args(env, "Native edit offsets and inserted data must be valid UTF-16LE byte ranges");
+        return JNI_FALSE;
+    }
+    const uint64_t new_size = old_size -
+        static_cast<uint64_t>(old_end_byte - start_byte) +
+        static_cast<uint64_t>(inserted_size);
+    if (new_size > UINT32_MAX || (new_size & 1u) != 0) {
+        throw_illegal_args(env, "Edited document exceeds Tree-sitter's 32-bit byte-offset limit");
+        return JNI_FALSE;
+    }
+
+    std::string pattern = document->backing_directory;
+    if (pattern.empty()) {
+        throw_illegal_state(env, "Native document backing directory is unavailable");
+        return JNI_FALSE;
+    }
+    if (pattern.back() != '/') pattern.push_back('/');
+    pattern += ".windbell-tsh-edit-XXXXXX";
+    std::vector<char> path(pattern.begin(), pattern.end());
+    path.push_back('\\0');
+    const int fd = ::mkstemp(path.data());
+    if (fd < 0) {
+        throw_illegal_state(env, "Cannot create native edited-document snapshot");
+        return JNI_FALSE;
+    }
+    const std::string backing_path(path.data());
+    bool ok = ::ftruncate(fd, static_cast<off_t>(new_size)) == 0;
+    if (ok) ok = copySourceRange(*document->source, fd, 0,
+        static_cast<uint64_t>(start_byte), 0);
+    if (ok && inserted_size > 0) {
+        std::vector<jbyte> inserted(static_cast<size_t>(inserted_size));
+        env->GetByteArrayRegion(inserted_bytes, 0, inserted_size, inserted.data());
+        if (env->ExceptionCheck()) ok = false;
+        else ok = writeAllAt(fd, reinterpret_cast<const uint8_t *>(inserted.data()),
+            inserted.size(), static_cast<uint64_t>(start_byte));
+    }
+    const uint64_t suffix_size = old_size - static_cast<uint64_t>(old_end_byte);
+    if (ok) ok = copySourceRange(*document->source, fd,
+        static_cast<uint64_t>(old_end_byte), suffix_size,
+        static_cast<uint64_t>(start_byte) + static_cast<uint64_t>(inserted_size));
+    ::close(fd);
+    if (!ok) {
+        ::unlink(backing_path.c_str());
+        if (!env->ExceptionCheck()) {
+            throw_illegal_state(env, "Failed to construct edited native document snapshot");
+        }
+        return JNI_FALSE;
+    }
+
+    auto next_source = std::make_unique<windbell::largefile::MappedFileSource>();
+    if (!next_source->open(backing_path)) {
+        ::unlink(backing_path.c_str());
+        throw_illegal_state(env, "Unable to map edited native document snapshot");
+        return JNI_FALSE;
+    }
+    ::unlink(backing_path.c_str());
+
+    TSTree *edited_tree = ts_tree_copy(document->tree);
+    if (!edited_tree) {
+        throw_illegal_state(env, "Unable to clone native syntax tree for transactional edit");
+        return JNI_FALSE;
+    }
+    const TSPoint start_point = nativePointAt(*document->source,
+        static_cast<uint32_t>(start_byte));
+    const TSPoint old_end_point = nativePointAt(*document->source,
+        static_cast<uint32_t>(old_end_byte));
+    TSPoint new_end_point = start_point;
+    const auto *inserted_data = reinterpret_cast<const uint8_t *>(nullptr);
+    std::vector<jbyte> inserted_for_points(static_cast<size_t>(inserted_size));
+    if (inserted_size > 0) {
+        env->GetByteArrayRegion(inserted_bytes, 0, inserted_size, inserted_for_points.data());
+        if (env->ExceptionCheck()) {
+            ts_tree_delete(edited_tree);
+            return JNI_FALSE;
+        }
+        inserted_data = reinterpret_cast<const uint8_t *>(inserted_for_points.data());
+    }
+    for (jsize i = 0; i + 1 < inserted_size; i += 2) {
+        const uint16_t unit = static_cast<uint16_t>(inserted_data[i]) |
+            (static_cast<uint16_t>(inserted_data[i + 1]) << 8);
+        if (unit == '\\n') {
+            ++new_end_point.row;
+            new_end_point.column = 0;
+        } else {
+            new_end_point.column += 2;
+        }
+    }
+    TSInputEdit edit{};
+    edit.start_byte = static_cast<uint32_t>(start_byte);
+    edit.old_end_byte = static_cast<uint32_t>(old_end_byte);
+    edit.new_end_byte = static_cast<uint32_t>(static_cast<uint64_t>(start_byte) +
+        static_cast<uint64_t>(inserted_size));
+    edit.start_point = start_point;
+    edit.old_end_point = old_end_point;
+    edit.new_end_point = new_end_point;
+    ts_tree_edit(edited_tree, &edit);
+
+    NativeDocumentInput payload{next_source.get()};
+    TSInput input{&payload, nativeDocumentRead, TSInputEncodingUTF16LE, nullptr};
+    TSTree *next_tree = ts_parser_parse(document->parser, edited_tree, input);
+    ts_tree_delete(edited_tree);
+    if (!next_tree) {
+        throw_illegal_state(env, "Tree-sitter incremental reparse failed; original document retained");
+        return JNI_FALSE;
+    }
+
+    ts_tree_delete(document->tree);
+    document->tree = next_tree;
+    document->source = std::move(next_source);
+    document->length_chars = static_cast<uint32_t>(new_size / 2u);
+    return JNI_TRUE;
 }
 
 JNIEXPORT jintArray JNICALL

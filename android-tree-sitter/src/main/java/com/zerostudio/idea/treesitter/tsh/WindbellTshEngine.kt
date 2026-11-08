@@ -642,6 +642,26 @@ class WindbellTshEngine private constructor() {
         )
     }
 
+    /**
+     * Applies an edit to the native-owned document. Offsets and inserted bytes
+     * are UTF-16LE byte units; native code updates the Tree-sitter tree
+     * incrementally and atomically swaps the backing snapshot on success.
+     */
+    fun applyNativeDocumentEdit(
+        documentHandle: Long,
+        startByte: Long,
+        oldEndByte: Long,
+        insertedUtf16Le: ByteArray
+    ): Boolean {
+        require(documentHandle != 0L)
+        require(startByte >= 0L && oldEndByte >= startByte)
+        require((startByte and 1L) == 0L && (oldEndByte and 1L) == 0L)
+        require((insertedUtf16Le.size and 1) == 0)
+        return nativeApplyDocumentEdit(
+            documentHandle, startByte, oldEndByte, insertedUtf16Le
+        )
+    }
+
     fun highlightNativeDocument(
         documentHandle: Long,
         startByte: Long = 0L,
@@ -662,6 +682,13 @@ class WindbellTshEngine private constructor() {
         languagePointer: Long,
         extension: String
     ): Long
+
+    private external fun nativeApplyDocumentEdit(
+        documentHandle: Long,
+        startByte: Long,
+        oldEndByte: Long,
+        insertedUtf16Le: ByteArray
+    ): Boolean
 
     private external fun nativeHighlightDocument(
         documentHandle: Long,
