@@ -1,0 +1,67 @@
+# 公共 API 基础层（首个实现切片）
+
+## 状态
+
+- [x] 结构化诊断与结果类型
+- [x] 文本坐标系、位置和范围基础类型
+- [x] 对象 ID、能力和对象描述符
+- [x] 基于实例身份的对象注册表
+- [x] Provider 注册与对象能力匹配
+- [x] 引擎创建、初始化、关闭状态机
+- [x] 对应单元测试源码
+- [ ] 本地 Gradle 编译验证
+- [ ] Robolectric/设备端运行验证
+- [ ] 现有 WindbellTshEngine 迁移接线
+
+## 包
+
+`com.zerostudio.idea.treesitter.tsh.api`
+
+## TshEngine
+
+```kotlin
+val engine = TshEngine.create()
+val initialized = engine.initialize()
+```
+
+引擎当前提供 `objects` 和 `providers` 两个注册中心。该首个切片尚未接管原有 Native 解析和高亮服务；既有 `WindbellTshEngine` 仍是当前执行入口。不得把新门面初始化误认为 Native 子系统已经初始化。
+
+状态：CREATED -> INITIALIZED -> CLOSED。关闭后不能重新初始化；关闭会清理注册表。
+
+## TshObjectRegistry
+
+```kotlin
+val descriptor = engine.objects.register(
+    editor,
+    type = "editor",
+    capabilities = TshCapabilitySet.of(
+        TshCapability("text.read"),
+        TshCapability("render.custom")
+    )
+)
+val sameInstance = engine.objects.find(editor)
+val instance = engine.objects.find(descriptor.id)
+engine.objects.unregister(descriptor.id)
+```
+
+注册按实例身份（`===`）判断，而不是按 `equals()`。注册表在注销前持有强引用，宿主必须在对象生命周期结束时注销，或关闭引擎。重复注册同一实例且类型一致时更新能力和元数据并保留 ID；类型不一致时拒绝。
+
+## Provider
+
+Provider 必须声明稳定 ID、API 版本、能力集合，并对给定实例和描述符明确回答是否支持。当前注册中心提供注册、注销、枚举和匹配查询；尚未提供自动反射探测、优先级选择、异步绑定或渲染执行。
+
+## 诊断与结果
+
+`TshDiagnostic` 包含稳定 code、severity、stage、message，以及可选 source/range/objectId/cause/relatedInformation。范围端点必须使用同一坐标系，结束 offset 不得小于开始 offset。
+
+`TshResult.Success` 可携带非致命诊断；`TshResult.Failure` 必须至少携带一条诊断。
+
+## 当前限制与下一步
+
+1. 将错误码目录独立文档化，并增加诊断收集器/报告。
+2. 增加 TextDocument、TextBuffer、CoordinateConverter 和版本化编辑事件。
+3. 增加 Provider 能力版本协商、优先级和注册冲突诊断。
+4. 为旧 `WindbellTshEngine` 增加兼容 Facade，逐步将配置/高亮能力迁入服务。
+5. 在可用构建环境运行 `android-tree-sitter` 单元测试并修正编译问题。
+
+注意：API 文件已提交到开发分支，但当前执行环境没有仓库工作区和 Gradle 构建能力，因此不能声称代码已编译或测试通过。
