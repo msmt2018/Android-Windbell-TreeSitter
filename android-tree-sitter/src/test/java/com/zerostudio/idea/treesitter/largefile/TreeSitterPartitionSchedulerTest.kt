@@ -125,4 +125,11 @@ class TreeSitterPartitionSchedulerTest {
         assertEquals("x", String(rest, Charsets.UTF_16LE))
     }
 
+    @Test fun windowedCallbackRefusesToSplitPairWhenOnlyOneCodeUnitFits() {
+        val callback = CharSequenceParseWindowCallback("😀") { start, _ ->
+            "😀".substring(start, start + 1)
+        }
+        assertThrows(IllegalStateException::class.java) { callback.read(0L, 2) }
+    }
+
 }

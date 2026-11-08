@@ -47,7 +47,7 @@ class CharSequenceParseWindowCallback(
         val joinedPair = pairCrossesPieceBoundary && safeLength == 1 &&
             chunk.length == 1 && maxChars >= 2
         val outputLength = if (joinedPair) 2 else safeLength
-        check(outputLength > 0) {
+        check(outputLength > 0 && (!pairCrossesPieceBoundary || joinedPair || safeLength < chunk.length)) {
             "The requested window is too small to keep a UTF-16 surrogate pair together"
         }
         val output = if (joinedPair) charArrayOf(chunk[0], source[nextOffset]).concatToString() else chunk

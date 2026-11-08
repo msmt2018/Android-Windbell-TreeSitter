@@ -297,12 +297,27 @@ class MainActivity : AppCompatActivity() {
             .setMessage("是否在编辑器中加载默认的大型示例源码文件 (View.java.txt) 以供体验？")
             .setPositiveButton("加载示例文件") { _, _ ->
                 activityScope.launch(Dispatchers.IO) {
-                    val fileContent = runCatching {
-                        assets.open("View.java.txt").bufferedReader().use { it.readText() }
-                    }.getOrElse { "// ⚠️ 加载 View.java.txt 失败: ${it.localizedMessage}" }
-
+                    val loadedBuffer = runCatching {
+                        assets.open("View.java.txt").bufferedReader().use { reader ->
+                            val builder = PieceTreeTextBufferBuilder()
+                            val chars = CharArray(64 * 1024)
+                            while (true) {
+                                val count = reader.read(chars)
+                                if (count < 0) break
+                                if (count > 0) builder.acceptChunk(String(chars, 0, count))
+                            }
+                            PieceTreeBuffer(builder.build())
+                        }
+                    }
                     withContext(Dispatchers.Main) {
-                        setEditorContent(fileContent)
+                        loadedBuffer.onSuccess { buffer ->
+                            // Streamed into bounded Piece Tree chunks: no intermediate
+                            // whole-file String or duplicate Activity-owned text copy.
+                            editorView?.setBuffer(buffer)
+                            triggerEditorFullHighlight()
+                        }.onFailure { error ->
+                            showResultDialog("示例文件加载失败", error.stackTraceToString())
+                        }
                     }
                 }
             }
