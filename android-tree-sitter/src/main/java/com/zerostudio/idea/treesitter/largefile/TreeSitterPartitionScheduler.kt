@@ -184,6 +184,8 @@ class TreeSitterPartitionScheduler(
                             } else {
                                 astCache.put(key, tree, request.contextEndUtf16 - request.contextStartUtf16)
                             }
+                        } catch (_: CancellationException) {
+                            // Superseded work is expected while the document changes.
                         } catch (error: Throwable) {
                             onFailure(request, error)
                         } finally {

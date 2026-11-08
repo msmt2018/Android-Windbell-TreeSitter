@@ -20,6 +20,8 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import x.github.module.editor.highlight.SyntaxHighlighter
 import x.github.module.editor.input.AutoPairFilter
 import x.github.module.editor.model.EditorBuffer
@@ -58,8 +60,15 @@ class TshSyntaxHighlighter(
         val lengthChars: AtomicLong,
         val captureIndexes: ByteBudgetLruCache<Int, CaptureIntervalIndex>,
         val ticket: Long,
-        val pendingPartitions: MutableSet<Int> = ConcurrentHashMap.newKeySet()
+        val nativeMutex: Mutex = Mutex(),
+        val partitionWork: ConcurrentHashMap<Int, PartitionWork> = ConcurrentHashMap()
     )
+
+    private enum class PartitionWorkState { QUEUED, RUNNING, SUCCEEDED, FAILED, CANCELLED }
+
+    private class PartitionWork {
+        @Volatile var state: PartitionWorkState = PartitionWorkState.QUEUED
+    }
 
     private data class NativeEdit(
         val startByte: Long,
@@ -491,34 +500,54 @@ class TshSyntaxHighlighter(
             version = active.ticket
         )
         if (active.captureIndexes.get(partition.index) != null) return
-        if (!active.pendingPartitions.add(partition.index)) return
+        val work = PartitionWork()
+        if (active.partitionWork.putIfAbsent(partition.index, work) != null) return
 
-        // The native document owns one persistent parse session. A viewport request
-        // executes TSH against its absolute byte range; no partition-local parser/tree
-        // is created and tokenizer checkpoints remain owned by the native document.
+        // One native document handle has one serialized operation stream. Viewport
+        // highlighting, incremental edits and close must never race on its parser/tree.
         scope.launch(Dispatchers.IO) {
-            if (generation.get() != active.ticket || largeSession !== active) return@launch
             try {
-                val flat = engine.highlightNativeDocument(
-                    documentHandle = active.nativeHandle,
-                    startByte = partition.start * 2L,
-                    endByte = partition.endExclusive * 2L
-                ) ?: return@launch
+                if (generation.get() != active.ticket || largeSession !== active) {
+                    work.state = PartitionWorkState.CANCELLED
+                    return@launch
+                }
+                work.state = PartitionWorkState.RUNNING
+                val flat = active.nativeMutex.withLock {
+                    currentCoroutineContext().ensureActive()
+                    if (generation.get() != active.ticket || largeSession !== active) {
+                        throw CancellationException("Stale native viewport request")
+                    }
+                    engine.highlightNativeDocument(
+                        documentHandle = active.nativeHandle,
+                        startByte = partition.start * 2L,
+                        endByte = partition.endExclusive * 2L
+                    ) ?: throw IllegalStateException(
+                        "Native viewport TSH returned null (partition=${partition.index})"
+                    )
+                }
                 val spans = decodeNativeSpans(flat)
                 if (generation.get() == active.ticket && largeSession === active) {
-                    active.captureIndexes.put(
-                        partition.index,
-                        CaptureIntervalIndex(spans)
-                    )
+                    // Empty IntArray is a valid completed result and is cached as such.
+                    active.captureIndexes.put(partition.index, CaptureIntervalIndex(spans))
+                    work.state = PartitionWorkState.SUCCEEDED
                     host?.invalidateStyles()
                     host?.invalidateStructure()
+                } else {
+                    work.state = PartitionWorkState.CANCELLED
                 }
+            } catch (_: CancellationException) {
+                work.state = PartitionWorkState.CANCELLED
             } catch (error: Throwable) {
-                if (generation.get() == active.ticket) {
+                // Retain FAILED until an edit/session replacement invalidates it.
+                // Draw callbacks therefore cannot cause an immediate retry/log storm.
+                work.state = PartitionWorkState.FAILED
+                if (generation.get() == active.ticket && largeSession === active) {
                     Log.e(TAG, "Native viewport TSH failed: extension=.$extension partition=${partition.index}", error)
                 }
             } finally {
-                active.pendingPartitions.remove(partition.index)
+                if (work.state != PartitionWorkState.FAILED) {
+                    active.partitionWork.remove(partition.index, work)
+                }
             }
         }
     }
@@ -554,24 +583,26 @@ class TshSyntaxHighlighter(
             previous?.join()
             if (generation.get() != active.ticket || largeSession !== active) return@launch
             try {
-                var earliestOffset = Long.MAX_VALUE
-                for (edit in edits) {
-                    check(engine.applyNativeDocumentEdit(
-                        active.nativeHandle, edit.startByte, edit.oldEndByte, edit.insertedUtf16Le
-                    )) { "Native incremental Tree-sitter edit failed" }
-                    earliestOffset = minOf(earliestOffset, edit.startByte / 2L)
-                    active.lengthChars.addAndGet(
-                        edit.insertedChars.toLong() - edit.deletedChars.toLong()
-                    )
-                }
-                // Lexical state can flow to EOF. Keep the prefix cache and invalidate
-                // every page from the first affected partition onward; native TSH
-                // checkpoints are versioned and will be recomputed from a valid state.
-                val firstInvalid = (earliestOffset / PARTITION_CHARS).toInt()
-                active.captureIndexes.invalidate { key, _ -> key >= firstInvalid }
-                if (generation.get() == active.ticket && largeSession === active) {
-                    host?.invalidateStyles()
-                    host?.invalidateStructure()
+                active.nativeMutex.withLock {
+                    var earliestOffset = Long.MAX_VALUE
+                    for (edit in edits) {
+                        check(engine.applyNativeDocumentEdit(
+                            active.nativeHandle, edit.startByte, edit.oldEndByte, edit.insertedUtf16Le
+                        )) { "Native incremental Tree-sitter edit failed" }
+                        earliestOffset = minOf(earliestOffset, edit.startByte / 2L)
+                        active.lengthChars.addAndGet(
+                            edit.insertedChars.toLong() - edit.deletedChars.toLong()
+                        )
+                    }
+                    // Lexical state can flow to EOF. Invalidate downstream captures
+                    // and failed-work markers only after the edit transaction completes.
+                    val firstInvalid = (earliestOffset / PARTITION_CHARS).toInt()
+                    active.captureIndexes.invalidate { key, _ -> key >= firstInvalid }
+                    active.partitionWork.entries.removeIf { it.key >= firstInvalid }
+                    if (generation.get() == active.ticket && largeSession === active) {
+                        host?.invalidateStyles()
+                        host?.invalidateStructure()
+                    }
                 }
             } catch (error: Throwable) {
                 Log.e(TAG, "Native incremental edit failed; rebuilding the native session", error)
@@ -617,10 +648,13 @@ class TshSyntaxHighlighter(
 
     private fun disposeSession(active: LargeSession) {
         scope.launch(Dispatchers.IO) {
-            runCatching { engine.closeNativeDocument(active.nativeHandle) }
-                .onFailure { Log.w(TAG, "Failed to close native TSH document", it) }
+            runCatching {
+                active.nativeMutex.withLock {
+                    engine.closeNativeDocument(active.nativeHandle)
+                }
+            }.onFailure { Log.w(TAG, "Failed to close native TSH document", it) }
             runCatching { active.captureIndexes.close() }
                 .onFailure { Log.w(TAG, "Failed to close native TSH capture cache", it) }
         }
     }
-}
+}}

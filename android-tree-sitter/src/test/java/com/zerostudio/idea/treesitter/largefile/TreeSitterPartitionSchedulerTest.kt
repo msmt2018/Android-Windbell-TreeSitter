@@ -6,6 +6,7 @@ import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 
 class TreeSitterPartitionSchedulerTest {
     private class Source(val text: String, override val version: Long = 7L) : Utf16DocumentSource {
@@ -182,12 +183,12 @@ class TreeSitterPartitionSchedulerTest {
         val manager = DocumentPartitionManager(256, prefetchPartitions = 0)
         val cache = PartitionAstCache(1024) { 1L }
         val scheduler = TreeSitterPartitionScheduler(manager, cache, contextChars = 16)
-        var callbackCalled = false
+        val callbackCalled = AtomicBoolean(false)
         scheduler.requestViewportAsync(source, 100, 200, 1, {
             fail("Test source should not need native parsing")
-        }) { callbackCalled = true }
+        }) { callbackCalled.set(true) }
         assertTrue(enteredRead.await(2, TimeUnit.SECONDS), "indexing should begin on worker")
-        assertFalse(callbackCalled)
+        assertFalse(callbackCalled.get())
         releaseRead.countDown()
         scheduler.close()
     }
