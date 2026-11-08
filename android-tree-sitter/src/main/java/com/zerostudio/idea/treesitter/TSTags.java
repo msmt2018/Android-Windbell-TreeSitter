@@ -86,6 +86,7 @@ public final class TSTags {
       throw new IllegalArgumentException("Cannot map tags with an invalid query");
     }
 
+    final String[] captureNames = query.getCaptureNames();
     final List<TSTag> tags = new ArrayList<>(matches.length);
     for (TSQueryMatch match : matches) {
       if (match == null) {
@@ -105,7 +106,11 @@ public final class TSTags {
             || !capture.getNode().canAccess()) {
           throw new IllegalStateException("Tag query contains an invalid capture node");
         }
-        String captureName = query.getCaptureNameForId(capture.getIndex());
+        final int captureId = capture.getIndex();
+        if (captureId < 0 || captureId >= captureNames.length) {
+          throw new IllegalStateException("Tag query capture id is outside the query table");
+        }
+        String captureName = captureNames[captureId];
         if (captureName == null) {
           continue;
         }
