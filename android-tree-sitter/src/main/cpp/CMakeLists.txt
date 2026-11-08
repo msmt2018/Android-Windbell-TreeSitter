@@ -132,8 +132,9 @@ add_library(android-tree-sitter SHARED
     "${ONIG_SRC_DIR}/unicode_fold2_key.c"
     "${ONIG_SRC_DIR}/unicode_fold3_key.c"
 
-    # Native large-text source adapters
+    # Native large-text source adapters and bounded storage
     largefile/TextSource.cpp
+    largefile/ChunkedTextStore.cpp
 
     # 原生 JNI 适配层
     main.cc
