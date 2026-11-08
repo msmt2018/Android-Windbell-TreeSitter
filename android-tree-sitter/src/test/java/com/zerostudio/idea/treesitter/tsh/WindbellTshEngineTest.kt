@@ -170,6 +170,34 @@ class WindbellTshLinkageTest {
     }
 
     @Test
+    fun testByteRangeHighlightingRestrictsNativeQueryAndClipsOutput() {
+        val engine = WindbellTshEngine.instance
+        assertTrue(engine.loadTshSource("range-test", javaTestDsl(), null))
+
+        val text = "alpha beta"
+        val spans = engine.computeHighlights(
+            tree = null,
+            text = text,
+            extension = "range-test",
+            startByte = 0L,
+            endByte = 10L
+        )
+
+        assertTrue(spans.isNotEmpty(), "The first identifier should be highlighted")
+        assertTrue(spans.all { it.startByte >= 0 && it.endByte <= 10 })
+        assertTrue(spans.none { it.startByte >= 12 }, "Captures outside the requested range must be omitted")
+
+        val emptyRange = engine.computeHighlights(
+            tree = null,
+            text = text,
+            extension = "range-test",
+            startByte = 4L,
+            endByte = 4L
+        )
+        assertTrue(emptyRange.isEmpty())
+    }
+
+    @Test
     fun testTextMateNamedRepositoryIncludeExecutes() {
         val engine = WindbellTshEngine.instance
         val source = """
