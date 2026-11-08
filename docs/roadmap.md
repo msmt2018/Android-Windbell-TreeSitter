@@ -61,9 +61,12 @@
 - [x] Query Lease Store 增加 `registerDeferred` / `retireDeferred`：高层 Query Registry 事务锁内只切换 revision/登记退役，旧 Query 与依赖 Language Lease 的 close action 在事务锁外执行；增加 deferred close 测试源码。
 - [x] `TshEngine` 持有自己的 Native Resource Lease Store/Registry；Engine.close 先关闭该 Registry 并退役其拥有的 Native 资源，再清理 Provider/Object 索引。
 - [x] 新增 Engine Native 生命周期测试源码：验证 idle resource 在 Engine.close 时释放、活动 Lease 延迟释放，以及 Engine 关闭后拒绝新资源注册。
+- [x] Engine 拥有 `TshCompiledQueryRegistry` 和 `TshNativeQueryLeaseStore`；提供 `createTreeSitterQueryCompiler/Executor` 工厂，强制使用同一个 Engine ObjectRegistry、Query catalog、Query Lease Store 与 Native Resource Registry。
+- [x] Engine.close 按 Query → Parser/Tree → Language 顺序退役；Native Query Lease Store 增加永久 close，关闭后拒绝 Query 发布，活动 Query Lease 释放后再关闭 Query 和 Language 依赖。
+- [x] Native Resource Lease 支持从仍然持有的 Lease 派生子 Lease；Grammar 已退役时不允许从 Store 重新 acquire，但 Parser 可从其存活的 Language dependency lease 派生 Tree dependency lease；新增退役后 child retain 与并发 retain/release 测试源码。
 - [x] Tree-sitter Compiler/Executor Adapter 增加可选 `TshNativeResourceRegistry` 注入：启用时 Language/Tree Lease 获取经统一协调入口完成；旧底层 Store 注入保留为兼容迁移路径。
-- [ ] 旧宿主所有 Tree/Language/Parser owner 迁移到协调 Registry 的 register/acquire/retire，清除绕过 Store 的直接 close；生产构造必须注入 Engine 所有的协调入口；增加并发/真实 Native 测试。ParserOwner 目前是新 API 的可用源码，不代表旧宿主调用点已迁移。
-- [ ] 审计 Engine.close 与并发 register/retire 的线性化和等待语义；Resource Registry 与 Query Registry 已避免常规退役路径在各自协调锁内执行 Native close，但尚未完成全场景并发验证。
+- [ ] 旧宿主所有 Tree/Language/Parser owner 迁移到协调 Registry 的 register/acquire/retire，清除绕过 Store 的直接 close；新 API 应通过 Engine 工厂创建 Compiler/Executor；增加并发/真实 Native 测试。ParserOwner 目前是新 API 的可用源码，不代表旧宿主调用点已迁移。
+- [ ] 审计 Engine.close 与并发 register/retire/compile/execute 的线性化和等待语义；Store 已具备关闭门闩及活动 Lease 延迟释放，但尚未完成全场景并发验证。
 - [x] Predicate Handler 结果语义：OK 接受当前表达式、ERR 拒绝当前 match、UNHANDLED 委派下一 Handler；按 Done 分隔表达式并逐个执行，同一 pattern 的多个表达式全部通过才保留 match；按注册顺序确定 Handler 调用顺序。
 - [ ] Tree-sitter incremental edit/changed-range 查询。
 - [ ] 与现有 dynamic_ts_query 及旧 native 方法建立兼容 Adapter。
@@ -150,4 +153,4 @@
 - DSL：新增 `TshDslModel.kt`、`TshSchemaRegistry.kt`、`TshConfigRepository.kt` 与对应测试源码。
 - ATS/Tree-sitter：新增 `TshQueryApi.kt`、`TshCompiledQueryRegistry.kt`、`TshQueryApiTest.kt`；新增 `TshTreeSitterQueryAdapter.kt`，基于现有 `TSQuery.create`、`TSQueryCursor.create/exec/nextMatch`、`TSQueryMatch`、`TSQueryCapture` 实现编译/执行与 Capture 映射；新增 Adapter 合约测试源码。
 - 已检查现有实现：仓库包含 `TSQuery`、`TSQueryCursor` Java 封装，以及 C++ `TshCompiler` 和 `TshGrammar.dynamic_ts_query`。下一步应在这些既有入口上做 Adapter，不创建第二套 Native Query 引擎。
-- **状态：上述 Kotlin 源码和测试源码已提交；Gradle 构建、JUnit 执行、Native Query/Tree/Language lease 与协调式 Resource Registry 均尚未验证；宿主所有者迁移尚未完成；ATS 编译执行和设备运行均未验证。Tree-sitter Query Adapter 已有真实 Native 调用代码与 Lease 管理源码；Query revision 替换/release 的 close action 已移出 Query catalog 锁；ParserOwner 与编码标记已有源码，但尚未通过构建/运行测试。**
+- **状态：上述 Kotlin 源码和测试源码已提交；Gradle 构建、JUnit 执行、Native Query/Tree/Language lease 与协调式 Resource Registry 均尚未验证；宿主所有者迁移尚未完成；ATS 编译执行和设备运行均未验证。Tree-sitter Query Adapter 已有真实 Native 调用代码与 Lease 管理源码；Query revision 替换/release 的 close action 已移出 Query catalog 锁；ParserOwner、Engine 统一工厂、Query Store shutdown 与退役后 child Lease 已有源码/测试源码，但尚未通过构建/运行测试。**
