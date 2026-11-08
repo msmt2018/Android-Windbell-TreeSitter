@@ -146,7 +146,24 @@ public:
         uint32_t editStart, uint32_t oldEditEnd, uint32_t insertedBytes,
         const std::vector<std::pair<uint32_t, uint32_t>> &dirtyRanges
     ) noexcept {
-        const int64_t delta = static_cast<int64_t>(insertedBytes) -
+        // A Tree-sitter query result may depend on syntax outside every emitted
+    // capture (ancestors, siblings, predicates, and surrounding structure).
+    // Capture/viewport overlap therefore cannot prove that an entry is still
+    // valid after an edit. Until query execution records a conservative
+    // dependency envelope per cache entry, invalidate atomically on every edit.
+    // This deliberately trades cache hit rate for correctness; rebasing only
+    // the byte coordinates would otherwise allow stale captures to survive.
+    (void)newVersion;
+    (void)newSourceVersion;
+    (void)newPartitionVersion;
+    (void)editStart;
+    (void)oldEditEnd;
+    (void)insertedBytes;
+    (void)dirtyRanges;
+    clear();
+    return;
+
+    const int64_t delta = static_cast<int64_t>(insertedBytes) -
             static_cast<int64_t>(oldEditEnd - editStart);
         std::list<Key> nextLru;
         std::unordered_map<Key, Entry, KeyHash> nextEntries;
