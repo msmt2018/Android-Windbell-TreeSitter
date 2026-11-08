@@ -115,6 +115,33 @@ public final class TSHighlight {
     return Collections.unmodifiableList(spans);
   }
 
+  /**
+   * Execute the query and map captures directly into a compact native-produced
+   * span buffer. Each six-long record is startByte, endByte, captureId,
+   * patternIndex, styleId, and matchId. No TSQueryMatch/TSQueryCapture Java
+   * object graph is created by this path.
+   */
+  public static long[] extractPackedSpans(
+      TSQuery query, TSNode root, long startByte, long endByte,
+      int maxResults, int maxPendingMatches, int[] styleIds, int maxSpans) {
+    Objects.requireNonNull(styleIds, "styleIds");
+    if (query == null || !query.canAccess()) {
+      throw new IllegalArgumentException("Cannot highlight with an invalid query");
+    }
+    if (root == null || !root.canAccess() || root.getTree() == null
+        || !root.getTree().canAccess() || root.hasChanges()) {
+      throw new IllegalArgumentException("Cannot highlight an invalid or changed root");
+    }
+    if (startByte < 0 || endByte < startByte || endByte > 0xFFFF_FFFFL) {
+      throw new IllegalArgumentException("Invalid absolute byte range");
+    }
+    if (maxResults < 1 || maxPendingMatches < 1 || maxSpans < 1) {
+      throw new IllegalArgumentException("Highlight query limits must be positive");
+    }
+    return Native.extractSpans(query.getNativeObject(), root, startByte, endByte,
+        maxResults, maxPendingMatches, styleIds, maxSpans);
+  }
+
   @GenerateNativeHeaders(fileName = "highlight")
   private static final class Native {
     static native TSQueryMatch[] extract(
@@ -124,5 +151,9 @@ public final class TSHighlight {
         long endByte,
         int maxResults,
         int maxPendingMatches);
+
+    static native long[] extractSpans(
+        long query, TSNode root, long startByte, long endByte,
+        int maxResults, int maxPendingMatches, int[] styleIds, int maxSpans);
   }
 }

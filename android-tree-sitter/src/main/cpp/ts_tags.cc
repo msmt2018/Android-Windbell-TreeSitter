@@ -75,11 +75,12 @@ bool tagsProgressCallback(TSQueryCursorState *state) {
 
 } // namespace
 
-static jobjectArray TSQuery_extractBounded(
+static jobject TSQuery_extractBounded(
     JNIEnv *env, jclass,
     jlong query_pointer, jobject root_object,
     jlong start_byte, jlong end_byte,
-    jint max_results, jint max_pending_matches) {
+    jint max_results, jint max_pending_matches,
+    jintArray style_ids, jint max_spans) {
   if (query_pointer == 0 || root_object == nullptr) {
     throwTagsIllegalArgument(env, "query and root must be non-null");
     return nullptr;
@@ -174,6 +175,70 @@ static jobjectArray TSQuery_extractBounded(
     return nullptr;
   }
 
+  if (style_ids != nullptr) {
+    const jsize style_count = env->GetArrayLength(style_ids);
+    const uint32_t query_capture_count = ts_query_capture_count(
+        reinterpret_cast<const TSQuery *>(query_pointer));
+    if (style_count != static_cast<jsize>(query_capture_count)) {
+      throwTagsIllegalArgument(env, "styleIds length must equal the query capture count");
+      return nullptr;
+    }
+    if (max_spans < 1 || max_spans > 4000000) {
+      throwTagsIllegalArgument(env, "maxSpans must be between 1 and 4000000");
+      return nullptr;
+    }
+    std::vector<jint> styles;
+    std::vector<jlong> packed;
+    try {
+      styles.resize(static_cast<size_t>(style_count));
+      if (style_count > 0) {
+        env->GetIntArrayRegion(style_ids, 0, style_count, styles.data());
+        if (env->ExceptionCheck()) return nullptr;
+      }
+      packed.reserve(std::min<size_t>(
+          static_cast<size_t>(max_spans) * 6,
+          static_cast<size_t>(matches.size()) * 12));
+      for (const auto &owned : matches) {
+        for (const TSQueryCapture &capture : owned.captures) {
+          if (capture.index >= styles.size()) {
+            throwTagsIllegalState(env, "Native query returned an invalid capture index");
+            return nullptr;
+          }
+          const jint style_id = styles[capture.index];
+          if (style_id < 0) continue;
+          if (packed.size() / 6 >= static_cast<size_t>(max_spans)) {
+            throwTagsIllegalState(env,
+                "Tree-sitter query exceeded maxSpans; no partial result was returned");
+            return nullptr;
+          }
+          const uint32_t capture_start = ts_node_start_byte(capture.node);
+          const uint32_t capture_end = ts_node_end_byte(capture.node);
+          if (capture_end < capture_start) {
+            throwTagsIllegalState(env, "Native query returned an invalid capture range");
+            return nullptr;
+          }
+          packed.push_back(static_cast<jlong>(capture_start));
+          packed.push_back(static_cast<jlong>(capture_end));
+          packed.push_back(static_cast<jlong>(capture.index));
+          packed.push_back(static_cast<jlong>(owned.pattern_index));
+          packed.push_back(static_cast<jlong>(style_id));
+          packed.push_back(static_cast<jlong>(owned.id));
+        }
+      }
+    } catch (const std::bad_alloc &) {
+      throwTagsOutOfMemory(env);
+      return nullptr;
+    }
+    jlongArray result = env->NewLongArray(static_cast<jsize>(packed.size()));
+    if (!result) return nullptr;
+    if (!packed.empty()) {
+      env->SetLongArrayRegion(result, 0, static_cast<jsize>(packed.size()),
+                              packed.data());
+      if (env->ExceptionCheck()) return nullptr;
+    }
+    return result;
+  }
+
   jclass match_class = env->FindClass(
       "com/zerostudio/idea/treesitter/TSQueryMatch");
   if (!match_class) return nullptr;
@@ -206,9 +271,9 @@ static jobjectArray TSTags_extract(
     jlong query_pointer, jobject root_object,
     jlong start_byte, jlong end_byte,
     jint max_results, jint max_pending_matches) {
-  return TSQuery_extractBounded(env, nullptr, query_pointer, root_object,
-                                start_byte, end_byte, max_results,
-                                max_pending_matches);
+  return static_cast<jobjectArray>(TSQuery_extractBounded(
+      env, nullptr, query_pointer, root_object, start_byte, end_byte,
+      max_results, max_pending_matches, nullptr, 0));
 }
 
 static jobjectArray TSHighlight_extract(
@@ -219,9 +284,24 @@ static jobjectArray TSHighlight_extract(
   // Highlight queries use the exact same bounded Tree-sitter cursor executor
   // as tags. The returned captures retain their original capture and pattern
   // indices; style resolution remains a TSH-layer concern.
-  return TSQuery_extractBounded(env, nullptr, query_pointer, root_object,
-                        start_byte, end_byte, max_results,
-                        max_pending_matches);
+  return static_cast<jobjectArray>(TSQuery_extractBounded(
+      env, nullptr, query_pointer, root_object, start_byte, end_byte,
+      max_results, max_pending_matches, nullptr, 0));
+}
+
+static jlongArray TSHighlight_extractSpans(
+    JNIEnv *env, jclass,
+    jlong query_pointer, jobject root_object,
+    jlong start_byte, jlong end_byte,
+    jint max_results, jint max_pending_matches,
+    jintArray style_ids, jint max_spans) {
+  if (style_ids == nullptr) {
+    throwTagsIllegalArgument(env, "styleIds must be non-null");
+    return nullptr;
+  }
+  return static_cast<jlongArray>(TSQuery_extractBounded(
+      env, nullptr, query_pointer, root_object, start_byte, end_byte,
+      max_results, max_pending_matches, style_ids, max_spans));
 }
 
 void TSTags_Native__SetJniMethods(JNINativeMethod *methods, int count) {
@@ -230,4 +310,5 @@ void TSTags_Native__SetJniMethods(JNINativeMethod *methods, int count) {
 
 void TSHighlight_Native__SetJniMethods(JNINativeMethod *methods, int count) {
   SET_JNI_METHOD(methods, TSHighlight_Native_extract, TSHighlight_extract);
+  SET_JNI_METHOD(methods, TSHighlight_Native_extractSpans, TSHighlight_extractSpans);
 }
