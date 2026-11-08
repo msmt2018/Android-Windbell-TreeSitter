@@ -890,9 +890,11 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                     if (text_start > text_end || text_end > total_bytes ||
                         (text_start & 1u) || (text_end & 1u)) continue;
                     std::string node_text_storage;
+                    const UChar* node_source = input_chars
+                        ? reinterpret_cast<const UChar*>(input_chars) + text_start
+                        : &kEmptyInput;
                     if (!tshUtf16SliceToUtf8(
-                            text_start ? reinterpret_cast<const UChar*>(input_chars) + text_start : &kEmptyInput,
-                            text_end - text_start, node_text_storage)) continue;
+                            node_source, text_end - text_start, node_text_storage)) continue;
                     const std::string_view node_text(node_text_storage);
                     if (ast_rule.has_text_equals && node_text != ast_rule.text_equals) continue;
                     if (ast_rule.has_text_prefix &&
