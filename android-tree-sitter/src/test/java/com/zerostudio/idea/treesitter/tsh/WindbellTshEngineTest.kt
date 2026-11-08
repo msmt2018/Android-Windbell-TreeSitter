@@ -25,7 +25,7 @@ class WindbellTshLinkageTest {
 
         // 验证具备复杂代理对 (Emoji / 罕见字) 与正则规则的 TSH 配置载入
         val tshDsl = """
-            name: ["Java", ".java"]
+            name: ["Java 😀 𠮷", ".java"]
             styles: [
                 "keyword", #FF007F, #CC7832, @B,
                 "string", #007F00, #6A8759,
