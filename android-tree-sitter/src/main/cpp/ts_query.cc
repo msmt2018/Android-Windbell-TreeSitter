@@ -134,7 +134,9 @@ static jstring new_string_from_standard_utf8(JNIEnv *env,
     throw_illegal_args(env, "Tree-sitter UTF-8 string exceeds the Java String length limit");
     return nullptr;
   }
-  return env->NewString(utf16.data(), static_cast<jsize>(utf16.size()));
+  static const jchar empty_string_storage = 0;
+  const jchar *string_data = utf16.empty() ? &empty_string_storage : utf16.data();
+  return env->NewString(string_data, static_cast<jsize>(utf16.size()));
 }
 
 static jlong TSQuery_newQuery(JNIEnv *env,
