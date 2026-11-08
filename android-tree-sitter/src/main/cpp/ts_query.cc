@@ -143,7 +143,6 @@ static jlong TSQuery_newQuery(JNIEnv *env,
                               jlong language,
                               jstring source) {
   req_nnp(env, language);
-  req_nnp(env, source, "Query source");
 
   std::string source_utf8;
   if (!append_standard_utf8(env, source_utf8, source)) {
