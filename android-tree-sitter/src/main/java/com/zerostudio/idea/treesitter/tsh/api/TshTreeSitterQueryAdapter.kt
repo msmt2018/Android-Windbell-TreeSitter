@@ -66,7 +66,6 @@ class TshTreeSitterQueryCompiler(
         if (!nativeQuery.canAccess()) {
             val nativeError = runCatching { nativeQuery.errorType }.getOrNull()
             val offset = runCatching { nativeQuery.errorOffset }.getOrNull() ?: -1
-            nativeQuery.close()
             return failure(
                 "TSH-QUERY-COMPILE-002",
                 "Tree-sitter rejected query (error=${nativeError ?: "unknown"}, byteOffset=$offset)",
@@ -80,12 +79,10 @@ class TshTreeSitterQueryCompiler(
         val patternCount = try {
             nativeQuery.patternCount
         } catch (error: Throwable) {
-            nativeQuery.close()
             return failure("TSH-QUERY-COMPILE-003", "Cannot inspect compiled query: ${error.message}", cause = error)
         }
 
         if (patternCount > options.maxPatternCount) {
-            nativeQuery.close()
             return failure(
                 "TSH-QUERY-COMPILE-004",
                 "Compiled query has $patternCount patterns; configured maximum is ${options.maxPatternCount}"
@@ -98,7 +95,6 @@ class TshTreeSitterQueryCompiler(
         val objectDescriptor = try {
             objects.register(nativeQuery, "tree-sitter-query")
         } catch (error: Throwable) {
-            nativeQuery.close()
             return failure("TSH-QUERY-REGISTRY-004", "Cannot register native query: ${error.message}", cause = error)
         }
         val deferredCloseActions = ArrayList<AutoCloseable>(2)
