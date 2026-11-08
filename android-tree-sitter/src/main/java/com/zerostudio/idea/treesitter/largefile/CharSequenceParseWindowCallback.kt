@@ -10,7 +10,10 @@ import com.zerostudio.idea.treesitter.TSTree
  * the entire document is never flattened into a byte array or direct buffer.
  */
 class CharSequenceParseWindowCallback(
-    private val source: CharSequence
+    private val source: CharSequence,
+    private val chunkReader: (startUtf16: Int, maxChars: Int) -> CharSequence = { start, count ->
+        source.subSequence(start, minOf(source.length, start + count))
+    }
 ) : TSParser.ParseWindowCallback {
     private val byteLength = source.length.toLong() * 2L
 
@@ -25,22 +28,26 @@ class CharSequenceParseWindowCallback(
         }
 
         val start = (byteOffset / 2L).toInt()
-        val maxChars = (maxBytes / 2).coerceAtLeast(1).toLong()
-        var end = minOf(source.length.toLong(), start.toLong() + maxChars).toInt()
-
-        if (end < source.length && end > start &&
-            Character.isHighSurrogate(source[end - 1]) &&
-            Character.isLowSurrogate(source[end])) {
-            end--
+        val maxChars = (maxBytes / 2).coerceAtLeast(1)
+        val chunk = chunkReader(start, maxChars)
+        require(chunk.isNotEmpty() && chunk.length <= maxChars &&
+            start.toLong() + chunk.length <= source.length.toLong()) {
+            "chunkReader must return a non-empty bounded window before EOF"
         }
-        check(end > start) {
-            "maxBytes is too small to return the next UTF-16 surrogate pair"
+        var safeLength = chunk.length
+        val nextOffset = start + safeLength
+        if (nextOffset < source.length &&
+            Character.isHighSurrogate(chunk[safeLength - 1]) &&
+            Character.isLowSurrogate(source[nextOffset])) {
+            safeLength--
         }
-        val chunk = source.subSequence(start, end)
+        check(safeLength > 0) {
+            "The requested window is too small to keep a UTF-16 surrogate pair together"
+        }
         // Encode UTF-16 code units directly. String.getBytes may replace an
         // isolated surrogate, while editor buffers must preserve exact code units.
-        val bytes = ByteArray(chunk.length * 2)
-        for (index in 0 until chunk.length) {
+        val bytes = ByteArray(safeLength * 2)
+        for (index in 0 until safeLength) {
             val codeUnit = chunk[index].code
             bytes[index * 2] = codeUnit.toByte()
             bytes[index * 2 + 1] = (codeUnit ushr 8).toByte()

@@ -75,4 +75,48 @@ class TreeSitterPartitionSchedulerTest {
         assertEquals(0xD800, codeUnit)
     }
 
+    @Test fun windowedCallbackUsesPieceTreeChunkReaderWithoutFlattening() {
+        val text = "class A { val emoji = \"😀\" }"
+        var reads = 0
+        val source = object : CharSequence {
+            override val length: Int get() = text.length
+            override fun get(index: Int): Char = text[index]
+            override fun subSequence(startIndex: Int, endIndex: Int): CharSequence =
+                error("source.subSequence must not be called")
+        }
+        val callback = CharSequenceParseWindowCallback(source) { start, count ->
+            reads++
+            text.substring(start, minOf(text.length, start + count))
+        }
+        val bytes = callback.read(0L, 64)
+        assertEquals(text, String(bytes, Charsets.UTF_16LE))
+        assertEquals(1, reads)
+    }
+
+    @Test fun windowedNativeParserConsumesBoundedUtf16Chunks() {
+        val text = ("class A { int value; String emoji = \"😀\"; }\\n").repeat(12000)
+        val parser = TSParser.create().apply { setLanguage(TSLanguageJava.getInstance()) }
+        var maxRead = 0
+        val callback = TSParser.ParseWindowCallback { offset, maxBytes ->
+            val start = (offset / 2L).toInt()
+            val count = minOf(maxBytes / 2, text.length - start)
+            var end = start + count
+            if (end < text.length && Character.isHighSurrogate(text[end - 1]) &&
+                Character.isLowSurrogate(text[end])) end--
+            val bytes = ByteArray((end - start) * 2)
+            for (index in start until end) {
+                val code = text[index].code
+                bytes[(index - start) * 2] = code.toByte()
+                bytes[(index - start) * 2 + 1] = (code ushr 8).toByte()
+            }
+            maxRead = maxOf(maxRead, bytes.size)
+            bytes
+        }
+        val tree = parser.parseWindowed(null, text.length.toLong() * 2L, emptyArray(), callback)
+        assertNotNull(tree)
+        assertTrue(maxRead <= 64 * 1024)
+        tree?.close()
+        parser.close()
+    }
+
 }
