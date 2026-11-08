@@ -538,8 +538,21 @@ class WindbellTshEngine private constructor() {
         }
     }
 
-    fun computeHighlights(tree: TSTree?, text: String, extension: String): List<HighlightSpan> {
-        val flatData = nativeHighlight(tree?.nativeObject ?: 0L, text, extension, false) ?: return emptyList()
+    fun computeHighlights(
+        tree: TSTree?,
+        text: String,
+        extension: String,
+        startByte: Long = 0L,
+        endByte: Long = text.length.toLong() * 2L
+    ): List<HighlightSpan> {
+        require(startByte >= 0L && endByte >= startByte &&
+            endByte <= text.length.toLong() * 2L &&
+            (startByte and 1L) == 0L && (endByte and 1L) == 0L) {
+            "TSH range must be ordered UTF-16LE byte offsets within the document"
+        }
+        val flatData = nativeHighlight(
+            tree?.nativeObject ?: 0L, text, extension, false, startByte, endByte
+        ) ?: return emptyList()
         // JNI row layout: start, end, packed(styleId|flags), priority, order, source.
         val count = flatData.size / 6
         val result = ArrayList<HighlightSpan>(count)
@@ -559,8 +572,21 @@ class WindbellTshEngine private constructor() {
 
     data class PipelineDiagnostics(val matchCounts: Map<Int, Int>, val captures: List<HighlightSpan>)
 
-    fun computePipelineDiagnostics(tree: TSTree?, text: String, extension: String): PipelineDiagnostics {
-        val flatData = nativeHighlight(tree?.nativeObject ?: 0L, text, extension, true)
+    fun computePipelineDiagnostics(
+        tree: TSTree?,
+        text: String,
+        extension: String,
+        startByte: Long = 0L,
+        endByte: Long = text.length.toLong() * 2L
+    ): PipelineDiagnostics {
+        require(startByte >= 0L && endByte >= startByte &&
+            endByte <= text.length.toLong() * 2L &&
+            (startByte and 1L) == 0L && (endByte and 1L) == 0L) {
+            "TSH range must be ordered UTF-16LE byte offsets within the document"
+        }
+        val flatData = nativeHighlight(
+            tree?.nativeObject ?: 0L, text, extension, true, startByte, endByte
+        )
             ?: return PipelineDiagnostics(emptyMap(), emptyList())
         if (flatData.size < 4) return PipelineDiagnostics(emptyMap(), emptyList())
         val counts = (0..3).associateWith { flatData[it] }
@@ -616,7 +642,14 @@ class WindbellTshEngine private constructor() {
     private external fun nativeGetPalette(extension: String, schemeName: String): IntArray?
 
     @FastNative
-    private external fun nativeHighlight(treePtr: Long, text: String, extension: String, diagnostics: Boolean): IntArray?
+    private external fun nativeHighlight(
+        treePtr: Long,
+        text: String,
+        extension: String,
+        diagnostics: Boolean,
+        rangeStartByte: Long,
+        rangeEndByte: Long
+    ): IntArray?
 
 
 }
