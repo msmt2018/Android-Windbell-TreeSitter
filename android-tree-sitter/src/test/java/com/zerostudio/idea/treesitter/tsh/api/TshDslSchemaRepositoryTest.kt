@@ -67,6 +67,31 @@ class TshDslSchemaRepositoryTest {
     }
 
     @Test
+    fun schemaRejectsMissingRequiredCapability() {
+        val registry = TshSchemaRegistry()
+        registry.register(TshDeclarationSchema(
+            kind = TshDslDeclarationKind.STYLE,
+            properties = mapOf(
+                "fontSize" to TshPropertySchema(
+                    name = "fontSize",
+                    type = TshDslType.MeasureType(setOf(TshDslUnit.SP)),
+                    required = true,
+                    requiredCapability = "font.variable"
+                )
+            )
+        ))
+        val result = registry.validate(
+            TshDslDeclaration(
+                TshDslDeclarationKind.STYLE, "keyword",
+                mapOf("fontSize" to TshDslValue.MeasureValue(12.0, TshDslUnit.SP))
+            ),
+            TshDslVersion(1)
+        )
+        assertTrue(result is TshResult.Failure)
+        assertTrue(result.diagnostics().any { it.code == "TSH-SCHEMA-011" })
+    }
+
+    @Test
     fun lenientModeDowngradesUnknownPropertiesToWarnings() {
         val registry = TshSchemaRegistry()
         registry.register(TshDeclarationSchema(
@@ -92,7 +117,7 @@ class TshDslSchemaRepositoryTest {
             configId = "java",
             revision = revision,
             sourceId = "java.tsh",
-            sourceText = "name: [\\"Java\\"]",
+            sourceText = "name: [\"Java\"]",
             document = TshDslDocument(TshDslVersion(1), listOf(
                 TshDslDeclaration(TshDslDeclarationKind.LANGUAGE, "java", emptyMap())
             ))
