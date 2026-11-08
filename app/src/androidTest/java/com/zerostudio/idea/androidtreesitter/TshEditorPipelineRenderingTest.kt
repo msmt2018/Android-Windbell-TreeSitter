@@ -7,6 +7,7 @@ import android.os.SystemClock
 import android.view.View
 import android.text.SpannableStringBuilder
 import android.text.Spanned
+import android.text.style.BackgroundColorSpan
 import android.text.style.ForegroundColorSpan
 import android.text.style.StyleSpan
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -47,8 +48,8 @@ class TshEditorPipelineRenderingTest {
                 }
                 schemes {
                     plain {
-                        light [ outer: #202020 @bold, inner: #FF0000 ]
-                        dark [ outer: #A0A0A0, inner: #FF5555 ]
+                        light [ outer: #202020 @bold @bg #203040, inner: #FF0000 ]
+                        dark [ outer: #A0A0A0 @bg #304050, inner: #FF5555 ]
                     }
                 }
                 defaultScheme: "plain"
@@ -114,6 +115,19 @@ class TshEditorPipelineRenderingTest {
                     (expectedOuterPriority shl Spanned.SPAN_PRIORITY_SHIFT)
             }
         )
+        val tokenBackgrounds = styled.getSpans(
+            tokenStart, tokenEnd, BackgroundColorSpan::class.java
+        ).filter {
+            styled.getSpanStart(it) <= tokenStart && styled.getSpanEnd(it) >= tokenEnd
+        }
+        assertTrue("The outer TSH background must cover the nested token", tokenBackgrounds.isNotEmpty())
+        assertEquals(
+            "The DSL background color must survive native palette decoding",
+            engine.getStylePalette("canvas-priority-regression", "outer")?.lightBackground,
+            tokenBackgrounds.maxByOrNull {
+                styled.getSpanFlags(it) and Spanned.SPAN_PRIORITY
+            }?.backgroundColor
+        )
         val tokenColors = styled.getSpans(
             tokenStart, tokenEnd, ForegroundColorSpan::class.java
         ).filter {
@@ -149,6 +163,15 @@ class TshEditorPipelineRenderingTest {
                 basePaint = paint
             )
             val expected = engine.getStylePalette("canvas-priority-regression", "inner")!!.lightColor
+            val expectedBackground = engine.getStylePalette(
+                "canvas-priority-regression", "outer"
+            )!!.lightBackground
+            val tokenX = 8f + paint.measureText(source.substring(0, tokenStart))
+            assertEquals(
+                "The .tsh background must reach the final Canvas pixel",
+                expectedBackground,
+                bitmap.getPixel((tokenX + 2f).toInt(), 5)
+            )
             var matchingPixels = 0
             for (y in 0 until bitmap.height) {
                 for (x in 8 until bitmap.width) {

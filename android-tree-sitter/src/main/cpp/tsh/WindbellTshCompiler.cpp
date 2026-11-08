@@ -2917,6 +2917,14 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                     target.has_dark_color = true;
                     target.explicit_dark_color = true;
                 }
+                if (entry.second.has_light_background) {
+                    target.light_background = entry.second.light_background;
+                    target.has_light_background = true;
+                }
+                if (entry.second.has_dark_background) {
+                    target.dark_background = entry.second.dark_background;
+                    target.has_dark_background = true;
+                }
                 target.light_font_flags |= entry.second.light_font_flags;
                 target.dark_font_flags |= entry.second.dark_font_flags;
             }
