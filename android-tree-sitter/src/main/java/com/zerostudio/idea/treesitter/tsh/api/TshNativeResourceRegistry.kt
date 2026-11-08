@@ -27,12 +27,13 @@ class TshNativeResourceRegistry(
         resource: T,
         type: String,
         capabilities: TshCapabilitySet = TshCapabilitySet.EMPTY,
-        metadata: Map<String, String> = emptyMap()
+        metadata: Map<String, String> = emptyMap(),
+        dependencies: List<AutoCloseable> = emptyList()
     ): Registration<T> = synchronized(lock) {
         check(!closed) { "Native resource registry is closed" }
         val descriptor = objects.registerUnique(resource, type, capabilities, metadata)
         try {
-            val handle = leases.register(descriptor.id, resource)
+            val handle = leases.register(descriptor.id, resource, dependencies)
             ownedIds.add(descriptor.id)
             Registration(descriptor, handle)
         } catch (error: Throwable) {
