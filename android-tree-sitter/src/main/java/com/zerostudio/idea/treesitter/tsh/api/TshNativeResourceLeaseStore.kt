@@ -15,7 +15,7 @@ class TshNativeResourceLeaseStore {
         val resource: T
     )
 
-    private class Entry<T : TSNativeObject>(
+    internal class Entry<T : TSNativeObject>(
         val objectId: TshObjectId,
         val resource: T
     ) {
