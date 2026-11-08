@@ -90,7 +90,7 @@ class TshTreeSitterQueryCompiler(
         val hash = sha256(source.text)
         val queryId = source.sourceId?.takeIf { it.isNotBlank() } ?: "tsq:$hash"
         val revision = hash
-        return synchronized(registrationLock) {
+        synchronized(registrationLock) {
             val previous = queries.get(queryId)
             val objectDescriptor = try {
                 objects.register(nativeQuery, "tree-sitter-query")
