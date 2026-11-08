@@ -13,7 +13,8 @@ class TshNativeQueryLeaseStore {
     internal class Entry(
         val queryId: String,
         val objectId: TshObjectId,
-        val query: TSQuery
+        val query: TSQuery,
+        val dependencies: List<AutoCloseable>
     ) {
         var activeLeases: Int = 0
         var retired: Boolean = false
@@ -42,7 +43,12 @@ class TshNativeQueryLeaseStore {
     private val byQueryId = LinkedHashMap<String, Entry>()
 
     /** Registers a newly-created query. The same query ID may replace a retired entry only. */
-    fun register(queryId: String, objectId: TshObjectId, query: TSQuery) {
+    fun register(
+        queryId: String,
+        objectId: TshObjectId,
+        query: TSQuery,
+        dependencies: List<AutoCloseable> = emptyList()
+    ) {
         require(queryId.isNotBlank())
         require(query.canAccess()) { "Cannot register a closed native query" }
         var closeNow: Entry? = null
@@ -54,7 +60,7 @@ class TshNativeQueryLeaseStore {
                 byQueryId.remove(queryId)
                 closeNow = takeForCloseIfReady(current)
             }
-            val entry = Entry(queryId, objectId, query)
+            val entry = Entry(queryId, objectId, query, dependencies.toList())
             byObjectId[objectId] = entry
             byQueryId[queryId] = entry
         }
@@ -119,5 +125,6 @@ class TshNativeQueryLeaseStore {
 
     private fun Entry.closeSafely() {
         runCatching { query.close() }
+        dependencies.asReversed().forEach { dependency -> runCatching { dependency.close() } }
     }
 }
