@@ -238,6 +238,10 @@ class TshEditorPipelineRenderingTest {
         val light = palette!!
         assertEquals(128, Color.alpha(light.lightColor))
         assertEquals(64, Color.alpha(light.lightBackground))
+        val darkPalette = engine.getSchemePalette("canvas-alpha-regression", "plain")
+            .values.first { it.styleId == light.styleId }
+        assertEquals(191, Color.alpha(darkPalette.darkColor))
+        assertEquals(128, Color.alpha(darkPalette.darkBackground))
 
         val source = "42"
         val captures = engine.computeHighlights(null, source, "canvas-alpha-regression")
@@ -287,8 +291,37 @@ class TshEditorPipelineRenderingTest {
                     abs(Color.green(actualBackground) - Color.green(expectedBackground)) <= 1 &&
                     abs(Color.blue(actualBackground) - Color.blue(expectedBackground)) <= 1
             )
-            val expectedForegroundAlpha = Color.alpha(light.lightColor)
-            assertEquals(128, expectedForegroundAlpha)
+            // Remove the background and render onto transparent pixels to verify
+            // that ForegroundColorSpan alpha survives the custom Canvas painter too.
+            styled.removeSpan(background)
+            bitmap.eraseColor(Color.TRANSPARENT)
+            StyledTextPainter().draw(
+                canvas = Canvas(bitmap),
+                text = source,
+                spans = styled,
+                start = 0,
+                end = styled.length,
+                x = 8f,
+                baseline = 58f,
+                rowTop = 0f,
+                rowBottom = 80f,
+                basePaint = paint
+            )
+            var translucentForegroundPixels = 0
+            for (y in 0 until bitmap.height) {
+                for (x in 0 until bitmap.width) {
+                    val pixel = bitmap.getPixel(x, y)
+                    if (Color.alpha(pixel) in 1..128 && Color.red(pixel) > 0 &&
+                        Color.green(pixel) == 0 && Color.blue(pixel) == 0) {
+                        translucentForegroundPixels++
+                    }
+                }
+            }
+            assertTrue(
+                "Foreground alpha must survive the actual Canvas text draw; " +
+                    "pixels=$translucentForegroundPixels",
+                translucentForegroundPixels > 0
+            )
         } finally {
             bitmap.recycle()
             engine.clearAppearanceOverride("canvas-alpha-regression")
