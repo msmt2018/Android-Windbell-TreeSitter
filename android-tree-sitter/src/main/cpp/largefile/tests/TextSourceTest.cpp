@@ -236,8 +236,10 @@ static void testPieceTreeSnapshotIsolatedAndSharesBacking() {
     PieceTreeSource original(mapped, 1024u * 1024u);
     const char firstInsert[] = {'X',0};
     assert(original.replace(2, 2, firstInsert, sizeof(firstInsert)));
+    const uint64_t beforeSnapshotBytes = original.allocatedBytes();
     auto snapshot = original.clone();
     assert(snapshot && snapshot->isValid());
+    assert(snapshot->allocatedBytes() == beforeSnapshotBytes);
     const std::string snapshotBytes = readAll(*snapshot);
 
     const char secondInsert[] = {'Y',0};
@@ -245,7 +247,7 @@ static void testPieceTreeSnapshotIsolatedAndSharesBacking() {
     assert(readAll(original) == snapshotBytes);
     assert(readAll(*snapshot) != snapshotBytes);
     assert(snapshot->version() == original.version() + 1);
-    assert(original.allocatedBytes() == snapshot->allocatedBytes());
+    assert(snapshot->allocatedBytes() > original.allocatedBytes());
     ::unlink(path);
 }
 
