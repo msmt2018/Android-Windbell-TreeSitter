@@ -550,6 +550,24 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
         : &kEmptyInput;
     const UChar* text_end = text_start + total_bytes;
 
+    // Keep intermediate capture memory proportional to the requested viewport.
+    // Regex and Monarch still scan from document start to preserve anchors and
+    // tokenizer state, but captures outside this byte interval are discarded
+    // immediately after each producer finishes instead of accumulating for the
+    // entire document.
+    auto retain_requested_range = [&](std::vector<HighlightSpan>& candidates) {
+        for (auto& span : candidates) {
+            span.start_byte = std::max(span.start_byte, range_start_byte);
+            span.end_byte = std::min(span.end_byte, range_end_byte);
+        }
+        candidates.erase(
+            std::remove_if(candidates.begin(), candidates.end(),
+                [](const HighlightSpan& span) {
+                    return span.start_byte >= span.end_byte;
+                }),
+            candidates.end());
+    };
+
     // Tree-sitter offsets and the TSH input are both UTF-16LE byte offsets.
     // Keep the original source as the single canonical buffer and convert only
     // individual AST slices when a rule explicitly needs UTF-8 text predicates.
@@ -636,6 +654,7 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
         }
         onig_region_free(region, 1);
     }
+    retain_requested_range(micro_spans);
 
     // Tag regex spans before the stateful tokenizer appends its own results.
     for (auto& span : micro_spans) {
@@ -806,6 +825,7 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
     for (size_t i = monarch_span_begin; i < micro_spans.size(); ++i) {
         micro_spans[i].source = static_cast<uint8_t>(HighlightSource::MONARCH);
     }
+    retain_requested_range(micro_spans);
 
     std::vector<HighlightSpan> macro_spans;
     if (tree && tree_source_valid && !grammar->ast_selector_rules.empty()) {
@@ -1071,6 +1091,7 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
     for (size_t i = native_query_span_begin; i < macro_spans.size(); ++i) {
         macro_spans[i].source = static_cast<uint8_t>(HighlightSource::NATIVE_QUERY);
     }
+    retain_requested_range(macro_spans);
 
     // Keep the public range API's output bounded to the requested document
     // window. Regex and Monarch still evaluate from document start to preserve
