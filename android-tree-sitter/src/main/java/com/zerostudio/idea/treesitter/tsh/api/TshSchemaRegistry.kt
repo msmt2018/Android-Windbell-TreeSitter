@@ -80,7 +80,7 @@ class TshSchemaRegistry {
         synchronized(lock) {
             val existing = schemas[schema.kind]
             if (existing != null && !replace) {
-                return@synchronized failure("TSH-SCHEMA-001", "A schema for \${schema.kind} is already registered")
+                return@synchronized failure("TSH-SCHEMA-001", "A schema for ${schema.kind} is already registered")
             }
             schemas[schema.kind] = schema
             TshResult.Success(schema)
@@ -99,7 +99,7 @@ class TshSchemaRegistry {
         availableCapabilities: TshCapabilitySet = TshCapabilitySet.EMPTY
     ): TshResult<TshSchemaValidationResult> {
         val schema = get(declaration.kind)
-            ?: return failure("TSH-SCHEMA-002", "No schema registered for \${declaration.kind}")
+            ?: return failure("TSH-SCHEMA-002", "No schema registered for ${declaration.kind}")
         val diagnostics = ArrayList<TshDiagnostic>()
         val normalized = LinkedHashMap<String, TshDslValue>()
 
@@ -113,48 +113,48 @@ class TshSchemaRegistry {
                     else -> TshDiagnosticSeverity.ERROR
                 }
                 if (severity != null) diagnostics += diagnostic(
-                    "TSH-SCHEMA-003", severity, "Unknown property '\$name' in \${declaration.kind}"
+                    "TSH-SCHEMA-003", severity, "Unknown property '$name' in ${declaration.kind}"
                 )
                 continue
             }
             if (version < property.introducedIn) {
                 diagnostics += diagnostic("TSH-SCHEMA-004", TshDiagnosticSeverity.ERROR,
-                    "Property '\$name' requires DSL \${property.introducedIn} or newer")
+                    "Property '$name' requires DSL ${property.introducedIn} or newer")
                 continue
             }
             if (property.deprecatedIn != null && version >= property.deprecatedIn) {
                 diagnostics += diagnostic("TSH-SCHEMA-005", TshDiagnosticSeverity.WARNING,
-                    "Property '\$name' is deprecated since DSL \${property.deprecatedIn}")
+                    "Property '$name' is deprecated since DSL ${property.deprecatedIn}")
             }
             if (value === TshDslValue.NullValue && !property.nullable) {
                 diagnostics += diagnostic("TSH-SCHEMA-006", TshDiagnosticSeverity.ERROR,
-                    "Property '\$name' does not accept null")
+                    "Property '$name' does not accept null")
                 continue
             }
             if (!matches(value, property.type)) {
                 diagnostics += diagnostic("TSH-SCHEMA-007", TshDiagnosticSeverity.ERROR,
-                    "Property '\$name' does not match declared type \${property.type}")
+                    "Property '$name' does not match declared type ${property.type}")
                 continue
             }
             if (property.allowedValues.isNotEmpty() && value !in property.allowedValues) {
                 diagnostics += diagnostic("TSH-SCHEMA-008", TshDiagnosticSeverity.ERROR,
-                    "Property '\$name' has a value outside its allowed set")
+                    "Property '$name' has a value outside its allowed set")
                 continue
             }
             val numeric = numericValue(value)
             if (numeric != null && property.minimum != null && numeric < property.minimum) {
                 diagnostics += diagnostic("TSH-SCHEMA-009", TshDiagnosticSeverity.ERROR,
-                    "Property '\$name' is below minimum \${property.minimum}")
+                    "Property '$name' is below minimum ${property.minimum}")
                 continue
             }
             if (numeric != null && property.maximum != null && numeric > property.maximum) {
                 diagnostics += diagnostic("TSH-SCHEMA-010", TshDiagnosticSeverity.ERROR,
-                    "Property '\$name' exceeds maximum \${property.maximum}")
+                    "Property '$name' exceeds maximum ${property.maximum}")
                 continue
             }
             if (property.requiredCapability != null && !availableCapabilities.contains(property.requiredCapability)) {
                 diagnostics += diagnostic("TSH-SCHEMA-011", TshDiagnosticSeverity.ERROR,
-                    "Property '\$name' requires capability '\${property.requiredCapability}'")
+                    "Property '$name' requires capability '${property.requiredCapability}'")
                 continue
             }
             normalized[name] = value
@@ -165,7 +165,7 @@ class TshSchemaRegistry {
                 when {
                     property.defaultValue != null -> normalized[name] = property.defaultValue
                     property.required -> diagnostics += diagnostic("TSH-SCHEMA-012", TshDiagnosticSeverity.ERROR,
-                        "Required property '\$name' is missing")
+                        "Required property '$name' is missing")
                 }
             }
         }
