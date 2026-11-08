@@ -1078,7 +1078,10 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
     windbell::largefile::TextChunkView view{};
     const uint16_t *input = nullptr;
     std::vector<uint16_t> compatibility_window;
-    if (total_bytes != 0) {
+    const auto grammar = WindbellEngine::getInstance().getGrammarByExtension(document->extension);
+    const bool source_native_ast_only = grammar &&
+        grammar->regex_rules.empty() && grammar->monarch_states.empty();
+    if (total_bytes != 0 && !source_native_ast_only) {
         if (!document->source->read(0, UINT32_MAX, &view) ||
             !view.data || view.size == 0) {
             throw_illegal_state(env, "Native Piece Tree cannot provide its first input window");

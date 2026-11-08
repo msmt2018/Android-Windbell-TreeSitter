@@ -545,12 +545,17 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
 ) {
     std::vector<HighlightSpan> final_spans;
     if (diagnostic_match_counts) std::fill(diagnostic_match_counts, diagnostic_match_counts + 4, 0u);
-    if (length_chars != 0 && input_chars == nullptr) return final_spans;
+    if (length_chars != 0 && input_chars == nullptr && !text_source) return final_spans;
     if (length_chars > (std::numeric_limits<uint32_t>::max() / sizeof(uint16_t))) return final_spans;
     auto grammar = getGrammarByExtension(extension);
     if (!grammar) return final_spans;
 
-    uint32_t total_bytes = length_chars * sizeof(uint16_t);
+    const uint64_t source_bytes = text_source ? text_source->sizeBytes() :
+        static_cast<uint64_t>(length_chars) * sizeof(uint16_t);
+    if (source_bytes > std::numeric_limits<uint32_t>::max() ||
+        (source_bytes & 1u) != 0 ||
+        source_bytes != static_cast<uint64_t>(length_chars) * sizeof(uint16_t)) return final_spans;
+    const uint32_t total_bytes = static_cast<uint32_t>(source_bytes);
     if (range_end_byte == UINT32_MAX) range_end_byte = total_bytes;
     if ((range_start_byte & 1u) != 0 || (range_end_byte & 1u) != 0 ||
         range_start_byte > range_end_byte || range_end_byte > total_bytes) {
@@ -586,7 +591,7 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
     // Keep the original source as the single canonical buffer and convert only
     // individual AST slices when a rule explicitly needs UTF-8 text predicates.
     const bool tree_source_valid = tree && (total_bytes & 1u) == 0 &&
-        (text_start != nullptr || total_bytes == 0);
+        (input_chars != nullptr || text_source != nullptr || total_bytes == 0);
 
     std::vector<HighlightSpan> micro_spans;
     // Do not reserve proportional to document length: a 300 MB source can
@@ -594,7 +599,7 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
     // reserved hundreds of megabytes before the first rule had matched.
     micro_spans.reserve(std::min<size_t>(length_chars / 4, 4096));
 
-    for (const auto& rule : grammar->regex_rules) {
+    if (input_chars) for (const auto& rule : grammar->regex_rules) {
         if (!rule.enabled) continue;
         if (rule.type == RegexRuleType::BLOCK && rule.onig_start && rule.onig_end) {
             matchBlockRecursive(rule, text_start, text_end, text_start, text_end, micro_spans,
@@ -681,7 +686,7 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
     // Monarch stateful tokenizer. It runs on the same UTF-16 buffer as
     // Oniguruma rules and emits the same span ABI, so the Android renderer does
     // not need a second token model.
-    if (!grammar->monarch_states.empty()) {
+    if (input_chars && !grammar->monarch_states.empty()) {
         std::vector<std::string> state_stack{grammar->monarch_start_state};
         uint32_t position = 0;
         uint64_t next_checkpoint = 64u * 1024u;
