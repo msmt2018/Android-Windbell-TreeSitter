@@ -60,7 +60,9 @@ class DocumentPartitionManagerTest {
         assertEquals(start * 2L, range.startByte.toLong())
         assertEquals(end * 2L, range.endByte.toLong())
         assertEquals(1, range.startPoint.row)
-        assertEquals(("😀".length + 0L) * 2L + "second".length * 2L, range.endPoint.column.toLong())
+        assertEquals(4, range.startPoint.column)
+        assertEquals(2, range.endPoint.row)
+        assertEquals(10, range.endPoint.column)
     }
 
     @Test fun treeSitterRangeRejectsSurrogatePairSplit() {
