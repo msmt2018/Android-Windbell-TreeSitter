@@ -28,7 +28,9 @@
 - Predicate Handler 改为按注册顺序确定性执行；TSH 预检逐个扫描每个 pattern 中的所有 predicate，而不只检查首个 predicate。
 - Query revision 发布、注销和 Executor 的“当前 revision 检查 + Lease acquire”统一通过 `TshCompiledQueryRegistry` 事务锁协调，避免并发替换期间 Registry 指向新 revision、Lease Store 却已退役该 revision的短暂不一致。
 - 新增 `TshNativeQueryLeaseStore` 与生命周期测试源码，覆盖 release 延迟关闭、同 ID 替换和批量退役；Executor 对 predicate 名称执行 Handler 声明覆盖预检。
-- 新增通用 `TshNativeResourceLeaseStore`：资源 Handle 实例校验、Lease 计数、retire/retireAll 后延迟 close；Tree Executor 接入 Tree Lease，Grammar Language Resolver 改为返回带 objectId 的 Language Handle，Compiler 将 Language Lease 作为 Query 依赖保持至 Query 完整退役；新增资源 Lease 测试源码。
+- 新增通用 `TshNativeResourceLeaseStore`：资源 Handle 实例校验、Lease 计数、retire/retireAll 后延迟 close；支持依赖 Lease，Native resource close 后逆序释放依赖；Tree Executor 接入 Tree Lease，Grammar Language Resolver 改为返回带 objectId 的 Language Handle，Compiler 将 Language Lease 作为 Query 依赖保持至 Query 完整退役；新增资源 Lease 测试源码。
+- 新增 `TshTreeSitterParserOwner`：Parser 持有 Language Lease，解析出的每棵 Tree 独立持有 Language Lease，允许 Tree 安全晚于 Parser/Grammar Provider 释放；Parser 和 Tree 均注册到 Engine 的协调 Resource Registry。
+- 修正 Tree-sitter byte range 契约：`TshByteRange` 表示 Native Tree-sitter byte offset，`TshSyntaxTreeSnapshot`/`TshQueryResult` 携带源文本编码；当前 Java `TSParser.parseString` 使用 UTF-16LE，ParserOwner 生成的 Snapshot 明确标记 `UTF16_LE`，避免把 UTF-16LE 字节偏移误当成 UTF-8。
 - 新增 `TshNativeResourceRegistry` 协调对象索引与 Native 资源所有权：统一注册、按 Native 类型及实例身份校验的 Lease 获取、先退役后注销对象索引、仅退役本协调器所有资源的作用域化 retireAll；新增注册/获取/退役/批量退役生命周期测试源码。
 - 修正 Native Resource Registry 锁边界：在协调锁内先撤销资源的公开获取资格并移除对象索引，之后在锁外调用 Lease Store retire，避免 Native close 回调在协调器锁内运行；新增永久 close 状态与对应测试源码。
 - `TshNativeQueryLeaseStore` 新增 `registerDeferred` / `retireDeferred`，允许 Query catalog 在事务锁内原子切换 revision/标记退役，并将旧 Query 与其 Language 依赖 Lease 的实际 close action 延后到锁外执行；新增 deferred close 测试源码。
@@ -40,12 +42,12 @@
 - Engine Session、任务调度、资源 Scope 和兼容迁移接线。
 - .tsh Lexer/Parser/AST/Schema/Language Service 实现及 C++ Compiler 兼容。
 - ATS Lexer/Parser/AST/Compiler 到现有 Tree-sitter Query 执行器的适配。
-- Tree/Language/Parser Native lease 的宿主全面迁移到 Engine 所有的 `TshNativeResourceRegistry`（禁止绕过 Store 直接 close）、并发关闭/注册线性化验证、生产构造强制协调入口、增量查询与可中断取消/真实 step budget。
+- 旧宿主 Tree/Language/Parser Native owner 全面迁移到 Engine 所有的 `TshNativeResourceRegistry`（禁止绕过 Store 直接 close）、并发关闭/注册线性化验证、生产构造强制协调入口、增量查询与可中断取消/真实 step budget。新 ParserOwner 仅代表 API 源码，不代表旧宿主已迁移。
 - Regex 独立 WindowLease、Oniguruma 连续缓冲区和跨窗口等价策略。
 - Unified Match/Scope/Attribute/Highlight 与 Theme/RenderPlan 运行时实现。
 - Binding/EventBus/Provider 版本协商和诊断收集器。
 - 本地 Gradle 编译、自动化测试和真实编辑器渲染验证。
 
 ### Status
-- 本轮新增的 Kotlin API 和测试仅代表源码已提交；没有运行 Gradle、JUnit、C++/JNI 构建或 Android 设备验证。Tree-sitter Adapter 调用了既有 Native API；Query/Tree/Language lease、Predicate 过滤和协调式 Resource Registry 源码及测试源码已提交；Resource Registry 锁边界、Engine.close 退役接线和 Query catalog 锁外 close action 也已加入源码/测试源码，但未做 Gradle/JUnit 或真实 Native 运行验证。
+- 本轮新增的 Kotlin API 和测试仅代表源码已提交；没有运行 Gradle、JUnit、C++/JNI 构建或 Android 设备验证。Tree-sitter Adapter 调用了既有 Native API；Query/Tree/Language lease、Predicate 过滤和协调式 Resource Registry 源码及测试源码已提交；Resource Registry 锁边界、Engine.close 退役接线和 Query catalog 锁外 close action、ParserOwner 和源文本编码契约也已加入源码/测试源码，但未做 Gradle/JUnit 或真实 Native 运行验证。
 - 现有仓库已检查到 `TSQuery`、`TSQueryCursor`、`TshCompiler`、`TshGrammar.dynamic_ts_query`；后续实现应复用这些既有能力并保持旧 JNI 入口兼容。
