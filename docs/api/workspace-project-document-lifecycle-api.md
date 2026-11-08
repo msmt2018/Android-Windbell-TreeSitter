@@ -1,3 +1,5 @@
+> **范围声明：非 TSH 核心 API。** 本文仅作为宿主 Editor 集成边界/历史设计参考，不构成 TSH 引擎公共 API。TSH 不负责通用编辑器功能；请以 docs/api/README.md 的 TSH 核心 API 总目录为准。
+
 # Workspace、Project 与 Document Lifecycle API
 
 > 状态：目标契约（规范文档）；不代表对应运行时 API 已实现。
