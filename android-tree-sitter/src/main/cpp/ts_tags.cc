@@ -13,6 +13,7 @@
 #include <memory>
 #include <new>
 #include <vector>
+#include <utility>
 
 #include "tree_sitter/api.h"
 #include "utils/ts_obj_utils.h"
@@ -51,6 +52,24 @@ struct OwnedQueryMatch {
   std::vector<TSQueryCapture> captures;
 };
 
+#if defined(TSH_TREE_SITTER_HAS_QUERY_CURSOR_OPTIONS)
+struct TagsProgressBudget {
+  uint32_t callbacks = 0;
+  static constexpr uint32_t kMaxCallbacks = 100000;
+  bool cancelled = false;
+};
+
+bool tagsProgressCallback(TSQueryCursorState *state) {
+  if (!state || !state->payload) return true;
+  auto *budget = static_cast<TagsProgressBudget *>(state->payload);
+  if (++budget->callbacks >= TagsProgressBudget::kMaxCallbacks) {
+    budget->cancelled = true;
+    return true;
+  }
+  return false;
+}
+#endif
+
 } // namespace
 
 static jobjectArray TSTags_extract(
@@ -84,6 +103,14 @@ static jobjectArray TSTags_extract(
     return nullptr;
   }
 
+#if defined(TSH_TREE_SITTER_HAS_QUERY_CURSOR_OPTIONS)
+  // The options payload must outlive the cursor because Tree-sitter retains
+  // the options pointer until the cursor is destroyed or executed again.
+  TagsProgressBudget progress_budget;
+  TSQueryCursorOptions query_options{};
+  query_options.payload = &progress_budget;
+  query_options.progress_callback = tagsProgressCallback;
+#endif
   std::unique_ptr<TSQueryCursor, decltype(&ts_query_cursor_delete)> cursor(
       ts_query_cursor_new(), &ts_query_cursor_delete);
   if (!cursor) {
@@ -96,8 +123,14 @@ static jobjectArray TSTags_extract(
       static_cast<uint32_t>(end_byte));
   ts_query_cursor_set_match_limit(
       cursor.get(), static_cast<uint32_t>(max_pending_matches));
+#if defined(TSH_TREE_SITTER_HAS_QUERY_CURSOR_OPTIONS)
+  ts_query_cursor_exec_with_options(
+      cursor.get(), reinterpret_cast<const TSQuery *>(query_pointer), root,
+      &query_options);
+#else
   ts_query_cursor_exec(
       cursor.get(), reinterpret_cast<const TSQuery *>(query_pointer), root);
+#endif
 
   std::vector<OwnedQueryMatch> matches;
   try {
@@ -122,6 +155,13 @@ static jobjectArray TSTags_extract(
     return nullptr;
   }
 
+#if defined(TSH_TREE_SITTER_HAS_QUERY_CURSOR_OPTIONS)
+  if (progress_budget.cancelled) {
+    throwTagsIllegalState(env,
+        "Tag query exceeded its native work budget; no partial result was returned");
+    return nullptr;
+  }
+#endif
   if (ts_query_cursor_did_exceed_match_limit(cursor.get())) {
     throwTagsIllegalState(env,
         "Tag query exceeded maxPendingMatches; no partial result was returned");
