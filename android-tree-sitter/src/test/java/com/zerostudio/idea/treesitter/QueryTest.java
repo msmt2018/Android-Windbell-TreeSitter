@@ -118,7 +118,7 @@ public class QueryTest extends TreeSitterTest {
       assertThat(foundEmpty).isTrue();
     }
 
-    final String invalidQuery = "((identifier) @name (#eq? @name \"" + '\uD800' + "\"))";
+    final String invalidQuery = "((identifier) @name (#eq? @name \"" + String.valueOf((char) 0xD800) + "\"))";
     try {
       TSQuery.create(TSLanguageJava.getInstance(), invalidQuery);
       throw new AssertionError("Expected an unpaired UTF-16 surrogate to be rejected");
