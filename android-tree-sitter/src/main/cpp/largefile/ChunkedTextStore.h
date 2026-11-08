@@ -24,8 +24,9 @@ public:
         uint64_t memoryLimitBytes = UINT64_MAX,
         uint32_t chunkBytes = kTextStoreChunkBytes) noexcept;
 
-    // Appends bytes. Returns false without throwing on invalid input,
-    // budget exhaustion, or allocation failure.
+    // Appends UTF-16LE bytes. Returns false without throwing on invalid input,
+    // budget exhaustion, or allocation failure. Allocation failure may leave
+    // a valid appended prefix; discard the store after a false result.
     bool append(const void *data, size_t length) noexcept;
 
     // No further writes are accepted after seal(). Parsing should only use
