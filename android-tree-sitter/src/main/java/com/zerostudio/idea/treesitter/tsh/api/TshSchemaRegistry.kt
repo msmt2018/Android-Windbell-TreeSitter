@@ -172,7 +172,7 @@ class TshSchemaRegistry {
 
         val result = TshSchemaValidationResult(declaration, normalized.toMap(), diagnostics.toList())
         return if (result.isValid) TshResult.Success(result, diagnostics)
-        else TshResult.Failure(diagnostics.filter { it.severity == TshDiagnosticSeverity.ERROR })
+        else TshResult.Failure(diagnostics.toList())
     }
 
     private fun matches(value: TshDslValue, type: TshDslType): Boolean = when (type) {
