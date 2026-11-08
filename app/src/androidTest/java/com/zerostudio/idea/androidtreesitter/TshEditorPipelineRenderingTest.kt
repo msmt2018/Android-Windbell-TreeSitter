@@ -329,6 +329,38 @@ class TshEditorPipelineRenderingTest {
     }
 
     @Test
+    fun styleParentFontAttributesAreInheritedIndependentlyOfForeground() {
+        val engine = WindbellTshEngine.instance
+        val dsl = """
+            tsh 2 {
+                language { id: "style-parent-paint-regression" extensions: [".spr"] }
+                styles {
+                    base { scope: "entity.name" }
+                    child { scope: "entity.name.type" parent: "base" }
+                }
+                schemes {
+                    plain {
+                        light [ base: #FF0000 @bold @italic, child: #0000FF ]
+                        dark [ base: #AA0000 @bold @italic, child: #0000AA ]
+                    }
+                }
+                defaultScheme: "plain"
+            }
+        """.trimIndent()
+        assertTrue(
+            "Style-parent paint DSL must compile: ${engine.lastCompileDiagnostics}",
+            engine.loadTshSource("style-parent-paint-regression", dsl, null)
+        )
+        val child = engine.getStylePalette("style-parent-paint-regression", "child")
+        assertNotNull("Child style palette must be available", child)
+        assertEquals("Child foreground must remain its own color", Color.BLUE, child!!.lightColor)
+        assertEquals("Parent bold must be inherited even with child foreground", 1, child.lightFontFlags and 0x01)
+        assertEquals("Parent italic must be inherited even with child foreground", 2, child.lightFontFlags and 0x02)
+        assertEquals("Dark parent bold must be inherited", 1, child.darkFontFlags and 0x01)
+        assertEquals("Dark parent italic must be inherited", 2, child.darkFontFlags and 0x02)
+    }
+
+    @Test
     fun javaAstSymbolColorReachesEditorCanvas() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         TreeSitter.loadLibrary()
