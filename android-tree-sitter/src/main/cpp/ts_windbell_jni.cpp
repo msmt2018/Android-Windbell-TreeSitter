@@ -1164,10 +1164,12 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeApplyDocumentEdi
     // newly parsed tree. Also include the literal edit range: leaf text can change
     // without producing a structural changed range.
     std::vector<DirtyLineInterval> next_dirty_intervals;
+    std::vector<std::pair<uint32_t, uint32_t>> next_dirty_byte_ranges;
     TSRange *changed_ranges = nullptr;
     uint32_t changed_count = 0;
     try {
-        next_dirty_intervals.reserve(static_cast<size_t>(changed_count) + 2u);
+        next_dirty_intervals.reserve(2u);
+        next_dirty_byte_ranges.reserve(2u);
     } catch (...) {
         ts_tree_delete(next_tree);
         ts_tree_delete(edited_tree);
@@ -1181,8 +1183,13 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeApplyDocumentEdi
             *next_source, *next_partition_index,
             changed_ranges[i].start_byte, changed_ranges[i].end_byte,
             &next_dirty_intervals);
+        if (dirty_ranges_ok) {
+            try { next_dirty_byte_ranges.emplace_back(
+                changed_ranges[i].start_byte, changed_ranges[i].end_byte); }
+            catch (...) { dirty_ranges_ok = false; }
+        }
     }
-    std::free(changed_ranges);
+    ts_free(changed_ranges);
     const uint64_t insertedEnd = static_cast<uint64_t>(start_byte) +
         static_cast<uint64_t>(inserted_size);
     if (dirty_ranges_ok) {
@@ -1190,8 +1197,26 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeApplyDocumentEdi
             *next_source, *next_partition_index,
             static_cast<uint64_t>(start_byte), insertedEnd,
             &next_dirty_intervals);
+        if (dirty_ranges_ok) {
+            try { next_dirty_byte_ranges.emplace_back(
+                static_cast<uint32_t>(start_byte), static_cast<uint32_t>(insertedEnd)); }
+            catch (...) { dirty_ranges_ok = false; }
+        }
     }
     if (dirty_ranges_ok) dirty_ranges_ok = normalizeDirtyLineIntervals(&next_dirty_intervals);
+    if (dirty_ranges_ok) {
+        try {
+            std::sort(next_dirty_byte_ranges.begin(), next_dirty_byte_ranges.end());
+            size_t out = 0;
+            for (const auto &range : next_dirty_byte_ranges) {
+                if (out && range.first <= next_dirty_byte_ranges[out - 1].second) {
+                    next_dirty_byte_ranges[out - 1].second = std::max(
+                        next_dirty_byte_ranges[out - 1].second, range.second);
+                } else next_dirty_byte_ranges[out++] = range;
+            }
+            next_dirty_byte_ranges.resize(out);
+        } catch (...) { dirty_ranges_ok = false; }
+    }
     ts_tree_delete(edited_tree);
     if (!dirty_ranges_ok) {
         ts_tree_delete(next_tree);
@@ -1210,7 +1235,10 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeApplyDocumentEdi
     // Until NativeHighlightCache supports interval-level eviction, clear its
     // entries conservatively. Dirty intervals are retained for the next
     // incremental ATS capture implementation instead of being discarded.
-    document->highlight_cache.clear();
+    document->highlight_cache.rebaseAfterEdit(
+        document->version, document->source->version(), document->partition_index.version(),
+        static_cast<uint32_t>(start_byte), static_cast<uint32_t>(old_end_byte),
+        static_cast<uint32_t>(inserted_size), next_dirty_byte_ranges);
 
     // Keep tokenizer checkpoints before the edit as immediately reusable. Keep
     // checkpoints after the replaced range as *candidates* at their shifted byte
