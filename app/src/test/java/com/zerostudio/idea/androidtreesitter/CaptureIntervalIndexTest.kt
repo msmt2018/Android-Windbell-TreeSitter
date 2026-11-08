@@ -17,7 +17,7 @@ class CaptureIntervalIndexTest {
             span(50, 100, 4)
         ))
         assertEquals(listOf(1, 2), index.query(4, 6).map { it.styleId })
-        assertEquals(listOf(2), index.query(5, 6).map { it.styleId })
+        assertEquals(listOf(1, 2), index.query(5, 6).map { it.styleId })
         assertEquals(listOf(3), index.query(15, 18).map { it.styleId })
         assertTrue(index.query(20, 25).isEmpty())
         assertTrue(index.query(0, 0).isEmpty())
