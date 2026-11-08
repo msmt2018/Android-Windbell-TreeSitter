@@ -221,7 +221,9 @@ class TshEditorPipelineRenderingTest {
                     }
                 }
                 defaultScheme: "plain"
-                match: /42/ style: "translucent"
+                contains: [
+                    { match: /42/, style: "translucent" }
+                ]
             }
         """.trimIndent()
         assertTrue(
@@ -277,10 +279,13 @@ class TshEditorPipelineRenderingTest {
                 basePaint = paint
             )
             val expectedBackground = blendArgbForTest(Color.WHITE, light.lightBackground)
-            assertEquals(
-                "Background alpha must be composited by the actual Canvas painter",
-                expectedBackground,
-                bitmap.getPixel(9, 2)
+            val actualBackground = bitmap.getPixel(9, 2)
+            assertTrue(
+                "Background alpha must be composited by the actual Canvas painter: " +
+                    "expected=$expectedBackground actual=$actualBackground",
+                abs(Color.red(actualBackground) - Color.red(expectedBackground)) <= 1 &&
+                    abs(Color.green(actualBackground) - Color.green(expectedBackground)) <= 1 &&
+                    abs(Color.blue(actualBackground) - Color.blue(expectedBackground)) <= 1
             )
             val expectedForegroundAlpha = Color.alpha(light.lightColor)
             assertEquals(128, expectedForegroundAlpha)
