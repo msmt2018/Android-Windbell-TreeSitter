@@ -5,8 +5,11 @@ package com.zerostudio.idea.treesitter.tsh.api
  * It does not own native query destruction; a native provider must manage leases separately.
  */
 class TshCompiledQueryRegistry {
-    private val lock = Any()
+    @PublishedApi
+    internal val lock = Any()
     private val queries = LinkedHashMap<String, TshCompiledQuery>()
+
+    internal inline fun <T> withLock(action: () -> T): T = synchronized(lock, action)
 
     fun register(query: TshCompiledQuery, replace: Boolean = false): TshResult<TshCompiledQuery> =
         synchronized(lock) {
