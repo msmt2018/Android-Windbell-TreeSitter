@@ -30,20 +30,18 @@ static const UChar* advanceOneUtf16CodePoint(const UChar* current, const UChar* 
 }
 
 
-static bool tshBuildUtf16ByteToUtf8ByteMap(
+// Convert only the requested UTF-16LE slice. Building a UTF-8 copy and a
+// byte-for-byte offset map for the entire document multiplies peak memory for
+// large files; AST text predicates need conversion only for the nodes they test.
+static bool tshUtf16SliceToUtf8(
     const UChar* input,
     uint32_t input_bytes,
-    std::string& utf8,
-    std::vector<uint32_t>& byte_map
+    std::string& utf8
 ) {
     utf8.clear();
-    byte_map.assign(static_cast<size_t>(input_bytes) + 1,
-                    std::numeric_limits<uint32_t>::max());
     if ((input_bytes & 1u) != 0 || (!input && input_bytes != 0)) return false;
-    byte_map[0] = 0;
-
+    utf8.reserve(input_bytes);
     for (uint32_t i = 0; i < input_bytes;) {
-        const uint32_t utf16_start = i;
         const uint16_t first = static_cast<uint16_t>(input[i]) |
             (static_cast<uint16_t>(input[i + 1]) << 8);
         i += 2;
@@ -60,7 +58,6 @@ static bool tshBuildUtf16ByteToUtf8ByteMap(
             return false;
         }
 
-        byte_map[utf16_start] = static_cast<uint32_t>(utf8.size());
         if (cp <= 0x7F) {
             utf8.push_back(static_cast<char>(cp));
         } else if (cp <= 0x7FF) {
@@ -76,9 +73,6 @@ static bool tshBuildUtf16ByteToUtf8ByteMap(
             utf8.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F)));
             utf8.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
         }
-        // Tree-sitter parses this project with UTF-16LE, so its byte offsets
-        // address this UTF-16 input directly. Only code-point boundaries map.
-        byte_map[i] = static_cast<uint32_t>(utf8.size());
     }
     return true;
 }
@@ -118,22 +112,18 @@ static bool tshUtf8ToUtf16(const std::string& input, std::vector<UChar>& output)
 }
 
 static bool tshPredicateCaptureTexts(const TSQueryMatch& match, uint32_t capture_id,
-    const std::string& utf8_source,
-    const std::vector<uint32_t>& utf16_to_utf8_byte,
+    const UChar* utf16_source,
+    uint32_t source_bytes,
     std::vector<std::vector<UChar>>& texts) {
     texts.clear();
     for (uint32_t i = 0; i < match.capture_count; ++i) {
         if (match.captures[i].index != capture_id) continue;
-        const uint32_t start_byte = ts_node_start_byte(match.captures[i].node);
-        const uint32_t end_byte = ts_node_end_byte(match.captures[i].node);
-        if (start_byte > end_byte || end_byte >= utf16_to_utf8_byte.size()) return false;
-        const uint32_t start = utf16_to_utf8_byte[start_byte];
-        const uint32_t end = utf16_to_utf8_byte[end_byte];
-        if (start == std::numeric_limits<uint32_t>::max() ||
-            end == std::numeric_limits<uint32_t>::max() ||
-            start > end || end > utf8_source.size()) return false;
+        const uint32_t start = ts_node_start_byte(match.captures[i].node);
+        const uint32_t end = ts_node_end_byte(match.captures[i].node);
+        if (start > end || end > source_bytes || (start & 1u) || (end & 1u) ||
+            (!utf16_source && end != start)) return false;
         std::vector<UChar> converted;
-        if (!tshUtf8ToUtf16(utf8_source.substr(start, end - start), converted)) return false;
+        if (end > start) converted.assign(utf16_source + start, utf16_source + end);
         texts.push_back(std::move(converted));
     }
     // A query may legitimately omit an optional capture. Negative predicates
@@ -143,8 +133,7 @@ static bool tshPredicateCaptureTexts(const TSQueryMatch& match, uint32_t capture
 }
 
 static bool tshEvaluateNativePredicates(const NativeQueryProgram& program,
-    const TSQueryMatch& match, const std::string& utf8_source,
-    const std::vector<uint32_t>& utf16_to_utf8_byte) {
+    const TSQueryMatch& match, const UChar* utf16_source, uint32_t source_bytes) {
     const TSQuery* query = program.query;
     uint32_t step_count = 0;
     const TSQueryPredicateStep* steps =
@@ -167,7 +156,7 @@ static bool tshEvaluateNativePredicates(const NativeQueryProgram& program,
         if (!op.empty() && op.front() == '#') op.erase(op.begin());
 
         std::vector<std::vector<UChar>> actual;
-        if (!tshPredicateCaptureTexts(match, predicate[1].value_id, utf8_source, utf16_to_utf8_byte, actual))
+        if (!tshPredicateCaptureTexts(match, predicate[1].value_id, utf16_source, source_bytes, actual))
             return false;
         std::vector<std::vector<UChar>> expected;
         for (size_t i = 2; i < predicate.size(); ++i) {
@@ -554,13 +543,11 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
         : &kEmptyInput;
     const UChar* text_end = text_start + total_bytes;
 
-    std::string tree_source_utf8;
-    std::vector<uint32_t> utf16_to_utf8_byte;
-    const bool needs_tree_source_map = tree &&
-        (!grammar->ast_selector_rules.empty() || !grammar->native_queries.empty());
-    const bool tree_source_map_valid = !needs_tree_source_map ||
-        tshBuildUtf16ByteToUtf8ByteMap(
-            text_start, total_bytes, tree_source_utf8, utf16_to_utf8_byte);
+    // Tree-sitter offsets and the TSH input are both UTF-16LE byte offsets.
+    // Keep the original source as the single canonical buffer and convert only
+    // individual AST slices when a rule explicitly needs UTF-8 text predicates.
+    const bool tree_source_valid = tree && (total_bytes & 1u) == 0 &&
+        (text_start != nullptr || total_bytes == 0);
 
     std::vector<HighlightSpan> micro_spans;
     micro_spans.reserve(length_chars / 4);
@@ -811,7 +798,7 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
     }
 
     std::vector<HighlightSpan> macro_spans;
-    if (tree && tree_source_map_valid && !grammar->ast_selector_rules.empty()) {
+    if (tree && tree_source_valid && !grammar->ast_selector_rules.empty()) {
         macro_spans.reserve(length_chars / 6);
         TSTreeCursor cursor = ts_tree_cursor_new(ts_tree_root_node(tree));
         std::vector<const AstSelectorRule*> candidate_rules;
@@ -900,14 +887,13 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                     ast_rule.has_text_suffix || ast_rule.text_regex) {
                     const uint32_t text_start = ts_node_start_byte(node);
                     const uint32_t text_end = ts_node_end_byte(node);
-                    if (text_start > text_end || text_end >= utf16_to_utf8_byte.size()) continue;
-                    const uint32_t utf8_start = utf16_to_utf8_byte[text_start];
-                    const uint32_t utf8_end = utf16_to_utf8_byte[text_end];
-                    if (utf8_start == std::numeric_limits<uint32_t>::max() ||
-                        utf8_end == std::numeric_limits<uint32_t>::max() ||
-                        utf8_start > utf8_end || utf8_end > tree_source_utf8.size()) continue;
-                    const std::string_view node_text(
-                        tree_source_utf8.data() + utf8_start, utf8_end - utf8_start);
+                    if (text_start > text_end || text_end > total_bytes ||
+                        (text_start & 1u) || (text_end & 1u)) continue;
+                    std::string node_text_storage;
+                    if (!tshUtf16SliceToUtf8(
+                            text_start ? reinterpret_cast<const UChar*>(input_chars) + text_start : &kEmptyInput,
+                            text_end - text_start, node_text_storage)) continue;
+                    const std::string_view node_text(node_text_storage);
                     if (ast_rule.has_text_equals && node_text != ast_rule.text_equals) continue;
                     if (ast_rule.has_text_prefix &&
                         (node_text.size() < ast_rule.text_prefix.size() ||
@@ -1034,7 +1020,7 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                     !pattern_metadata->second.enabled) {
                     continue;
                 }
-                if (!tshEvaluateNativePredicates(native_query, match, tree_source_utf8, utf16_to_utf8_byte))
+                if (!tshEvaluateNativePredicates(native_query, match, text_start, total_bytes))
                     continue;
                 if (diagnostic_match_counts) ++diagnostic_match_counts[3];
                 const int32_t pattern_priority =
