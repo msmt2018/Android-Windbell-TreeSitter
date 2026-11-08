@@ -5,7 +5,7 @@
 - [公共 API 基础层](core-foundation.md)：Engine 生命周期、对象注册、Capability、Provider Registry、诊断与坐标基础类型。
 - [对象与文本模型](object-and-text-model.md)：TextDocument、TextSnapshot、TextEdit、坐标模型与宿主缓冲区抽象。
 
-> 当前 API 文件已经提交，但尚未完成 Gradle 编译和设备端验证。以下领域文档定义目标契约，不代表对应实现已经存在。
+> 当前基础 API 与 DSL Schema/Config Repository 的首批 Kotlin 源码已提交；尚未完成本轮 Gradle 编译/测试和设备端验证。其余领域文档定义目标契约，不代表对应实现已经存在。
 
 ## API 领域规范
 
@@ -78,3 +78,13 @@
 - editor-adapters.md、workspace-project-document-lifecycle-api.md、accessibility-bidi-virtual-layout-api.md、injection-and-language-layer-api.md（仅作宿主集成参考；最小文本/坐标契约以核心 API 定义为准）
 
 嵌入语言语法注入属于 TSH 核心语法能力，见 language-injection-api.md；不得将通用 Editor Language Layer 当作引擎职责。
+
+
+## 已提交源码（尚待构建/测试验证）
+
+- `TshDslModel.kt`：DSL typed value、declaration/document 和版本/单位模型。
+- `TshSchemaRegistry.kt`：Schema 注册与类型/约束校验。
+- `TshConfigRepository.kt`：配置 Artifact Catalog 与原子版本替换/卸载。
+- `TshDslSchemaRepositoryTest.kt`：上述基础模型的测试源码。
+
+这些源码暂时不负责解析 .tsh 文本，也没有调用 C++ TshCompiler；Parser/Compiler Adapter 将在语法兼容审计后实现。
