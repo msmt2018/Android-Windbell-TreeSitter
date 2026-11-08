@@ -55,6 +55,15 @@ class TshNativeResourceRegistry(
         leases.acquire(TshNativeResourceLeaseStore.Handle(objectId, typed))
     }
 
+    /** Acquires a previously published handle and verifies both ID and instance identity. */
+    fun <T : TSNativeObject> acquire(
+        handle: TshNativeResourceLeaseStore.Handle<T>
+    ): TshNativeResourceLeaseStore.Lease<T>? = synchronized(lock) {
+        val resource = objects.find(handle.objectId) ?: return@synchronized null
+        if (resource !== handle.resource) return@synchronized null
+        leases.acquire(handle)
+    }
+
     /**
      * Stops new acquisitions before removing the public object index. Existing leases defer close.
      */
