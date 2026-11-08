@@ -1,5 +1,7 @@
 package com.zerostudio.idea.treesitter.largefile
 
+import com.zerostudio.idea.treesitter.TSPoint
+import com.zerostudio.idea.treesitter.TSRange
 import java.util.LinkedHashMap
 import java.util.concurrent.locks.ReentrantReadWriteLock
 import kotlin.concurrent.read
@@ -133,6 +135,70 @@ class DocumentPartitionManager(
             val through = (last + prefetchPartitions).coerceAtMost(partitions.lastIndex)
             ViewportPlan(start, endExclusive, partitions.subList(from, through + 1).toList(), indexedVersion)
         }
+    }
+
+    /**
+     * Builds a Tree-sitter range with absolute UTF-16LE byte offsets and byte-based
+     * TSPoint columns. The sparse line index bounds point calculation to at most
+     * [lineCheckpointStride] lines rather than rescanning from the document start.
+     */
+    fun treeSitterRange(source: Utf16DocumentSource, startUtf16: Long, endUtf16: Long): TSRange {
+        require(startUtf16 >= 0L && endUtf16 >= startUtf16 && endUtf16 <= source.length)
+        require(startUtf16 <= Int.MAX_VALUE / 2L && endUtf16 <= Int.MAX_VALUE / 2L) {
+            "TSRange uses signed 32-bit byte offsets in this binding"
+        }
+        require(isScalarBoundary(source, startUtf16) && isScalarBoundary(source, endUtf16)) {
+            "Tree-sitter ranges must not split a UTF-16 surrogate pair"
+        }
+        ensureIndexed(source)
+        val startPoint = pointAt(source, startUtf16)
+        val endPoint = pointAt(source, endUtf16)
+        return TSRange.create(
+            (startUtf16 * 2L).toInt(),
+            (endUtf16 * 2L).toInt(),
+            startPoint,
+            endPoint
+        )
+    }
+
+    private fun pointAt(source: Utf16DocumentSource, offset: Long): TSPoint {
+        val checkpoint = lock.read {
+            var low = 0
+            var high = lineCheckpoints.lastIndex
+            var best = 0
+            while (low <= high) {
+                val middle = (low + high) ushr 1
+                if (lineCheckpoints[middle] <= offset) {
+                    best = middle
+                    low = middle + 1
+                } else {
+                    high = middle - 1
+                }
+            }
+            Pair(lineCheckpoints[best], best.toLong() * lineCheckpointStride)
+        }
+        var row = checkpoint.second
+        var column = 0L
+        var index = checkpoint.first
+        while (index < offset) {
+            if (source[index] == '\\n') {
+                row++
+                column = 0L
+            } else {
+                column++
+            }
+            index++
+        }
+        require(row <= Int.MAX_VALUE && column * 2L <= Int.MAX_VALUE) {
+            "Tree-sitter TSPoint exceeds signed 32-bit coordinates"
+        }
+        return TSPoint.create(row.toInt(), (column * 2L).toInt())
+    }
+
+    private fun isScalarBoundary(source: Utf16DocumentSource, offset: Long): Boolean {
+        if (offset <= 0L || offset >= source.length) return true
+        return !(Character.isHighSurrogate(source[offset - 1L]) &&
+            Character.isLowSurrogate(source[offset]))
     }
 
     /** Returns the nearest sparse line checkpoint at or before [line]. */
