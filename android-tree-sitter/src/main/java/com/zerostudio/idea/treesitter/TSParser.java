@@ -29,7 +29,12 @@ import java.util.concurrent.locks.ReentrantLock;
 
 /**
  * Implementation of tree sitter's <code>TSParser</code> APIs. This implementation always converts
- * the input source code to {@link UTF16String UTF-16 string}.
+ * the input source code to {@link UTF16String UTF-16 string}. Native parsing requests source bytes
+ * from a bounded 64 KiB callback window rather than exposing the entire remaining document to
+ * Tree-sitter at once. Upstream Tree-sitter still uses 32-bit byte offsets; this binding's
+ * UTF16String storage also currently has signed 32-bit byte lengths, so a single parse is limited
+ * to fewer than 2 GiB of UTF-16LE bytes. Applications should use regional parsing for very large
+ * documents instead of assuming that chunked input makes the syntax tree itself small.
  */
 public class TSParser extends TSNativeObject {
 
