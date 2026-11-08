@@ -297,7 +297,9 @@ public:
         uint32_t length_chars,
         const std::string& extension,
         std::vector<HighlightSpan>* diagnostic_spans = nullptr,
-        uint32_t* diagnostic_match_counts = nullptr
+        uint32_t* diagnostic_match_counts = nullptr,
+        uint32_t range_start_byte = 0,
+        uint32_t range_end_byte = UINT32_MAX
     );
 
 private:
