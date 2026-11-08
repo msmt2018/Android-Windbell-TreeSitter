@@ -494,8 +494,14 @@ class WindbellTshEngine private constructor() {
         // SpannableStringBuilder is mutable and is not thread-safe. A caller may
         // schedule rendering from several workers; serialize only mutations of the
         // same document buffer, never the native tokenizer or unrelated documents.
+        // Rendering may be the first consumer attached after a grammar was
+        // restored/registered. Never silently treat a valid styleId as an
+        // uncoloured token merely because this process-local palette cache is cold.
+        // ensurePalette resolves the selected/default scheme from the compiled
+        // native grammar and populates the immutable palette before drawing.
+        ensurePalette(extension)
         synchronized(spannable) {
-            val palette = paletteCache[extension] ?: emptyMap()
+            val palette = paletteCache[extension].orEmpty()
             val darkMode = isDark(extension)
             val visibleStart = start.coerceIn(0, spannable.length)
             val visibleEnd = end.coerceIn(visibleStart, spannable.length)
