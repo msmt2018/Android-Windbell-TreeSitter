@@ -27,6 +27,12 @@
 | [安全与 Regex 防护](security-and-regex-safety.md) | Regex、配置、Provider 安全 | 超时、资源配额、隔离和 SafeMode |
 | [测试与兼容性](testing-and-compatibility-api.md) | API/Provider/Native 版本治理 | 测试分层、兼容策略和发布门槛 |
 | [平台与线程契约](platform-and-threading-api.md) | 模块边界、Dispatcher、回调 | UI 线程、并发、重入和模块依赖 |
+| [Symbol、Outline、Folding 与 Navigation](symbol-outline-navigation-api.md) | 符号、折叠与导航 | 符号树、折叠区间、定义目标和版本校验 |
+| [Selection、Cursor 与 Multi-Cursor](selection-cursor-multicursor-api.md) | 光标与选择 | 主/次光标、选区、矩形选择和事件订阅 |
+| [Language Intelligence](language-intelligence-api.md) | 语言智能 | Completion、Hover、Definition、References、Rename |
+| [Injection 与 Language Layer](injection-and-language-layer-api.md) | 嵌入语言 | 语言层级、范围映射、增量失效与资源限制 |
+| [Decoration、Gutter、Inlay 与 CodeLens](decorations-gutter-inlay-codelens-api.md) | 装饰与边栏 | 所有权、样式合成、渲染能力和交互命令 |
+| [EditTransaction、Undo/Redo 与 Command](edit-transaction-undo-redo-command-api.md) | 编辑事务 | 版本校验、原子应用、撤销栈所有权和命令安全 |
 
 ## 公共 API 设计要求
 
