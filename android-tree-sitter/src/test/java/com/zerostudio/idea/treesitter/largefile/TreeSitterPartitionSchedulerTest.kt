@@ -46,4 +46,33 @@ class TreeSitterPartitionSchedulerTest {
         assertEquals("😀b", String(second, Charsets.UTF_16LE))
     }
 
+    @Test fun windowedReaderHandlesThreeHundredMegabyteVirtualSourceWithoutFlattening() {
+        val virtual = object : CharSequence {
+            override val length = 300 * 1024 * 1024
+            override fun get(index: Int): Char {
+                if (index !in 0 until length) throw IndexOutOfBoundsException()
+                return 'x'
+            }
+            override fun subSequence(startIndex: Int, endIndex: Int): CharSequence {
+                require(startIndex >= 0 && endIndex >= startIndex && endIndex <= length)
+                return "x".repeat(endIndex - startIndex)
+            }
+        }
+        val source = CharSequenceUtf16DocumentSource(virtual, 42L)
+        assertEquals(300L * 1024L * 1024L, source.length)
+        assertEquals('x', source[source.length - 1L])
+
+        val callback = CharSequenceParseWindowCallback(virtual)
+        val lastHundredChars = callback.read((virtual.length - 100L) * 2L, 64 * 1024)
+        assertEquals(200, lastHundredChars.size)
+        assertEquals("x".repeat(100), String(lastHundredChars, Charsets.UTF_16LE))
+    }
+
+    @Test fun windowedReaderPreservesUnpairedUtf16CodeUnits() {
+        val callback = CharSequenceParseWindowCallback("a\uD800b")
+        val bytes = callback.read(0L, 64)
+        val codeUnit = (bytes[2].toInt() and 0xFF) or ((bytes[3].toInt() and 0xFF) shl 8)
+        assertEquals(0xD800, codeUnit)
+    }
+
 }

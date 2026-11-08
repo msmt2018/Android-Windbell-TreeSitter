@@ -95,15 +95,27 @@ class DocumentPartitionManagerTest {
 
     @Test fun partitionIndexUsesBoundedSequentialSourceWindows() {
         val text = ("line-".repeat(100) + "\n").repeat(4000)
-        var reads = 0
-        val source = CharSequenceUtf16DocumentSource(text, 12L) { start, count ->
-            reads++
-            text.subSequence(start, start + count)
+        var chunkReads = 0
+        var randomReads = 0
+        val source = object : Utf16DocumentSource {
+            override val length = text.length.toLong()
+            override val version = 12L
+            override fun get(offset: Long): Char {
+                randomReads++
+                return text[offset.toInt()]
+            }
+            override fun readChunk(offset: Long, maxChars: Int): CharSequence {
+                chunkReads++
+                val start = offset.toInt()
+                val end = minOf(text.length, start + maxChars)
+                return text.subSequence(start, end)
+            }
         }
         val manager = DocumentPartitionManager(targetPartitionChars = 64 * 1024)
         manager.rebuild(source)
         assertTrue(manager.snapshot().isNotEmpty())
-        assertTrue(reads < 100)
+        assertTrue(chunkReads < 100)
+        assertTrue(randomReads < 100)
     }
 
 }

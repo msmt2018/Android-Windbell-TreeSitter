@@ -122,13 +122,31 @@ class DocumentPartitionManager(
         var start = 0L
         var firstLine = 0L
         while (start < source.length) {
-            val nominal = minOf(source.length, start + targetPartitionChars)
+            val nominal = minOf(source.length, safeAdd(start, targetPartitionChars))
             var end = nominal
-            // Prefer a line boundary close to the target. Bound the scan to one
-            // additional target window so a single giant line cannot stall indexing.
-            val scanLimit = minOf(source.length, nominal + targetPartitionChars)
-            while (end < scanLimit && end < source.length && source[end - 1L] != '\n') end++
-            if (end < source.length && end > 0L && source[end - 1L] != '\n') {
+            // Prefer a nearby line boundary, but scan through bounded source windows
+            // instead of repeatedly indexing a piece-tree snapshot character by character.
+            val scanLimit = minOf(source.length, safeAdd(nominal, targetPartitionChars))
+            var searchOffset = (nominal - 1L).coerceAtLeast(start)
+            var foundLineEnd: Long? = null
+            while (searchOffset < scanLimit) {
+                val searchChunk = source.readChunk(
+                    searchOffset,
+                    minOf(SOURCE_SCAN_CHUNK_CHARS.toLong(), scanLimit - searchOffset).toInt()
+                )
+                require(searchChunk.isNotEmpty() && searchChunk.length <= scanLimit - searchOffset) {
+                    "Utf16DocumentSource.readChunk returned an invalid partition-boundary window"
+                }
+                val newline = searchChunk.indexOf('\n')
+                if (newline >= 0) {
+                    foundLineEnd = searchOffset + newline + 1L
+                    break
+                }
+                searchOffset += searchChunk.length
+            }
+            if (foundLineEnd != null) {
+                end = foundLineEnd
+            } else {
                 // A long line: retain a hard size bound and split only at a
                 // Unicode scalar boundary. Surrogate pairs are never separated.
                 end = nominal.coerceAtLeast(start + 1L)
@@ -294,6 +312,9 @@ class DocumentPartitionManager(
         const val POINT_CHECKPOINT_STRIDE = 64L * 1024L
         const val SOURCE_SCAN_CHUNK_CHARS = 64 * 1024
     }
+
+    private fun safeAdd(a: Long, b: Long): Long =
+        if (Long.MAX_VALUE - a < b) Long.MAX_VALUE else a + b
 
     private fun countNewlines(source: Utf16DocumentSource, start: Long, end: Long): Long {
         var count = 0L

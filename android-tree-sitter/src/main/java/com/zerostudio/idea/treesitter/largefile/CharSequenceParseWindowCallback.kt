@@ -36,7 +36,16 @@ class CharSequenceParseWindowCallback(
         check(end > start) {
             "maxBytes is too small to return the next UTF-16 surrogate pair"
         }
-        return source.subSequence(start, end).toString().toByteArray(Charsets.UTF_16LE)
+        val chunk = source.subSequence(start, end)
+        // Encode UTF-16 code units directly. String.getBytes may replace an
+        // isolated surrogate, while editor buffers must preserve exact code units.
+        val bytes = ByteArray(chunk.length * 2)
+        for (index in 0 until chunk.length) {
+            val codeUnit = chunk[index].code
+            bytes[index * 2] = codeUnit.toByte()
+            bytes[index * 2 + 1] = (codeUnit ushr 8).toByte()
+        }
+        return bytes
     }
 }
 
