@@ -5,9 +5,37 @@
 #include <cstdio>
 #include <cstring>
 #include <string>
+#include <vector>
+#include <utility>
 #include <unistd.h>
 
 using namespace windbell::largefile;
+
+static void testSegmentedTextSource() {
+    const char first[] = {'a', 0, 'b', 0};
+    const char second[] = {'c', 0, 'd', 0};
+    std::vector<TextSegment> segments{
+        {first, sizeof(first)},
+        {second, sizeof(second)}
+    };
+    SegmentedTextSource source(std::move(segments), sizeof(first) + sizeof(second));
+    assert(source.isValid());
+    assert(source.sizeBytes() == 8);
+
+    TextChunkView view{};
+    assert(source.read(0, 64u * 1024u, &view));
+    assert(view.size == sizeof(first));
+    assert(view.data[0] == 'a');
+    assert(source.read(4, 64u * 1024u, &view));
+    assert(view.size == sizeof(second));
+    assert(view.data[0] == 'c');
+    assert(source.read(8, 64u * 1024u, &view));
+    assert(view.data == nullptr && view.size == 0);
+
+    SegmentedTextSource invalid({{first, 3}}, 3);
+    assert(!invalid.isValid());
+    assert(!invalid.read(0, 64, &view));
+}
 
 static void testChunkedStoreReadsAcrossBoundaries() {
     ChunkedTextStore store(128u * 1024u, 64u * 1024u);
@@ -85,6 +113,7 @@ static void testMappedFileSource() {
 }
 
 int main() {
+    testSegmentedTextSource();
     testChunkedStoreReadsAcrossBoundaries();
     testChunkedStoreReusesAllocatedTail();
     testChunkedStoreHonorsMemoryBudget();
