@@ -21,7 +21,6 @@
 #include "utils/ts_obj_utils.h"
 #include "utils/ts_preconditions.h"
 #include "ts_tags.h"
-#include "ts_highlight.h"
 
 namespace {
 
@@ -103,7 +102,7 @@ static jobjectArray TSQuery_extractBounded(
   const TSNode root = _unmarshalNode(env, root_object);
   if (env->ExceptionCheck()) return nullptr;
   if (ts_node_is_null(root) || ts_node_has_changes(root)) {
-    throwTagsIllegalArgument(env, "Cannot query tags on a null or changed syntax node");
+    throwTagsIllegalArgument(env, "Cannot query a null or changed syntax node");
     return nullptr;
   }
   if (start < ts_node_start_byte(root) || end > ts_node_end_byte(root)) {
@@ -226,5 +225,8 @@ static jobjectArray TSHighlight_extract(
 
 void TSTags_Native__SetJniMethods(JNINativeMethod *methods, int count) {
   SET_JNI_METHOD(methods, TSTags_Native_extract, TSTags_extract);
+}
+
+void TSHighlight_Native__SetJniMethods(JNINativeMethod *methods, int count) {
   SET_JNI_METHOD(methods, TSHighlight_Native_extract, TSHighlight_extract);
 }
