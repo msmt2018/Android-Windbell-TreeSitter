@@ -18,10 +18,8 @@
 | [Binding、事件与扩展](binding-events-and-extension.md) | Binding、EventBus、Provider | 对象关系、事件线程、扩展卸载 |
 | [ATS、Regex 与 Match](ats-regex-and-match-api.md) | 双管道匹配 | 统一 Match、优先级、增量和窗口 |
 | [诊断与可观测性](diagnostics-and-observability.md) | Diagnostics、Trace、Metrics | 错误码、集成报告、渲染状态 |
-
-| [快速接入](quick-start.md) | 当前 API 使用方式与边界 |
-| [API 审查清单](public-api-review-checklist.md) | 新增 public API 的发布门槛 |
-
+| [快速接入](quick-start.md) | 接入示例 | 当前 API 使用方式与边界 |
+| [API 审查清单](public-api-review-checklist.md) | 发布治理 | 新增 public API 的发布门槛 |
 | [Grammar 与 Query](grammar-and-query-api.md) | Grammar、Parser、Tree、ATS Query | 语法资源生命周期、解析与查询 |
 | [增量文本与 Buffer](incremental-text-and-buffer-api.md) | TextBuffer、Snapshot、Piece Tree/Rope | 分块读取、编辑事务、索引化坐标 |
 | [JNI 与 Native Bridge](jni-native-bridge-api.md) | Kotlin/JNI/C++ 边界 | 句柄所有权、编码、错误和 ABI |
