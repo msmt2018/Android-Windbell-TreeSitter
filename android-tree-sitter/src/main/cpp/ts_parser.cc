@@ -18,6 +18,8 @@
 #include <atomic>
 #include <chrono>
 #include <iostream>
+#include <vector>
+#include <utility>
 
 #include "utf16str/UTF16String.h"
 #include "largefile/TextSource.h"
@@ -311,6 +313,99 @@ static jlong TSParser_parse(JNIEnv *env,
   return (jlong) tree;
 }
 
+static jlong TSParser_parseBuffers(
+    JNIEnv *env,
+    jclass clazz,
+    jlong parser,
+    jlong tree_pointer,
+    jobjectArray buffers,
+    jlong byte_length) {
+  req_nnp(env, parser, "parser");
+  req_nnp(env, buffers, "buffers");
+
+  if (byte_length < 0 ||
+      static_cast<uint64_t>(byte_length) > UINT32_MAX ||
+      (byte_length & 1LL) != 0) {
+    throw_illegal_args(env,
+        "Segmented UTF-16LE input length must be even and fit Tree-sitter's 32-bit byte offsets");
+    return 0;
+  }
+
+  auto *parser_internal = reinterpret_cast<TSParserInternal *>(parser);
+  TSParser *ts_parser = parser_internal->getParser(env);
+  if (ts_parser == nullptr || env->ExceptionCheck()) return 0;
+
+  const jsize count = env->GetArrayLength(buffers);
+  std::vector<windbell::largefile::TextSegment> segments;
+  try {
+    segments.reserve(static_cast<size_t>(count));
+  } catch (...) {
+    throw_illegal_state(env, "Unable to allocate segmented Tree-sitter input metadata");
+    return 0;
+  }
+
+  uint64_t total = 0;
+  for (jsize i = 0; i < count; ++i) {
+    jobject buffer = env->GetObjectArrayElement(buffers, i);
+    if (buffer == nullptr) {
+      throw_illegal_args(env, "Segmented Tree-sitter input contains a null ByteBuffer");
+      return 0;
+    }
+
+    const jlong capacity = env->GetDirectBufferCapacity(buffer);
+    void *address = env->GetDirectBufferAddress(buffer);
+    env->DeleteLocalRef(buffer);
+
+    if (capacity < 0 || (capacity > 0 && address == nullptr) ||
+        (capacity & 1LL) != 0 ||
+        static_cast<uint64_t>(capacity) > UINT32_MAX - total) {
+      throw_illegal_args(env,
+          "Every input segment must be a direct ByteBuffer with an even capacity");
+      return 0;
+    }
+
+    segments.push_back({
+        static_cast<const char *>(address),
+        static_cast<uint64_t>(capacity)
+    });
+    total += static_cast<uint64_t>(capacity);
+  }
+
+  if (total != static_cast<uint64_t>(byte_length)) {
+    throw_illegal_args(env, "Segment capacities do not match the declared input length");
+    return 0;
+  }
+
+  if (!parser_internal->beginRound(env)) return 0;
+  struct ParseRoundGuard {
+    TSParserInternal *parser;
+    ~ParseRoundGuard() { if (parser) parser->endRound(); }
+  } roundGuard{parser_internal};
+
+  windbell::largefile::SegmentedTextSource source(std::move(segments), total);
+  if (!source.isValid()) {
+    throw_illegal_args(env, "Invalid segmented UTF-16LE text source");
+    return 0;
+  }
+
+  TSParserInput inputPayload{&source};
+  TSInput input{
+      &inputPayload,
+      TSParser_readInput,
+      TSInputEncodingUTF16LE,
+      nullptr,
+  };
+  TSParseOptions options{
+      parser_internal,
+      TSParser_progressCallback,
+  };
+
+  TSTree *old_tree = tree_pointer == 0 ? nullptr : reinterpret_cast<TSTree *>(tree_pointer);
+  parser_internal->markParseStart();
+  return reinterpret_cast<jlong>(
+      ts_parser_parse_with_options(ts_parser, old_tree, input, options));
+}
+
 static jboolean
 TSParser_requestCancellation(
     JNIEnv *env,
@@ -336,6 +431,7 @@ void TSParser_Native__SetJniMethods(JNINativeMethod *methods, int count) {
   SET_JNI_METHOD(methods, TSParser_Native_setIncludedRanges, TSParser_setIncludedRanges);
   SET_JNI_METHOD(methods, TSParser_Native_getIncludedRanges, TSParser_getIncludedRanges);
   SET_JNI_METHOD(methods, TSParser_Native_parse, TSParser_parse);
+  SET_JNI_METHOD(methods, TSParser_Native_parseBuffers, TSParser_parseBuffers);
   SET_JNI_METHOD(methods, TSParser_Native_requestCancellation,
                  TSParser_requestCancellation);
 }
