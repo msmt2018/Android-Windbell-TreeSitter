@@ -21,6 +21,7 @@
 #include "utils/ts_obj_utils.h"
 #include "utils/ts_preconditions.h"
 #include "ts_tags.h"
+#include "ts_highlight.h"
 
 namespace {
 
