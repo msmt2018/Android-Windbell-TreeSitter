@@ -34,7 +34,7 @@
 - 新增 `TshNativeResourceRegistry` 协调对象索引与 Native 资源所有权：统一注册、按 Native 类型及实例身份校验的 Lease 获取、先退役后注销对象索引、仅退役本协调器所有资源的作用域化 retireAll；新增注册/获取/退役/批量退役生命周期测试源码。
 - 修正 Native Resource Registry 锁边界：在协调锁内先撤销资源的公开获取资格并移除对象索引，之后在锁外调用 Lease Store retire，避免 Native close 回调在协调器锁内运行；新增永久 close 状态与对应测试源码。
 - `TshNativeQueryLeaseStore` 新增 `registerDeferred` / `retireDeferred`，允许 Query catalog 在事务锁内原子切换 revision/标记退役，并将旧 Query 与其 Language 依赖 Lease 的实际 close action 延后到锁外执行；新增 deferred close 测试源码。
-- `TshEngine` 新增自有 Native Resource Lease Store/Registry，并拥有 `TshCompiledQueryRegistry` / `TshNativeQueryLeaseStore`；新增 `createTreeSitterQueryCompiler/Executor` 工厂，将两条 Adapter 装配到同一个 Engine 资源协调体系。`TshEngine.close()` 先关闭 Query Store、清理 Query catalog，再关闭 Native Resource Registry，确保 Query 依赖的 Language Lease 先释放；新增 Engine 生命周期测试源码。
+- `TshEngine` 新增自有 Native Resource Lease Store/Registry，并拥有 `TshCompiledQueryRegistry` / `TshNativeQueryLeaseStore`；新增 `createTreeSitterQueryCompiler/Executor` 和 `openTreeSitterParser` 工厂，将 Parser、Compiler、Executor 装配到同一个 Engine 资源协调体系；新增关闭后拒绝创建 Adapter/Parser 测试源码。`TshEngine.close()` 先关闭 Query Store、清理 Query catalog，再关闭 Native Resource Registry，确保 Query 依赖的 Language Lease 先释放；新增 Engine 生命周期测试源码。
 - `TshNativeQueryLeaseStore` 增加永久 `close()`：关闭后拒绝新 Query 注册，已有活动执行 Lease 释放后才关闭 Native Query 及其 Grammar 依赖；新增关闭后拒绝注册和活动 Lease 延迟关闭测试源码。
 - `TshNativeResourceLeaseStore.Lease.retain()` 支持从仍存活的 Lease 派生子 Lease；即使 Grammar 对外 Handle 已退役，仍由 Parser dependency lease 保活的 Language 可继续派生 Tree dependency lease，不允许从已退役 Store 重新 acquire；新增退役后 child retain 和并发 retain/release 测试源码。
 - `TshTreeSitterQueryCompiler` / `TshTreeSitterQueryExecutor` 新增可选协调 Registry 注入；启用后 Language/Tree Lease 获取经统一入口完成，旧 Store 直连构造仍保留作为兼容迁移路径，Lease Store 构造参数提供默认值以兼容既有短参数列表。宿主生产装配尚未全面迁移。
