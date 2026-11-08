@@ -52,6 +52,7 @@ class TshNativeResourceRegistry(
         objectId: TshObjectId,
         expectedType: Class<T>
     ): TshNativeResourceLeaseStore.Lease<T>? = synchronized(lock) {
+        if (objectId !in ownedIds) return@synchronized null
         val resource = objects.find(objectId) ?: return@synchronized null
         if (!expectedType.isInstance(resource)) return@synchronized null
         val typed = expectedType.cast(resource)
@@ -62,6 +63,7 @@ class TshNativeResourceRegistry(
     fun <T : TSNativeObject> acquire(
         handle: TshNativeResourceLeaseStore.Handle<T>
     ): TshNativeResourceLeaseStore.Lease<T>? = synchronized(lock) {
+        if (handle.objectId !in ownedIds) return@synchronized null
         val resource = objects.find(handle.objectId) ?: return@synchronized null
         if (resource !== handle.resource) return@synchronized null
         leases.acquire(handle)
