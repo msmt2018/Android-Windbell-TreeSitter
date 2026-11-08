@@ -1374,11 +1374,17 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
         &document->regex_state_checkpoints, document->source->version(),
         document->partition_index.version());
     if (diagnostics == JNI_TRUE) spans = std::move(candidates);
+    // Materialize the JNI result before transferring span ownership to the
+    // cache. This avoids a second full copy of potentially hundreds of
+    // thousands of HighlightSpan records on every cache miss.
+    jintArray encoded = encodeNativeHighlightResult(
+        env, spans, counts, diagnostics == JNI_TRUE);
+    if (!encoded || env->ExceptionCheck()) return nullptr;
     NativeHighlightCache::Value cache_value;
-    cache_value.spans = spans;
+    cache_value.spans = std::move(spans);
     std::copy(std::begin(counts), std::end(counts), std::begin(cache_value.match_counts));
     document->highlight_cache.put(cache_key, std::move(cache_value));
-    return encodeNativeHighlightResult(env, spans, counts, diagnostics == JNI_TRUE);
+    return encoded;
 }
 
 JNIEXPORT void JNICALL

@@ -147,119 +147,20 @@ public:
         const std::vector<std::pair<uint32_t, uint32_t>> &dirtyRanges
     ) noexcept {
         // A Tree-sitter query result may depend on syntax outside every emitted
-    // capture (ancestors, siblings, predicates, and surrounding structure).
-    // Capture/viewport overlap therefore cannot prove that an entry is still
-    // valid after an edit. Until query execution records a conservative
-    // dependency envelope per cache entry, invalidate atomically on every edit.
-    // This deliberately trades cache hit rate for correctness; rebasing only
-    // the byte coordinates would otherwise allow stale captures to survive.
-    (void)newVersion;
-    (void)newSourceVersion;
-    (void)newPartitionVersion;
-    (void)editStart;
-    (void)oldEditEnd;
-    (void)insertedBytes;
-    (void)dirtyRanges;
-    clear();
-    return;
-
-    const int64_t delta = static_cast<int64_t>(insertedBytes) -
-            static_cast<int64_t>(oldEditEnd - editStart);
-        std::list<Key> nextLru;
-        std::unordered_map<Key, Entry, KeyHash> nextEntries;
-        try {
-            nextEntries.reserve(entries_.size());
-            for (const Key &oldKey : lru_) {
-                auto found = entries_.find(oldKey);
-                if (found == entries_.end()) continue;
-                Key key = oldKey;
-                if (key.end_byte <= editStart) {
-                    // Entire cached range is before the edit.
-                } else if (key.start_byte >= oldEditEnd &&
-                           !(editStart == oldEditEnd && key.start_byte < editStart)) {
-                    const int64_t start = static_cast<int64_t>(key.start_byte) + delta;
-                    const int64_t end = static_cast<int64_t>(key.end_byte) + delta;
-                    if (start < 0 || end < start || end > UINT32_MAX) continue;
-                    key.start_byte = static_cast<uint32_t>(start);
-                    key.end_byte = static_cast<uint32_t>(end);
-                } else {
-                    continue; // The cached viewport overlaps replaced text.
-                }
-                bool intersectsDirty = false;
-                for (const auto &range : dirtyRanges) {
-                    if (key.start_byte < range.second && range.first < key.end_byte) {
-                        intersectsDirty = true;
-                        break;
-                    }
-                }
-                if (intersectsDirty) continue;
-                // Move the cached value into the candidate map. Copying this
-                // vector here doubled peak span memory during every edit; moving
-                // preserves its allocation and keeps migration within the existing
-                // cache budget. If candidate construction fails, the catch path
-                // clears the cache rather than exposing partially rebased entries.
-                Value value = std::move(found->second.value);
-                bool spansValid = true;
-                for (auto &span : value.spans) {
-                    if (span.end_byte <= editStart) continue;
-                    if (span.start_byte >= oldEditEnd &&
-                        !(editStart == oldEditEnd && span.start_byte < editStart)) {
-                        const int64_t start = static_cast<int64_t>(span.start_byte) + delta;
-                        const int64_t end = static_cast<int64_t>(span.end_byte) + delta;
-                        if (start < 0 || end < start || end > UINT32_MAX) {
-                            spansValid = false;
-                            break;
-                        }
-                        span.start_byte = static_cast<uint32_t>(start);
-                        span.end_byte = static_cast<uint32_t>(end);
-                    } else {
-                        spansValid = false;
-                        break;
-                    }
-                }
-                if (!spansValid) continue;
-                // Query matches can capture an ancestor whose span extends beyond
-                // the requested viewport. Invalidate by both viewport and actual
-                // cached capture spans so an out-of-viewport edit cannot preserve
-                // a stale ancestor capture.
-                for (const auto &span : value.spans) {
-                    for (const auto &range : dirtyRanges) {
-                        if (span.start_byte < range.second && range.first < span.end_byte) {
-                            spansValid = false;
-                            break;
-                        }
-                    }
-                    if (!spansValid) break;
-                }
-                if (!spansValid) continue;
-                key.version = newVersion;
-                key.source_version = newSourceVersion;
-                key.partition_version = newPartitionVersion;
-                nextLru.push_back(key);
-                auto position = std::prev(nextLru.end());
-                const auto inserted = nextEntries.emplace(
-                    key, Entry{std::move(value), position, found->second.bytes});
-                if (!inserted.second) nextLru.erase(position);
-            }
-        } catch (...) {
-            clear();
-            return;
-        }
-        entries_.swap(nextEntries);
-        lru_.swap(nextLru);
-        // Cache accounting is unchanged for retained entries only. Recompute it
-        // because invalidated entries released their memory from this cache.
-        size_t retainedBytes = 0;
-        for (const auto &entry : entries_) {
-            if (entry.second.bytes > static_cast<size_t>(-1) - retainedBytes) {
-                clear();
-                return;
-            }
-            retainedBytes += entry.second.bytes;
-        }
-        const size_t released = used_bytes_ - std::min(used_bytes_, retainedBytes);
-        if (shared_budget_ && released) shared_budget_->release(released);
-        used_bytes_ = retainedBytes;
+        // capture (ancestors, siblings, predicates, and surrounding structure).
+        // Capture/viewport overlap therefore cannot prove that an entry is still
+        // valid after an edit. Until query execution records a conservative
+        // dependency envelope per cache entry, invalidate on every edit.
+        // This trades cache hit rate for correctness rather than exposing stale
+        // syntax captures under a new document version.
+        (void)newVersion;
+        (void)newSourceVersion;
+        (void)newPartitionVersion;
+        (void)editStart;
+        (void)oldEditEnd;
+        (void)insertedBytes;
+        (void)dirtyRanges;
+        clear();
     }
 
     void clear() noexcept {
