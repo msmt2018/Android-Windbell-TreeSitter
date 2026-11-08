@@ -127,31 +127,36 @@ static void testMappedFileSource() {
     ::unlink(path);
 }
 
-static void testThreeHundredMegabyteSparseFileUsesBoundedWindow() {
-    char path[] = "/tmp/windbell-largefile-300mb-XXXXXX";
-    const int fd = ::mkstemp(path);
-    assert(fd >= 0);
-
-    constexpr off_t file_size = static_cast<off_t>(300) * 1024 * 1024;
-    assert(::ftruncate(fd, file_size) == 0);
+static void testSparseFilesFromOneToThreeHundredMegabytesUseBoundedWindow() {
+    constexpr int sizes_mb[] = {1, 10, 50, 100, 200, 300};
     const char marker[] = {'O', 0, 'K', 0};
-    const off_t marker_offset = file_size - static_cast<off_t>(sizeof(marker));
-    assert((marker_offset & 1) == 0);
-    assert(::pwrite(fd, marker, sizeof(marker), marker_offset) ==
-           static_cast<ssize_t>(sizeof(marker)));
-    ::close(fd);
+    for (const int size_mb : sizes_mb) {
+        char path[] = "/tmp/windbell-largefile-stress-XXXXXX";
+        const int fd = ::mkstemp(path);
+        assert(fd >= 0);
 
-    FileWindowSource source(path, 64u * 1024u);
-    assert(source.isOpen());
-    assert(source.sizeBytes() == static_cast<uint64_t>(file_size));
+        const off_t file_size = static_cast<off_t>(size_mb) * 1024 * 1024;
+        assert(::ftruncate(fd, file_size) == 0);
+        const off_t marker_offset = file_size - static_cast<off_t>(sizeof(marker));
+        assert((marker_offset & 1) == 0);
+        assert(::pwrite(fd, marker, sizeof(marker), marker_offset) ==
+               static_cast<ssize_t>(sizeof(marker)));
+        ::close(fd);
 
-    TextChunkView view{};
-    assert(source.read(static_cast<uint64_t>(marker_offset), 64u * 1024u, &view));
-    assert(view.size == sizeof(marker));
-    assert(std::memcmp(view.data, marker, sizeof(marker)) == 0);
+        // This validates large-file addressing and bounded source memory only;
+        // it deliberately does not claim to parse or highlight sparse zero-filled text.
+        FileWindowSource source(path, 64u * 1024u);
+        assert(source.isOpen());
+        assert(source.sizeBytes() == static_cast<uint64_t>(file_size));
 
-    source.close();
-    ::unlink(path);
+        TextChunkView view{};
+        assert(source.read(static_cast<uint64_t>(marker_offset), 64u * 1024u, &view));
+        assert(view.size == sizeof(marker));
+        assert(std::memcmp(view.data, marker, sizeof(marker)) == 0);
+
+        source.close();
+        ::unlink(path);
+    }
 }
 
 int main() {
@@ -160,6 +165,6 @@ int main() {
     testChunkedStoreReusesAllocatedTail();
     testChunkedStoreHonorsMemoryBudget();
     testMappedFileSource();
-    testThreeHundredMegabyteSparseFileUsesBoundedWindow();
+    testSparseFilesFromOneToThreeHundredMegabytesUseBoundedWindow();
     return 0;
 }
