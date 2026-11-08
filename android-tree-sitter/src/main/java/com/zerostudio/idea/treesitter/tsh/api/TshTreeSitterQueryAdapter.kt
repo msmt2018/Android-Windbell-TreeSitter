@@ -10,7 +10,8 @@ import java.security.MessageDigest
 
 /** Resolves a live language handle for a descriptor; the resolver retains language ownership. */
 fun interface TshGrammarLanguageResolver {
-    fun resolve(grammar: TshGrammarDescriptor): TSLanguage?
+    /** Returns a registered handle; the resolver retains no right to close it after registration. */
+    fun resolve(grammar: TshGrammarDescriptor): TshNativeResourceLeaseStore.Handle<TSLanguage>?
 }
 
 /**
@@ -24,6 +25,7 @@ class TshTreeSitterQueryCompiler(
     private val objects: TshObjectRegistry,
     private val queries: TshCompiledQueryRegistry,
     private val leases: TshNativeQueryLeaseStore,
+    private val languageLeases: TshNativeResourceLeaseStore,
     private val compilerVersion: String = "treesitter-adapter-1"
 ) : TshAtsCompiler {
 
@@ -40,21 +42,20 @@ class TshTreeSitterQueryCompiler(
             )
         }
 
-        val language = try {
+        val languageHandle = try {
             languages.resolve(grammar)
         } catch (error: Throwable) {
             return failure("TSH-QUERY-GRAMMAR-001", "Grammar resolver failed: ${error.message}", cause = error)
         } ?: return failure("TSH-QUERY-GRAMMAR-002", "No live Tree-sitter language is registered for '${grammar.languageId}'")
-
-        if (!language.canAccess()) {
-            return failure("TSH-QUERY-GRAMMAR-003", "Resolved Tree-sitter language is closed")
-        }
-
-        val nativeQuery = try {
-            TSQuery.create(language, source.text)
-        } catch (error: Throwable) {
-            return failure("TSH-QUERY-COMPILE-001", "Tree-sitter query creation failed: ${error.message}", cause = error)
-        }
+        val languageLease = languageLeases.acquire(languageHandle)
+            ?: return failure("TSH-QUERY-GRAMMAR-003", "Resolved Tree-sitter language is retired, closed, or not registered")
+        return languageLease.use {
+            val language = it.resource
+            val nativeQuery = try {
+                TSQuery.create(language, source.text)
+            } catch (error: Throwable) {
+                return@use failure("TSH-QUERY-COMPILE-001", "Tree-sitter query creation failed: ${error.message}", cause = error)
+            }
 
         if (!nativeQuery.canAccess()) {
             val nativeError = runCatching { nativeQuery.errorType }.getOrNull()
@@ -113,7 +114,7 @@ class TshTreeSitterQueryCompiler(
                 options = options,
                 nativeObjectId = objectDescriptor.id
             )
-            return when (val registered = queries.register(compiled, replace = true)) {
+            when (val registered = queries.register(compiled, replace = true)) {
                 is TshResult.Success -> {
                     val oldId = previous?.nativeObjectId
                     if (oldId != null && oldId != objectDescriptor.id) {
@@ -127,6 +128,7 @@ class TshTreeSitterQueryCompiler(
                     registered
                 }
             }
+        }
         }
     }
 
@@ -156,6 +158,7 @@ class TshTreeSitterQueryExecutor(
     private val objects: TshObjectRegistry,
     private val queries: TshCompiledQueryRegistry,
     private val leases: TshNativeQueryLeaseStore,
+    private val treeLeases: TshNativeResourceLeaseStore,
     private val predicateHandlers: List<TSPredicateHandler> = emptyList()
 ) : TshQueryExecutor {
 
@@ -185,11 +188,14 @@ class TshTreeSitterQueryExecutor(
             ?: return failure("TSH-QUERY-EXEC-004", "Native query is missing, retired, or currently unavailable")
         try {
         val nativeQuery = queryLease.query
-        val nativeTree = objects.find(tree.nativeObjectId) as? TSTree
+        val treeHandle = objects.find(tree.nativeObjectId) as? TSTree
             ?: return failure("TSH-QUERY-EXEC-005", "Native syntax tree handle is missing or has the wrong type")
+        val treeLease = treeLeases.acquire(TshNativeResourceLeaseStore.Handle(tree.nativeObjectId, treeHandle))
+            ?: return failure("TSH-QUERY-EXEC-007", "Native syntax tree is retired, closed, or not registered")
+        try {
+        val nativeTree = treeLease.resource
 
         if (!nativeQuery.canAccess()) return failure("TSH-QUERY-EXEC-006", "Native query has been closed")
-        if (!nativeTree.canAccess()) return failure("TSH-QUERY-EXEC-007", "Native syntax tree has been closed")
 
         val hasPredicates = try {
             (0 until nativeQuery.patternCount).any {
@@ -323,6 +329,9 @@ class TshTreeSitterQueryExecutor(
         }
         } finally {
             queryLease.close()
+        }
+        } finally {
+            treeLease.close()
         }
     }
 }
