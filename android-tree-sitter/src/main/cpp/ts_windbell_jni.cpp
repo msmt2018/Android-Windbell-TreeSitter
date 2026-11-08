@@ -538,25 +538,26 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlight(
     // this matters for multi-megabyte and very large editor buffers.
     const jchar* source_chars = env->GetStringChars(text_jstr, nullptr);
     if (!source_chars) return nullptr;
+    struct SourceCharsGuard {
+        JNIEnv* env;
+        jstring source;
+        const jchar* chars;
+        ~SourceCharsGuard() {
+            if (chars) env->ReleaseStringChars(source, chars);
+        }
+    } source_guard{env, text_jstr, source_chars};
 
     std::vector<HighlightSpan> raw_candidates;
     uint32_t pipeline_match_counts[4] = {};
-    std::vector<HighlightSpan> spans;
-    try {
-        spans = WindbellEngine::getInstance().highlightHybrid(
-            tree ? ts_tree_language(tree) : nullptr,
-            tree,
-            reinterpret_cast<const uint16_t*>(source_chars),
-            static_cast<uint32_t>(len),
-            ext_str,
-            diagnostics == JNI_TRUE ? &raw_candidates : nullptr,
-            diagnostics == JNI_TRUE ? pipeline_match_counts : nullptr
-        );
-    } catch (...) {
-        env->ReleaseStringChars(text_jstr, source_chars);
-        throw;
-    }
-    env->ReleaseStringChars(text_jstr, source_chars);
+    std::vector<HighlightSpan> spans = WindbellEngine::getInstance().highlightHybrid(
+        tree ? ts_tree_language(tree) : nullptr,
+        tree,
+        reinterpret_cast<const uint16_t*>(source_chars),
+        static_cast<uint32_t>(len),
+        ext_str,
+        diagnostics == JNI_TRUE ? &raw_candidates : nullptr,
+        diagnostics == JNI_TRUE ? pipeline_match_counts : nullptr
+    );
     if (diagnostics == JNI_TRUE) spans = std::move(raw_candidates);
 
     const jsize header_size = diagnostics == JNI_TRUE ? 4 : 0;
