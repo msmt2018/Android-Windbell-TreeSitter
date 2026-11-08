@@ -156,7 +156,7 @@ class TshSyntaxHighlighter(
             pendingNativeEdits.clear()
         }
         if (edits.isEmpty()) return
-        applyNativeEdits(active, edits)
+        applyNativeEdits(active ?: return, edits)
     }
 
     override fun styleLine(

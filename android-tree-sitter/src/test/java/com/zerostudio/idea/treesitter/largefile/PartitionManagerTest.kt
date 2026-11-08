@@ -44,7 +44,7 @@ class PartitionManagerTest {
         cache.put("c", ByteArray(5))
         assertThat(cache.get("a")).isNull()
         assertThat(cache.get("b")).isNotNull()
-        assertThat(cache.weight()).isAtMost(10)
+        assertThat(cache.weight()).isAtMost(10L)
         cache.put("huge", ByteArray(11))
         assertThat(cache.get("huge")).isNull()
     }
