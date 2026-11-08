@@ -10,6 +10,7 @@ add_executable(windbell_largefile_tests
     ../MappedFileSource.cpp
     ../FileWindowSource.cpp
     ../PieceTreeSource.cpp
+    ../TextPartitionIndex.cpp
 )
 
 target_include_directories(windbell_largefile_tests PRIVATE ..)
