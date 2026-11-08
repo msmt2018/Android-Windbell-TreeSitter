@@ -1,35 +1,46 @@
 package com.zerostudio.idea.androidtreesitter
 
-import android.util.Log
-import android.text.style.CharacterStyle
 import android.text.SpannableStringBuilder
 import android.text.Spanned
+import android.text.style.CharacterStyle
+import android.util.Log
 import com.zerostudio.idea.treesitter.TSLanguage
 import com.zerostudio.idea.treesitter.TSParser
 import com.zerostudio.idea.treesitter.TSTree
-import com.zerostudio.idea.treesitter.largefile.parseWindowed
+import com.zerostudio.idea.treesitter.largefile.ByteBudgetLruCache
+import com.zerostudio.idea.treesitter.largefile.CharSequenceUtf16DocumentSource
+import com.zerostudio.idea.treesitter.largefile.DocumentPartitionManager
+import com.zerostudio.idea.treesitter.largefile.PartitionAstCache
+import com.zerostudio.idea.treesitter.largefile.PartitionParseRequest
+import com.zerostudio.idea.treesitter.largefile.TreeSitterPartitionScheduler
 import com.zerostudio.idea.treesitter.tsh.WindbellTshEngine
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.launch
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import x.github.module.editor.highlight.SyntaxHighlighter
-import x.github.module.editor.input.AutoPair
 import x.github.module.editor.input.AutoPairFilter
-import x.github.module.editor.structure.PlainBracketMatcher
 import x.github.module.editor.model.EditorBuffer
 import x.github.module.editor.model.EditorDocument
-import java.util.concurrent.atomic.AtomicLong
+import x.github.module.editor.model.EditorTextSnapshot
+import x.github.module.editor.structure.PlainBracketMatcher
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 
 /**
- * Connects a loaded TSH language package to EditorView's line-based renderer.
+ * TSH adapter for EditorView.
  *
- * Parsing and capture calculation happen on a worker dispatcher. Drawing only reads
- * the last immutable capture snapshot and maps document UTF-16 offsets to line offsets.
+ * Small documents use the original whole-document pipeline. Large documents use
+ * immutable Piece Tree snapshots, sparse partition indexing, viewport-prioritized
+ * parsing, and byte-budgeted capture/AST caches. Only the current partition's
+ * bounded context window is materialized as a String for the existing TSH regex,
+ * Monarch, ATS and Tree-sitter Query pipeline.
  */
 class TshSyntaxHighlighter(
     private val language: TSLanguage,
@@ -39,21 +50,40 @@ class TshSyntaxHighlighter(
 
     companion object {
         private const val TAG = "WindbellTSH"
+        private const val LARGE_DOCUMENT_THRESHOLD_CHARS = 1 * 1024 * 1024
+        private const val PARTITION_CHARS = 64L * 1024L
+        private const val CONTEXT_CHARS = 128L * 1024L
+        private const val AST_CACHE_BYTES = 16L * 1024L * 1024L
+        private const val CAPTURE_CACHE_BYTES = 32L * 1024L * 1024L
     }
+
+    private data class LargeSession(
+        val snapshot: EditorTextSnapshot,
+        val source: CharSequenceUtf16DocumentSource,
+        val partitions: DocumentPartitionManager,
+        val parser: TSParser,
+        val astCache: PartitionAstCache,
+        val scheduler: TreeSitterPartitionScheduler,
+        val captureIndexes: ByteBudgetLruCache<Int, CaptureIntervalIndex>,
+        val ticket: Long
+    )
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val generation = AtomicLong()
     private val firstStyleCallLogged = AtomicBoolean(false)
+
     @Volatile private var host: SyntaxHighlighter.Host? = null
-    @Volatile private var captureIndex = CaptureIntervalIndex(emptyList())()
+    @Volatile private var captureIndex = CaptureIntervalIndex(emptyList())
+    @Volatile private var largeSession: LargeSession? = null
+    @Volatile private var parsing = false
+
     private val editorMetadata by lazy { engine.getEditorMetadata(extension) }
     private val stylesById by lazy { engine.getStyleCatalog(extension).associateBy { it.styleId } }
-    @Volatile private var parsing = false
     private var parseJob: Job? = null
 
     override fun onAttached(host: SyntaxHighlighter.Host) {
         this.host = host
-        Log.i(TAG, "Attached to EditorView: extension=.$extension, textLength=${host.buffer.length}")
+        Log.i(TAG, "Attached to EditorView: extension=.$extension textLength=${host.buffer.length}")
         scheduleParse(host.buffer)
     }
 
@@ -61,6 +91,8 @@ class TshSyntaxHighlighter(
         generation.incrementAndGet()
         parseJob?.cancel(CancellationException("TSH highlighter detached"))
         parseJob = null
+        largeSession?.let(::disposeSession)
+        largeSession = null
         captureIndex = CaptureIntervalIndex(emptyList())
         parsing = false
         host = null
@@ -86,18 +118,27 @@ class TshSyntaxHighlighter(
         start: Int,
         end: Int
     ): Spanned? {
-        // A compact interval index avoids duplicating multiline captures into every
-        // line bucket. A long comment/string therefore occupies one index entry.
-        val snapshot = captureIndex.query(lineStartOffset, lineStartOffset + text.length)
         if (start >= end) return null
-        if (firstStyleCallLogged.compareAndSet(false, true)) {
-            Log.i(TAG, "Editor renderer invoked styleLine: extension=.$extension line=$bufferLine range=$start..$end captures=${snapshot.size}")
+        val lineEnd = lineStartOffset + text.length
+        val active = largeSession
+        val spans = if (active != null) {
+            val offset = lineStartOffset.toLong().coerceIn(0L, active.source.length)
+            val endOffset = minOf(active.source.length, offset + text.length.toLong())
+            requestLargeViewport(active, offset, endOffset)
+            val partition = active.partitions.partitionAt(active.source, offset)
+            active.captureIndexes.get(partition.index)?.query(lineStartOffset, lineEnd).orEmpty()
+        } else {
+            captureIndex.query(lineStartOffset, lineEnd)
         }
-        if (snapshot.isEmpty()) return null
+
+        if (firstStyleCallLogged.compareAndSet(false, true)) {
+            Log.i(TAG, "Editor renderer invoked styleLine: extension=.$extension line=$bufferLine range=$start..$end captures=${spans.size}")
+        }
+        if (spans.isEmpty()) return null
 
         val styled = SpannableStringBuilder(text)
         engine.applyHighlightSpansToSpannable(
-            spans = snapshot,
+            spans = spans,
             documentOffset = lineStartOffset,
             text = text,
             extension = extension,
@@ -107,9 +148,7 @@ class TshSyntaxHighlighter(
         )
         val applied = styled.getSpans(start, end, CharacterStyle::class.java)
         if (applied.isEmpty()) {
-            if (firstStyleCallLogged.get()) {
-                Log.w(TAG, "No Android CharacterStyle applied: extension=.$extension line=$bufferLine captures=${snapshot.size} paletteMissing=${snapshot.map { it.styleId }.distinct().filter { id -> stylesById.values.none { style -> style.styleId == id && engine.getStylePalette(extension, style.name) != null } }}")
-            }
+            Log.w(TAG, "No Android CharacterStyle applied: extension=.$extension line=$bufferLine captures=${spans.size}")
             return null
         }
         return styled
@@ -120,7 +159,19 @@ class TshSyntaxHighlighter(
         lineStartOffset: Int,
         start: Int,
         end: Int
-    ): Boolean = !parsing
+    ): Boolean {
+        val active = largeSession ?: return !parsing
+        if (lineStartOffset < 0) return false
+        val offset = lineStartOffset.toLong().coerceIn(0L, active.source.length)
+        val partition = active.partitions.partitionAt(active.source, offset)
+        if (active.captureIndexes.get(partition.index) != null) return true
+        requestLargeViewport(
+            active,
+            offset,
+            minOf(active.source.length, offset + maxOf(1, end - start).toLong())
+        )
+        return false
+    }
 
     fun createBracketMatcher(): PlainBracketMatcher? {
         val pairs = editorMetadata.brackets.joinToString("") { it.first + it.second }
@@ -143,21 +194,30 @@ class TshSyntaxHighlighter(
 
     private fun isInExcludedScope(offset: Int, excludedScopes: List<String>): Boolean {
         if (excludedScopes.isEmpty()) return false
-        return captureIndex.query(offset, offset + 1).any { span ->
+        val active = largeSession
+        val spans = if (active != null) {
+            if (offset < 0 || offset.toLong() >= active.source.length) {
+                emptyList()
+            } else {
+                val partition = active.partitions.partitionAt(active.source, offset.toLong())
+                active.captureIndexes.get(partition.index)?.query(offset, offset + 1).orEmpty()
+            }
+        } else {
+            captureIndex.query(offset, offset + 1)
+        }
+        return spans.any { span ->
             val style = stylesById[span.styleId]
             excludedScopes.any { scope ->
-                style?.tags?.contains(scope) == true ||
-                    style?.scope?.startsWith(scope) == true
+                style?.tags?.contains(scope) == true || style?.scope?.startsWith(scope) == true
             }
         }
     }
 
-    /** Call after selecting another scheme or appearance to repaint without reparsing. */
+    /** Theme changes only invalidate drawing; partition parses and captures remain valid. */
     fun refreshTheme() {
         host?.invalidateStyles()
     }
 
-    /** Re-runs the same parser/highlighter pipeline used by EditorView rendering. */
     fun reparse() {
         host?.buffer?.let(::scheduleParse)
     }
@@ -179,60 +239,230 @@ class TshSyntaxHighlighter(
     }
 
     private fun scheduleParse(buffer: EditorBuffer) {
-        // PieceTreeBuffer returns an immutable, versioned snapshot backed by its
-        // original chunks. Never call getText() here: that eagerly flattens the
-        // complete document before parsing even starts.
+        // PieceTreeBuffer snapshots retain their backing chunks. Large-file mode
+        // never calls getText() or snapshot.toString() for the complete document.
         val snapshot = buffer.createTextSnapshot()
         val ticket = generation.incrementAndGet()
         parseJob?.cancel(CancellationException("Superseded by newer document snapshot"))
+        largeSession?.let(::disposeSession)
+        largeSession = null
+        captureIndex = CaptureIntervalIndex(emptyList())
         parsing = true
 
         parseJob = scope.launch {
             delay(45)
-            var parser: TSParser? = null
-            var tree: TSTree? = null
-            try {
-                parser = TSParser.create().also { it.setLanguage(language) }
-                tree = parser.parseWindowed(
-                    oldTree = null,
-                    source = snapshot,
-                    includedRanges = emptyArray()
-                ) { offset, maxChars ->
-                    snapshot.getNearestChunk(offset, maxChars)
-                }
-
-                // Regex/Monarch currently use the contiguous-source JNI ABI.
-                // Tree-sitter now reads the immutable piece snapshot through bounded
-                // windows and no longer allocates a second full-document native copy.
-                val tshText = snapshot.toString()
-                val nextCaptures = engine.computeHighlights(tree, tshText, extension)
-                if (generation.get() == ticket) {
-                    captureIndex = CaptureIntervalIndex(nextCaptures)
-                    parsing = false
-                    val styleIds = nextCaptures.map { it.styleId }.distinct()
-                    val catalog = stylesById
-                    val missingPalette = styleIds.filter { id ->
-                        val style = catalog[id]
-                        style == null || engine.getStylePalette(extension, style.name) == null
-                    }
-                    Log.i(TAG, "TSH pipeline ready: extension=.$extension snapshotVersion=${snapshot.version} textLength=${snapshot.length} spans=\${nextCaptures.size} indexedCaptures=\${nextCaptures.size} styles=\${catalog.size} usedStyleIds=$styleIds missingPalette=$missingPalette")
-                    host?.invalidateStyles()
-                    host?.invalidateStructure()
-                }
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (error: Throwable) {
-                if (generation.get() == ticket) {
-                    Log.e(TAG, "TSH parse/highlight failed for .$extension (snapshotLength=${snapshot.length}, version=${snapshot.version})", error)
-                    captureIndex = CaptureIntervalIndex(emptyList())
-                    parsing = false
-                    host?.invalidateStyles()
-                    host?.invalidateStructure()
-                }
-            } finally {
-                tree?.close()
-                parser?.close()
+            if (snapshot.length >= LARGE_DOCUMENT_THRESHOLD_CHARS) {
+                initializeLargeSession(snapshot, ticket)
+            } else {
+                parseSmallSnapshot(snapshot, ticket)
             }
+        }
+    }
+
+    private suspend fun initializeLargeSession(snapshot: EditorTextSnapshot, ticket: Long) {
+        var parser: TSParser? = null
+        var astCache: PartitionAstCache? = null
+        var scheduler: TreeSitterPartitionScheduler? = null
+        var captureIndexes: ByteBudgetLruCache<Int, CaptureIntervalIndex>? = null
+        try {
+            val createdParser = TSParser.create().also { it.setLanguage(language) }
+            parser = createdParser
+            val initJob = currentCoroutineContext()[Job]
+            val source = CharSequenceUtf16DocumentSource(snapshot, snapshot.version) { start, count ->
+                if (initJob?.isActive == false) {
+                    throw CancellationException("Large-file partition indexing superseded")
+                }
+                snapshot.getNearestChunk(start, count)
+            }
+            val manager = DocumentPartitionManager(
+                targetPartitionChars = PARTITION_CHARS,
+                prefetchPartitions = 0
+            )
+            // Full-file indexing is linear and chunked, never a full String/byte-array copy.
+            manager.rebuild(source)
+            currentCoroutineContext().ensureActive()
+            if (generation.get() != ticket) throw CancellationException("Stale document snapshot")
+
+            val createdAstCache = PartitionAstCache(AST_CACHE_BYTES) { length ->
+                maxOf(128L * 1024L, length * 64L)
+            }
+            astCache = createdAstCache
+            val createdScheduler = TreeSitterPartitionScheduler(
+                partitionManager = manager,
+                astCache = createdAstCache,
+                contextChars = CONTEXT_CHARS,
+                parallelism = 1,
+                onFailure = { request, error ->
+                    Log.e(TAG, "Partition parse failed: extension=.$extension partition=${request.partition.index}", error)
+                    if (generation.get() == ticket) host?.invalidateStyles()
+                }
+            )
+            scheduler = createdScheduler
+            val createdCaptureIndexes = ByteBudgetLruCache<Int, CaptureIntervalIndex>(
+                CAPTURE_CACHE_BYTES,
+                { index -> 64L + index.size.toLong() * 48L }
+            )
+            captureIndexes = createdCaptureIndexes
+
+            val active = LargeSession(
+                snapshot,
+                source,
+                manager,
+                createdParser,
+                createdAstCache,
+                createdScheduler,
+                createdCaptureIndexes,
+                ticket
+            )
+            if (generation.get() == ticket) {
+                largeSession = active
+                parser = null
+                astCache = null
+                scheduler = null
+                captureIndexes = null
+                parsing = false
+                Log.i(
+                    TAG,
+                    "Large-file TSH index ready: extension=.$extension version=${snapshot.version} " +
+                        "utf16Length=${snapshot.length} partitions=${manager.snapshot().size} " +
+                        "source=PieceTreeSnapshot mode=viewport-partitioned"
+                )
+                host?.invalidateStyles()
+                host?.invalidateStructure()
+            }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Throwable) {
+            if (generation.get() == ticket) {
+                Log.e(TAG, "Large-file TSH initialization failed: extension=.$extension length=${snapshot.length}", error)
+                parsing = false
+                host?.invalidateStyles()
+            }
+        } finally {
+            scheduler?.close() ?: astCache?.close()
+            parser?.close()
+            captureIndexes?.close()
+        }
+    }
+
+    private suspend fun parseSmallSnapshot(snapshot: EditorTextSnapshot, ticket: Long) {
+        var parser: TSParser? = null
+        var tree: TSTree? = null
+        try {
+            val createdParser = TSParser.create().also { it.setLanguage(language) }
+            parser = createdParser
+            val text = snapshot.toString()
+            tree = createdParser.parseString(text)
+            val nextCaptures = engine.computeHighlights(tree, text, extension)
+            if (generation.get() == ticket) {
+                captureIndex = CaptureIntervalIndex(nextCaptures)
+                parsing = false
+                logPipelineReady(snapshot.length, nextCaptures)
+                host?.invalidateStyles()
+                host?.invalidateStructure()
+            }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Throwable) {
+            if (generation.get() == ticket) {
+                Log.e(TAG, "TSH parse/highlight failed for .$extension (length=${snapshot.length})", error)
+                captureIndex = CaptureIntervalIndex(emptyList())
+                parsing = false
+                host?.invalidateStyles()
+                host?.invalidateStructure()
+            }
+        } finally {
+            tree?.close()
+            parser?.close()
+        }
+    }
+
+    private fun requestLargeViewport(active: LargeSession, start: Long, end: Long) {
+        if (generation.get() != active.ticket || largeSession !== active) return
+        val partition = active.partitions.partitionAt(active.source, start.coerceIn(0L, active.source.length))
+        if (active.captureIndexes.get(partition.index) != null) return
+
+        // A capture page may have been evicted while its AST remains cached. Invalidate
+        // that AST key so the scheduler reruns the bounded TSH capture pass for this page.
+        active.astCache.invalidate { it.partitionIndex == partition.index }
+        try {
+            active.scheduler.requestViewport(active.source, start, end, active.ticket) { request ->
+                parseLargePartition(active, request)
+            }
+        } catch (error: IllegalStateException) {
+            if (generation.get() == active.ticket) {
+                Log.w(TAG, "Unable to queue large-file viewport parse", error)
+            }
+        }
+    }
+
+    private fun parseLargePartition(
+        active: LargeSession,
+        request: PartitionParseRequest
+    ): TSTree? {
+        if (generation.get() != active.ticket || largeSession !== active) return null
+        val contextStart = request.contextStartUtf16.toInt()
+        val contextEnd = request.contextEndUtf16.toInt()
+        // Only this bounded context becomes a String. The complete Piece Tree snapshot
+        // remains chunk-backed and is never flattened by the large-file pipeline.
+        val contextText = active.snapshot.substring(contextStart, contextEnd)
+        val tree = active.parser.parseString(contextText) ?: return null
+        try {
+            val localSpans = engine.computeHighlights(tree, contextText, extension)
+            val baseByte = request.contextStartUtf16 * 2L
+            val partitionStartByte = request.partition.start * 2L
+            val partitionEndByte = request.partition.endExclusive * 2L
+            val absoluteSpans = localSpans.mapNotNull { span ->
+                val absoluteStart = baseByte + span.startByte.toLong()
+                val absoluteEnd = baseByte + span.endByte.toLong()
+                val clippedStart = maxOf(absoluteStart, partitionStartByte)
+                val clippedEnd = minOf(absoluteEnd, partitionEndByte)
+                if (clippedStart >= clippedEnd || clippedEnd > Int.MAX_VALUE) {
+                    null
+                } else {
+                    span.copy(
+                        startByte = clippedStart.toInt(),
+                        endByte = clippedEnd.toInt()
+                    )
+                }
+            }
+            if (generation.get() == active.ticket && largeSession === active) {
+                active.captureIndexes.put(
+                    request.partition.index,
+                    CaptureIntervalIndex(absoluteSpans)
+                )
+                host?.invalidateStyles()
+                host?.invalidateStructure()
+            }
+            return tree
+        } catch (error: Throwable) {
+            tree.close()
+            throw error
+        }
+    }
+
+    private fun logPipelineReady(length: Int, captures: List<WindbellTshEngine.HighlightSpan>) {
+        val styleIds = captures.map { it.styleId }.distinct()
+        val catalog = stylesById
+        val missingPalette = styleIds.filter { id ->
+            val style = catalog[id]
+            style == null || engine.getStylePalette(extension, style.name) == null
+        }
+        Log.i(
+            TAG,
+            "TSH pipeline ready: extension=.$extension textLength=$length spans=${captures.size} " +
+                "styles=${catalog.size} usedStyleIds=$styleIds missingPalette=$missingPalette"
+        )
+    }
+
+    private fun disposeSession(active: LargeSession) {
+        scope.launch(Dispatchers.IO) {
+            runCatching { active.scheduler.close() }
+                .onFailure { Log.w(TAG, "Failed to close large-file partition scheduler", it) }
+            runCatching { active.parser.close() }
+                .onFailure { Log.w(TAG, "Failed to close large-file Tree-sitter parser", it) }
+            runCatching { active.captureIndexes.close() }
+                .onFailure { Log.w(TAG, "Failed to close large-file capture cache", it) }
         }
     }
 }

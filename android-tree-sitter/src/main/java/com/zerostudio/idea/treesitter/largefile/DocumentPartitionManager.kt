@@ -180,6 +180,13 @@ class DocumentPartitionManager(
 
     fun snapshot(): List<DocumentPartition> = lock.read { partitions.toList() }
 
+    /** Returns the partition containing a UTF-16 document offset. */
+    fun partitionAt(source: Utf16DocumentSource, offset: Long): DocumentPartition {
+        require(offset >= 0L && offset <= source.length)
+        ensureIndexed(source)
+        return lock.read { partitions[findPartition(offset)] }
+    }
+
     fun planViewport(source: Utf16DocumentSource, start: Long, endExclusive: Long): ViewportPlan {
         require(start >= 0L && endExclusive >= start && endExclusive <= source.length)
         ensureIndexed(source)

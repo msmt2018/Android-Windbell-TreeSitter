@@ -69,6 +69,10 @@ class TreeSitterPartitionScheduler(
         for (partition in plan.partitions) {
             var contextStart = (partition.start - contextChars).coerceAtLeast(0L)
             var contextEnd = minOf(source.length, safeAdd(partition.endExclusive, contextChars))
+            // Start/end at nearby line boundaries when possible so regex and Monarch
+            // tokenization do not begin in the middle of an ordinary source line.
+            contextStart = alignContextStartToLine(source, contextStart)
+            contextEnd = alignContextEndToLine(source, contextEnd)
             // Context windows must not split a UTF-16 surrogate pair either.
             if (contextStart > 0L && contextStart < source.length &&
                 Character.isHighSurrogate(source[contextStart - 1L]) &&
@@ -173,11 +177,48 @@ class TreeSitterPartitionScheduler(
         override fun compareTo(other: PrioritizedTask): Int = priority.compareTo(other.priority)
     }
 
+    private fun alignContextStartToLine(source: Utf16DocumentSource, offset: Long): Long {
+        if (offset <= 0L) return 0L
+        val windowStart = (offset - CONTEXT_LINE_ALIGNMENT_CHARS).coerceAtLeast(0L)
+        var cursor = windowStart
+        var lastNewline: Long? = null
+        while (cursor < offset) {
+            val chunk = source.readChunk(
+                cursor,
+                minOf(CONTEXT_LINE_ALIGNMENT_CHARS, offset - cursor).toInt()
+            )
+            if (chunk.isEmpty()) break
+            val newline = chunk.lastIndexOf('\n')
+            if (newline >= 0) lastNewline = cursor + newline
+            cursor += chunk.length
+        }
+        return lastNewline?.plus(1L) ?: offset
+    }
+
+    private fun alignContextEndToLine(source: Utf16DocumentSource, offset: Long): Long {
+        if (offset >= source.length) return source.length
+        val limit = minOf(source.length, safeAdd(offset, CONTEXT_LINE_ALIGNMENT_CHARS))
+        var cursor = offset
+        while (cursor < limit) {
+            val chunk = source.readChunk(
+                cursor,
+                minOf(CONTEXT_LINE_ALIGNMENT_CHARS, limit - cursor).toInt()
+            )
+            if (chunk.isEmpty()) break
+            val newline = chunk.indexOf('\n')
+            if (newline >= 0) return cursor + newline + 1L
+            cursor += chunk.length
+        }
+        return offset
+    }
+
     private fun distanceToRange(position: Long, start: Long, end: Long): Long = when {
         position < start -> start - position
         position > end -> position - end
         else -> 0L
     }
+
+    private companion object { const val CONTEXT_LINE_ALIGNMENT_CHARS = 64 * 1024L }
 
     private fun safeAdd(a: Long, b: Long): Long =
         if (Long.MAX_VALUE - a < b) Long.MAX_VALUE else a + b
