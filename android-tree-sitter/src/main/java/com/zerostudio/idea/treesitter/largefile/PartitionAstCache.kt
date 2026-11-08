@@ -42,14 +42,16 @@ class PartitionAstCache(
         var evictWhenReleased: Boolean = false
     )
 
-    inner class Lease internal constructor(private val entry: Entry) : AutoCloseable {
-        val tree: TSTree get() = entry.tree
+    inner class Lease internal constructor(
+        val tree: TSTree,
+        private val releaseAction: () -> Unit
+    ) : AutoCloseable {
         private var released = false
         override fun close() {
             synchronized(lock) {
                 if (released) return
                 released = true
-                releaseLocked(entry)
+                releaseAction()
             }
         }
     }
@@ -89,7 +91,7 @@ class PartitionAstCache(
         if (closed) return@synchronized null
         val entry = entries[key] ?: return@synchronized null
         entry.leases++
-        Lease(entry)
+        Lease(entry.tree) { synchronized(lock) { releaseLocked(entry) } }
     }
 
     fun invalidate(predicate: (PartitionAstKey) -> Boolean) {
