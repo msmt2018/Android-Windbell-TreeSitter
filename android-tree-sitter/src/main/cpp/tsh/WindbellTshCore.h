@@ -188,6 +188,30 @@ struct TshStylePaint {
     TshColorValue foreground;
     TshColorValue background;
     TshFontAttributes font;
+
+    // Resolve inheritance property-by-property. A defined font bit may be
+    // explicitly off, so flags alone are never sufficient to decide inheritance.
+    void inheritMissing(const TshStylePaint& parent) {
+        if (!foreground.present && parent.foreground.present) foreground = parent.foreground;
+        if (!background.present && parent.background.present) background = parent.background;
+        const uint16_t inherited = static_cast<uint16_t>(
+            parent.font.defined_mask & static_cast<uint16_t>(~font.defined_mask));
+        font.flags = static_cast<uint16_t>(
+            (font.flags & static_cast<uint16_t>(~inherited)) |
+            (parent.font.flags & inherited));
+        font.defined_mask |= parent.font.defined_mask;
+    }
+
+    // Overlay only values explicitly supplied by the overlay paint.
+    void overlay(const TshStylePaint& child) {
+        if (child.foreground.present) foreground = child.foreground;
+        if (child.background.present) background = child.background;
+        const uint16_t overridden = child.font.defined_mask;
+        font.flags = static_cast<uint16_t>(
+            (font.flags & static_cast<uint16_t>(~overridden)) |
+            (child.font.flags & overridden));
+        font.defined_mask |= overridden;
+    }
 };
 
 // 单个 Token 的方案配色定义。Legacy fields remain the compiler's
@@ -228,54 +252,46 @@ struct SchemeColor {
     // Inherit each paint property independently. Font attributes inherit only
     // where the child has not explicitly set or cleared that attribute.
     void inheritMissing(const SchemeColor& parent) {
-        if (!has_light_color && parent.has_light_color) {
-            light_color = parent.light_color;
-            has_light_color = true;
-        }
-        if (!has_dark_color && parent.has_dark_color) {
-            dark_color = parent.dark_color;
-            has_dark_color = true;
-        }
-        if (!has_light_background && parent.has_light_background) {
-            light_background = parent.light_background;
-            has_light_background = true;
-        }
-        if (!has_dark_background && parent.has_dark_background) {
-            dark_background = parent.dark_background;
-            has_dark_background = true;
-        }
-        const uint16_t light_inherit = parent.light_font_defined_mask & static_cast<uint16_t>(~light_font_defined_mask);
-        const uint16_t dark_inherit = parent.dark_font_defined_mask & static_cast<uint16_t>(~dark_font_defined_mask);
-        light_font_flags = static_cast<uint16_t>((light_font_flags & ~light_inherit) | (parent.light_font_flags & light_inherit));
-        dark_font_flags = static_cast<uint16_t>((dark_font_flags & ~dark_inherit) | (parent.dark_font_flags & dark_inherit));
-        light_font_defined_mask |= parent.light_font_defined_mask;
-        dark_font_defined_mask |= parent.dark_font_defined_mask;
+        TshStylePaint light = lightPaint();
+        light.inheritMissing(parent.lightPaint());
+        light_color = light.foreground.argb;
+        has_light_color = light.foreground.present;
+        light_background = light.background.argb;
+        has_light_background = light.background.present;
+        light_font_flags = light.font.flags;
+        light_font_defined_mask = light.font.defined_mask;
+
+        TshStylePaint dark = darkPaint();
+        dark.inheritMissing(parent.darkPaint());
+        dark_color = dark.foreground.argb;
+        has_dark_color = dark.foreground.present;
+        dark_background = dark.background.argb;
+        has_dark_background = dark.background.present;
+        dark_font_flags = dark.font.flags;
+        dark_font_defined_mask = dark.font.defined_mask;
     }
 
     // Scheme extension overlays only properties explicitly supplied by child.
     void overlay(const SchemeColor& child) {
-        if (child.has_light_color) {
-            light_color = child.light_color;
-            has_light_color = true;
-            explicit_light_color = true;
-        }
-        if (child.has_dark_color) {
-            dark_color = child.dark_color;
-            has_dark_color = true;
-            explicit_dark_color = true;
-        }
-        if (child.has_light_background) {
-            light_background = child.light_background;
-            has_light_background = true;
-        }
-        if (child.has_dark_background) {
-            dark_background = child.dark_background;
-            has_dark_background = true;
-        }
-        light_font_flags = static_cast<uint16_t>((light_font_flags & ~child.light_font_defined_mask) | (child.light_font_flags & child.light_font_defined_mask));
-        dark_font_flags = static_cast<uint16_t>((dark_font_flags & ~child.dark_font_defined_mask) | (child.dark_font_flags & child.dark_font_defined_mask));
-        light_font_defined_mask |= child.light_font_defined_mask;
-        dark_font_defined_mask |= child.dark_font_defined_mask;
+        TshStylePaint light = lightPaint();
+        light.overlay(child.lightPaint());
+        light_color = light.foreground.argb;
+        has_light_color = light.foreground.present;
+        light_background = light.background.argb;
+        has_light_background = light.background.present;
+        light_font_flags = light.font.flags;
+        light_font_defined_mask = light.font.defined_mask;
+        if (child.has_light_color) explicit_light_color = true;
+
+        TshStylePaint dark = darkPaint();
+        dark.overlay(child.darkPaint());
+        dark_color = dark.foreground.argb;
+        has_dark_color = dark.foreground.present;
+        dark_background = dark.background.argb;
+        has_dark_background = dark.background.present;
+        dark_font_flags = dark.font.flags;
+        dark_font_defined_mask = dark.font.defined_mask;
+        if (child.has_dark_color) explicit_dark_color = true;
     }
 };
 
