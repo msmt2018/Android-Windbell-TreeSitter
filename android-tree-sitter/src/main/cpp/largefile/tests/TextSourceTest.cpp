@@ -224,6 +224,31 @@ static void testPieceTreeEditsDoNotCopyUnchangedText() {
 
 
 
+static void testPieceTreeSnapshotIsolatedAndSharesBacking() {
+    char path[] = "/tmp/windbell-piece-snapshot-XXXXXX";
+    const int fd = ::mkstemp(path);
+    assert(fd >= 0);
+    const char initial[] = {'a',0,'b',0,'c',0,'d',0};
+    assert(::write(fd, initial, sizeof(initial)) == static_cast<ssize_t>(sizeof(initial)));
+    ::close(fd);
+
+    auto mapped = std::make_shared<MappedFileSource>(path);
+    PieceTreeSource original(mapped, 1024u * 1024u);
+    const char firstInsert[] = {'X',0};
+    assert(original.replace(2, 2, firstInsert, sizeof(firstInsert)));
+    auto snapshot = original.clone();
+    assert(snapshot && snapshot->isValid());
+    const std::string snapshotBytes = readAll(*snapshot);
+
+    const char secondInsert[] = {'Y',0};
+    assert(snapshot->replace(4, 4, secondInsert, sizeof(secondInsert)));
+    assert(readAll(original) == snapshotBytes);
+    assert(readAll(*snapshot) != snapshotBytes);
+    assert(snapshot->version() == original.version() + 1);
+    assert(original.allocatedBytes() == snapshot->allocatedBytes());
+    ::unlink(path);
+}
+
 static void testPieceTreeRandomEditsMatchReferenceBuffer() {
     char path[] = "/tmp/windbell-piece-random-XXXXXX";
     const int fd = ::mkstemp(path);
@@ -329,6 +354,7 @@ int main() {
     testMappedFileSource();
     testPieceTreeEditsDoNotCopyUnchangedText();
     testPieceTreeRandomEditsMatchReferenceBuffer();
+    testPieceTreeSnapshotIsolatedAndSharesBacking();
     testSparsePartitionIndexSurvivesEdits();
     testSparseFilesFromOneToThreeHundredMegabytesUseBoundedWindow();
     return 0;

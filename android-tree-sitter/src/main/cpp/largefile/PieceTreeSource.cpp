@@ -34,6 +34,29 @@ PieceTreeSource::PieceTreeSource(std::shared_ptr<const TextSource> original,
 
 PieceTreeSource::~PieceTreeSource() = default;
 
+std::unique_ptr<PieceTreeSource> PieceTreeSource::clone() const noexcept {
+    auto copy = std::unique_ptr<PieceTreeSource>(
+        new (std::nothrow) PieceTreeSource(original_, memory_limit_bytes_));
+    if (!copy || !copy->valid_) return nullptr;
+    copy->root_ = cloneNode(root_.get());
+    if (root_ && !copy->root_) return nullptr;
+    try {
+        copy->added_chunks_ = added_chunks_;
+    } catch (...) {
+        return nullptr;
+    }
+    copy->added_allocated_ = added_allocated_;
+    copy->added_size_ = added_size_;
+    constexpr uint64_t chunkBytes = 64u * 1024u;
+    if ((copy->added_size_ % chunkBytes) != 0) {
+        copy->added_size_ += chunkBytes - (copy->added_size_ % chunkBytes);
+    }
+    copy->version_ = version_;
+    copy->random_state_ = random_state_;
+    copy->valid_ = valid_;
+    return copy;
+}
+
 bool PieceTreeSource::isValid() const noexcept { return valid_; }
 uint64_t PieceTreeSource::sizeBytes() const noexcept { return subtreeBytes(root_); }
 uint64_t PieceTreeSource::allocatedBytes() const noexcept {
@@ -68,6 +91,19 @@ std::unique_ptr<PieceTreeSource::Node> PieceTreeSource::merge(
     right->left = merge(std::move(left), std::move(right->left));
     updateNode(right.get());
     return right;
+}
+
+std::unique_ptr<PieceTreeSource::Node> PieceTreeSource::cloneNode(const Node *node) noexcept {
+    if (!node) return nullptr;
+    auto copy = std::unique_ptr<Node>(new (std::nothrow) Node(
+        node->buffer, node->source_offset, node->length, node->priority));
+    if (!copy) return nullptr;
+    copy->left = cloneNode(node->left.get());
+    if (node->left && !copy->left) return nullptr;
+    copy->right = cloneNode(node->right.get());
+    if (node->right && !copy->right) return nullptr;
+    updateNode(copy.get());
+    return copy;
 }
 
 std::unique_ptr<PieceTreeSource::Node> PieceTreeSource::makeNode(
@@ -163,7 +199,8 @@ bool PieceTreeSource::appendAdded(const uint8_t *data, uint64_t bytes,
             if (index == added_chunks_.size()) {
                 if (chunkBytes > memory_limit_bytes_ -
                     std::min(memory_limit_bytes_, added_allocated_)) return false;
-                auto chunk = std::unique_ptr<uint8_t[]>(new (std::nothrow) uint8_t[chunkBytes]);
+                std::shared_ptr<uint8_t[]> chunk(
+                    new (std::nothrow) uint8_t[chunkBytes], std::default_delete<uint8_t[]>());
                 if (!chunk) return false;
                 added_chunks_.push_back(std::move(chunk));
                 added_allocated_ += chunkBytes;

@@ -36,6 +36,11 @@ public:
     bool replace(uint64_t startByte, uint64_t oldEndByte,
                  const void *inserted, uint64_t insertedBytes) noexcept;
 
+    // Cheap document snapshot: original mmap and immutable append chunks are
+    // shared; only the piece-tree nodes are cloned. A partial append tail is
+    // sealed so future writes cannot mutate bytes visible to the old snapshot.
+    std::unique_ptr<PieceTreeSource> clone() const noexcept;
+
     uint64_t allocatedBytes() const noexcept;
     uint64_t pieceCount() const noexcept;
     uint64_t version() const noexcept;
@@ -52,6 +57,7 @@ private:
                       std::unique_ptr<Node> &left,
                       std::unique_ptr<Node> &right) noexcept;
     static uint64_t countNodes(const Node *node) noexcept;
+    static std::unique_ptr<Node> cloneNode(const Node *node) noexcept;
 
     bool appendAdded(const uint8_t *data, uint64_t bytes,
                      uint64_t *startOffset) noexcept;
@@ -64,7 +70,7 @@ private:
 
     std::shared_ptr<const TextSource> original_;
     std::unique_ptr<Node> root_;
-    std::vector<std::unique_ptr<uint8_t[]>> added_chunks_;
+    std::vector<std::shared_ptr<uint8_t[]>> added_chunks_;
     uint64_t added_size_ = 0;
     uint64_t added_allocated_ = 0;
     uint64_t memory_limit_bytes_;
