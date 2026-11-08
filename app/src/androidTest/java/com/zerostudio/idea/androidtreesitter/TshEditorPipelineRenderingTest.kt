@@ -159,7 +159,7 @@ class TshEditorPipelineRenderingTest {
 
         // Build a real chunk-backed document larger than the 1 Mi UTF-16
         // small/large threshold. The target declaration is in a distant partition.
-        val fillerLine = "// partition filler 0123456789 abcdefghijklmnopqrstuvwxyz\\n"
+        val fillerLine = "// partition filler 0123456789 abcdefghijklmnopqrstuvwxyz\n"
         val fillerChunk = buildString {
             repeat(1024) { append(fillerLine) }
         }
