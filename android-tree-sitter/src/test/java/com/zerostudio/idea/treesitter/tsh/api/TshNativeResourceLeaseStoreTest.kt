@@ -7,8 +7,10 @@ import org.junit.Test
 class TshNativeResourceLeaseStoreTest {
     private class FakeTree : TSTree(1L) {
         var closeCalls = 0
+        var onClose: (() -> Unit)? = null
         override fun close() {
             closeCalls++
+            onClose?.invoke()
         }
     }
 
@@ -63,4 +65,26 @@ class TshNativeResourceLeaseStoreTest {
         lease.close()
         assertEquals(1, active.closeCalls)
     }
+    @Test
+    fun resourceDependenciesCloseAfterResourceAndLastLease() {
+        val store = TshNativeResourceLeaseStore()
+        val tree = FakeTree()
+        var dependencyCloseCalls = 0
+        tree.onClose = { assertEquals(0, dependencyCloseCalls) }
+        val handle = store.register(
+            TshObjectId(301L),
+            tree,
+            dependencies = listOf(AutoCloseable { dependencyCloseCalls++ })
+        )
+        val lease = store.acquire(handle)!!
+
+        assertTrue(store.retire(handle.objectId))
+        assertEquals(0, tree.closeCalls)
+        assertEquals(0, dependencyCloseCalls)
+
+        lease.close()
+        assertEquals(1, tree.closeCalls)
+        assertEquals(1, dependencyCloseCalls)
+    }
+
 }
