@@ -137,7 +137,7 @@ bool TextPartitionIndex::applyEdit(const TextSource &oldSource,
                                    const void *inserted, uint64_t insertedBytes) noexcept {
     if ((startByte & 1u) || (oldEndByte & 1u) || (insertedBytes & 1u) ||
         oldEndByte < startByte || oldEndByte > oldSource.sizeBytes() ||
-        startByte > static_cast<uint64_t>(INT64_MAX) || oldEndByte > static_cast<uint64_t>(INT64_MAX) ||
+        startByte > static_cast<uint64_t>(std::numeric_limits<int64_t>::max()) || oldEndByte > static_cast<uint64_t>(INT64_MAX) ||
         insertedBytes > static_cast<uint64_t>(INT64_MAX) ||
         (insertedBytes && !inserted)) return false;
 
@@ -180,11 +180,25 @@ bool TextPartitionIndex::applyEdit(const TextSource &oldSource,
         }
         for (const auto &checkpoint : checkpoints_) {
             if (checkpoint.byte_offset < oldEndByte) continue;
-            const int64_t shiftedByte = static_cast<int64_t>(checkpoint.byte_offset) + byteDelta;
-            const int64_t shiftedLine = static_cast<int64_t>(checkpoint.line) + lineDelta;
-            if (shiftedByte < 0 || shiftedLine < 0) continue;
-            const Checkpoint shifted{
-                static_cast<uint64_t>(shiftedByte), static_cast<uint64_t>(shiftedLine)};
+            const auto shiftOffset = [](uint64_t value, int64_t delta,
+                                        uint64_t *shifted) noexcept {
+                const uint64_t maximum = static_cast<uint64_t>(
+                    std::numeric_limits<int64_t>::max());
+                if (!shifted || value > maximum) return false;
+                if (delta >= 0) {
+                    const uint64_t amount = static_cast<uint64_t>(delta);
+                    if (value > maximum - amount) return false;
+                    *shifted = value + amount;
+                    return true;
+                }
+                const uint64_t amount = static_cast<uint64_t>(-(delta + 1)) + 1u;
+                if (value < amount) return false;
+                *shifted = value - amount;
+                return true;
+            };
+            Checkpoint shifted{};
+            if (!shiftOffset(checkpoint.byte_offset, byteDelta, &shifted.byte_offset) ||
+                !shiftOffset(checkpoint.line, lineDelta, &shifted.line)) continue;
             if (updated.empty() || updated.back().byte_offset < shifted.byte_offset)
                 updated.push_back(shifted);
         }
