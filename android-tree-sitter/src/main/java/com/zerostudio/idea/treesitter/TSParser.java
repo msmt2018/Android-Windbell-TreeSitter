@@ -21,6 +21,7 @@ import com.zerostudio.idea.treesitter.annotations.GenerateNativeHeaders;
 import com.zerostudio.idea.treesitter.string.UTF16String;
 import com.zerostudio.idea.treesitter.string.UTF16StringFactory;
 import com.zerostudio.idea.treesitter.util.TSObjectFactoryProvider;
+import java.nio.ByteBuffer;
 import dalvik.annotation.optimization.CriticalNative;
 import dalvik.annotation.optimization.FastNative;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -45,6 +46,12 @@ public class TSParser extends TSNativeObject {
    * parse a document of this size.
    */
   public static final int MAX_SUPPORTED_INPUT_BYTES = Integer.MAX_VALUE - 1;
+
+  /**
+   * Maximum even byte length accepted by Tree-sitter's uint32 byte-offset API.
+   * This is an address-space limit, not a device-memory recommendation.
+   */
+  public static final long MAX_SEGMENTED_INPUT_BYTES = 0xFFFF_FFFEL;
 
   protected final ReentrantLock parseLock = new ReentrantLock();
   protected final Condition parseCondition = parseLock.newCondition();
@@ -216,6 +223,78 @@ public class TSParser extends TSNativeObject {
       final var oldTreePointer = oldTree != null ? oldTree.getNativeObject() : 0;
       final var tree = Native.parse(this.getNativeObject(), oldTreePointer, strPointer);
       return createTree(tree);
+    } finally {
+      unsetParsingFlag();
+      parseCondition.signalAll();
+      parseLock.unlock();
+    }
+  }
+
+  /**
+   * Parses UTF-16LE text supplied as direct ByteBuffer segments without joining
+   * the segments into a single Java String or native contiguous byte array.
+   *
+   * <p>Each buffer's remaining range is parsed. Buffers must be direct, have an
+   * even remaining byte count, and remain unmodified for the duration of this
+   * synchronous call. The parser retains no references after it returns.
+   *
+   * <p>This avoids an additional full-document input copy, but Tree-sitter still
+   * constructs a syntax tree for the included ranges. Use included ranges and
+   * bounded query work when parsing very large documents.
+   *
+   * @param buffers UTF-16LE direct buffers in document order.
+   * @return parsed tree, or null if parsing failed or was cancelled.
+   */
+  public TSTree parseBuffers(ByteBuffer[] buffers) {
+    return parseBuffers(null, buffers);
+  }
+
+  /**
+   * Incrementally parses segmented UTF-16LE input using a previously edited tree.
+   *
+   * @param oldTree previously parsed and edited tree, or null.
+   * @param buffers UTF-16LE direct buffers in document order.
+   * @return parsed tree, or null if parsing failed or was cancelled.
+   */
+  public TSTree parseBuffers(TSTree oldTree, ByteBuffer[] buffers) {
+    checkAccess();
+    if (buffers == null) {
+      throw new NullPointerException("buffers");
+    }
+
+    final ByteBuffer[] slices = new ByteBuffer[buffers.length];
+    long totalBytes = 0;
+    for (int i = 0; i < buffers.length; i++) {
+      final ByteBuffer buffer = buffers[i];
+      if (buffer == null) {
+        throw new IllegalArgumentException("buffers[" + i + "] must not be null");
+      }
+      if (!buffer.isDirect()) {
+        throw new IllegalArgumentException("buffers[" + i + "] must be a direct ByteBuffer");
+      }
+      final ByteBuffer slice = buffer.slice();
+      final int remaining = slice.remaining();
+      if ((remaining & 1) != 0) {
+        throw new IllegalArgumentException("buffers[" + i + "] splits a UTF-16 code unit");
+      }
+      totalBytes += remaining;
+      if (totalBytes > MAX_SEGMENTED_INPUT_BYTES) {
+        throw new IllegalArgumentException("Segmented input exceeds Tree-sitter's 32-bit byte-offset limit");
+      }
+      slices[i] = slice;
+    }
+
+    if (parseLock.isHeldByCurrentThread()) {
+      throw new IllegalStateException("Reentrancy detected");
+    }
+    throwIfParseNotCancelled();
+    parseLock.lock();
+    setCancellationRequested(false);
+    setParsingFlag();
+    try {
+      final long oldTreePointer = oldTree != null ? oldTree.getNativeObject() : 0;
+      return createTree(Native.parseBuffers(
+          getNativeObject(), oldTreePointer, slices, totalBytes));
     } finally {
       unsetParsingFlag();
       parseCondition.signalAll();
@@ -425,6 +504,10 @@ public class TSParser extends TSNativeObject {
 
     @FastNative
     static native long parse(long parser, long treePointer, long strPointer);
+
+    @FastNative
+    static native long parseBuffers(
+        long parser, long treePointer, ByteBuffer[] buffers, long byteLength);
 
     @FastNative
     static native boolean requestCancellation(long parser);
