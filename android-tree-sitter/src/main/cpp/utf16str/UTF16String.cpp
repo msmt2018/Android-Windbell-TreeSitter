@@ -203,6 +203,10 @@ jint UTF16String::length() {
     return byte_length() >> CODER;
 }
 
+const jbyte *UTF16String::data() const {
+    return _string.data();
+}
+
 jstring UTF16String::to_jstring(JNIEnv *env) {
     return FNI_NewString(env, _string.data(), byte_length());
 }
