@@ -36,7 +36,9 @@ struct QueryProgressCallbackState {
 };
 
 std::mutex g_query_progress_lock;
-std::unordered_map<TSQueryCursor *, std::unique_ptr<QueryProgressCallbackState>>
+// The map owns each state pointer. Raw pointers avoid losing the JNI global
+// reference if unordered_map allocation throws while moving a unique_ptr.
+std::unordered_map<TSQueryCursor *, QueryProgressCallbackState *>
     g_query_progress_callbacks;
 
 bool queryProgressCallback(TSQueryCursorState *state) {
@@ -53,15 +55,16 @@ bool queryProgressCallback(TSQueryCursorState *state) {
 }
 
 void releaseQueryProgressCallback(JNIEnv *env, TSQueryCursor *cursor) {
-  std::unique_ptr<QueryProgressCallbackState> state;
+  QueryProgressCallbackState *state = nullptr;
   {
     std::lock_guard<std::mutex> lock(g_query_progress_lock);
     auto found = g_query_progress_callbacks.find(cursor);
     if (found == g_query_progress_callbacks.end()) return;
-    state = std::move(found->second);
+    state = found->second;
     g_query_progress_callbacks.erase(found);
   }
   if (state->callback) env->DeleteGlobalRef(state->callback);
+  delete state;
 }
 #endif
 
@@ -133,9 +136,20 @@ static void TSQueryCursor_execWithOptions(JNIEnv *env,
   state->options.payload = state.get();
   state->options.progress_callback = queryProgressCallback;
   QueryProgressCallbackState *callback_state = state.get();
-  {
+  try {
     std::lock_guard<std::mutex> lock(g_query_progress_lock);
-    g_query_progress_callbacks.emplace(native_cursor, std::move(state));
+    const auto inserted = g_query_progress_callbacks.emplace(native_cursor, callback_state);
+    if (!inserted.second) {
+      env->DeleteGlobalRef(callback_state->callback);
+      throwUnsupportedOperation(env, "A query is already active on this cursor");
+      return;
+    }
+    state.release();
+  } catch (const std::bad_alloc &) {
+    // Ownership is released only after successful map insertion.
+    env->DeleteGlobalRef(callback_state->callback);
+    throwUnsupportedOperation(env, "Unable to allocate query progress callback state");
+    return;
   }
   ts_query_cursor_exec_with_options(
       native_cursor, (TSQuery *) query, _unmarshalNode(env, node),
@@ -196,7 +210,7 @@ static jobject TSQueryCursor_nextMatch(JNIEnv *env, jclass self, jlong cursor) {
     std::lock_guard<std::mutex> lock(g_query_progress_lock);
     auto found = g_query_progress_callbacks.find((TSQueryCursor *) cursor);
     if (found != g_query_progress_callbacks.end()) {
-      callback_state = found->second.get();
+      callback_state = found->second;
       callback_state->active_env = env;
     }
   }
