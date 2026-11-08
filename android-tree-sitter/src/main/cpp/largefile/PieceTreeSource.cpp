@@ -14,12 +14,13 @@ struct PieceTreeSource::Node {
     uint64_t subtree_bytes;
     uint64_t subtree_pieces;
     uint64_t priority;
-    std::unique_ptr<Node> left;
-    std::unique_ptr<Node> right;
+    uint32_t subtree_height;
+    std::shared_ptr<Node> left;
+    std::shared_ptr<Node> right;
 
     Node(Buffer b, uint64_t o, uint64_t n, uint64_t p) noexcept
         : buffer(b), source_offset(o), length(n), subtree_bytes(n),
-          subtree_pieces(1), priority(p) {}
+          subtree_pieces(1), priority(p), subtree_height(1) {}
 };
 
 PieceTreeSource::PieceTreeSource(std::shared_ptr<const TextSource> original,
@@ -38,8 +39,9 @@ std::unique_ptr<PieceTreeSource> PieceTreeSource::clone() const noexcept {
     auto copy = std::unique_ptr<PieceTreeSource>(
         new (std::nothrow) PieceTreeSource(original_, memory_limit_bytes_));
     if (!copy || !copy->valid_) return nullptr;
-    copy->root_ = cloneNode(root_.get());
-    if (root_ && !copy->root_) return nullptr;
+    // The treap is persistent. Only the root reference is copied; all unchanged
+    // subtrees remain shared and become private only along a later edit path.
+    copy->root_ = root_;
     try {
         copy->added_chunks_ = added_chunks_;
     } catch (...) {
@@ -49,7 +51,9 @@ std::unique_ptr<PieceTreeSource> PieceTreeSource::clone() const noexcept {
     copy->added_size_ = added_size_;
     constexpr uint64_t chunkBytes = 64u * 1024u;
     if ((copy->added_size_ % chunkBytes) != 0) {
-        copy->added_size_ += chunkBytes - (copy->added_size_ % chunkBytes);
+        const uint64_t padding = chunkBytes - (copy->added_size_ % chunkBytes);
+        if (padding > copy->added_allocated_ - copy->added_size_) return nullptr;
+        copy->added_size_ += padding;
     }
     copy->version_ = version_;
     copy->random_state_ = random_state_;
@@ -59,117 +63,163 @@ std::unique_ptr<PieceTreeSource> PieceTreeSource::clone() const noexcept {
 
 bool PieceTreeSource::isValid() const noexcept { return valid_; }
 uint64_t PieceTreeSource::sizeBytes() const noexcept { return subtreeBytes(root_); }
+
 uint64_t PieceTreeSource::allocatedBytes() const noexcept {
-    return added_allocated_ + countNodes(root_.get()) * sizeof(Node);
+    const uint64_t nodes = countNodes(root_.get());
+    if (nodes > (std::numeric_limits<uint64_t>::max() - added_allocated_) / sizeof(Node))
+        return std::numeric_limits<uint64_t>::max();
+    return added_allocated_ + nodes * sizeof(Node);
 }
+
 uint64_t PieceTreeSource::pieceCount() const noexcept { return countNodes(root_.get()); }
 uint64_t PieceTreeSource::version() const noexcept { return version_; }
 
-uint64_t PieceTreeSource::subtreeBytes(const std::unique_ptr<Node> &node) noexcept {
+uint64_t PieceTreeSource::subtreeBytes(const std::shared_ptr<Node> &node) noexcept {
     return node ? node->subtree_bytes : 0;
 }
 
 void PieceTreeSource::updateNode(Node *node) noexcept {
     if (!node) return;
-    node->subtree_bytes = node->length +
-        (node->left ? node->left->subtree_bytes : 0) +
-        (node->right ? node->right->subtree_bytes : 0);
+    const uint64_t leftBytes = node->left ? node->left->subtree_bytes : 0;
+    const uint64_t rightBytes = node->right ? node->right->subtree_bytes : 0;
+    node->subtree_bytes = node->length + leftBytes + rightBytes;
     node->subtree_pieces = 1 +
         (node->left ? node->left->subtree_pieces : 0) +
         (node->right ? node->right->subtree_pieces : 0);
+    node->subtree_height = 1u + std::max(
+        node->left ? node->left->subtree_height : 0u,
+        node->right ? node->right->subtree_height : 0u);
 }
 
-std::unique_ptr<PieceTreeSource::Node> PieceTreeSource::merge(
-    std::unique_ptr<Node> left, std::unique_ptr<Node> right) noexcept {
-    if (!left) return right;
-    if (!right) return left;
-    if (left->priority > right->priority) {
-        left->right = merge(std::move(left->right), std::move(right));
-        updateNode(left.get());
-        return left;
-    }
-    right->left = merge(std::move(left), std::move(right->left));
-    updateNode(right.get());
-    return right;
-}
-
-std::unique_ptr<PieceTreeSource::Node> PieceTreeSource::cloneNode(const Node *node) noexcept {
+std::shared_ptr<PieceTreeSource::Node> PieceTreeSource::cloneShallow(
+    const std::shared_ptr<Node> &node) noexcept {
     if (!node) return nullptr;
-    auto copy = std::unique_ptr<Node>(new (std::nothrow) Node(
-        node->buffer, node->source_offset, node->length, node->priority));
-    if (!copy) return nullptr;
-    copy->left = cloneNode(node->left.get());
-    if (node->left && !copy->left) return nullptr;
-    copy->right = cloneNode(node->right.get());
-    if (node->right && !copy->right) return nullptr;
-    updateNode(copy.get());
-    return copy;
+    Node *raw = new (std::nothrow) Node(
+        node->buffer, node->source_offset, node->length, node->priority);
+    if (!raw) return nullptr;
+    try {
+        std::shared_ptr<Node> copy(raw);
+        copy->subtree_bytes = node->subtree_bytes;
+        copy->subtree_pieces = node->subtree_pieces;
+        copy->subtree_height = node->subtree_height;
+        copy->left = node->left;
+        copy->right = node->right;
+        return copy;
+    } catch (...) {
+        delete raw;
+        return nullptr;
+    }
 }
 
-std::unique_ptr<PieceTreeSource::Node> PieceTreeSource::makeNode(
+bool PieceTreeSource::merge(std::shared_ptr<Node> left,
+                            std::shared_ptr<Node> right,
+                            std::shared_ptr<Node> *out) noexcept {
+    if (!out) return false;
+    if (!left) { *out = std::move(right); return true; }
+    if (!right) { *out = std::move(left); return true; }
+
+    if (left->priority > right->priority) {
+        auto root = cloneShallow(left);
+        if (!root) return false;
+        std::shared_ptr<Node> merged;
+        if (!merge(left->right, std::move(right), &merged)) return false;
+        root->right = std::move(merged);
+        updateNode(root.get());
+        *out = std::move(root);
+        return true;
+    }
+
+    auto root = cloneShallow(right);
+    if (!root) return false;
+    std::shared_ptr<Node> merged;
+    if (!merge(std::move(left), right->left, &merged)) return false;
+    root->left = std::move(merged);
+    updateNode(root.get());
+    *out = std::move(root);
+    return true;
+}
+
+std::shared_ptr<PieceTreeSource::Node> PieceTreeSource::makeNode(
     Buffer buffer, uint64_t offset, uint64_t length) noexcept {
     if (length == 0) return nullptr;
     random_state_ ^= random_state_ >> 12;
     random_state_ ^= random_state_ << 25;
     random_state_ ^= random_state_ >> 27;
     const uint64_t priority = random_state_ * 0x2545F4914F6CDD1DULL;
-    return std::unique_ptr<Node>(new (std::nothrow) Node(buffer, offset, length, priority));
+    Node *raw = new (std::nothrow) Node(buffer, offset, length, priority);
+    if (!raw) return nullptr;
+    try {
+        return std::shared_ptr<Node>(raw);
+    } catch (...) {
+        delete raw;
+        return nullptr;
+    }
 }
 
-bool PieceTreeSource::split(std::unique_ptr<Node> root, uint64_t offset,
-                            std::unique_ptr<Node> &left,
-                            std::unique_ptr<Node> &right) noexcept {
+bool PieceTreeSource::split(std::shared_ptr<Node> root, uint64_t offset,
+                            std::shared_ptr<Node> &left,
+                            std::shared_ptr<Node> &right) noexcept {
     if (!root) {
         if (offset != 0) return false;
         left.reset();
         right.reset();
         return true;
     }
-    const uint64_t left_bytes = subtreeBytes(root->left);
-    if (offset < left_bytes) {
-        std::unique_ptr<Node> a, b;
-        if (!split(std::move(root->left), offset, a, b)) return false;
-        root->left = std::move(b);
-        updateNode(root.get());
+
+    const uint64_t leftBytes = subtreeBytes(root->left);
+    const uint64_t pieceEnd = leftBytes + root->length;
+    if (offset < leftBytes) {
+        std::shared_ptr<Node> a, b;
+        if (!split(root->left, offset, a, b)) return false;
+        auto copy = cloneShallow(root);
+        if (!copy) return false;
+        copy->left = std::move(b);
+        updateNode(copy.get());
         left = std::move(a);
-        right = std::move(root);
+        right = std::move(copy);
         return true;
     }
-    if (offset > left_bytes + root->length) {
-        std::unique_ptr<Node> a, b;
-        if (!split(std::move(root->right), offset - left_bytes - root->length, a, b)) return false;
-        root->right = std::move(a);
-        updateNode(root.get());
-        left = std::move(root);
+    if (offset > pieceEnd) {
+        std::shared_ptr<Node> a, b;
+        if (!split(root->right, offset - pieceEnd, a, b)) return false;
+        auto copy = cloneShallow(root);
+        if (!copy) return false;
+        copy->right = std::move(a);
+        updateNode(copy.get());
+        left = std::move(copy);
         right = std::move(b);
         return true;
     }
-    if (offset == left_bytes) {
-        auto old_left = std::move(root->left);
-        root->left.reset();
-        updateNode(root.get());
-        left = std::move(old_left);
-        right = std::move(root);
+    if (offset == leftBytes) {
+        auto copy = cloneShallow(root);
+        if (!copy) return false;
+        copy->left.reset();
+        updateNode(copy.get());
+        left = root->left;
+        right = std::move(copy);
         return true;
     }
-    if (offset == left_bytes + root->length) {
-        auto old_right = std::move(root->right);
-        root->right.reset();
-        updateNode(root.get());
-        left = std::move(root);
-        right = std::move(old_right);
+    if (offset == pieceEnd) {
+        auto copy = cloneShallow(root);
+        if (!copy) return false;
+        copy->right.reset();
+        updateNode(copy.get());
+        left = std::move(copy);
+        right = root->right;
         return true;
     }
 
-    const uint64_t in_piece = offset - left_bytes;
-    auto left_piece = makeNode(root->buffer, root->source_offset, in_piece);
-    auto right_piece = makeNode(root->buffer, root->source_offset + in_piece,
-                                root->length - in_piece);
-    if (!left_piece || !right_piece) return false;
-    auto old_left = std::move(root->left);
-    auto old_right = std::move(root->right);
-    left = merge(std::move(old_left), std::move(left_piece));
-    right = merge(std::move(right_piece), std::move(old_right));
+    const uint64_t inPiece = offset - leftBytes;
+    auto leftPiece = makeNode(root->buffer, root->source_offset, inPiece);
+    auto rightPiece = makeNode(root->buffer, root->source_offset + inPiece,
+                               root->length - inPiece);
+    if (!leftPiece || !rightPiece) return false;
+
+    std::shared_ptr<Node> leftTree, rightTree;
+    if (!merge(root->left, std::move(leftPiece), &leftTree) ||
+        !merge(std::move(rightPiece), root->right, &rightTree)) return false;
+    left = std::move(leftTree);
+    right = std::move(rightTree);
     return true;
 }
 
@@ -188,20 +238,19 @@ bool PieceTreeSource::appendAdded(const uint8_t *data, uint64_t bytes,
     const uint64_t requiredChunks = bytesBeyondTail == 0 ? 0 :
         (bytesBeyondTail + chunkBytes - 1u) / chunkBytes;
     if (requiredChunks > (memory_limit_bytes_ -
-        std::min(memory_limit_bytes_, added_allocated_)) / chunkBytes) return false;
-
-    // Allocate every required chunk and reserve the destination vector before
-    // changing logical size or writing into the current tail. A failed append
-    // therefore cannot leave a partially advanced append arena behind.
-    if (requiredChunks > static_cast<uint64_t>(std::numeric_limits<size_t>::max()) ||
+        std::min(memory_limit_bytes_, added_allocated_)) / chunkBytes ||
+        requiredChunks > static_cast<uint64_t>(std::numeric_limits<size_t>::max()) ||
         requiredChunks > static_cast<uint64_t>(std::numeric_limits<size_t>::max() -
                                                added_chunks_.size())) return false;
+
+    // Allocate all chunks and vector capacity before touching logical size or
+    // existing tail bytes. A failed append is observationally atomic.
     const size_t requiredChunkCount = static_cast<size_t>(requiredChunks);
     std::vector<std::shared_ptr<uint8_t>> pending;
     try {
         pending.reserve(requiredChunkCount);
         added_chunks_.reserve(added_chunks_.size() + requiredChunkCount);
-        for (uint64_t i = 0; i < requiredChunks; ++i) {
+        for (size_t i = 0; i < requiredChunkCount; ++i) {
             std::shared_ptr<uint8_t> chunk(
                 new (std::nothrow) uint8_t[chunkBytes], std::default_delete<uint8_t[]>());
             if (!chunk) return false;
@@ -233,7 +282,8 @@ bool PieceTreeSource::appendAdded(const uint8_t *data, uint64_t bytes,
 bool PieceTreeSource::readAdded(uint64_t offset, uint32_t maxBytes,
                                 TextChunkView *out) const noexcept {
     if (!out) return false;
-    out->data = nullptr; out->size = 0;
+    out->data = nullptr;
+    out->size = 0;
     constexpr uint64_t chunkBytes = 64u * 1024u;
     if (offset > added_size_ || (offset & 1u) || maxBytes < 2u) return false;
     if (offset == added_size_) return true;
@@ -266,20 +316,24 @@ bool PieceTreeSource::readPiece(const Node *piece, uint64_t localOffset,
 bool PieceTreeSource::read(uint64_t offset, uint32_t maxBytes,
                            TextChunkView *out) const noexcept {
     if (!out) return false;
-    out->data = nullptr; out->size = 0;
+    out->data = nullptr;
+    out->size = 0;
     const uint64_t total = sizeBytes();
     if (!valid_ || (offset & 1u) || offset > total || maxBytes < 2u) return false;
     if (offset == total) return true;
-    const Node *node = root_.get();
+
+    std::shared_ptr<Node> node = root_;
     uint64_t remaining = offset;
     while (node) {
-        const uint64_t leftBytes = node->left ? node->left->subtree_bytes : 0;
-        if (remaining < leftBytes) { node = node->left.get(); continue; }
-        if (remaining < leftBytes + node->length) {
-            return readPiece(node, remaining - leftBytes, maxBytes, out);
+        const uint64_t leftBytes = subtreeBytes(node->left);
+        if (remaining < leftBytes) {
+            node = node->left;
+            continue;
         }
+        if (remaining < leftBytes + node->length)
+            return readPiece(node.get(), remaining - leftBytes, maxBytes, out);
         remaining -= leftBytes + node->length;
-        node = node->right.get();
+        node = node->right;
     }
     return false;
 }
@@ -289,6 +343,7 @@ bool PieceTreeSource::replace(uint64_t startByte, uint64_t oldEndByte,
     if (!valid_ || (startByte & 1u) || (oldEndByte & 1u) ||
         (insertedBytes & 1u) || oldEndByte < startByte ||
         oldEndByte > sizeBytes() || (insertedBytes != 0 && !inserted)) return false;
+
     constexpr uint64_t chunkBytes = 64u * 1024u;
     const uint64_t tailCapacity = added_allocated_ - added_size_;
     const uint64_t bytesBeyondTail = insertedBytes > tailCapacity
@@ -297,39 +352,51 @@ bool PieceTreeSource::replace(uint64_t startByte, uint64_t oldEndByte,
         return false;
     const uint64_t requiredChunks = bytesBeyondTail == 0 ? 0 :
         (bytesBeyondTail + chunkBytes - 1u) / chunkBytes;
-    if (requiredChunks > std::numeric_limits<uint64_t>::max() / chunkBytes)
-        return false;
+    if (requiredChunks > std::numeric_limits<uint64_t>::max() / chunkBytes) return false;
     const uint64_t additionalChunks = requiredChunks * chunkBytes;
     if (additionalChunks > memory_limit_bytes_ -
         std::min(memory_limit_bytes_, added_allocated_) ||
-        additionalChunks > std::numeric_limits<uint64_t>::max() - added_allocated_)
-        return false;
+        additionalChunks > std::numeric_limits<uint64_t>::max() - added_allocated_) return false;
     const uint64_t projectedAdded = added_allocated_ + additionalChunks;
-    const uint64_t maximumPieces = (memory_limit_bytes_ - projectedAdded) / sizeof(Node);
+    const uint64_t maximumPieces =
+        (memory_limit_bytes_ - projectedAdded) / sizeof(Node);
+    const uint64_t currentPieces = countNodes(root_.get());
     const uint64_t splitNodes = insertedBytes ? 3u : 2u;
-    if (countNodes(root_.get()) + splitNodes > maximumPieces) return false;
+    const uint64_t height = root_ ? root_->subtree_height : 0u;
+    const uint64_t transientNodes = height > (std::numeric_limits<uint64_t>::max() - 8u) / 4u
+        ? std::numeric_limits<uint64_t>::max() : 4u * height + 8u;
+    if (currentPieces > maximumPieces ||
+        splitNodes > maximumPieces - currentPieces ||
+        transientNodes > maximumPieces - currentPieces - splitNodes) return false;
 
-    // Reserve the insertion node and split the tree before appending bytes.
-    // If allocation or range splitting fails, no append-arena bytes are consumed.
+    // Build a persistent candidate without mutating the live root. Every split
+    // and merge path is copied; any allocation failure discards only the
+    // candidate and leaves the current document untouched.
     const uint64_t addOffset = added_size_;
     auto insertedPiece = insertedBytes
         ? makeNode(Buffer::Added, addOffset, insertedBytes) : nullptr;
     if (insertedBytes && !insertedPiece) return false;
 
-    std::unique_ptr<Node> prefix, tail, removed, suffix;
-    if (!split(std::move(root_), oldEndByte, tail, suffix) ||
-        !split(std::move(tail), startByte, prefix, removed)) {
-        root_ = merge(std::move(prefix), merge(std::move(removed), std::move(suffix)));
-        return false;
-    }
+    std::shared_ptr<Node> prefix, tail, removed, suffix;
+    if (!split(root_, oldEndByte, tail, suffix) ||
+        !split(std::move(tail), startByte, prefix, removed)) return false;
+
+    std::shared_ptr<Node> prefixAndInsert;
+    std::shared_ptr<Node> candidate;
+    if (!merge(std::move(prefix), std::move(insertedPiece), &prefixAndInsert) ||
+        !merge(std::move(prefixAndInsert), std::move(suffix), &candidate)) return false;
+
+    // Append only after all tree allocations have succeeded. appendAdded()
+    // itself is failure-atomic, so the live root and arena commit together.
+    uint64_t committedOffset = 0;
     if (insertedBytes && !appendAdded(static_cast<const uint8_t *>(inserted),
-                                      insertedBytes, &addOffset)) {
-        root_ = merge(std::move(prefix), merge(std::move(removed), std::move(suffix)));
-        return false;
+                                     insertedBytes, &committedOffset)) return false;
+    if (candidate && insertedBytes) {
+        // insertedPiece's offset was based on the pre-append tail and remains
+        // stable because the append arena is append-only within this version.
+        (void)committedOffset;
     }
-    if (insertedPiece) insertedPiece->source_offset = addOffset;
-    removed.reset();
-    root_ = merge(merge(std::move(prefix), std::move(insertedPiece)), std::move(suffix));
+    root_ = std::move(candidate);
     ++version_;
     return true;
 }
