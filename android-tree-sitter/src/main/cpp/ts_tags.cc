@@ -45,17 +45,10 @@ void throwTagsOutOfMemory(JNIEnv *env) {
   }
 }
 
-struct GlobalMatchRefs {
-  JNIEnv *env;
-  std::vector<jobject> values;
-
-  explicit GlobalMatchRefs(JNIEnv *jni) : env(jni) {}
-
-  ~GlobalMatchRefs() {
-    for (jobject value : values) {
-      if (value) env->DeleteGlobalRef(value);
-    }
-  }
+struct OwnedQueryMatch {
+  uint32_t id = 0;
+  uint16_t pattern_index = 0;
+  std::vector<TSQueryCapture> captures;
 };
 
 } // namespace
@@ -106,32 +99,23 @@ static jobjectArray TSTags_extract(
   ts_query_cursor_exec(
       cursor.get(), reinterpret_cast<const TSQuery *>(query_pointer), root);
 
-  GlobalMatchRefs matches(env);
+  std::vector<OwnedQueryMatch> matches;
   try {
-    matches.values.reserve(static_cast<size_t>(std::min(max_results, 4096)));
+    matches.reserve(static_cast<size_t>(std::min(max_results, 4096)));
     TSQueryMatch match{};
     while (ts_query_cursor_next_match(cursor.get(), &match)) {
-      if (static_cast<jint>(matches.values.size()) >= max_results) {
+      if (static_cast<jint>(matches.size()) >= max_results) {
         throwTagsIllegalState(env, "Tag query exceeded maxResults; no partial result was returned");
         return nullptr;
       }
-
-      if (env->PushLocalFrame(32) != JNI_OK) return nullptr;
-      jobject java_match = _marshalMatch(env, match);
-      jobject global_match = java_match && !env->ExceptionCheck()
-          ? env->NewGlobalRef(java_match) : nullptr;
-      env->PopLocalFrame(nullptr);
-      if (env->ExceptionCheck()) return nullptr;
-      if (!global_match) {
-        throwTagsOutOfMemory(env);
-        return nullptr;
+      OwnedQueryMatch owned;
+      owned.id = match.id;
+      owned.pattern_index = match.pattern_index;
+      if (match.capture_count > 0) {
+        owned.captures.assign(
+            match.captures, match.captures + match.capture_count);
       }
-      try {
-        matches.values.push_back(global_match);
-      } catch (...) {
-        env->DeleteGlobalRef(global_match);
-        throw;
-      }
+      matches.push_back(std::move(owned));
     }
   } catch (const std::bad_alloc &) {
     throwTagsOutOfMemory(env);
@@ -148,12 +132,24 @@ static jobjectArray TSTags_extract(
       "com/zerostudio/idea/treesitter/TSQueryMatch");
   if (!match_class) return nullptr;
   jobjectArray result = env->NewObjectArray(
-      static_cast<jsize>(matches.values.size()), match_class, nullptr);
+      static_cast<jsize>(matches.size()), match_class, nullptr);
   env->DeleteLocalRef(match_class);
   if (!result) return nullptr;
 
-  for (jsize i = 0; i < static_cast<jsize>(matches.values.size()); ++i) {
-    env->SetObjectArrayElement(result, i, matches.values[static_cast<size_t>(i)]);
+  for (jsize i = 0; i < static_cast<jsize>(matches.size()); ++i) {
+    if (env->PushLocalFrame(32) != JNI_OK) return nullptr;
+    const auto &owned = matches[static_cast<size_t>(i)];
+    TSQueryMatch native_match{};
+    native_match.id = owned.id;
+    native_match.pattern_index = owned.pattern_index;
+    native_match.capture_count = static_cast<uint32_t>(owned.captures.size());
+    native_match.captures = owned.captures.empty()
+        ? nullptr : const_cast<TSQueryCapture *>(owned.captures.data());
+    jobject java_match = _marshalMatch(env, native_match);
+    if (java_match && !env->ExceptionCheck()) {
+      env->SetObjectArrayElement(result, i, java_match);
+    }
+    env->PopLocalFrame(nullptr);
     if (env->ExceptionCheck()) return nullptr;
   }
   return result;
