@@ -8,7 +8,7 @@ import com.zerostudio.idea.treesitter.TSTree
 import com.zerostudio.idea.treesitter.predicate.TSPredicateHandler
 import java.security.MessageDigest
 
-/** Resolves a live language handle for a descriptor; the resolver retains language ownership. */
+/** Resolves a registered, lease-managed language handle for a grammar descriptor. */
 fun interface TshGrammarLanguageResolver {
     /** Returns a registered handle; the resolver retains no right to close it after registration. */
     fun resolve(grammar: TshGrammarDescriptor): TshNativeResourceLeaseStore.Handle<TSLanguage>?
