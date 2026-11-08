@@ -1,5 +1,6 @@
 package com.zerostudio.idea.treesitter.tsh.api
 
+import com.zerostudio.idea.treesitter.TSQuery
 import com.zerostudio.idea.treesitter.TSTree
 import org.junit.Assert.*
 import org.junit.Test
@@ -41,7 +42,7 @@ class TshNativeResourceRegistryTest {
         val registry = TshNativeResourceRegistry(objects, leases)
         val registration = registry.register(FakeTree(), "syntax-tree")
 
-        assertNull(registry.acquire(registration.descriptor.id, FakeTree::class.java))
+        assertNull(registry.acquire(registration.descriptor.id, TSQuery::class.java))
         val lease = registry.acquire(registration.descriptor.id, TSTree::class.java)
         assertNotNull(lease)
         lease!!.close()
