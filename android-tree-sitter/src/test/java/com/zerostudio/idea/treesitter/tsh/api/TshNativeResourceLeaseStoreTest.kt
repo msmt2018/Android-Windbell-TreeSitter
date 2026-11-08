@@ -87,4 +87,53 @@ class TshNativeResourceLeaseStoreTest {
         assertEquals(1, dependencyCloseCalls)
     }
 
+
+    @Test
+    fun activeLeaseCanRetainChildAfterResourceRetirement() {
+        val store = TshNativeResourceLeaseStore()
+        val language = FakeTree()
+        val handle = store.register(TshObjectId(401L), language)
+        val parserDependencyLease = store.acquire(handle)!!
+
+        assertTrue(store.retire(handle.objectId))
+        assertNull(store.acquire(handle))
+        assertEquals(0, language.closeCalls)
+
+        val treeDependencyLease = parserDependencyLease.retain()!!
+        parserDependencyLease.close()
+        assertEquals(0, language.closeCalls)
+
+        treeDependencyLease.close()
+        assertEquals(1, language.closeCalls)
+        assertNull(parserDependencyLease.retain())
+    }
+
+    @Test
+    fun concurrentRetainAndReleaseNeverUnderflowLeaseCount() {
+        val store = TshNativeResourceLeaseStore()
+        val resource = FakeTree()
+        val handle = store.register(TshObjectId(402L), resource)
+        val parent = store.acquire(handle)!!
+        assertTrue(store.retire(handle.objectId))
+
+        val children = java.util.Collections.synchronizedList(
+            mutableListOf<TshNativeResourceLeaseStore.Lease<FakeTree>>()
+        )
+        val start = java.util.concurrent.CountDownLatch(1)
+        val workers = (0 until 8).map {
+            Thread {
+                start.await()
+                repeat(100) {
+                    parent.retain()?.let(children::add)
+                }
+            }.apply { start() }
+        }
+        start.countDown()
+        workers.forEach { it.join() }
+
+        parent.close()
+        children.toList().forEach { it.close() }
+        assertEquals(1, resource.closeCalls)
+        assertEquals(0, store.activeLeaseCount(handle.objectId))
+    }
 }
