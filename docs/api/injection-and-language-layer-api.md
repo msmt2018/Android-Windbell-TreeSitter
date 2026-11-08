@@ -1,3 +1,5 @@
+> **范围声明：历史宿主集成参考，非 TSH 核心 API。** TSH 的嵌入语言语法注入契约已迁移至 docs/api/language-injection-api.md。本文不定义通用 Editor Language Layer，也不构成公共引擎 API。
+
 # Injection、Embedded Language 与 Language Layer API
 
 > 状态：目标契约（规范文档）；不代表对应运行时 API 已实现。
