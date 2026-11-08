@@ -110,4 +110,5 @@ private class PieceTreeEditorTextSnapshot(
         snapshot.substring(startIndex, endIndex)
     override fun getNearestChunk(offset: Int, maxLength: Int): String =
         snapshot.getNearestChunk(offset, maxLength)
+    override fun toString(): String = snapshot.toString()
 }
