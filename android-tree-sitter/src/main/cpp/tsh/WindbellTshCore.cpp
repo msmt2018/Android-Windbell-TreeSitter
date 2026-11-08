@@ -1325,16 +1325,18 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                 ts_query_cursor_delete(q_cursor);
                 continue;
             }
-#if defined(TSH_TREE_SITTER_HAS_QUERY_CURSOR_OPTIONS)
-            // 0.28 bounds pending-match memory and provides a cooperative work
-            // budget. A cancelled/overflowed query is discarded atomically: never
-            // publish a partial capture set as a complete highlight result.
+// Bound in-progress capture state on every supported Tree-sitter version.
+            // The 0.28 progress callback below adds a separate work bound.
             constexpr uint32_t kQueryMatchLimit = 4096;
+            ts_query_cursor_set_match_limit(q_cursor, kQueryMatchLimit);
+#if defined(TSH_TREE_SITTER_HAS_QUERY_CURSOR_OPTIONS)
+            // 0.28 provides cooperative work cancellation. A cancelled/overflowed
+            // query is discarded atomically: never publish partial captures as a
+            // complete highlight result.
             TshQueryProgressBudget query_budget;
             TSQueryCursorOptions query_options{};
             query_options.payload = &query_budget;
             query_options.progress_callback = tshQueryProgressCallback;
-            ts_query_cursor_set_match_limit(q_cursor, kQueryMatchLimit);
             ts_query_cursor_exec_with_options(
                 q_cursor, native_query.query, ts_tree_root_node(tree), &query_options);
 #else
@@ -1379,17 +1381,14 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                     query_spans.push_back(span);
                 }
             }
+bool query_incomplete = ts_query_cursor_did_exceed_match_limit(q_cursor);
 #if defined(TSH_TREE_SITTER_HAS_QUERY_CURSOR_OPTIONS)
-            const bool query_incomplete = query_budget.cancelled ||
-                ts_query_cursor_did_exceed_match_limit(q_cursor);
+            query_incomplete = query_incomplete || query_budget.cancelled;
+#endif
             if (!query_incomplete) {
                 if (diagnostic_match_counts) diagnostic_match_counts[3] += accepted_match_count;
                 macro_spans.insert(macro_spans.end(), query_spans.begin(), query_spans.end());
             }
-#else
-            if (diagnostic_match_counts) diagnostic_match_counts[3] += match_order;
-            macro_spans.insert(macro_spans.end(), query_spans.begin(), query_spans.end());
-#endif
             ts_query_cursor_delete(q_cursor);
         }
     }
