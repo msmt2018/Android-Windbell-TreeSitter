@@ -963,6 +963,11 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
 
         while (true) {
             TSNode node = ts_tree_cursor_current_node(&cursor);
+            const uint32_t current_start_byte = ts_node_start_byte(node);
+            const uint32_t current_end_byte = ts_node_end_byte(node);
+            // Tree-sitter nodes are ordered by source position. Stop once the
+            // cursor reaches the first node after this result partition.
+            if (current_start_byte >= range_end_byte) break;
             TSSymbol sym = ts_node_symbol(node);
             TSFieldId fid = ts_tree_cursor_current_field_id(&cursor);
 
@@ -1070,10 +1075,13 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                             text_end > total_bytes || text_end < text_start) continue;
                         // Oniguruma receives UTF-16LE bytes; Tree-sitter node
                         // offsets are already byte offsets into this same buffer.
-                        const UChar* regex_source = input_chars
-                            ? reinterpret_cast<const UChar*>(input_chars) : &kEmptyInput;
-                        const UChar* regex_begin = regex_source + text_start;
-                        const UChar* regex_end = regex_source + text_end;
+                        // node_source already addresses this exact node slice,
+                        // whether it came from a small contiguous buffer or a bounded
+                        // TextSource copy. Never fall back to document-global offsets
+                        // when the large-file path has no contiguous input pointer.
+                        const UChar* regex_begin = node_source;
+                        const UChar* regex_end = node_source +
+                            (text_end - text_start) / sizeof(UChar);
                         OnigRegion* regex_region = onig_region_new();
                         if (!regex_region) continue;
                         const int regex_result = onig_search(
@@ -1145,6 +1153,17 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                 }
             }
 
+            // If this node contains the requested start offset, jump
+            // directly to the first intersecting child. This avoids walking
+            // every preceding sibling subtree for each partition request while
+            // still evaluating the ancestor nodes needed by parent/ancestor
+            // selectors. Once inside the partition, ordinary DFS visits all
+            // overlapping descendants and following siblings only.
+            if (current_start_byte < range_start_byte &&
+                current_end_byte > range_start_byte &&
+                ts_tree_cursor_goto_first_child_for_byte(&cursor, range_start_byte)) {
+                continue;
+            }
             if (ts_tree_cursor_goto_first_child(&cursor)) continue;
             if (ts_tree_cursor_goto_next_sibling(&cursor)) continue;
             
