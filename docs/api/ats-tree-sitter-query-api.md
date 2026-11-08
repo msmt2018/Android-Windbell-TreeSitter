@@ -66,3 +66,12 @@ CompiledQuery 必须绑定 grammar identity/version、ABI 和 fingerprint；只�
 - 所有 Handler 均返回 `UNHANDLED` 时，predicate match 不通过；TSH Executor 会先校验所有 pattern 中每个 predicate 的名称均有 Handler 声明支持，避免进入此状态。
 
 `TSQueryCursor.setPredicateEvaluationEnabled(false)` 可关闭 Java Handler 求值并原样返回 Native matches；TSH 根据 `TshQueryCompileOptions.enablePredicates` 设置此开关。启用 predicate 时，Executor 会逐个扫描 pattern 的 predicate step 序列（每段以 `Done` 结束），而不是只检查第一个 predicate。
+
+
+### Predicate expression grouping correction
+
+Predicate steps are not one flat argument list. Tree-sitter terminates each predicate/directive expression with a `Done` step. The cursor now splits the sequence at each `Done` and invokes handlers once per complete expression, preserving the terminator in that handler's argument list. This is required for handlers whose argument arity is defined per expression, including the existing `SetDirectiveHandler` for `#set!`.
+
+Each expression is evaluated independently and all expressions attached to a pattern must be accepted (logical AND). For each expression, handlers run in registration order: `OK` accepts that expression and stops dispatch; `ERR` rejects the match; `UNHANDLED` tries the next handler. A group with no accepting handler rejects the match. Consequently, directives such as `#set!` can apply metadata without accidentally swallowing adjacent predicates or being rejected because several expressions were concatenated.
+
+This correction is source-only at present. It has not been compiled or exercised against a real Native query.
