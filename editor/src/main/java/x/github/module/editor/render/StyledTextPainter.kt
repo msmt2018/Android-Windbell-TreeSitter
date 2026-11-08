@@ -89,6 +89,11 @@ class StyledTextPainter {
         var runStart = start
         var runX = x
         while (runStart < end) {
+            // CharacterStyle.updateDrawState() is allowed to mutate any TextPaint
+            // property, including alpha. Restore the complete base paint for every
+            // run so a dim/opacity span cannot leak into adjacent unstyled text.
+            paint.set(basePaint)
+
             // a run ends where any style begins or ends (or at the end of the piece)
             val runEnd = spans.nextSpanTransition(runStart, end, CharacterStyle::class.java)
                 .coerceIn(runStart + 1, end)
