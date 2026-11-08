@@ -239,7 +239,7 @@ class MainActivity : AppCompatActivity() {
                         binding.contentConsole.root.visibility = View.GONE
                         binding.contentEditor.root.visibility = View.VISIBLE
                         editorView?.requestFocus()
-                        triggerEditorFullHighlight()
+                        // TSH listens to buffer/edit events; tab selection must not restart a full parse.
                     }
                 }
             }
@@ -314,7 +314,7 @@ class MainActivity : AppCompatActivity() {
                             // Streamed into bounded Piece Tree chunks: no intermediate
                             // whole-file String or duplicate Activity-owned text copy.
                             editorView?.setBuffer(buffer)
-                            triggerEditorFullHighlight()
+                            ensureEditorHighlighterInstalled()
                         }.onFailure { error ->
                             showResultDialog("示例文件加载失败", error.stackTraceToString())
                         }
@@ -471,7 +471,7 @@ class MainActivity : AppCompatActivity() {
             applyEdits(listOf(SingleEditOperation(Range(1, 1, 1, 1), text)), false)
         })
         editorView?.setBuffer(buffer)
-        triggerEditorFullHighlight()
+        ensureEditorHighlighterInstalled()
     }
 
     /**
@@ -483,12 +483,16 @@ class MainActivity : AppCompatActivity() {
      * Do not parse a second tree here: the installed TshSyntaxHighlighter owns the
      * parser, capture snapshot, line indexing and invalidation used by drawText().
      */
-    private fun triggerEditorFullHighlight() {
+    /**
+     * EditorView notifies SyntaxHighlighter.onTextReplaced when setBuffer/setText
+     * swaps the document and onEditFinished after edits. Those events already
+     * schedule parsing. Restarting the whole parse here (notably on every tab
+     * selection) invalidates all large-file partitions and starves viewport work.
+     */
+    private fun ensureEditorHighlighterInstalled() {
         installTshHighlighterIfReady()
-        val highlighter = activeTshHighlighter
-        if (javaTshReady && highlighter != null) {
-            highlighter.reparse()
-        } else {
+        if (!javaTshReady || activeTshHighlighter == null ||
+            editorView?.getSyntaxHighlighter() !== activeTshHighlighter) {
             Log.w(TAG, "Editor TSH renderer unavailable: ready=$javaTshReady highlighterInstalled=${editorView?.getSyntaxHighlighter() != null} editorLanguage=$editorLanguageKey consoleLanguage=$currentLanguageKey")
         }
     }
