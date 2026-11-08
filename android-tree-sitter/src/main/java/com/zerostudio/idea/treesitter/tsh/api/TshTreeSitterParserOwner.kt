@@ -65,14 +65,15 @@ class TshTreeSitterParserOwner private constructor(
         var tree: TSTree? = null
         var languageLeaseTransferred = false
         try {
-            tree = parserLease.resource.parseString(source)
+            val parsedTree = parserLease.resource.parseString(source)
                 ?: return failure(
                     "TSH-PARSER-OWNER-004",
                     "Tree-sitter parser returned no syntax tree",
                     TshDiagnosticStage.PARSE,
                     parser.descriptor.id
                 )
-            if (!tree.canAccess()) {
+            tree = parsedTree
+            if (!parsedTree.canAccess()) {
                 return failure(
                     "TSH-PARSER-OWNER-005",
                     "Tree-sitter returned an inaccessible syntax tree",
@@ -81,7 +82,7 @@ class TshTreeSitterParserOwner private constructor(
                 )
             }
 
-            val root = tree.rootNode
+            val root = parsedTree.rootNode
             if (!root.canAccess()) {
                 return failure(
                     "TSH-PARSER-OWNER-006",
@@ -92,7 +93,7 @@ class TshTreeSitterParserOwner private constructor(
             }
             val rootRange = TshByteRange(root.startByte, root.endByte)
             val registration = resources.register(
-                resource = tree,
+                resource = parsedTree,
                 type = "syntax-tree",
                 metadata = mapOf(
                     "documentId" to documentId,
@@ -103,6 +104,7 @@ class TshTreeSitterParserOwner private constructor(
                 dependencies = listOf(languageLease)
             )
             languageLeaseTransferred = true
+            tree = null // ownership moved to the Engine resource registry
             val snapshot = TshSyntaxTreeSnapshot(
                 documentId = documentId,
                 documentVersion = documentVersion,
@@ -111,7 +113,6 @@ class TshTreeSitterParserOwner private constructor(
                 rootByteRange = rootRange,
                 nativeObjectId = registration.descriptor.id
             )
-            tree = null // ownership moved to the Engine resource registry
             return TshResult.Success(TshOwnedSyntaxTree(snapshot, registration))
         } catch (error: Throwable) {
             return failure(
@@ -154,10 +155,11 @@ class TshTreeSitterParserOwner private constructor(
             var nativeParser: TSParser? = null
             var ownershipTransferred = false
             try {
-                nativeParser = TSParser.create()
-                nativeParser.setLanguage(languageLease.resource)
+                val parser = TSParser.create()
+                nativeParser = parser
+                parser.setLanguage(languageLease.resource)
                 val registration = resources.register(
-                    resource = nativeParser,
+                    resource = parser,
                     type = "tree-sitter-parser",
                     metadata = mapOf(
                         "languageId" to grammar.languageId,
