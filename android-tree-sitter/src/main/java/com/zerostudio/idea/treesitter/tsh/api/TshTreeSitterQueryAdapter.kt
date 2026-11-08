@@ -23,6 +23,7 @@ class TshTreeSitterQueryCompiler(
     private val languages: TshGrammarLanguageResolver,
     private val objects: TshObjectRegistry,
     private val queries: TshCompiledQueryRegistry,
+    private val leases: TshNativeQueryLeaseStore,
     private val compilerVersion: String = "treesitter-adapter-1"
 ) : TshAtsCompiler {
 
@@ -94,6 +95,13 @@ class TshTreeSitterQueryCompiler(
             nativeQuery.close()
             return failure("TSH-QUERY-REGISTRY-004", "Cannot register native query: ${error.message}", cause = error)
         }
+        try {
+            leases.register(queryId, objectDescriptor.id, nativeQuery)
+        } catch (error: Throwable) {
+            objects.unregister(nativeQuery)
+            nativeQuery.close()
+            return failure("TSH-QUERY-LEASE-001", "Cannot register native query ownership: ${error.message}", cause = error)
+        }
         val compiled = TshCompiledQuery(
             queryId = queryId,
             revision = revision,
@@ -108,32 +116,28 @@ class TshTreeSitterQueryCompiler(
             is TshResult.Success -> {
                 val oldId = previous?.nativeObjectId
                 if (oldId != null && oldId != objectDescriptor.id) {
-                    val oldNative = objects.find(oldId) as? TSQuery
-                    if (oldNative != null) {
-                        objects.unregister(oldId)
-                        runCatching { oldNative.close() }
-                    }
+                    objects.unregister(oldId)
+                    leases.retire(previous.queryId)
                 }
                 registered
             }
             is TshResult.Failure -> {
                 objects.unregister(nativeQuery)
-                nativeQuery.close()
+                leases.retire(queryId)
                 registered
             }
         }
     }
 
     /**
-     * Releases a compiled query owned by this compiler. Call only after all executions using
-     * this revision have completed; TSNativeObject does not provide native reference counting.
+     * Retires a compiled query. Active executions retain leases; native close is deferred until
+     * the final execution lease is released.
      */
     fun release(queryId: String): Boolean {
         val compiled = queries.unregister(queryId) ?: return false
         val id = compiled.nativeObjectId ?: return true
-        val native = objects.find(id) as? TSQuery ?: return true
         objects.unregister(id)
-        runCatching { native.close() }
+        leases.retire(queryId)
         return true
     }
 
@@ -150,6 +154,7 @@ class TshTreeSitterQueryCompiler(
 class TshTreeSitterQueryExecutor(
     private val objects: TshObjectRegistry,
     private val queries: TshCompiledQueryRegistry,
+    private val leases: TshNativeQueryLeaseStore,
     private val predicateHandlers: List<TSPredicateHandler> = emptyList()
 ) : TshQueryExecutor {
 
@@ -170,8 +175,10 @@ class TshTreeSitterQueryExecutor(
         if (registered?.revision != query.revision || registered.nativeObjectId != query.nativeObjectId) {
             return failure("TSH-QUERY-EXEC-003", "Compiled query is not the active registered revision")
         }
-        val nativeQuery = objects.find(query.nativeObjectId) as? TSQuery
-            ?: return failure("TSH-QUERY-EXEC-004", "Native query handle is missing or has the wrong type")
+        val queryLease = leases.acquire(query.nativeObjectId)
+            ?: return failure("TSH-QUERY-EXEC-004", "Native query is missing, retired, or currently unavailable")
+        try {
+        val nativeQuery = queryLease.query
         val nativeTree = objects.find(tree.nativeObjectId) as? TSTree
             ?: return failure("TSH-QUERY-EXEC-005", "Native syntax tree handle is missing or has the wrong type")
 
@@ -185,11 +192,25 @@ class TshTreeSitterQueryExecutor(
         } catch (error: Throwable) {
             return failure("TSH-QUERY-EXEC-018", "Cannot inspect query predicates: ${error.message}", cause = error)
         }
-        if (hasPredicates && query.options.enablePredicates && predicateHandlers.isEmpty()) {
-            return failure(
-                "TSH-QUERY-EXEC-019",
-                "Query contains predicates but no TSPredicateHandler was supplied; refusing to silently ignore predicate semantics"
-            )
+        if (hasPredicates && query.options.enablePredicates) {
+            val declared = predicateHandlers.flatMap { handler ->
+                runCatching { handler.supportedPredicates.toList() }.getOrDefault(emptyList())
+            }.map { it.removePrefix("#") }.toSet()
+            val required = (0 until nativeQuery.patternCount).flatMap { pattern ->
+                nativeQuery.predicatesForPattern(pattern).asSequence()
+                    .takeWhile { it.type != com.zerostudio.idea.treesitter.TSQueryPredicateStep.Type.Done }
+                    .firstOrNull()
+                    ?.takeIf { it.type == com.zerostudio.idea.treesitter.TSQueryPredicateStep.Type.String }
+                    ?.let { listOf(nativeQuery.getStringValueForId(it.valueId)) }
+                    ?: emptyList()
+            }.toSet()
+            val missing = required - declared
+            if (missing.isNotEmpty()) {
+                return failure(
+                    "TSH-QUERY-EXEC-019",
+                    "No registered TSPredicateHandler declares support for: ${missing.sorted().joinToString()}"
+                )
+            }
         }
 
         val root = try {
@@ -280,7 +301,8 @@ class TshTreeSitterQueryExecutor(
         } catch (error: Throwable) {
             failure("TSH-QUERY-EXEC-016", "Tree-sitter query execution failed: ${error.message}", cause = error)
         } finally {
-            runCatching { cursor.close() }
+            queryLease.close()
+        }
         }
     }
 }
