@@ -3,36 +3,33 @@ package com.zerostudio.idea.treesitter.tsh.api
 import com.zerostudio.idea.treesitter.TSNativeObject
 
 /**
- * Coordinated object-index and native-ownership entry point for Tree/Language resources.
+ * Coordinates the public object index with native-resource ownership.
  *
- * Owners should register and retire through this class rather than independently mutating
- * TshObjectRegistry and TshNativeResourceLeaseStore. Acquire resolves the indexed instance and
- * obtains its lease; a concurrent retirement either wins before acquire (and acquire fails) or
- * follows it (and the acquired lease keeps the resource alive).
+ * The coordinator never invokes native close while holding its own lock. Removing an ID from
+ * [ownedIds] and [TshObjectRegistry] is the acquisition barrier; the lease store is retired only
+ * after that barrier has been published. Leases acquired before the barrier keep the resource alive.
  */
 class TshNativeResourceRegistry(
     private val objects: TshObjectRegistry,
     private val leases: TshNativeResourceLeaseStore
-) {
+) : AutoCloseable {
     private val lock = Any()
     private val ownedIds = LinkedHashSet<TshObjectId>()
+    private var closed = false
 
     data class Registration<T : TSNativeObject>(
         val descriptor: TshObjectDescriptor,
         val handle: TshNativeResourceLeaseStore.Handle<T>
     )
 
-    /**
-     * Transfers close responsibility to the lease store and publishes the object descriptor.
-     * If lease registration fails, the object-index entry is rolled back; ownership remains
-     * with the caller because the lease store did not accept the resource.
-     */
+    /** Transfers close responsibility to the lease store and publishes the object descriptor. */
     fun <T : TSNativeObject> register(
         resource: T,
         type: String,
         capabilities: TshCapabilitySet = TshCapabilitySet.EMPTY,
         metadata: Map<String, String> = emptyMap()
     ): Registration<T> = synchronized(lock) {
+        check(!closed) { "Native resource registry is closed" }
         val descriptor = objects.registerUnique(resource, type, capabilities, metadata)
         try {
             val handle = leases.register(descriptor.id, resource)
@@ -49,48 +46,60 @@ class TshNativeResourceRegistry(
         objectId: TshObjectId,
         expectedType: Class<T>
     ): TshNativeResourceLeaseStore.Lease<T>? = synchronized(lock) {
-        if (objectId !in ownedIds) return@synchronized null
+        if (closed || objectId !in ownedIds) return@synchronized null
         val resource = objects.find(objectId) ?: return@synchronized null
         if (!expectedType.isInstance(resource)) return@synchronized null
-        val typed = expectedType.cast(resource)
-        leases.acquire(TshNativeResourceLeaseStore.Handle(objectId, typed))
+        leases.acquire(
+            TshNativeResourceLeaseStore.Handle(objectId, expectedType.cast(resource))
+        )
     }
 
     /** Acquires a previously published handle and verifies both ID and instance identity. */
     fun <T : TSNativeObject> acquire(
         handle: TshNativeResourceLeaseStore.Handle<T>
     ): TshNativeResourceLeaseStore.Lease<T>? = synchronized(lock) {
-        if (handle.objectId !in ownedIds) return@synchronized null
+        if (closed || handle.objectId !in ownedIds) return@synchronized null
         val resource = objects.find(handle.objectId) ?: return@synchronized null
         if (resource !== handle.resource) return@synchronized null
         leases.acquire(handle)
     }
 
     /**
-     * Stops new acquisitions before removing the public object index. Existing leases defer close.
+     * Atomically blocks future acquisitions and removes the public index, then retires outside
+     * the coordinator lock so resource close callbacks cannot execute under that lock.
      */
-    fun retire(objectId: TshObjectId): Boolean = synchronized(lock) {
-        val retired = leases.retire(objectId)
-        if (retired) {
+    fun retire(objectId: TshObjectId): Boolean {
+        val shouldRetire = synchronized(lock) {
+            if (!ownedIds.remove(objectId)) return@synchronized false
             objects.unregister(objectId)
-            ownedIds.remove(objectId)
+            true
         }
-        retired
+        if (!shouldRetire) return false
+        return leases.retire(objectId)
     }
 
-    /**
-     * Retires every resource published through this coordinator. This deliberately does not call
-     * the underlying store's retireAll(), because that store may be shared with another owner.
-     */
-    fun retireAll(): Int = synchronized(lock) {
-        val ids = ownedIds.toList()
-        var retiredCount = 0
-        for (id in ids) {
-            if (leases.retire(id)) retiredCount++
-            objects.unregister(id)
-            ownedIds.remove(id)
+    /** Retires only this coordinator's resources; other coordinators may share the lease store. */
+    fun retireAll(): Int {
+        val ids = synchronized(lock) {
+            val snapshot = ownedIds.toList()
+            ownedIds.clear()
+            snapshot.forEach(objects::unregister)
+            snapshot
         }
-        retiredCount
+        var retiredCount = 0
+        ids.forEach { if (leases.retire(it)) retiredCount++ }
+        return retiredCount
+    }
+
+    /** Permanently closes this coordinator and retires all resources it owns. */
+    override fun close() {
+        val shouldClose = synchronized(lock) {
+            if (closed) false else {
+                closed = true
+                true
+            }
+        }
+        if (shouldClose) retireAll()
     }
 
     /** Number of active operations retaining this resource. */
