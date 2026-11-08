@@ -18,19 +18,20 @@
 - 新增 DSL typed value/declaration/document Kotlin 模型、Schema Registry、Config Artifact/Repository 和首批测试源码。
 - 新增 ATS/Tree-sitter Query API 首批 Kotlin 源码：Grammar descriptor、UTF-8 byte range、query source/options、compiled query、syntax tree snapshot、capture、execution budget、cancellation、versioned result 及 Compiler/Executor contracts。
 - 新增 CompiledQuery Registry，提供注册/替换/查询/Grammar fingerprint 兼容检查/注销。
-- 新增 ATS Query API 测试源码，覆盖半开 byte range、Grammar fingerprint、Registry 冲突与 stale result 识别。\n- 新增 `TshTreeSitterQueryCompiler`：复用 `TSQuery.create(TSLanguage, source)` 编译原生 Tree-sitter S-expression Query，绑定 Grammar fingerprint，映射 Native 编译错误和 byte offset，执行 pattern count 限制；ATS 输入明确拒绝，等待专用 ATS Parser/Compiler。\n- 新增 `TshTreeSitterQueryExecutor`：复用 `TSQueryCursor` 执行，支持 byte range、Capture name/type/range/node identity 转换、总 match 数预算、协作式取消检查、过期 Grammar/Query 检查，并在 `finally` 中关闭 Cursor。\n- 新增编译查询显式 `release(queryId)`，负责从对象注册表注销并关闭编译器拥有的 `TSQuery`；替换同 ID 查询时释放旧 Native Query。\n- 新增 Adapter 合约测试源码，覆盖 ATS 不误解析、Grammar 缺失、Grammar 不匹配、Native handle 缺失和 query revision 过期。
+- 新增 ATS Query API 测试源码，覆盖半开 byte range、Grammar fingerprint、Registry 冲突与 stale result 识别。\n- 新增 `TshTreeSitterQueryCompiler`：复用 `TSQuery.create(TSLanguage, source)` 编译原生 Tree-sitter S-expression Query，绑定 Grammar fingerprint，映射 Native 编译错误和 byte offset，执行 pattern count 限制；ATS 输入明确拒绝，等待专用 ATS Parser/Compiler。\n- 新增 `TshTreeSitterQueryExecutor`：复用 `TSQueryCursor` 执行，支持 byte range、Capture name/type/range/node identity 转换、总 match 数预算、协作式取消检查、过期 Grammar/Query 检查，并在 `finally` 中关闭 Cursor。\n- 新增编译查询显式 `release(queryId)`；后续加入共享 `TshNativeQueryLeaseStore`，release/替换先退役 Query，活动执行持有 Lease，最后一个 Lease 释放后才关闭 Native Query。\n- 新增 Adapter 合约测试源码，覆盖 ATS 不误解析、Grammar 缺失、Grammar 不匹配、Native handle 缺失和 query revision 过期。
+- 新增 `TshNativeQueryLeaseStore` 与生命周期测试源码，覆盖 release 延迟关闭、同 ID 替换和批量退役；Executor 对 predicate 名称执行 Handler 声明覆盖预检。
 
 ### Planned
 - Piece Tree/Rope 索引化坐标映射与 Layout-aware 坐标 Provider。
 - Engine Session、任务调度、资源 Scope 和兼容迁移接线。
 - .tsh Lexer/Parser/AST/Schema/Language Service 实现及 C++ Compiler 兼容。
 - ATS Lexer/Parser/AST/Compiler 到现有 Tree-sitter Query 执行器的适配。
-- 基于既有 TSQuery/TSQueryCursor 的 Native lease/refcount、增量查询与可中断取消/真实 step budget。
+- Tree/Language Native lease、增量查询与可中断取消/真实 step budget。
 - Regex 独立 WindowLease、Oniguruma 连续缓冲区和跨窗口等价策略。
 - Unified Match/Scope/Attribute/Highlight 与 Theme/RenderPlan 运行时实现。
 - Binding/EventBus/Provider 版本协商和诊断收集器。
 - 本地 Gradle 编译、自动化测试和真实编辑器渲染验证。
 
 ### Status
-- 本轮新增的 Kotlin API 和测试仅代表源码已提交；没有运行 Gradle、JUnit、C++/JNI 构建或 Android 设备验证。Tree-sitter Adapter 调用了既有 Native API，但未做真实 Native 运行验证。
+- 本轮新增的 Kotlin API 和测试仅代表源码已提交；没有运行 Gradle、JUnit、C++/JNI 构建或 Android 设备验证。Tree-sitter Adapter 调用了既有 Native API；Query lease 源码和测试源码已提交，但未做 Gradle/JUnit 或真实 Native 运行验证。
 - 现有仓库已检查到 `TSQuery`、`TSQueryCursor`、`TshCompiler`、`TshGrammar.dynamic_ts_query`；后续实现应复用这些既有能力并保持旧 JNI 入口兼容。
