@@ -1128,7 +1128,7 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
         diagnostics == JNI_TRUE ? &candidates : nullptr,
         diagnostics == JNI_TRUE ? counts : nullptr,
         static_cast<uint32_t>(range_start_byte),
-        static_cast<uint32_t>(range_end_byte));
+        static_cast<uint32_t>(range_end_byte), document->source.get());
     if (diagnostics == JNI_TRUE) spans = std::move(candidates);
     NativeHighlightCache::Value cache_value;
     cache_value.spans = spans;

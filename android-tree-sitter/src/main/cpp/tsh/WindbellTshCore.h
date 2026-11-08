@@ -17,6 +17,7 @@
 
 #include "tree_sitter/api.h"
 #include "oniguruma.h"
+#include "../largefile/TextSource.h"
 
 namespace windbell::tsh {
 
@@ -299,7 +300,8 @@ public:
         std::vector<HighlightSpan>* diagnostic_spans = nullptr,
         uint32_t* diagnostic_match_counts = nullptr,
         uint32_t range_start_byte = 0,
-        uint32_t range_end_byte = UINT32_MAX
+        uint32_t range_end_byte = UINT32_MAX,
+        const windbell::largefile::TextSource* text_source = nullptr
     );
 
 private:

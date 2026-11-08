@@ -11,6 +11,7 @@
 #include <unordered_set>
 #include <string_view>
 #include "ts__log.h"
+#include "../largefile/TextSource.h"
 
 namespace windbell::tsh {
 
@@ -113,6 +114,7 @@ static bool tshUtf8ToUtf16(const std::string& input, std::vector<UChar>& output)
 
 static bool tshPredicateCaptureTexts(const TSQueryMatch& match, uint32_t capture_id,
     const UChar* utf16_source,
+    const windbell::largefile::TextSource* text_source,
     uint32_t source_bytes,
     std::vector<std::vector<UChar>>& texts) {
     texts.clear();
@@ -123,7 +125,14 @@ static bool tshPredicateCaptureTexts(const TSQueryMatch& match, uint32_t capture
         if (start > end || end > source_bytes || (start & 1u) || (end & 1u) ||
             (!utf16_source && end != start)) return false;
         std::vector<UChar> converted;
-        if (end > start) converted.assign(utf16_source + start, utf16_source + end);
+        if (end > start) {
+            converted.resize((end - start) / sizeof(UChar));
+            if (text_source) {
+                if (!windbell::largefile::copyTextRange(*text_source, start, end - start, converted.data())) return false;
+            } else if (utf16_source) {
+                std::memcpy(converted.data(), utf16_source + start, end - start);
+            } else return false;
+        }
         texts.push_back(std::move(converted));
     }
     // A query may legitimately omit an optional capture. Negative predicates
@@ -133,7 +142,8 @@ static bool tshPredicateCaptureTexts(const TSQueryMatch& match, uint32_t capture
 }
 
 static bool tshEvaluateNativePredicates(const NativeQueryProgram& program,
-    const TSQueryMatch& match, const UChar* utf16_source, uint32_t source_bytes) {
+    const TSQueryMatch& match, const UChar* utf16_source,
+    const windbell::largefile::TextSource* text_source, uint32_t source_bytes) {
     const TSQuery* query = program.query;
     uint32_t step_count = 0;
     const TSQueryPredicateStep* steps =
@@ -156,7 +166,7 @@ static bool tshEvaluateNativePredicates(const NativeQueryProgram& program,
         if (!op.empty() && op.front() == '#') op.erase(op.begin());
 
         std::vector<std::vector<UChar>> actual;
-        if (!tshPredicateCaptureTexts(match, predicate[1].value_id, utf16_source, source_bytes, actual))
+        if (!tshPredicateCaptureTexts(match, predicate[1].value_id, utf16_source, text_source, source_bytes, actual))
             return false;
         std::vector<std::vector<UChar>> expected;
         for (size_t i = 2; i < predicate.size(); ++i) {
@@ -527,7 +537,8 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
     std::vector<HighlightSpan>* diagnostic_spans,
     uint32_t* diagnostic_match_counts,
     uint32_t range_start_byte,
-    uint32_t range_end_byte
+    uint32_t range_end_byte,
+    const windbell::largefile::TextSource* text_source
 ) {
     std::vector<HighlightSpan> final_spans;
     if (diagnostic_match_counts) std::fill(diagnostic_match_counts, diagnostic_match_counts + 4, 0u);
@@ -926,11 +937,16 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                     if (text_start > text_end || text_end > total_bytes ||
                         (text_start & 1u) || (text_end & 1u)) continue;
                     std::string node_text_storage;
-                    const UChar* node_source = input_chars
-                        ? reinterpret_cast<const UChar*>(input_chars) + text_start
-                        : &kEmptyInput;
-                    if (!tshUtf16SliceToUtf8(
-                            node_source, text_end - text_start, node_text_storage)) continue;
+                    std::vector<UChar> node_text_window((text_end - text_start) / sizeof(UChar));
+                    const UChar* node_source = nullptr;
+                    if (text_end > text_start) {
+                        if (text_source) {
+                            if (!windbell::largefile::copyTextRange(*text_source, text_start, text_end - text_start, node_text_window.data())) continue;
+                            node_source = node_text_window.data();
+                        } else if (input_chars) node_source = reinterpret_cast<const UChar*>(input_chars) + text_start;
+                        else continue;
+                    } else node_source = &kEmptyInput;
+                    if (!tshUtf16SliceToUtf8(node_source, text_end - text_start, node_text_storage)) continue;
                     const std::string_view node_text(node_text_storage);
                     if (ast_rule.has_text_equals && node_text != ast_rule.text_equals) continue;
                     if (ast_rule.has_text_prefix &&
@@ -1065,7 +1081,7 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                     !pattern_metadata->second.enabled) {
                     continue;
                 }
-                if (!tshEvaluateNativePredicates(native_query, match, text_start, total_bytes))
+                if (!tshEvaluateNativePredicates(native_query, match, text_start, text_source, total_bytes))
                     continue;
                 if (diagnostic_match_counts) ++diagnostic_match_counts[3];
                 const int32_t pattern_priority =
