@@ -102,13 +102,17 @@ bool TextPartitionIndex::lineForByte(const TextSource &source,
             return value < checkpoint.byte_offset;
         });
     if (it != checkpoints_.begin()) --it;
+    // scan() may append checkpoints and reallocate the vector, so never keep
+    // an iterator alive across that call.
+    const uint64_t checkpointByte = it->byte_offset;
+    const uint64_t checkpointLine = it->line;
     uint64_t ignored = 0;
     uint64_t result = 0;
-    if (!scan(source, it->byte_offset, it->line, byteOffset, 0, false, &ignored))
+    if (!scan(source, checkpointByte, checkpointLine, byteOffset, 0, false, &ignored))
         return false;
     // Count line feeds from the checkpoint to the exact target.
-    if (!countNewlines(source, it->byte_offset, ignored, &result)) return false;
-    *line = it->line + result;
+    if (!countNewlines(source, checkpointByte, ignored, &result)) return false;
+    *line = checkpointLine + result;
     return true;
 }
 
