@@ -5,6 +5,7 @@ import com.zerostudio.idea.treesitter.TSQuery
 import com.zerostudio.idea.treesitter.TSQueryCursor
 import com.zerostudio.idea.treesitter.TSQueryError
 import com.zerostudio.idea.treesitter.TSTree
+import com.zerostudio.idea.treesitter.predicate.TSPredicateHandler
 import java.security.MessageDigest
 
 /** Resolves a live language handle for a descriptor; the resolver retains language ownership. */
@@ -148,7 +149,8 @@ class TshTreeSitterQueryCompiler(
  */
 class TshTreeSitterQueryExecutor(
     private val objects: TshObjectRegistry,
-    private val queries: TshCompiledQueryRegistry
+    private val queries: TshCompiledQueryRegistry,
+    private val predicateHandlers: List<TSPredicateHandler> = emptyList()
 ) : TshQueryExecutor {
 
     override fun execute(
@@ -176,6 +178,20 @@ class TshTreeSitterQueryExecutor(
         if (!nativeQuery.canAccess()) return failure("TSH-QUERY-EXEC-006", "Native query has been closed")
         if (!nativeTree.canAccess()) return failure("TSH-QUERY-EXEC-007", "Native syntax tree has been closed")
 
+        val hasPredicates = try {
+            (0 until nativeQuery.patternCount).any {
+                nativeQuery.getPredicatesForPattern(it).isNotEmpty()
+            }
+        } catch (error: Throwable) {
+            return failure("TSH-QUERY-EXEC-018", "Cannot inspect query predicates: ${error.message}", cause = error)
+        }
+        if (hasPredicates && query.options.enablePredicates && predicateHandlers.isEmpty()) {
+            return failure(
+                "TSH-QUERY-EXEC-019",
+                "Query contains predicates but no TSPredicateHandler was supplied; refusing to silently ignore predicate semantics"
+            )
+        }
+
         val root = try {
             nativeTree.rootNode
         } catch (error: Throwable) {
@@ -199,6 +215,7 @@ class TshTreeSitterQueryExecutor(
             // Tree-sitter's match limit bounds pending in-progress matches, not total results.
             // Enforce maxMatches while draining the cursor instead.
             cursor.setByteRange(effectiveRange.startByte, effectiveRange.endByte)
+            predicateHandlers.forEach(cursor::addPredicateHandler)
             cursor.exec(nativeQuery, root)
 
             val captures = ArrayList<TshCapture>()
