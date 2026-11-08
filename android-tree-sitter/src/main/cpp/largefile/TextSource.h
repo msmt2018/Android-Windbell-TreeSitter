@@ -56,6 +56,7 @@ public:
 
 private:
     std::vector<TextSegment> segments_;
+    std::vector<uint64_t> segment_starts_;
     uint64_t total_bytes_ = 0;
     bool valid_ = false;
 };
