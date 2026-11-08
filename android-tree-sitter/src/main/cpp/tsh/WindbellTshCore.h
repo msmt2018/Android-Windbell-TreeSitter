@@ -217,101 +217,33 @@ struct TshStylePaint {
 // 单个 Token 的方案配色定义。Legacy fields remain the compiler's
 // serialization/storage representation while consumers migrate to typed paint.
 struct SchemeColor {
-    // Zero is an absent value, never a fallback color. The DSL owns all visible values.
-    uint32_t light_color = 0;
-    uint32_t dark_color = 0;
-    uint32_t light_background = 0;
-    uint32_t dark_background = 0;
-    uint16_t light_font_flags = 0;
-    uint16_t dark_font_flags = 0;
-    uint16_t light_font_defined_mask = 0;
-    uint16_t dark_font_defined_mask = 0;
-    bool has_light_color = false;
-    bool has_dark_color = false;
-    bool has_light_background = false;
-    bool has_dark_background = false;
+    // Typed paint is the single source of truth for all renderable attributes.
+    // Explicit-color provenance remains separate metadata because scope rules
+    // must not override a foreground explicitly supplied by this scheme.
+    TshStylePaint light;
+    TshStylePaint dark;
     bool explicit_light_color = false;
     bool explicit_dark_color = false;
 
-    TshStylePaint lightPaint() const {
-        return {
-            {light_color, has_light_color},
-            {light_background, has_light_background},
-            {light_font_flags, light_font_defined_mask}
-        };
-    }
+    const TshStylePaint& lightPaint() const { return light; }
+    const TshStylePaint& darkPaint() const { return dark; }
 
-    TshStylePaint darkPaint() const {
-        return {
-            {dark_color, has_dark_color},
-            {dark_background, has_dark_background},
-            {dark_font_flags, dark_font_defined_mask}
-        };
-    }
+    void setLightPaint(const TshStylePaint& paint) { light = paint; }
+    void setDarkPaint(const TshStylePaint& paint) { dark = paint; }
 
-    // Typed paint is the compiler-facing mutation API. These adapters keep the
-    // existing storage layout stable while all parsing moves to typed values.
-    void setLightPaint(const TshStylePaint& paint) {
-        light_color = paint.foreground.argb;
-        has_light_color = paint.foreground.present;
-        light_background = paint.background.argb;
-        has_light_background = paint.background.present;
-        light_font_flags = paint.font.flags;
-        light_font_defined_mask = paint.font.defined_mask;
-    }
+    void setLightForeground(const TshColorValue& value) { light.foreground = value; }
+    void setDarkForeground(const TshColorValue& value) { dark.foreground = value; }
 
-    void setDarkPaint(const TshStylePaint& paint) {
-        dark_color = paint.foreground.argb;
-        has_dark_color = paint.foreground.present;
-        dark_background = paint.background.argb;
-        has_dark_background = paint.background.present;
-        dark_font_flags = paint.font.flags;
-        dark_font_defined_mask = paint.font.defined_mask;
-    }
-
-    // Inherit each paint property independently. Font attributes inherit only
-    // where the child has not explicitly set or cleared that attribute.
     void inheritMissing(const SchemeColor& parent) {
-        TshStylePaint light = lightPaint();
-        light.inheritMissing(parent.lightPaint());
-        light_color = light.foreground.argb;
-        has_light_color = light.foreground.present;
-        light_background = light.background.argb;
-        has_light_background = light.background.present;
-        light_font_flags = light.font.flags;
-        light_font_defined_mask = light.font.defined_mask;
-
-        TshStylePaint dark = darkPaint();
-        dark.inheritMissing(parent.darkPaint());
-        dark_color = dark.foreground.argb;
-        has_dark_color = dark.foreground.present;
-        dark_background = dark.background.argb;
-        has_dark_background = dark.background.present;
-        dark_font_flags = dark.font.flags;
-        dark_font_defined_mask = dark.font.defined_mask;
+        light.inheritMissing(parent.light);
+        dark.inheritMissing(parent.dark);
     }
 
-    // Scheme extension overlays only properties explicitly supplied by child.
     void overlay(const SchemeColor& child) {
-        TshStylePaint light = lightPaint();
-        light.overlay(child.lightPaint());
-        light_color = light.foreground.argb;
-        has_light_color = light.foreground.present;
-        light_background = light.background.argb;
-        has_light_background = light.background.present;
-        light_font_flags = light.font.flags;
-        light_font_defined_mask = light.font.defined_mask;
-        if (child.has_light_color) explicit_light_color = true;
-
-        TshStylePaint dark = darkPaint();
-        dark.overlay(child.darkPaint());
-        dark_color = dark.foreground.argb;
-        has_dark_color = dark.foreground.present;
-        dark_background = dark.background.argb;
-        has_dark_background = dark.background.present;
-        dark_font_flags = dark.font.flags;
-        dark_font_defined_mask = dark.font.defined_mask;
-        if (child.has_dark_color) explicit_dark_color = true;
+        light.overlay(child.light);
+        dark.overlay(child.dark);
+        if (child.light.foreground.present) explicit_light_color = true;
+        if (child.dark.foreground.present) explicit_dark_color = true;
     }
 };
 

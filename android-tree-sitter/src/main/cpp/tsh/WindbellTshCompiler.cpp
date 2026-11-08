@@ -3015,12 +3015,10 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                 }
             }
             if (!explicit_light && best_light_specificity >= 0) {
-                palette.light_color = best_light_color;
-                palette.has_light_color = true;
+                palette.setLightForeground({best_light_color, true});
             }
             if (!explicit_dark && best_dark_specificity >= 0) {
-                palette.dark_color = best_dark_color;
-                palette.has_dark_color = true;
+                palette.setDarkForeground({best_dark_color, true});
             }
         }
     }
