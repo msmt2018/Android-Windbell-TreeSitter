@@ -49,3 +49,8 @@ C++ 异常不得跨 JNI 边界传播。JNI 层将错误转换为结构化 Native
 - 32/64 位与目标 ABI 的句柄宽度安全。
 - Native 资源在 Session/Engine close 后释放。
 - JNI API 变更自动检查声明、生成物和实现同步。
+
+
+## 完整性检查
+
+更完整的 Kotlin/JNI/C++ operation catalog、注解/注册生成同步、typed handle、generation、ownership、lease、错误码和生命周期契约见 [native-jni-cpp-completeness-api.md](native-jni-cpp-completeness-api.md)。
