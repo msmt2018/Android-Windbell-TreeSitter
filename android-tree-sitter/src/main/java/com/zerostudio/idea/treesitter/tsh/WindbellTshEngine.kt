@@ -13,6 +13,12 @@ import com.zerostudio.idea.treesitter.TSLanguage
 import com.zerostudio.idea.treesitter.TSTree
 import dalvik.annotation.optimization.FastNative
 import java.util.concurrent.ConcurrentHashMap
+import java.io.File
+
+/** Supplies bounded UTF-16LE windows to the native document engine. */
+fun interface NativeTextWindowReader {
+    fun read(byteOffset: Long, maxBytes: Int): ByteArray
+}
 import com.zerostudio.idea.treesitter.TreeSitter
 /**
  * Windbell Treesitter Highlighting Configuration Engine (Windbell-TSH)
@@ -614,6 +620,60 @@ class WindbellTshEngine private constructor() {
 
     fun computeDiagnosticCandidates(tree: TSTree?, text: String, extension: String): List<HighlightSpan> =
         computePipelineDiagnostics(tree, text, extension).captures
+
+
+    /**
+     * Creates a native-owned, file-backed UTF-16LE document and parses it in
+     * JNI. The callback only supplies bounded bytes; partitioning, storage,
+     * parsing and TSH execution remain inside the native engine.
+     */
+    fun createNativeDocument(
+        language: TSLanguage,
+        extension: String,
+        byteLength: Long,
+        temporaryDirectory: File,
+        reader: NativeTextWindowReader
+    ): Long {
+        require(byteLength >= 0L && (byteLength and 1L) == 0L)
+        require(temporaryDirectory.isDirectory && temporaryDirectory.canWrite())
+        return nativeCreateDocument(
+            reader, byteLength, temporaryDirectory.absolutePath,
+            language.nativeObject, extension
+        )
+    }
+
+    fun highlightNativeDocument(
+        documentHandle: Long,
+        startByte: Long = 0L,
+        endByte: Long,
+        diagnostics: Boolean = false
+    ): IntArray? = nativeHighlightDocument(
+        documentHandle, diagnostics, startByte, endByte
+    )
+
+    fun closeNativeDocument(documentHandle: Long) {
+        if (documentHandle != 0L) nativeCloseDocument(documentHandle)
+    }
+
+    @FastNative
+    private external fun nativeCreateDocument(
+        reader: NativeTextWindowReader,
+        byteLength: Long,
+        temporaryDirectory: String,
+        languagePointer: Long,
+        extension: String
+    ): Long
+
+    @FastNative
+    private external fun nativeHighlightDocument(
+        documentHandle: Long,
+        diagnostics: Boolean,
+        rangeStartByte: Long,
+        rangeEndByte: Long
+    ): IntArray?
+
+    @FastNative
+    private external fun nativeCloseDocument(documentHandle: Long)
 
     @FastNative
     private external fun nativeLoadTshSource(extension: String, tshSourceContent: String, languagePtr: Long): Boolean

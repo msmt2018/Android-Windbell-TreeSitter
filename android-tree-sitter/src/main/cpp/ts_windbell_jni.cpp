@@ -16,11 +16,126 @@
 
 #include "tsh/WindbellTshCore.h"
 #include "tsh/WindbellTshCompiler.h"
+#include "largefile/MappedFileSource.h"
+#include <cerrno>
+#include <memory>
+#include <mutex>
+#include <string>
+#include <sys/types.h>
+#include <unistd.h>
 #include "utils/ts_exceptions.h"
 #include "utils/ts_preconditions.h"
 #include "ts__log.h"
 
+
 using namespace windbell::tsh;
+
+namespace {
+
+struct NativeTshDocument {
+    std::unique_ptr<windbell::largefile::MappedFileSource> source;
+    TSParser *parser = nullptr;
+    TSTree *tree = nullptr;
+    std::string extension;
+    uint32_t length_chars = 0;
+    std::mutex mutex;
+
+    ~NativeTshDocument() {
+        if (tree) ts_tree_delete(tree);
+        if (parser) ts_parser_delete(parser);
+    }
+};
+
+struct NativeDocumentInput {
+    const windbell::largefile::TextSource *source = nullptr;
+};
+
+static const char *nativeDocumentRead(
+    void *payload, uint32_t byte_index, TSPoint, uint32_t *bytes_read
+) {
+    auto *input = static_cast<NativeDocumentInput *>(payload);
+    if (!input || !input->source || !bytes_read) {
+        if (bytes_read) *bytes_read = 0;
+        return nullptr;
+    }
+    windbell::largefile::TextChunkView chunk{};
+    if (!input->source->read(
+            byte_index, windbell::largefile::kTreeSitterInputChunkBytes, &chunk) ||
+        !chunk.data || chunk.size == 0) {
+        *bytes_read = 0;
+        return nullptr;
+    }
+    *bytes_read = chunk.size;
+    return chunk.data;
+}
+
+static bool writeAllAt(int fd, const uint8_t *data, size_t length, uint64_t offset) {
+    size_t written = 0;
+    while (written < length) {
+        const ssize_t count = ::pwrite(
+            fd, data + written, length - written,
+            static_cast<off_t>(offset + written));
+        if (count < 0 && errno == EINTR) continue;
+        if (count <= 0) return false;
+        written += static_cast<size_t>(count);
+    }
+    return true;
+}
+
+static jintArray encodeNativeHighlightResult(
+    JNIEnv *env,
+    const std::vector<HighlightSpan> &spans,
+    const uint32_t *match_counts,
+    bool diagnostics
+) {
+    constexpr size_t kFields = 6;
+    const jsize header = diagnostics ? 4 : 0;
+    const size_t maximum = (static_cast<size_t>(std::numeric_limits<jsize>::max()) -
+        static_cast<size_t>(header)) / kFields;
+    if (spans.size() > maximum) {
+        throw_illegal_args(env, "Native document highlight result exceeds JNI array limits");
+        return nullptr;
+    }
+    const jsize output_size = header + static_cast<jsize>(spans.size() * kFields);
+    jintArray output = env->NewIntArray(output_size);
+    if (!output) {
+        throw_npe(env, "Unable to allocate native document highlight result");
+        return nullptr;
+    }
+    if (diagnostics) {
+        const jint values[4] = {
+            static_cast<jint>(match_counts[0]), static_cast<jint>(match_counts[1]),
+            static_cast<jint>(match_counts[2]), static_cast<jint>(match_counts[3])
+        };
+        env->SetIntArrayRegion(output, 0, 4, values);
+        if (env->ExceptionCheck()) return nullptr;
+    }
+    constexpr size_t kBatchSpans = 4096;
+    std::vector<jint> batch;
+    batch.reserve(kBatchSpans * kFields);
+    for (size_t base = 0; base < spans.size();) {
+        const size_t count = std::min(kBatchSpans, spans.size() - base);
+        batch.clear();
+        for (size_t i = 0; i < count; ++i) {
+            const auto &span = spans[base + i];
+            batch.push_back(static_cast<jint>(span.start_byte));
+            batch.push_back(static_cast<jint>(span.end_byte));
+            batch.push_back(static_cast<jint>(
+                span.style_id | (static_cast<uint32_t>(span.flags) << 16)));
+            batch.push_back(static_cast<jint>(span.priority));
+            batch.push_back(static_cast<jint>(span.declaration_order));
+            batch.push_back(static_cast<jint>(span.source));
+        }
+        env->SetIntArrayRegion(
+            output, header + static_cast<jsize>(base * kFields),
+            static_cast<jsize>(batch.size()), batch.data());
+        if (env->ExceptionCheck()) return nullptr;
+        base += count;
+    }
+    return output;
+}
+
+} // namespace
 
 static size_t utf16LengthModifiedUtf8(const std::string& value) {
     size_t count = 0;
