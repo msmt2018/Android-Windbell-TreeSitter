@@ -1037,7 +1037,35 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeApplyDocumentEdi
     document->length_chars = static_cast<uint32_t>(new_size / 2u);
     ++document->version;
     document->highlight_cache.clear();
-    document->monarch_checkpoints.clear();
+
+    // Keep tokenizer checkpoints before the edit as immediately reusable. Keep
+    // checkpoints after the replaced range as *candidates* at their shifted byte
+    // offsets: they become reusable only after a fresh scan reaches the same
+    // offset with an identical Monarch state stack (state convergence).
+    const uint64_t old_source_version = document->source->version() - 1u;
+    const uint64_t new_source_version = document->source->version();
+    const uint64_t new_partition_version = document->partition_index.version();
+    const int64_t byte_delta = static_cast<int64_t>(inserted_size) -
+        static_cast<int64_t>(old_end_byte - start_byte);
+    std::vector<MonarchStateCheckpoint> retained;
+    retained.reserve(document->monarch_checkpoints.size());
+    for (auto checkpoint : document->monarch_checkpoints) {
+        if (checkpoint.source_version != old_source_version) continue;
+        if (checkpoint.byte_offset <= static_cast<uint64_t>(start_byte)) {
+            checkpoint.source_version = new_source_version;
+            checkpoint.partition_version = new_partition_version;
+            retained.push_back(std::move(checkpoint));
+            continue;
+        }
+        if (checkpoint.byte_offset >= static_cast<uint64_t>(old_end_byte)) {
+            const int64_t shifted = static_cast<int64_t>(checkpoint.byte_offset) + byte_delta;
+            if (shifted < 0 || shifted > static_cast<int64_t>(new_size)) continue;
+            checkpoint.byte_offset = static_cast<uint64_t>(shifted);
+            // Keep the old source version until a new scan proves convergence.
+            retained.push_back(std::move(checkpoint));
+        }
+    }
+    document->monarch_checkpoints.swap(retained);
     return JNI_TRUE;
 }
 
