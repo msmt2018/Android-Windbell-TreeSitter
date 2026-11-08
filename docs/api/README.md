@@ -22,6 +22,14 @@
 | [快速接入](quick-start.md) | 当前 API 使用方式与边界 |
 | [API 审查清单](public-api-review-checklist.md) | 新增 public API 的发布门槛 |
 
+| [Grammar 与 Query](grammar-and-query-api.md) | Grammar、Parser、Tree、ATS Query | 语法资源生命周期、解析与查询 |
+| [增量文本与 Buffer](incremental-text-and-buffer-api.md) | TextBuffer、Snapshot、Piece Tree/Rope | 分块读取、编辑事务、索引化坐标 |
+| [JNI 与 Native Bridge](jni-native-bridge-api.md) | Kotlin/JNI/C++ 边界 | 句柄所有权、编码、错误和 ABI |
+| [缓存与性能](cache-and-performance-api.md) | Scheduler、Cache、Backpressure | 任务优先级、缓存失效、性能预算 |
+| [安全与 Regex 防护](security-and-regex-safety.md) | Regex、配置、Provider 安全 | 超时、资源配额、隔离和 SafeMode |
+| [测试与兼容性](testing-and-compatibility-api.md) | API/Provider/Native 版本治理 | 测试分层、兼容策略和发布门槛 |
+| [平台与线程契约](platform-and-threading-api.md) | 模块边界、Dispatcher、回调 | UI 线程、并发、重入和模块依赖 |
+
 ## 公共 API 设计要求
 
 每个公共 API 必须定义目标对象、输入/输出、能力前置条件、线程约束、生命周期、错误语义、诊断信息、扩展点、兼容策略和测试要求。
