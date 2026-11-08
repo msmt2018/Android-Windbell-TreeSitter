@@ -414,9 +414,9 @@ void WindbellEngine::matchBlockRecursive(
                     block_span.start_byte = std::max(block_start_byte, output_start_byte);
                     block_span.end_byte = std::min(block_end_byte, output_end_byte);
                     block_span.style_id = rule.style_id;
-                block_span.flags = 0;
-                block_span.priority = rule.priority;
-                block_span.declaration_order = rule.declaration_order;
+                    block_span.flags = 0;
+                    block_span.priority = rule.priority;
+                    block_span.declaration_order = rule.declaration_order;
                     block_span.allow_overlap = rule.allow_overlap ? 1 : 0;
                     out_spans.push_back(block_span);
                 }
@@ -571,6 +571,7 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
         range_start_byte > range_end_byte || range_end_byte > total_bytes) {
         return final_spans;
     }
+    if (range_start_byte == range_end_byte) return final_spans;
     // Avoid pointer arithmetic on a null input pointer for an empty document.
     // Empty buffers are valid inputs (for example, immediately after clearing an editor).
     static const UChar kEmptyInput = 0;
