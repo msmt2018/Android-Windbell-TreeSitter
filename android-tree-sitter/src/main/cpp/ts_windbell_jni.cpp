@@ -1151,10 +1151,8 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
                     input = compatibility_window.data();
                 }
             } else {
-                __android_log_print(ANDROID_LOG_WARN, "WindbellTSH",
-                    "Skipping legacy contiguous Regex/Monarch input for edited large document (%llu bytes); "
-                    "continuing with TextSource-backed Tree-sitter captures",
-                    static_cast<unsigned long long>(total_bytes));
+                // No whole-document compatibility allocation: source-backed
+                // Tree-sitter captures remain available to the viewport renderer.
             }
         }
     }
