@@ -5,6 +5,7 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.os.SystemClock
 import android.view.View
+import android.text.SpannableStringBuilder
 import android.text.style.ForegroundColorSpan
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -19,6 +20,7 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
+import x.github.module.editor.render.StyledTextPainter
 import x.github.module.editor.view.EditorView
 import kotlin.math.abs
 
@@ -28,6 +30,121 @@ import kotlin.math.abs
  */
 @RunWith(AndroidJUnit4::class)
 class TshEditorPipelineRenderingTest {
+
+
+    @Test
+    fun nestedTshCapturePriorityReachesFinalCanvasColor() {
+        val engine = WindbellTshEngine.instance
+        val dsl = """
+            tsh 2 {
+                language { id: "canvas-priority-regression" extensions: [".cpr"] }
+                matching { multiline: true }
+                styles {
+                    outer { scope: "comment.block" }
+                    inner { scope: "keyword.other.todo" }
+                }
+                schemes {
+                    plain {
+                        light [ outer: #202020, inner: #FF0000 ]
+                        dark [ outer: #A0A0A0, inner: #FF5555 ]
+                    }
+                }
+                defaultScheme: "plain"
+                contains: [
+                    {
+                        start: { match: /BEGIN/ }
+                        end: { match: /END/ }
+                        name: "outer"
+                        contentName: "outer"
+                        contains: [
+                            { match: /TOKEN/, style: "inner", priority: 100 }
+                        ]
+                    }
+                ]
+            }
+        """.trimIndent()
+        assertTrue(
+            "Nested-priority TSH DSL must compile: undefined",
+            engine.loadTshSource("canvas-priority-regression", dsl, null)
+        )
+        assertTrue(engine.ensurePalette("canvas-priority-regression"))
+        engine.setAppearance("canvas-priority-regression", false)
+
+        val source = "BEGIN TOKEN END"
+        val captures = engine.computeHighlights(null, source, "canvas-priority-regression")
+        val innerId = engine.getStyleCatalog("canvas-priority-regression")
+            .first { it.name == "inner" }.styleId
+        assertTrue(
+            "Native ATS/regex pipeline must emit the nested high-priority capture",
+            captures.any { it.styleId == innerId && it.priority == 100 }
+        )
+
+        val styled = SpannableStringBuilder(source)
+        engine.applyHighlightSpansToSpannable(
+            spans = captures,
+            documentOffset = 0,
+            text = source,
+            extension = "canvas-priority-regression",
+            spannable = styled
+        )
+        val tokenStart = source.indexOf("TOKEN")
+        val tokenEnd = tokenStart + "TOKEN".length
+        val tokenColors = styled.getSpans(
+            tokenStart, tokenEnd, ForegroundColorSpan::class.java
+        ).filter {
+            styled.getSpanStart(it) <= tokenStart && styled.getSpanEnd(it) >= tokenEnd
+        }
+        assertTrue("Both outer and nested styles must cover TOKEN", tokenColors.size >= 2)
+        val winningColor = tokenColors.maxByOrNull {
+            styled.getSpanFlags(it) and Spanned.SPAN_PRIORITY
+        }?.foregroundColor
+        assertEquals(
+            "Android span priority must preserve the native high-priority capture",
+            engine.getStylePalette("canvas-priority-regression", "inner")?.lightColor,
+            winningColor
+        )
+
+        val bitmap = Bitmap.createBitmap(640, 100, Bitmap.Config.ARGB_8888)
+        try {
+            val canvas = Canvas(bitmap).apply { drawColor(Color.WHITE) }
+            val paint = android.text.TextPaint(android.text.TextPaint.ANTI_ALIAS_FLAG).apply {
+                color = Color.BLACK
+                textSize = 42f
+            }
+            StyledTextPainter().draw(
+                canvas = canvas,
+                text = source,
+                spans = styled,
+                start = 0,
+                end = styled.length,
+                x = 8f,
+                baseline = 64f,
+                rowTop = 0f,
+                rowBottom = 100f,
+                basePaint = paint
+            )
+            val expected = engine.getStylePalette("canvas-priority-regression", "inner")!!.lightColor
+            var matchingPixels = 0
+            for (y in 0 until bitmap.height) {
+                for (x in 8 until bitmap.width) {
+                    val pixel = bitmap.getPixel(x, y)
+                    if (Color.alpha(pixel) == 0) continue
+                    val distance =
+                        abs(Color.red(pixel) - Color.red(expected)) +
+                        abs(Color.green(pixel) - Color.green(expected)) +
+                        abs(Color.blue(pixel) - Color.blue(expected))
+                    if (distance <= 72) matchingPixels++
+                }
+            }
+            assertTrue(
+                "Nested TSH style must win at the final Canvas pixel stage; pixels=$matchingPixels",
+                matchingPixels > 0
+            )
+        } finally {
+            bitmap.recycle()
+            engine.clearAppearanceOverride("canvas-priority-regression")
+        }
+    }
 
     @Test
     fun javaAstSymbolColorReachesEditorCanvas() {

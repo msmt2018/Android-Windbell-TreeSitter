@@ -531,11 +531,12 @@ class WindbellTshEngine private constructor() {
                 val hasColor = if (darkMode) colorDef?.hasDarkColor == true else colorDef?.hasLightColor == true
                 val color = if (darkMode) colorDef?.darkColor ?: 0 else colorDef?.lightColor ?: 0
                 if (hasColor) {
-                    // Native emits deterministic paint order: outer captures first,
-                    // then nested/high-priority captures. Encode that order in Android's
-                    // span priority instead of relying on incidental getSpans ordering.
-                    val precedence = (((spanIndex + 1L) * 255L) / spans.size.coerceAtLeast(1))
-                        .toInt().coerceIn(1, 255)
+                    // Native returns captures in paint order: higher-priority captures
+                    // precede lower-priority captures. Android resolves overlapping spans
+                    // in the opposite direction (larger SPAN_PRIORITY wins), so invert the
+                    // native index. Keep the value in Android's 8-bit priority field.
+                    // More than 255 ordered captures necessarily share priority buckets.
+                    val precedence = (spans.size - spanIndex).coerceIn(1, 255)
                     val spanFlags = Spannable.SPAN_EXCLUSIVE_EXCLUSIVE or
                         (precedence shl Spanned.SPAN_PRIORITY_SHIFT)
                     spannable.setSpan(ForegroundColorSpan(color), charStart, charEnd, spanFlags)
