@@ -9,43 +9,28 @@
 - 新增 TextDocument/TextSnapshot/TextEdit/TextChange 与 TextAccessProvider 契约。
 - 新增内存文本 UTF-8/UTF-16/Unicode Code Point/Grapheme 坐标转换器及测试源码。
 - 新增 Runtime/Session、Config/Language Service、Editor Adapter、Highlight/Render、Binding/Event/Extension、ATS/Regex/Match 和 Diagnostics/Observability 详细 API 规范。
-
 - 新增 Grammar/Parser/Query、增量 TextBuffer、JNI/Native Bridge、Cache/Performance、安全/Regex 防护、测试/兼容性、平台/线程契约文档。
-
-- 新增 Symbol/Outline/Folding/Navigation、Selection/Cursor/Multi-Cursor、Language Intelligence、Injection/Language Layer、Decoration/Gutter/Inlay/CodeLens、EditTransaction/Undo/Redo/Command 六组 API 规范。
-- 明确宿主拥有编辑、撤销栈与实际绘制；TSH 通过版本化事务提案、owner-scoped decorations 和 Render Provider 接入，避免覆盖宿主状态。
-- 补充语言智能多 Provider 聚合、过期版本拒绝、嵌入语言范围映射及多光标语义约束。
+- 补充 .tsh 配置源、加载/编译/安装/替换/卸载、对象 Catalog 查询和配置事务契约。
+- 补充 .tsh DSL v1 顶层声明、类型系统、属性 Schema、表达式、引用和语义诊断契约。
+- 补充 Theme/Style/Font/Color/Decoration API，明确字体族、字重、字形、字号、字距、行高、OpenType 特性、可变字体轴与 fallback。
+- 补充 DSL 能力到 Parser/Resolver/Runtime/Render Backend 的覆盖矩阵，防止只定义语法而没有执行实现。
+- 从核心 API 索引移除通用编辑器功能文档；这些内容仅作为宿主集成边界参考。嵌入语言语法注入保留为 TSH 核心能力。
+- 新增 DSL typed value/declaration/document Kotlin 模型、Schema Registry、Config Artifact/Repository 和首批测试源码。
+- 新增 ATS/Tree-sitter Query API 首批 Kotlin 源码：Grammar descriptor、UTF-8 byte range、query source/options、compiled query、syntax tree snapshot、capture、execution budget、cancellation、versioned result 及 Compiler/Executor contracts。
+- 新增 CompiledQuery Registry，提供注册/替换/查询/Grammar fingerprint 兼容检查/注销。
+- 新增 ATS Query API 测试源码，覆盖半开 byte range、Grammar fingerprint、Registry 冲突与 stale result 识别。
 
 ### Planned
 - Piece Tree/Rope 索引化坐标映射与 Layout-aware 坐标 Provider。
 - Engine Session、任务调度、资源 Scope 和兼容迁移接线。
-- .tsh Lexer/Parser/AST/Schema/Language Service 实现。
-- Editor/Layout/Viewport/Render Provider 标准适配器。
-- Highlight/Attribute/Theme/RenderPlan 运行时实现。
+- .tsh Lexer/Parser/AST/Schema/Language Service 实现及 C++ Compiler 兼容。
+- ATS Lexer/Parser/AST/Compiler 到现有 Tree-sitter Query 执行器的适配。
+- 基于既有 TSQuery/TSQueryCursor 的 Native lease、增量查询与取消/预算边界。
+- Regex 独立 WindowLease、Oniguruma 连续缓冲区和跨窗口等价策略。
+- Unified Match/Scope/Attribute/Highlight 与 Theme/RenderPlan 运行时实现。
 - Binding/EventBus/Provider 版本协商和诊断收集器。
 - 本地 Gradle 编译、自动化测试和真实编辑器渲染验证。
 
-
-### Core DSL/API scope correction
-- 补充 .tsh 配置源、加载/编译/安装/替换/卸载、对象 Catalog 查询和配置事务契约。
-- 补充 TSH DSL v1 顶层声明、类型系统、属性 Schema、表达式、引用和语义诊断契约。
-- 补充 Theme/Style/Font/Color/Decoration API，明确字体族、字重、字形、字号、字距、行高、OpenType 特性、可变字体轴与 fallback。
-- 补充 DSL 能力到 Parser/Resolver/Runtime/Render Backend 的覆盖矩阵，防止只定义语法而没有执行实现。
-- 从核心 API 索引移除通用编辑器功能文档；这些内容仅作为宿主集成边界参考。嵌入语言语法注入保留为 TSH 核心能力。
-- 以上新增内容均为目标契约文档；未据此宣称底层实现、Gradle 构建、自动化测试或设备绘制已经完成。
-
-
-### Complete core API contract set
-- 新增 DSL 完整类型系统与 Schema、ATS/Tree-sitter 查询、Regex 窗口执行、统一 Match/Scope、Attribute/Semantic/Highlight、Theme/Style/Render、Kotlin/JNI/C++ 完整性七份契约文档。
-- 明确 Oniguruma 只接收生命周期内稳定的连续缓冲区；对无法证明跨窗口等价的正则必须整段回退或明确拒绝。
-- 明确每个 DSL 属性必须有 Schema、类型、语义、运行时 consumer 和验收测试，不能只声明不执行。
-- 明确 JNI/Kotlin/C++ 签名、生成注解、注册表、句柄所有权、错误码和资源释放的一致性门槛。
-- 所有新增内容均为目标契约；尚未证明对应实现、编译、自动化测试或设备端渲染已完成。
-
-
-### Kotlin API source implementation started
-- 新增 Parser-neutral DSL typed value/declaration/document 模型及 DSL version、unit、color-space 类型。
-- 新增线程安全 Schema Registry，支持声明属性类型、单位、默认值、数值边界、枚举、版本、能力要求及未知属性策略校验。
-- 新增不可变 ConfigArtifact 与内存 ConfigRepository，支持 get/list/install/replace/unload 和 expected-revision 乐观并发检查。
-- 新增 Schema/Repository 单元测试源码，覆盖默认值、类型/单位、未知属性、能力、宽松校验和 revision 冲突。
-- 本轮仅实现 JVM API 基础层；尚未接入 C++ TshCompiler/Native registry，未运行 Gradle 或测试。
+### Status
+- 本轮新增的 Kotlin API 和测试仅代表源码已提交；没有运行 Gradle、JUnit、C++/JNI 构建或 Android 设备验证。
+- 现有仓库已检查到 `TSQuery`、`TSQueryCursor`、`TshCompiler`、`TshGrammar.dynamic_ts_query`；后续实现应复用这些既有能力并保持旧 JNI 入口兼容。
