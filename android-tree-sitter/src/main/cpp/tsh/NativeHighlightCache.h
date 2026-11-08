@@ -177,6 +177,11 @@ public:
                 }
                 if (intersectsDirty) continue;
                 Value value = found->second.value;
+                // Preserve the original capacity so retained entries do not
+                // silently exceed the cache's recorded/shared memory budget after
+                // the transactional copy. The temporary copy is bounded by the
+                // existing per-document cache limit.
+                value.spans.reserve(found->second.value.spans.capacity());
                 bool spansValid = true;
                 for (auto &span : value.spans) {
                     if (span.end_byte <= editStart) continue;
@@ -215,7 +220,9 @@ public:
                 key.partition_version = newPartitionVersion;
                 nextLru.push_back(key);
                 auto position = std::prev(nextLru.end());
-                nextEntries.emplace(key, Entry{std::move(value), position, found->second.bytes});
+                const auto inserted = nextEntries.emplace(
+                    key, Entry{std::move(value), position, found->second.bytes});
+                if (!inserted.second) nextLru.erase(position);
             }
         } catch (...) {
             clear();
