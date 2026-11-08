@@ -132,4 +132,36 @@ class TreeSitterPartitionSchedulerTest {
         assertThrows(IllegalStateException::class.java) { callback.read(0L, 2) }
     }
 
+
+    @Test fun supersededSourceReadIsSilentAndDoesNotQueuePartialViewportWork() {
+        var cancelReads = false
+        val source = object : Utf16DocumentSource {
+            private val text = ("line\\n").repeat(300)
+            override val length = text.length.toLong()
+            override val version = 19L
+            override fun get(offset: Long) = text[offset.toInt()]
+            override fun readChunk(offset: Long, maxChars: Int): CharSequence {
+                if (cancelReads) throw java.util.concurrent.CancellationException(
+                    "Large-file partition indexing superseded"
+                )
+                if (offset >= length) return ""
+                return text.substring(offset.toInt(), minOf(text.length, offset.toInt() + maxChars))
+            }
+        }
+        val manager = DocumentPartitionManager(256, prefetchPartitions = 0)
+        manager.rebuild(source)
+        val cache = PartitionAstCache(1024) { 1L }
+        var failures = 0
+        val scheduler = TreeSitterPartitionScheduler(
+            manager, cache, contextChars = 32,
+            onFailure = { _, _ -> failures++ }
+        )
+        cancelReads = true
+        val requests = scheduler.requestViewport(source, 100, 200, 1) {
+            fail("A cancelled viewport must not submit parse work")
+        }
+        assertTrue(requests.isEmpty())
+        assertEquals(0, failures)
+        scheduler.close()
+    }
 }

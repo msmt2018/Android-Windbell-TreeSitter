@@ -1,6 +1,7 @@
 package com.zerostudio.idea.treesitter.largefile
 
 import com.zerostudio.idea.treesitter.TSTree
+import java.util.concurrent.CancellationException
 import java.util.concurrent.PriorityBlockingQueue
 import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
@@ -67,12 +68,21 @@ class TreeSitterPartitionScheduler(
         val tasks = ArrayList<PrioritizedTask>(plan.partitions.size)
 
         for (partition in plan.partitions) {
+            // A source may invalidate an in-progress read when a newer document
+            // snapshot supersedes it. This is normal cancellation, not a parse error.
+            if (closed.get() || source.version != plan.documentVersion) return emptyList()
             var contextStart = (partition.start - contextChars).coerceAtLeast(0L)
             var contextEnd = minOf(source.length, safeAdd(partition.endExclusive, contextChars))
-            // Start/end at nearby line boundaries when possible so regex and Monarch
-            // tokenization do not begin in the middle of an ordinary source line.
-            contextStart = alignContextStartToLine(source, contextStart)
-            contextEnd = alignContextEndToLine(source, contextEnd)
+            // Align context outside the renderer's hot path. Source reads may be
+            // cancelled by the owner when its document snapshot is superseded.
+            try {
+                contextStart = alignContextStartToLine(source, contextStart)
+                contextEnd = alignContextEndToLine(source, contextEnd)
+            } catch (_: CancellationException) {
+                // No tasks have been submitted yet; abandon this plan atomically.
+                return emptyList()
+            }
+            if (closed.get() || source.version != plan.documentVersion) return emptyList()
             // Context windows must not split a UTF-16 surrogate pair either.
             if (contextStart > 0L && contextStart < source.length &&
                 Character.isHighSurrogate(source[contextStart - 1L]) &&
