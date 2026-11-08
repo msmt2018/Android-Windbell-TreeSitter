@@ -247,11 +247,18 @@ class TshTreeSitterQueryExecutor(
                     stepsUsed = 0L,
                     isComplete = complete
                 ),
-                diagnostics = if (!complete) listOf(diagnostic(
-                    "TSH-QUERY-EXEC-015",
-                    "Query result is partial because the total match budget was reached or Tree-sitter dropped pending matches",
-                    TshDiagnosticSeverity.WARNING
-                )) else emptyList()
+                diagnostics = buildList {
+                    if (!complete) add(diagnostic(
+                        "TSH-QUERY-EXEC-015",
+                        "Query result is partial because the total match budget was reached or Tree-sitter dropped pending matches",
+                        TshDiagnosticSeverity.WARNING
+                    ))
+                    add(diagnostic(
+                        "TSH-QUERY-EXEC-017",
+                        "The current TSQueryCursor API does not expose VM step counts; maxSteps is not enforced and stepsUsed is reported as 0",
+                        TshDiagnosticSeverity.INFO
+                    ))
+                }
             )
         } catch (error: Throwable) {
             failure("TSH-QUERY-EXEC-016", "Tree-sitter query execution failed: ${error.message}", cause = error)
