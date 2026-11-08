@@ -218,7 +218,7 @@ TSParser_setIncludedRanges(
     jobjectArray ranges) {
   req_nnp(env, parser);
   int count = env->GetArrayLength(ranges);
-  TSRange tsRanges[count];
+  std::vector<TSRange> tsRanges(static_cast<size_t>(count));
   for (int i = 0; i < count; i++) {
     jobject range = env->GetObjectArrayElement(ranges, i);
     std::string msg = std::string("ranges[") + std::to_string(i) + "]";
@@ -237,9 +237,9 @@ TSParser_setIncludedRanges(
     }
   }
 
-  const TSRange *r = tsRanges;
+  const TSRange *r = tsRanges.empty() ? nullptr : tsRanges.data();
   return (jboolean) ts_parser_set_included_ranges(((TSParserInternal *) parser)->getParser(
-      env), r, count);
+      env), r, static_cast<uint32_t>(count));
 }
 
 static jobjectArray
