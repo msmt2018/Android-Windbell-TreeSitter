@@ -109,8 +109,8 @@ static jobject TSQuery_extractBounded(
       throwTagsIllegalArgument(env, "styleIds length must equal the query capture count");
       return nullptr;
     }
-    if (max_spans < 1 || max_spans > 1000000) {
-      throwTagsIllegalArgument(env, "maxSpans must be between 1 and 1000000");
+    if (max_spans < 1 || max_spans > 500000) {
+      throwTagsIllegalArgument(env, "maxSpans must be between 1 and 500000");
       return nullptr;
     }
     try {
@@ -167,14 +167,16 @@ static jobject TSQuery_extractBounded(
 
   std::vector<OwnedQueryMatch> matches;
   size_t capture_count_for_spans = 0;
+  size_t query_match_count = 0;
   try {
     matches.reserve(static_cast<size_t>(std::min(max_results, 4096)));
     TSQueryMatch match{};
     while (ts_query_cursor_next_match(cursor.get(), &match)) {
-      if (matches.size() >= static_cast<size_t>(max_results)) {
+      if (query_match_count >= static_cast<size_t>(max_results)) {
         throwTagsIllegalState(env, "Tree-sitter query exceeded maxResults; no partial result was returned");
         return nullptr;
       }
+      ++query_match_count;
       OwnedQueryMatch owned;
       owned.id = match.id;
       owned.pattern_index = match.pattern_index;
@@ -201,7 +203,9 @@ static jobject TSQuery_extractBounded(
           }
         }
       }
-      matches.push_back(std::move(owned));
+      if (style_ids == nullptr || !owned.captures.empty()) {
+        matches.push_back(std::move(owned));
+      }
     }
   } catch (const std::bad_alloc &) {
     throwTagsOutOfMemory(env);
