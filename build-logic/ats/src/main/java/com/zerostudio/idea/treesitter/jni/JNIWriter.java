@@ -699,7 +699,7 @@ public class JNIWriter {
 
       // validate the method
 
-      TypeSignature newtypesig = new TypeSignature(types);
+      TypeSignature newtypesig = new TypeSignature(types, elements);
       CharSequence methodName = md.getSimpleName();
 
       boolean isOverloaded = false;
@@ -762,7 +762,7 @@ public class JNIWriter {
     result.append(encode(msym.getSimpleName(), EncoderType.JNI, false));
 
     if (isOverloaded) {
-      TypeSignature typeSig = new TypeSignature(types);
+      TypeSignature typeSig = new TypeSignature(types, elements);
       StringBuilder sig = typeSig.getParameterSignature(msym, true);
       result.append("__").append(encode(sig, EncoderType.JNI));
     }
