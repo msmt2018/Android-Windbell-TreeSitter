@@ -19,7 +19,7 @@ data class TshGrammarDescriptor(
     }
 }
 
-/** UTF-8 byte range used by Tree-sitter nodes and query captures. End is exclusive. */
+/** Native Tree-sitter byte range. End is exclusive; its encoding is carried by the tree snapshot. */
 data class TshByteRange(val startByte: Int, val endByte: Int) {
     init {
         require(startByte >= 0)
@@ -74,6 +74,9 @@ data class TshCompiledQuery(
             grammar.fingerprint == candidate.fingerprint
 }
 
+/** Encoding used by the source buffer passed to the native Tree-sitter parser. */
+enum class TshTreeSitterInputEncoding { UTF8, UTF16_LE, UTF16_BE }
+
 /** Minimal immutable syntax-tree identity; native tree ownership remains with its provider. */
 data class TshSyntaxTreeSnapshot(
     val documentId: String,
@@ -81,7 +84,8 @@ data class TshSyntaxTreeSnapshot(
     val treeRevision: Long,
     val grammar: TshGrammarDescriptor,
     val rootByteRange: TshByteRange,
-    val nativeObjectId: TshObjectId
+    val nativeObjectId: TshObjectId,
+    val inputEncoding: TshTreeSitterInputEncoding = TshTreeSitterInputEncoding.UTF8
 ) {
     init {
         require(documentId.isNotBlank())
@@ -132,7 +136,9 @@ data class TshQueryResult(
     val grammarFingerprint: String,
     val captures: List<TshCapture>,
     val stepsUsed: Long,
-    val isComplete: Boolean = true
+    val isComplete: Boolean = true,
+    /** Byte ranges in captures use this tree source encoding. */
+    val inputEncoding: TshTreeSitterInputEncoding = TshTreeSitterInputEncoding.UTF8
 ) {
     init {
         require(queryId.isNotBlank())
