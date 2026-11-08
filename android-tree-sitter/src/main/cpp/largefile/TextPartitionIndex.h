@@ -48,8 +48,6 @@ private:
               bool stopByLine, uint64_t *result,
               uint64_t *resultLine = nullptr,
               uint64_t *resultLineStart = nullptr) noexcept;
-    bool countNewlines(const TextSource &source, uint64_t startByte,
-                       uint64_t endByte, uint64_t *count) noexcept;
     void addCheckpoint(uint64_t byteOffset, uint64_t line) noexcept;
 
     uint32_t stride_lines_;

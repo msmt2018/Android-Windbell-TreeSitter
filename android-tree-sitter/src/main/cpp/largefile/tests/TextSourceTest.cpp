@@ -482,6 +482,20 @@ static void testSparsePartitionIndexSurvivesEdits() {
     }
     assert(index.lineForByte(source, source.sizeBytes(), &line));
     assert(line == resultingLines);
+
+    // Random-access lookups must not append earlier checkpoints after later
+    // checkpoints. That would invalidate upper_bound() and corrupt later rows.
+    for (uint64_t expectedLine = resultingLines; expectedLine-- > 0;) {
+        const uint64_t lineStart = utf16LineStart(expected, expectedLine);
+        assert(index.pointForByte(source, lineStart, &line, &byte));
+        assert(line == expectedLine);
+        assert(byte == lineStart);
+    }
+    const auto &checkpoints = index.checkpoints();
+    for (size_t i = 1; i < checkpoints.size(); ++i) {
+        assert(checkpoints[i - 1].byte_offset < checkpoints[i].byte_offset);
+        assert(checkpoints[i - 1].line < checkpoints[i].line);
+    }
     ::unlink(path);
 }
 

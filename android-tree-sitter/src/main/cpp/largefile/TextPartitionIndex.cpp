@@ -22,38 +22,25 @@ void TextPartitionIndex::reset() noexcept {
 }
 
 void TextPartitionIndex::addCheckpoint(uint64_t byteOffset, uint64_t line) noexcept {
-    if (!checkpoints_.empty() &&
-        checkpoints_.back().byte_offset == byteOffset) return;
+    // Queries are not guaranteed to arrive in document order: editors can ask
+    // for a distant line and then jump back to the beginning. Keep the vector
+    // sorted because every lookup uses upper_bound().
+    auto position = std::lower_bound(
+        checkpoints_.begin(), checkpoints_.end(), byteOffset,
+        [](const Checkpoint &checkpoint, uint64_t value) {
+            return checkpoint.byte_offset < value;
+        });
+    if (position != checkpoints_.end() && position->byte_offset == byteOffset) {
+        position->line = line;
+        return;
+    }
     try {
-        checkpoints_.push_back({byteOffset, line});
+        if (position == checkpoints_.end()) checkpoints_.push_back({byteOffset, line});
+        else checkpoints_.insert(position, {byteOffset, line});
     } catch (...) {
         // The index is an optimization. A failed checkpoint allocation leaves
         // the preceding valid sparse index usable.
     }
-}
-
-bool TextPartitionIndex::countNewlines(const TextSource &source,
-                                       uint64_t startByte, uint64_t endByte,
-                                       uint64_t *count) noexcept {
-    if (!count || (startByte & 1u) || (endByte & 1u) ||
-        endByte < startByte || endByte > source.sizeBytes()) return false;
-    *count = 0;
-    uint64_t offset = startByte;
-    while (offset < endByte) {
-        TextChunkView chunk{};
-        const uint32_t request = static_cast<uint32_t>(std::min<uint64_t>(
-            kTreeSitterInputChunkBytes, endByte - offset));
-        if (!source.read(offset, request, &chunk) || !chunk.data || chunk.size == 0)
-            return false;
-        const auto *bytes = reinterpret_cast<const uint8_t *>(chunk.data);
-        for (uint32_t i = 0; i + 1 < chunk.size; i += 2) {
-            const uint16_t unit = static_cast<uint16_t>(bytes[i]) |
-                (static_cast<uint16_t>(bytes[i + 1]) << 8u);
-            if (unit == '\n') ++*count;
-        }
-        offset += chunk.size;
-    }
-    return true;
 }
 
 bool TextPartitionIndex::scan(const TextSource &source, uint64_t startByte,
@@ -177,9 +164,15 @@ bool TextPartitionIndex::applyEdit(const TextSource &oldSource,
         (insertedBytes && !inserted)) return false;
 
     uint64_t startLine = 0;
-    uint64_t removedLines = 0;
-    if (!lineForByte(oldSource, startByte, &startLine) ||
-        !countNewlines(oldSource, startByte, oldEndByte, &removedLines)) return false;
+    uint64_t ignoredLineStart = 0;
+    uint64_t endLine = 0;
+    uint64_t ignoredOffset = 0;
+    if (!pointForByte(oldSource, startByte, &startLine, &ignoredLineStart) ||
+        !scan(oldSource, startByte, startLine, oldEndByte, 0, false,
+              &ignoredOffset, &endLine)) return false;
+    // Derive removed newline count from the same bounded scan used to resolve
+    // the old end point; do not reread the replaced text a second time.
+    const uint64_t removedLines = endLine - startLine;
 
     uint64_t insertedLines = 0;
     const auto *bytes = static_cast<const uint8_t *>(inserted);
