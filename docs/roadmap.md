@@ -61,7 +61,7 @@
 - [x] Query Lease Store 增加 `registerDeferred` / `retireDeferred`：高层 Query Registry 事务锁内只切换 revision/登记退役，旧 Query 与依赖 Language Lease 的 close action 在事务锁外执行；增加 deferred close 测试源码。
 - [x] `TshEngine` 持有自己的 Native Resource Lease Store/Registry；Engine.close 先关闭该 Registry 并退役其拥有的 Native 资源，再清理 Provider/Object 索引。
 - [x] 新增 Engine Native 生命周期测试源码：验证 idle resource 在 Engine.close 时释放、活动 Lease 延迟释放，以及 Engine 关闭后拒绝新资源注册。
-- [x] Engine 拥有 `TshCompiledQueryRegistry` 和 `TshNativeQueryLeaseStore`；提供 `createTreeSitterQueryCompiler/Executor` 工厂，强制使用同一个 Engine ObjectRegistry、Query catalog、Query Lease Store 与 Native Resource Registry。
+- [x] Engine 拥有 `TshCompiledQueryRegistry` 和 `TshNativeQueryLeaseStore`；提供 `createTreeSitterQueryCompiler/Executor` 与 `openTreeSitterParser` 工厂，强制使用同一个 Engine ObjectRegistry、Query catalog、Query Lease Store 与 Native Resource Registry；补充 Engine 关闭后拒绝打开 Parser 的测试源码。
 - [x] Engine.close 按 Query → Parser/Tree → Language 顺序退役；Native Query Lease Store 增加永久 close，关闭后拒绝 Query 发布，活动 Query Lease 释放后再关闭 Query 和 Language 依赖。
 - [x] Native Resource Lease 支持从仍然持有的 Lease 派生子 Lease；Grammar 已退役时不允许从 Store 重新 acquire，但 Parser 可从其存活的 Language dependency lease 派生 Tree dependency lease；新增退役后 child retain 与并发 retain/release 测试源码。
 - [x] 修复 Query Compiler Native Query 的失败清理路径：统一由外层 finally 释放未转移所有权的 Query，避免错误分支提前 close 后 finally 再次 close；修复 cleanup 变量作用域。
