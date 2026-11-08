@@ -29,7 +29,6 @@
 #include <limits>
 #include <unordered_set>
 #include <cstdint>
-#include <limits>
 #include "ts__log.h"
 
 namespace windbell::tsh {
@@ -60,16 +59,19 @@ static bool analyzeBoundedRegexWidth(
         uint64_t atom_width = 1;
         const unsigned char c = static_cast<unsigned char>(pattern[i++]);
         if (c == '(' || c == ')' || c == '|' || c == '^' || c == '$')
-            return false; // groups, alternatives and anchors need richer analysis
+            return false;
         if (c == '[') {
+            // A Unicode character class may match a supplementary scalar,
+            // represented by two UTF-16 code units.
+            atom_width = 2;
             bool closed = false;
             bool first = true;
             while (i < pattern.size()) {
                 const char member = pattern[i++];
                 if (member == ']' && !first) { closed = true; break; }
                 first = false;
-                if (member == '[') return false; // nested/intersection classes
-                if (member == '\\\\') {
+                if (member == '[') return false;
+                if (member == '\\') {
                     if (i >= pattern.size()) return false;
                     const char escaped = pattern[i++];
                     if (escaped == 'p' || escaped == 'P' || escaped == 'x' ||
@@ -78,45 +80,42 @@ static bool analyzeBoundedRegexWidth(
                 }
             }
             if (!closed) return false;
-        } else if (c == '\\\\') {
+        } else if (c == '\\') {
             if (i >= pattern.size()) return false;
             const char escaped = pattern[i++];
             if (escaped == 'A' || escaped == 'z' || escaped == 'Z' ||
                 escaped == 'G' || escaped == 'b' || escaped == 'B' ||
                 escaped == 'K' || escaped == 'k' || escaped == 'g' ||
-                escaped == 'R' || escaped == 'X' || escaped == 'Q' ||
-                escaped == 'E' || escaped >= '1' && escaped <= '9')
+                escaped == 'Q' || escaped == 'E' ||
+                (escaped >= '1' && escaped <= '9'))
                 return false;
+            // Escaped character classes and Unicode escapes may match a
+            // supplementary scalar, so reserve two UTF-16 code units.
+            atom_width = 2;
             if (escaped == 'x' || escaped == 'u') {
-                if (i < pattern.size() && pattern[i] == '{') {
-                    ++i;
-                    const size_t close = pattern.find('}', i);
-                    if (close == std::string::npos || close == i) return false;
-                    for (; i < close; ++i) {
-                        const char digit = pattern[i];
-                        if (!std::isxdigit(static_cast<unsigned char>(digit))) return false;
-                    }
-                    i = close + 1;
-                } else {
-                    const size_t digits = escaped == 'x' ? 2 : 4;
-                    if (i + digits > pattern.size()) return false;
-                    for (size_t n = 0; n < digits; ++n) {
-                        if (!std::isxdigit(static_cast<unsigned char>(pattern[i + n]))) return false;
-                    }
-                    i += digits;
+                if (i < pattern.size() && pattern[i] == '{') return false;
+                const size_t digits = escaped == 'x' ? 2 : 4;
+                if (i + digits > pattern.size()) return false;
+                for (size_t n = 0; n < digits; ++n) {
+                    if (!std::isxdigit(static_cast<unsigned char>(pattern[i + n]))) return false;
                 }
-            } else if (escaped == 'c' || escaped == 'C' || escaped == 'M') {
+                i += digits;
+            } else if (escaped == 'c' || escaped == 'C' || escaped == 'M' ||
+                       escaped == 'R' || escaped == 'X') {
                 return false;
             }
+        } else if (c == '.') {
+            // Dot may match a supplementary Unicode scalar.
+            atom_width = 2;
         } else if (c == '*' || c == '+' || c == '?' || c == '{' || c == '}') {
-            return false; // quantifier without a preceding atom / malformed sequence
+            return false;
         }
 
         uint64_t minimum_repeat = 1;
         uint64_t maximum_repeat = 1;
         if (i < pattern.size() && pattern[i] == '?') {
-            maximum_repeat = 1;
             minimum_repeat = 0;
+            maximum_repeat = 1;
             ++i;
         } else if (i < pattern.size() && pattern[i] == '{') {
             const size_t close = pattern.find('}', i + 1);
@@ -131,7 +130,7 @@ static bool analyzeBoundedRegexWidth(
                 if (comma == std::string::npos) maximum_repeat = minimum_repeat;
                 else {
                     const std::string upper = bounds.substr(comma + 1);
-                    if (upper.empty()) return false; // {m,} is unbounded
+                    if (upper.empty()) return false;
                     consumed = 0;
                     maximum_repeat = std::stoull(upper, &consumed);
                     if (consumed != upper.size()) return false;
@@ -141,13 +140,12 @@ static bool analyzeBoundedRegexWidth(
             i = close + 1;
         }
         if (i < pattern.size() && (pattern[i] == '?' || pattern[i] == '+'))
-            return false; // lazy/possessive suffix not in the proven subset
+            return false;
         if (!add_width(atom_width, maximum_repeat, total)) return false;
     }
     *maximum_utf16_units = total;
     return true;
 }
-
 static void annotateRegexRuleExecution(CompiledRegexRule& rule) {
     uint64_t width = 0;
     const bool bounded = rule.type == RegexRuleType::MATCH &&
@@ -155,7 +153,11 @@ static void annotateRegexRuleExecution(CompiledRegexRule& rule) {
     rule.execution_capability = bounded ?
         RegexExecutionCapability::BOUNDED_WINDOW :
         RegexExecutionCapability::DOCUMENT_CONTEXT_REQUIRED;
-    rule.maximum_match_bytes = bounded ? width * sizeof(UChar) : 0;
+    rule.maximum_match_bytes = bounded && width <= std::numeric_limits<uint64_t>::max() / sizeof(UChar) ?
+        width * sizeof(UChar) : 0;
+    if (bounded && rule.maximum_match_bytes == 0) {
+        rule.execution_capability = RegexExecutionCapability::DOCUMENT_CONTEXT_REQUIRED;
+    }
     for (auto& nested : rule.nested_rules) annotateRegexRuleExecution(nested);
 }
 
@@ -2148,7 +2150,10 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                                     uint64_t maximum_width = 0;
                                     if (analyzeBoundedRegexWidth(expanded_pattern, &maximum_width)) {
                                         rule.execution_capability = RegexExecutionCapability::BOUNDED_WINDOW;
-                                        rule.maximum_match_bytes = maximum_width * sizeof(UChar);
+                                        if (maximum_width <= std::numeric_limits<uint64_t>::max() / sizeof(UChar))
+                                            rule.maximum_match_bytes = maximum_width * sizeof(UChar);
+                                        else
+                                            rule.execution_capability = RegexExecutionCapability::DOCUMENT_CONTEXT_REQUIRED;
                                     }
                                     rule.pattern = compileOnigurumaUtf16(expanded_pattern, options);
                                     if (!rule.pattern) return nullptr;
