@@ -1,0 +1,297 @@
+package com.zerostudio.idea.treesitter.largefile
+
+import java.util.LinkedHashMap
+import java.util.concurrent.locks.ReentrantReadWriteLock
+import kotlin.concurrent.read
+import kotlin.concurrent.write
+
+/**
+ * Random-access UTF-16 document view. Offsets are UTF-16 code units (not bytes).
+ * Implementations may be backed by mmap windows, a piece tree, or chunk storage.
+ */
+interface Utf16DocumentSource {
+    val length: Long
+    val version: Long
+    operator fun get(offset: Long): Char
+}
+
+data class DocumentPartition(
+    val index: Int,
+    val start: Long,
+    val endExclusive: Long,
+    val firstLine: Long,
+    val lineCount: Long,
+    val version: Long
+) {
+    init {
+        require(index >= 0 && start >= 0 && endExclusive >= start)
+        require(firstLine >= 0 && lineCount >= 0)
+    }
+}
+
+data class ViewportPlan(
+    val requestedStart: Long,
+    val requestedEndExclusive: Long,
+    val partitions: List<DocumentPartition>,
+    val documentVersion: Long
+)
+
+/**
+ * Sparse line index + stable partition metadata. It stores one line checkpoint
+ * per stride, not one Long per line, so index memory remains bounded.
+ *
+ * A document edit invalidates the touched partition and the suffix: lexical and
+ * parser state may flow across every later boundary. Callers can later narrow
+ * this invalidation only when a grammar-provided convergence checkpoint agrees.
+ */
+class DocumentPartitionManager(
+    private val targetPartitionChars: Long = 64L * 1024L,
+    private val lineCheckpointStride: Long = 256L,
+    private val prefetchPartitions: Int = 1
+) {
+    private val lock = ReentrantReadWriteLock()
+    private var indexedVersion = Long.MIN_VALUE
+    private var indexedLength = 0L
+    private var partitions = emptyList<DocumentPartition>()
+    private var lineCheckpoints = LongArray(0)
+
+    init {
+        require(targetPartitionChars >= 256L)
+        require(lineCheckpointStride > 0L)
+        require(prefetchPartitions >= 0)
+    }
+
+    fun rebuild(source: Utf16DocumentSource) = lock.write {
+        val starts = ArrayList<Long>()
+        starts.add(0L)
+        var line = 0L
+        var nextCheckpoint = lineCheckpointStride
+        var offset = 0L
+        while (offset < source.length) {
+            val ch = source[offset]
+            if (ch == '\n') {
+                line++
+                if (line == nextCheckpoint) {
+                    starts.add(offset + 1L)
+                    nextCheckpoint += lineCheckpointStride
+                }
+            }
+            offset++
+        }
+        val checkpoints = starts.toLongArray()
+
+        val built = ArrayList<DocumentPartition>()
+        var start = 0L
+        var firstLine = 0L
+        while (start < source.length) {
+            val nominal = minOf(source.length, start + targetPartitionChars)
+            var end = nominal
+            // Prefer a line boundary close to the target. Bound the scan to one
+            // additional target window so a single giant line cannot stall indexing.
+            val scanLimit = minOf(source.length, nominal + targetPartitionChars)
+            while (end < scanLimit && end < source.length && source[end - 1L] != '\n') end++
+            if (end < source.length && end > 0L && source[end - 1L] != '\n') {
+                // A long line: retain a hard size bound and split only at a
+                // Unicode scalar boundary. Surrogate pairs are never separated.
+                end = nominal.coerceAtLeast(start + 1L)
+            }
+            if (end < source.length && end > 0L &&
+                Character.isHighSurrogate(source[end - 1L]) && Character.isLowSurrogate(source[end])) {
+                end++
+            }
+            if (end <= start) end = minOf(source.length, start + targetPartitionChars)
+            val endLine = countNewlines(source, start, end)
+            built.add(DocumentPartition(
+                index = built.size,
+                start = start,
+                endExclusive = end,
+                firstLine = firstLine,
+                lineCount = endLine + if (end > start && source[end - 1L] != '\n') 1L else 0L,
+                version = source.version
+            ))
+            firstLine += endLine + if (end > start && source[end - 1L] != '\n') 1L else 0L
+            start = end
+        }
+        if (source.length == 0L) {
+            built.add(DocumentPartition(0, 0L, 0L, 0L, 0L, source.version))
+        }
+        partitions = built
+        lineCheckpoints = checkpoints
+        indexedLength = source.length
+        indexedVersion = source.version
+    }
+
+    fun snapshot(): List<DocumentPartition> = lock.read { partitions.toList() }
+
+    fun planViewport(source: Utf16DocumentSource, start: Long, endExclusive: Long): ViewportPlan {
+        require(start >= 0L && endExclusive >= start && endExclusive <= source.length)
+        ensureIndexed(source)
+        return lock.read {
+            val first = findPartition(start)
+            val last = findPartition(if (endExclusive == start) start else endExclusive - 1L)
+            val from = (first - prefetchPartitions).coerceAtLeast(0)
+            val through = (last + prefetchPartitions).coerceAtMost(partitions.lastIndex)
+            ViewportPlan(start, endExclusive, partitions.subList(from, through + 1).toList(), indexedVersion)
+        }
+    }
+
+    /** Returns the nearest sparse line checkpoint at or before [line]. */
+    fun lineCheckpointAtOrBefore(line: Long): Long {
+        require(line >= 0L)
+        return lock.read {
+            if (lineCheckpoints.isEmpty()) return@read 0L
+            val index = (line / lineCheckpointStride).coerceAtMost(lineCheckpoints.lastIndex.toLong()).toInt()
+            lineCheckpoints[index]
+        }
+    }
+
+    /**
+     * Conservative edit invalidation. Returns the first partition that must be
+     * reparsed; every later partition is stale until state convergence is proven.
+     */
+    fun invalidateEdit(oldStart: Long, oldEndExclusive: Long, newLength: Long): Int = lock.write {
+        require(oldStart >= 0L && oldEndExclusive >= oldStart && newLength >= 0L)
+        val index = findPartition(oldStart.coerceAtMost(indexedLength))
+        val prefix = partitions.take(index)
+        partitions = prefix
+        indexedVersion = Long.MIN_VALUE
+        indexedLength = -1L
+        index
+    }
+
+    private fun ensureIndexed(source: Utf16DocumentSource) {
+        val current = lock.read { indexedVersion == source.version && indexedLength == source.length }
+        if (!current) rebuild(source)
+    }
+
+    private fun findPartition(offset: Long): Int {
+        if (partitions.isEmpty()) return 0
+        var low = 0
+        var high = partitions.lastIndex
+        while (low <= high) {
+            val mid = (low + high) ushr 1
+            val part = partitions[mid]
+            if (offset < part.start) high = mid - 1
+            else if (offset >= part.endExclusive && mid != partitions.lastIndex) low = mid + 1
+            else return mid
+        }
+        return low.coerceIn(0, partitions.lastIndex)
+    }
+
+    private fun countNewlines(source: Utf16DocumentSource, start: Long, end: Long): Long {
+        var count = 0L
+        var i = start
+        while (i < end) {
+            if (source[i] == '\n') count++
+            i++
+        }
+        return count
+    }
+}
+
+/** LRU cache with an explicit byte budget and deterministic close-on-eviction. */
+class BoundedLruCache<K : Any, V : Any>(
+    private val maxBytes: Long,
+    private val weigh: (V) -> Long,
+    private val onEvict: (V) -> Unit = {}
+) : AutoCloseable {
+    private val lock = ReentrantReadWriteLock()
+    private val entries = LinkedHashMap<K, V>(16, 0.75f, true)
+    private var usedBytes = 0L
+    init { require(maxBytes >= 0L) }
+
+    val size: Int get() = lock.read { entries.size }
+    val bytesUsed: Long get() = lock.read { usedBytes }
+
+    fun get(key: K): V? = lock.write { entries[key] }
+
+    fun put(key: K, value: V) = lock.write {
+        val weight = weigh(value).coerceAtLeast(0L)
+        val previous = entries.remove(key)
+        if (previous != null) {
+            usedBytes -= weigh(previous).coerceAtLeast(0L)
+            if (previous !== value) onEvict(previous)
+        }
+        if (weight > maxBytes) {
+            onEvict(value)
+            return@write
+        }
+        entries[key] = value
+        usedBytes += weight
+        val iterator = entries.entries.iterator()
+        while (usedBytes > maxBytes && iterator.hasNext()) {
+            val eldest = iterator.next().value
+            usedBytes -= weigh(eldest).coerceAtLeast(0L)
+            iterator.remove()
+            onEvict(eldest)
+        }
+    }
+
+    fun remove(key: K): V? = lock.write {
+        val value = entries.remove(key) ?: return@write null
+        usedBytes -= weigh(value).coerceAtLeast(0L)
+        value
+    }
+
+    fun invalidate(predicate: (K, V) -> Boolean) = lock.write {
+        val iterator = entries.entries.iterator()
+        while (iterator.hasNext()) {
+            val entry = iterator.next()
+            if (predicate(entry.key, entry.value)) {
+                usedBytes -= weigh(entry.value).coerceAtLeast(0L)
+                iterator.remove()
+                onEvict(entry.value)
+            }
+        }
+    }
+
+    override fun close() = lock.write {
+        entries.values.forEach(onEvict)
+        entries.clear()
+        usedBytes = 0L
+    }
+}
+
+/** A cache identity must include every input capable of changing captures. */
+data class CaptureCacheKey(
+    val documentVersion: Long,
+    val partitionIndex: Int,
+    val startUtf16: Long,
+    val endUtf16: Long,
+    val grammarRevision: Long,
+    val themeRevision: Long
+)
+
+data class TokenizerCheckpoint(
+    val documentVersion: Long,
+    val line: Long,
+    val utf16Offset: Long,
+    val stateStack: List<String>
+) {
+    init { require(documentVersion >= 0L && line >= 0L && utf16Offset >= 0L) }
+}
+
+/**
+ * Per-line Monarch continuation snapshots. A checkpoint is reusable only for
+ * the exact document version; edits must invalidate from the preceding checkpoint.
+ */
+class TokenizerCheckpointStore(private val maxEntries: Int = 4096) {
+    private val entries = object : LinkedHashMap<Long, TokenizerCheckpoint>(16, 0.75f, true) {}
+    init { require(maxEntries > 0) }
+
+    @Synchronized fun put(checkpoint: TokenizerCheckpoint) {
+        entries[checkpoint.line] = checkpoint
+        while (entries.size > maxEntries) entries.remove(entries.entries.iterator().next().key)
+    }
+
+    @Synchronized fun nearest(line: Long, documentVersion: Long): TokenizerCheckpoint? =
+        entries.values.filter { it.line <= line && it.documentVersion == documentVersion }
+            .maxByOrNull { it.line }
+
+    @Synchronized fun invalidateFrom(line: Long) {
+        val iterator = entries.entries.iterator()
+        while (iterator.hasNext()) if (iterator.next().key >= line) iterator.remove()
+    }
+
+    @Synchronized fun clear() = entries.clear()
+}
