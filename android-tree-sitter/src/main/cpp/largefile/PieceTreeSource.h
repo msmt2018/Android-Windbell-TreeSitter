@@ -47,7 +47,8 @@ private:
     static uint64_t subtreeBytes(const std::unique_ptr<Node> &node) noexcept;
     static std::unique_ptr<Node> merge(std::unique_ptr<Node> left,
                                        std::unique_ptr<Node> right) noexcept;
-    static bool split(std::unique_ptr<Node> root, uint64_t offset,
+    static void updateNode(Node *node) noexcept;
+    bool split(std::unique_ptr<Node> root, uint64_t offset,
                       std::unique_ptr<Node> &left,
                       std::unique_ptr<Node> &right) noexcept;
     static uint64_t countNodes(const Node *node) noexcept;

@@ -43,7 +43,7 @@ uint64_t PieceTreeSource::subtreeBytes(const std::unique_ptr<Node> &node) noexce
     return node ? node->subtree_bytes : 0;
 }
 
-static void updatePieceNode(PieceTreeSource::Node *node) noexcept {
+void PieceTreeSource::updateNode(Node *node) noexcept {
     if (!node) return;
     node->subtree_bytes = node->length +
         (node->left ? node->left->subtree_bytes : 0) +
@@ -56,7 +56,7 @@ std::unique_ptr<PieceTreeSource::Node> PieceTreeSource::merge(
     if (!right) return left;
     if (left->priority > right->priority) {
         left->right = merge(std::move(left->right), std::move(right));
-        updatePieceNode(left.get());
+        updateNode(left.get());
         return left;
     }
     right->left = merge(std::move(left), std::move(right->left));
