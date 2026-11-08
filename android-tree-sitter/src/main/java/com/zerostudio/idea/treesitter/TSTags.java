@@ -25,6 +25,9 @@ import java.util.Objects;
  */
 public final class TSTags {
 
+  public static final int MAX_RESULTS = 250_000;
+  public static final int MAX_PENDING_MATCHES = 1_000_000;
+
   private TSTags() {
   }
 
@@ -61,8 +64,9 @@ public final class TSTags {
     if (startByte < 0 || endByte < startByte || endByte > 0xFFFF_FFFFL) {
       throw new IllegalArgumentException("Invalid absolute byte range");
     }
-    if (maxResults < 1 || maxPendingMatches < 1) {
-      throw new IllegalArgumentException("Tag query limits must be positive");
+    if (maxResults < 1 || maxResults > MAX_RESULTS
+        || maxPendingMatches < 1 || maxPendingMatches > MAX_PENDING_MATCHES) {
+      throw new IllegalArgumentException("Tag query limits exceed the supported native budget");
     }
     return Native.extract(
         query.getNativeObject(), root, startByte, endByte,

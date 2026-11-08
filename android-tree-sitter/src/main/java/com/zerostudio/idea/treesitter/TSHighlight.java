@@ -21,6 +21,10 @@ import java.util.Objects;
  * or introduce another highlighting runtime.
  */
 public final class TSHighlight {
+  public static final int MAX_RESULTS = 250_000;
+  public static final int MAX_PENDING_MATCHES = 1_000_000;
+  public static final int MAX_SPANS = 500_000;
+
   private TSHighlight() {}
 
   /**
@@ -44,8 +48,9 @@ public final class TSHighlight {
     if (startByte < 0 || endByte < startByte || endByte > 0xFFFF_FFFFL) {
       throw new IllegalArgumentException("Invalid absolute byte range");
     }
-    if (maxResults < 1 || maxPendingMatches < 1) {
-      throw new IllegalArgumentException("Highlight query limits must be positive");
+    if (maxResults < 1 || maxResults > MAX_RESULTS
+        || maxPendingMatches < 1 || maxPendingMatches > MAX_PENDING_MATCHES) {
+      throw new IllegalArgumentException("Highlight query limits exceed the supported native budget");
     }
     return Native.extract(query.getNativeObject(), root, startByte, endByte,
         maxResults, maxPendingMatches);
@@ -69,8 +74,8 @@ public final class TSHighlight {
     if (!query.canAccess()) {
       throw new IllegalArgumentException("Cannot map highlights with an invalid query");
     }
-    if (maxSpans < 1) {
-      throw new IllegalArgumentException("maxSpans must be positive");
+    if (maxSpans < 1 || maxSpans > MAX_SPANS) {
+      throw new IllegalArgumentException("maxSpans must be between 1 and MAX_SPANS");
     }
     final int captureCount = query.getCaptureCount();
     if (styleIds.length != captureCount) {
@@ -135,7 +140,9 @@ public final class TSHighlight {
     if (startByte < 0 || endByte < startByte || endByte > 0xFFFF_FFFFL) {
       throw new IllegalArgumentException("Invalid absolute byte range");
     }
-    if (maxResults < 1 || maxPendingMatches < 1 || maxSpans < 1) {
+    if (maxResults < 1 || maxResults > MAX_RESULTS
+        || maxPendingMatches < 1 || maxPendingMatches > MAX_PENDING_MATCHES
+        || maxSpans < 1 || maxSpans > MAX_SPANS) {
       throw new IllegalArgumentException("Highlight query limits must be positive");
     }
     return Native.extractSpans(query.getNativeObject(), root, startByte, endByte,
