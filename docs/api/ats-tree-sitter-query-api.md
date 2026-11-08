@@ -43,7 +43,7 @@ CompiledQuery 必须绑定 grammar identity/version、ABI 和 fingerprint；只�
 
 仓库已有 `TSQuery`、`TSQueryCursor` Java 封装；`TSQuery.create(TSLanguage, String)` 创建原生查询，`TSQueryCursor.exec(TSQuery, TSNode)` 执行查询，Cursor 支持 byte range、match limit 和 PredicateHandler。Executor 会预检查询所需 predicate 名称是否被任一 Handler 声明支持；Native Cursor 本身对 Handler 返回值的语义仍需单独验证。C++ TSH 侧已有 `TshGrammar.dynamic_ts_query`，由 `TshCompiler` 使用 `ts_query_new` 编译动态查询。
 
-当前 `TshTreeSitterQueryCompiler` 已通过 `TSQuery.create(language, source)` 编译原生 S-expression Query，并把 `TSQuery` 注册到 `TshObjectRegistry`；编译失败映射为结构化诊断（包含 Native error type 与 UTF-8 byte offset）。ATS source 会被明确拒绝，不会被当作 Tree-sitter S-expression 误解析。\n\n当前 `TshTreeSitterQueryExecutor` 通过 `TSQueryCursor.create()`、`setByteRange()`、`exec()`、`nextMatch()` 执行，并把 `TSQueryMatch` / `TSQueryCapture` 转为 TSH Capture。它只关闭自己创建的 Cursor；Query 由共享 `TshNativeQueryLeaseStore` 管理。Executor 开始执行时 acquire Lease；`release(queryId)` 或同 ID 替换会先退役旧 Query，阻止新 Lease，已有执行完成后最后一个 Lease 释放才真正 close。对象注册表条目在退役时移除，但活动 Lease 保留 Query 强引用。 Query Registry 的事务锁同时保护 revision 发布/注销与 Executor 的当前 revision 检查及 Lease acquire，避免替换窗口中的跨 Registry 状态撕裂。Tree 与 Grammar Language 已接入共享 `TshNativeResourceLeaseStore`：Tree Executor acquire Tree lease 并在执行完成后释放；Language Resolver 返回带 objectId 的注册 Handle，Compiler 在 `TSQuery.create` 期间持有 Language lease。资源 owner 必须先调用 `retire(objectId)`，不得绕过 Store 直接 close；最后一个 Lease 释放后 Store 才 close。对象仍需在 `TshObjectRegistry` 注册，以便按 ID 查找。
+当前 `TshTreeSitterQueryCompiler` 已通过 `TSQuery.create(language, source)` 编译原生 S-expression Query，并把 `TSQuery` 注册到 `TshObjectRegistry`；编译失败映射为结构化诊断（包含 Native error type 与 UTF-8 byte offset）。ATS source 会被明确拒绝，不会被当作 Tree-sitter S-expression 误解析。\n\n当前 `TshTreeSitterQueryExecutor` 通过 `TSQueryCursor.create()`、`setByteRange()`、`exec()`、`nextMatch()` 执行，并把 `TSQueryMatch` / `TSQueryCapture` 转为 TSH Capture。它只关闭自己创建的 Cursor；Query 由共享 `TshNativeQueryLeaseStore` 管理。Executor 开始执行时 acquire Lease；`release(queryId)` 或同 ID 替换会先退役旧 Query，阻止新 Lease，已有执行完成后最后一个 Lease 释放才真正 close。对象注册表条目在退役时移除，但活动 Lease 保留 Query 强引用。 Query Registry 的事务锁同时保护 revision 发布/注销与 Executor 的当前 revision 检查及 Lease acquire，避免替换窗口中的跨 Registry 状态撕裂。Tree 与 Grammar Language 已接入共享 `TshNativeResourceLeaseStore`：Tree Executor acquire Tree lease 并在执行完成后释放；Language Resolver 返回带 objectId 的注册 Handle，Compiler 在 `TSQuery.create` 期间持有 Language lease。资源 owner 应通过 `TshNativeResourceRegistry` 统一注册、按类型获取 Lease 并退役；该协调入口先阻止新 Lease，再注销 `TshObjectRegistry` 索引，已有 Lease 释放后 Store 才 close。底层 Store 仍可供内部 Adapter 使用，但宿主不应分别操作两个 Registry。
 
 ## 8. 错误与生命周期
 
@@ -87,3 +87,10 @@ Tree Executor 从 `TshObjectRegistry` 解析 TSTree 后，必须成功 acquire �
 
 
 **关键生命周期约束：** Tree-sitter Query 可能依赖 Grammar Language 的静态数据/动态库代码。仅在 `TSQuery.create` 调用期间持有 Language Lease 不够。因此 Compiler 将 Language Lease 转交给 `TshNativeQueryLeaseStore` 作为 Query 的依赖 Lease；Query 正常执行时，Query Lease 间接保证 Language Lease 存活。只有 Query 已退役、活动 Query Lease 清零、Native Query close 完成后，依赖 Language Lease 才释放并允许 `TSLanguage.close()/dlclose`。
+
+
+### Coordinated native resource registry
+
+新增 `TshNativeResourceRegistry` 作为宿主侧 Tree/Language 资源入口。它封装 `TshObjectRegistry` 与 `TshNativeResourceLeaseStore`，提供统一 register、带 Java 类型令牌的 acquire、retire 和活动 Lease 计数。retire 先让 Lease Store 拒绝新获取，再从对象索引注销；已取得的 Lease 仍保持 Native 资源存活，直到最后一次 close。
+
+该 Facade 和测试目前仅有源码提交。现有 Tree Executor / Grammar Resolver 的构造仍可直接注入底层 Store，宿主调用点尚未全面迁移；因此不能将“资源所有权已统一”或“并发关闭已验证”标记为完成。后续需把 Grammar/Tree owner 与 Executor 迁移到协调入口，并执行 Gradle/JUnit/Native 并发测试。
