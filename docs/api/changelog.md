@@ -28,19 +28,20 @@
 - Predicate Handler 改为按注册顺序确定性执行；TSH 预检逐个扫描每个 pattern 中的所有 predicate，而不只检查首个 predicate。
 - Query revision 发布、注销和 Executor 的“当前 revision 检查 + Lease acquire”统一通过 `TshCompiledQueryRegistry` 事务锁协调，避免并发替换期间 Registry 指向新 revision、Lease Store 却已退役该 revision的短暂不一致。
 - 新增 `TshNativeQueryLeaseStore` 与生命周期测试源码，覆盖 release 延迟关闭、同 ID 替换和批量退役；Executor 对 predicate 名称执行 Handler 声明覆盖预检。
-- 新增通用 `TshNativeResourceLeaseStore`：资源 Handle 实例校验、Lease 计数、retire/retireAll 后延迟 close；Tree Executor 接入 Tree Lease，Grammar Language Resolver 改为返回带 objectId 的 Language Handle，Compiler 在 Native Query 编译期间持有 Language Lease；新增资源 Lease 测试源码。
+- 新增通用 `TshNativeResourceLeaseStore`：资源 Handle 实例校验、Lease 计数、retire/retireAll 后延迟 close；Tree Executor 接入 Tree Lease，Grammar Language Resolver 改为返回带 objectId 的 Language Handle，Compiler 将 Language Lease 作为 Query 依赖保持至 Query 完整退役；新增资源 Lease 测试源码。
+- 新增 `TshNativeResourceRegistry` 协调对象索引与 Native 资源所有权：统一注册、按 Native 类型校验的 Lease 获取、先退役后注销对象索引；新增注册/获取/退役生命周期测试源码。宿主尚未全面迁移到该协调入口。
 
 ### Planned
 - Piece Tree/Rope 索引化坐标映射与 Layout-aware 坐标 Provider。
 - Engine Session、任务调度、资源 Scope 和兼容迁移接线。
 - .tsh Lexer/Parser/AST/Schema/Language Service 实现及 C++ Compiler 兼容。
 - ATS Lexer/Parser/AST/Compiler 到现有 Tree-sitter Query 执行器的适配。
-- Tree/Language Native lease 的宿主全面迁移（禁止绕过 Store 直接 close）、增量查询与可中断取消/真实 step budget。
+- Tree/Language Native lease 的宿主全面迁移到 `TshNativeResourceRegistry`（禁止绕过 Store 直接 close）、增量查询与可中断取消/真实 step budget。
 - Regex 独立 WindowLease、Oniguruma 连续缓冲区和跨窗口等价策略。
 - Unified Match/Scope/Attribute/Highlight 与 Theme/RenderPlan 运行时实现。
 - Binding/EventBus/Provider 版本协商和诊断收集器。
 - 本地 Gradle 编译、自动化测试和真实编辑器渲染验证。
 
 ### Status
-- 本轮新增的 Kotlin API 和测试仅代表源码已提交；没有运行 Gradle、JUnit、C++/JNI 构建或 Android 设备验证。Tree-sitter Adapter 调用了既有 Native API；Query lease 与 Predicate 过滤源码和测试源码已提交，但未做 Gradle/JUnit 或真实 Native 运行验证。
+- 本轮新增的 Kotlin API 和测试仅代表源码已提交；没有运行 Gradle、JUnit、C++/JNI 构建或 Android 设备验证。Tree-sitter Adapter 调用了既有 Native API；Query/Tree/Language lease、Predicate 过滤和协调式 Resource Registry 源码及测试源码已提交，但未做 Gradle/JUnit 或真实 Native 运行验证。
 - 现有仓库已检查到 `TSQuery`、`TSQueryCursor`、`TshCompiler`、`TshGrammar.dynamic_ts_query`；后续实现应复用这些既有能力并保持旧 JNI 入口兼容。
