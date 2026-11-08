@@ -103,6 +103,30 @@ public class QueryTest extends TreeSitterTest {
     }
   }
 
+
+  @Test
+  public void testQueryStringValueSupportsEmptyAndRejectsUnpairedSurrogates() {
+    final String emptyQuery = "((identifier) @name (#eq? @name \"\"))";
+    try (final TSQuery query = TSQuery.create(TSLanguageJava.getInstance(), emptyQuery)) {
+      boolean foundEmpty = false;
+      for (int i = 0; i < query.getStringCount(); i++) {
+        if ("".equals(query.getStringValueForId(i))) {
+          foundEmpty = true;
+          break;
+        }
+      }
+      assertThat(foundEmpty).isTrue();
+    }
+
+    final String invalidQuery = "((identifier) @name (#eq? @name \"" + '\uD800' + "\"))";
+    try {
+      TSQuery.create(TSLanguageJava.getInstance(), invalidQuery);
+      throw new AssertionError("Expected an unpaired UTF-16 surrogate to be rejected");
+    } catch (IllegalArgumentException expected) {
+      assertThat(expected).hasMessageThat().contains("unpaired UTF-16");
+    }
+  }
+
   @Test
   public void testQuerySyntaxError() throws Exception {
     try (TSQuery query = TSQuery.create(TSLanguageJava.getInstance(), "(class_declaration")) {
