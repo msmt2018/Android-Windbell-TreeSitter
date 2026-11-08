@@ -1061,6 +1061,8 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
     }
     NativeHighlightCache::Key cache_key{
         document->version,
+        document->source->version(),
+        document->partition_index.version(),
         static_cast<uint32_t>(range_start_byte),
         static_cast<uint32_t>(range_end_byte),
         diagnostics == JNI_TRUE
