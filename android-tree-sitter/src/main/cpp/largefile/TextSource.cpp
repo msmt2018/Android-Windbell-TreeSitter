@@ -1,6 +1,7 @@
 #include "TextSource.h"
 
-#include <algorithm>\n#include <cstring>
+#include <algorithm>
+#include <cstring>
 #include <limits>
 #include <utility>
 
