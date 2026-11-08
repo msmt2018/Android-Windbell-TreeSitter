@@ -172,7 +172,16 @@ class WindbellTshLinkageTest {
     @Test
     fun testByteRangeHighlightingRestrictsNativeQueryAndClipsOutput() {
         val engine = WindbellTshEngine.instance
-        assertTrue(engine.loadTshSource("range-test", javaTestDsl(), null))
+        val rangeDsl = """
+            tsh 2 {
+                language { id: "range-test" extensions: [".range-test"] }
+                styles { identifier { scope: "variable.other" } }
+                contains: [
+                    { match: /[a-z]+/, style: "identifier" }
+                ]
+            }
+        """.trimIndent()
+        assertTrue(engine.loadTshSource("range-test", rangeDsl, null))
 
         val text = "alpha beta"
         val spans = engine.computeHighlights(
