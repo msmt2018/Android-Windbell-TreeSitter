@@ -15,6 +15,7 @@ class TshNativeResourceRegistry(
     private val leases: TshNativeResourceLeaseStore
 ) {
     private val lock = Any()
+    private val ownedIds = LinkedHashSet<TshObjectId>()
 
     data class Registration<T : TSNativeObject>(
         val descriptor: TshObjectDescriptor,
@@ -37,7 +38,9 @@ class TshNativeResourceRegistry(
         }
         val descriptor = objects.register(resource, type, capabilities, metadata)
         try {
-            Registration(descriptor, leases.register(descriptor.id, resource))
+            val handle = leases.register(descriptor.id, resource)
+            ownedIds.add(descriptor.id)
+            Registration(descriptor, handle)
         } catch (error: Throwable) {
             objects.unregister(descriptor.id)
             throw error
@@ -69,8 +72,26 @@ class TshNativeResourceRegistry(
      */
     fun retire(objectId: TshObjectId): Boolean = synchronized(lock) {
         val retired = leases.retire(objectId)
-        if (retired) objects.unregister(objectId)
+        if (retired) {
+            objects.unregister(objectId)
+            ownedIds.remove(objectId)
+        }
         retired
+    }
+
+    /**
+     * Retires every resource published through this coordinator. This deliberately does not call
+     * the underlying store's retireAll(), because that store may be shared with another owner.
+     */
+    fun retireAll(): Int = synchronized(lock) {
+        val ids = ownedIds.toList()
+        var retiredCount = 0
+        for (id in ids) {
+            if (leases.retire(id)) retiredCount++
+            objects.unregister(id)
+            ownedIds.remove(id)
+        }
+        retiredCount
     }
 
     /** Number of active operations retaining this resource. */
