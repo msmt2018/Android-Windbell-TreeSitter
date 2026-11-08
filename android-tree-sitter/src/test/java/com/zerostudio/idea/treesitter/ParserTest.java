@@ -29,6 +29,8 @@ import com.zerostudio.idea.treesitter.log.TSLanguageLog;
 import com.zerostudio.idea.treesitter.python.TSLanguagePython;
 import com.zerostudio.idea.treesitter.string.UTF16StringFactory;
 import java.io.UnsupportedEncodingException;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -78,6 +80,31 @@ public class ParserTest extends TreeSitterTest {
       try (TSTree tree = parser.parseString("print(\"hi\")")) {
         assertThat(tree.getRootNode().getNodeString()).isEqualTo(
           "(module (expression_statement (call function: (identifier) arguments: (argument_list (string (string_start) (string_content) (string_end))))))");
+      }
+    }
+  }
+
+  @Test
+  public void testParseSegmentedDirectBuffers() {
+    try (TSParser parser = TSParser.create()) {
+      parser.setLanguage(TSLanguageJava.getInstance());
+
+      final ByteBuffer first = ByteBuffer.allocateDirect(32).order(ByteOrder.LITTLE_ENDIAN);
+      for (char ch : "class Segmented ".toCharArray()) {
+        first.putChar(ch);
+      }
+      first.flip();
+
+      final ByteBuffer second = ByteBuffer.allocateDirect(32).order(ByteOrder.LITTLE_ENDIAN);
+      for (char ch : "{ int value = 42; }".toCharArray()) {
+        second.putChar(ch);
+      }
+      second.flip();
+
+      try (TSTree tree = parser.parseBuffers(new ByteBuffer[]{first, second})) {
+        assertThat(tree).isNotNull();
+        assertThat(tree.getRootNode().getNodeString()).contains("class_declaration");
+        assertThat(tree.getRootNode().hasErrors()).isFalse();
       }
     }
   }
