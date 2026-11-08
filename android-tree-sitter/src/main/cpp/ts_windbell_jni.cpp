@@ -751,16 +751,18 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeGetPalette(
         auto color_it = scheme_it->second.colors.find(style.style_id);
         if (color_it != scheme_it->second.colors.end()) {
             const SchemeColor& color = color_it->second;
-            values[base + 1] = static_cast<jint>(color.light_color);
-            values[base + 2] = static_cast<jint>(color.dark_color);
-            values[base + 3] = static_cast<jint>(color.light_font_flags);
-            values[base + 4] = static_cast<jint>(color.dark_font_flags);
-            values[base + 5] = color.has_light_color ? 1 : 0;
-            values[base + 6] = color.has_dark_color ? 1 : 0;
-            values[base + 7] = static_cast<jint>(color.light_background);
-            values[base + 8] = static_cast<jint>(color.dark_background);
-            values[base + 9] = color.has_light_background ? 1 : 0;
-            values[base + 10] = color.has_dark_background ? 1 : 0;
+            const TshStylePaint light = color.lightPaint();
+            const TshStylePaint dark = color.darkPaint();
+            values[base + 1] = static_cast<jint>(light.foreground.argb);
+            values[base + 2] = static_cast<jint>(dark.foreground.argb);
+            values[base + 3] = static_cast<jint>(light.font.flags);
+            values[base + 4] = static_cast<jint>(dark.font.flags);
+            values[base + 5] = light.foreground.present ? 1 : 0;
+            values[base + 6] = dark.foreground.present ? 1 : 0;
+            values[base + 7] = static_cast<jint>(light.background.argb);
+            values[base + 8] = static_cast<jint>(dark.background.argb);
+            values[base + 9] = light.background.present ? 1 : 0;
+            values[base + 10] = dark.background.present ? 1 : 0;
         }
     }
     env->SetIntArrayRegion(result, 0, count * kPaletteFields, values.data());

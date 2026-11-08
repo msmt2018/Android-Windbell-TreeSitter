@@ -171,7 +171,25 @@ struct TshStyle {
     std::unordered_map<std::string, std::string> metadata;
 };
 
-// 单个 Token 的方案配色定义
+// Typed paint values are the renderer-facing style model. ARGB keeps
+// source alpha intact; presence is independent so transparent colors remain valid.
+struct TshColorValue {
+    uint32_t argb = 0;
+    bool present = false;
+};
+
+struct TshFontAttributes {
+    uint16_t flags = 0;
+};
+
+struct TshStylePaint {
+    TshColorValue foreground;
+    TshColorValue background;
+    TshFontAttributes font;
+};
+
+// 单个 Token 的方案配色定义。Legacy fields remain the compiler's
+// serialization/storage representation while consumers migrate to typed paint.
 struct SchemeColor {
     // Zero is an absent value, never a fallback color. The DSL owns all visible values.
     uint32_t light_color = 0;
@@ -186,6 +204,22 @@ struct SchemeColor {
     bool has_dark_background = false;
     bool explicit_light_color = false;
     bool explicit_dark_color = false;
+
+    TshStylePaint lightPaint() const {
+        return {
+            {light_color, has_light_color},
+            {light_background, has_light_background},
+            {light_font_flags}
+        };
+    }
+
+    TshStylePaint darkPaint() const {
+        return {
+            {dark_color, has_dark_color},
+            {dark_background, has_dark_background},
+            {dark_font_flags}
+        };
+    }
 };
 
 // 多主题方案实体 (Schemes Block)
