@@ -89,11 +89,13 @@ public class ParserTest extends TreeSitterTest {
     try (TSParser parser = TSParser.create()) {
       parser.setLanguage(TSLanguageJava.getInstance());
 
-      final ByteBuffer first = ByteBuffer.allocateDirect(32).order(ByteOrder.LITTLE_ENDIAN);
+      final ByteBuffer first = ByteBuffer.allocateDirect(40).order(ByteOrder.LITTLE_ENDIAN);
+      first.putChar('x').putChar('x').putChar('x').putChar('x');
       for (char ch : "class Segmented ".toCharArray()) {
         first.putChar(ch);
       }
       first.flip();
+      first.position(8);
 
       final ByteBuffer second = ByteBuffer.allocateDirect(64).order(ByteOrder.LITTLE_ENDIAN);
       for (char ch : "{ int value = 42; }".toCharArray()) {
