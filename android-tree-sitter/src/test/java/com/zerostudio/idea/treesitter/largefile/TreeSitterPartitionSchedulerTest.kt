@@ -137,7 +137,7 @@ class TreeSitterPartitionSchedulerTest {
     @Test fun supersededSourceReadIsSilentAndDoesNotQueuePartialViewportWork() {
         var cancelReads = false
         val source = object : Utf16DocumentSource {
-            private val text = ("line\\n").repeat(300)
+            private val text = ("line\n").repeat(300)
             override val length = text.length.toLong()
             override val version = 19L
             override fun get(offset: Long) = text[offset.toInt()]
@@ -168,7 +168,7 @@ class TreeSitterPartitionSchedulerTest {
     @Test fun asyncViewportRequestDoesNotReadOrIndexOnCallerThread() {
         val enteredRead = CountDownLatch(1)
         val releaseRead = CountDownLatch(1)
-        val text = ("line\\n").repeat(200)
+        val text = ("line\n").repeat(200)
         val source = object : Utf16DocumentSource {
             override val length = text.length.toLong()
             override val version = 77L
