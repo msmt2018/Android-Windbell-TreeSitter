@@ -256,7 +256,7 @@ class DocumentPartitionManager(
 }
 
 /** LRU cache with an explicit byte budget and deterministic close-on-eviction. */
-class BoundedLruCache<K : Any, V : Any>(
+class ByteBudgetLruCache<K : Any, V : Any>(
     private val maxBytes: Long,
     private val weigh: (V) -> Long,
     private val onEvict: (V) -> Unit = {}
