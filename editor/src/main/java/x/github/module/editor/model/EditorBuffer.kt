@@ -17,6 +17,7 @@
 package x.github.module.editor.model
 
 import kotlin.text.Regex
+import java.util.concurrent.atomic.AtomicLong
 
 import com.zerostudio.idea.piecetable.SliceChange
 import com.zerostudio.idea.piecetable.SliceEdit
@@ -188,9 +189,11 @@ interface EditorTextSnapshot : CharSequence {
     fun substring(startIndex: Int, endIndex: Int = length): String
 }
 
+private val nextStringSnapshotVersion = AtomicLong()
+
 private class StringEditorTextSnapshot(private val text: String) : EditorTextSnapshot {
     override val length: Int get() = text.length
-    override val version: Long = 0L
+    override val version: Long = nextStringSnapshotVersion.incrementAndGet()
     override fun get(index: Int): Char = text[index]
     override fun subSequence(startIndex: Int, endIndex: Int): CharSequence = text.subSequence(startIndex, endIndex)
     override fun substring(startIndex: Int, endIndex: Int): String = text.substring(startIndex, endIndex)
