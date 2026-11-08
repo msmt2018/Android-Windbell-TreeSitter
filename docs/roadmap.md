@@ -68,4 +68,9 @@
 - 阶段 7：`api/binding-events-and-extension.md`。
 - 全阶段：`api/diagnostics-and-observability.md`、`api/public-api-review-checklist.md`。
 
+- 阶段 2：补充 `api/selection-cursor-multicursor-api.md`、`api/symbol-outline-navigation-api.md`。
+- 阶段 3：补充 `api/language-intelligence-api.md`、`api/injection-and-language-layer-api.md`。
+- 阶段 5/6：补充 `api/decorations-gutter-inlay-codelens-api.md`。
+- 阶段 7/9：补充 `api/edit-transaction-undo-redo-command-api.md`。
+
 新增公共 API 必须先更新契约和示例，再实现接口；实现后补齐测试、兼容性说明和 changelog。没有对应测试与状态标记的文档条目不得标记为已完成。
