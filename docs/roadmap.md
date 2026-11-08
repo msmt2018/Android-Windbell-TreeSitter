@@ -54,7 +54,7 @@
 - [x] 基于现有 TSQuery/TSQueryCursor 的 Kotlin Compiler/Executor Adapter：Query 编译、Cursor 执行、Capture 转换、Grammar 检查、结构化错误和 Cursor finally-close。
 - [x] Native Query lease/refcount：编译器与执行器共享 Lease Store；release/替换先退役，活动执行结束后延迟 close。
 - [ ] Tree/Language Native lease；当前 Tree 与 Language 仍由调用方持有，关闭不得与执行并发。
-- [x] Predicate Handler 结果语义：OK 接受、ERR 拒绝当前 match、UNHANDLED 委派下一 Handler；全部 UNHANDLED 时拒绝。按注册顺序确定 Handler 调用顺序。
+- [x] Predicate Handler 结果语义：OK 接受当前表达式、ERR 拒绝当前 match、UNHANDLED 委派下一 Handler；按 Done 分隔表达式并逐个执行，同一 pattern 的多个表达式全部通过才保留 match；按注册顺序确定 Handler 调用顺序。
 - [ ] Tree-sitter incremental edit/changed-range 查询。
 - [ ] 与现有 dynamic_ts_query 及旧 native 方法建立兼容 Adapter。
 - [ ] 实现可中断 Native 执行/真实 step budget；当前 Cursor 不暴露 VM steps，取消只能在两次 nextMatch 调用之间检查。
