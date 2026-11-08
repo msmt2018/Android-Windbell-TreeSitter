@@ -20,7 +20,7 @@
 |---|---|---|
 | 公共 API 基础 | TshEngine、TshResult、诊断/坐标/对象/Provider 注册、TextSnapshot 等 Kotlin 源码已存在 | 全模块构建、ABI 稳定性、与 Native 执行入口接通 |
 | DSL | Parser-neutral typed AST、Schema Registry、Config Repository Kotlin 源码已提交 | .tsh Lexer/Parser、C++ Compiler Schema 接入、Gradle 构建与测试 |
-| ATS/Tree-sitter | Query 数据契约、Registry、基于既有 TSQuery/TSQueryCursor 的 Kotlin Compiler/Executor Adapter 与错误映射源码已提交 | ATS Lexer/Parser、Tree Query lease 已有源码；Tree/Language lease、增量查询、真实 Native 测试与构建验证仍待完成 |
+| ATS/Tree-sitter | Query 数据契约、Registry、基于既有 TSQuery/TSQueryCursor 的 Compiler/Executor Adapter、Query/Tree/Language Lease 与协调式 Resource Registry 源码已提交 | ATS Lexer/Parser、宿主全面迁移、增量查询、真实 Native 测试与构建验证仍待完成 |
 | 旧 TSH 执行入口 | WindbellTshEngine、TshCompiler、WindbellEngine、JNI 入口存在 | 与新 Facade 的完整桥接、错误结构化、所有权治理 |
 | 双管线 | C++ core 有 Regex 与 Tree-sitter/Query 混合处理 | ATS 完整语法、统一 Match/Scope、Regex 窗口正确性 |
 | 样式/绘制 | 旧 Palette 与 Spannable 前景色/粗体路径存在 | 完整 Font/Color/Decoration、通用 RenderPlan、后端回执及设备覆盖 |
@@ -53,8 +53,9 @@
 - [ ] ATS Lexer/Parser/AST/Compiler，映射为 Tree-sitter Query plan。
 - [x] 基于现有 TSQuery/TSQueryCursor 的 Kotlin Compiler/Executor Adapter：Query 编译、Cursor 执行、Capture 转换、Grammar 检查、结构化错误和 Cursor finally-close。
 - [x] Native Query lease/refcount：编译器与执行器共享 Lease Store；release/替换先退役，活动执行结束后延迟 close。
-- [x] Tree/Language Native lease 首版源码接入：Tree Executor 持有 Tree Lease；Language Compiler 将 Language Lease 转交为 Query 依赖 Lease，覆盖 Query 整个存活期；Tree Executor 持有 Tree Lease；共享 Store 负责 retire/retireAll 后延迟 close。
-- [ ] 宿主所有 Tree/Language owner 迁移到 Store 的 register/retire，清除绕过 Store 的直接 close；增加并发/真实 Native 测试。
+- [x] Tree/Language Native lease 首版源码接入：Tree Executor 持有 Tree Lease；Language Compiler 将 Language Lease 转交为 Query 依赖 Lease，覆盖 Query 整个存活期；共享 Store 负责 retire/retireAll 后延迟 close。
+- [x] 新增 `TshNativeResourceRegistry` 协调 ObjectRegistry 与 Native Resource Lease Store 的注册、类型化获取和退役入口，并补充生命周期测试源码。
+- [ ] 宿主所有 Tree/Language owner 迁移到协调 Registry 的 register/acquire/retire，清除绕过 Store 的直接 close；Executor 全面改用协调入口；增加并发/真实 Native 测试。
 - [x] Predicate Handler 结果语义：OK 接受当前表达式、ERR 拒绝当前 match、UNHANDLED 委派下一 Handler；按 Done 分隔表达式并逐个执行，同一 pattern 的多个表达式全部通过才保留 match；按注册顺序确定 Handler 调用顺序。
 - [ ] Tree-sitter incremental edit/changed-range 查询。
 - [ ] 与现有 dynamic_ts_query 及旧 native 方法建立兼容 Adapter。
@@ -141,4 +142,4 @@
 - DSL：新增 `TshDslModel.kt`、`TshSchemaRegistry.kt`、`TshConfigRepository.kt` 与对应测试源码。
 - ATS/Tree-sitter：新增 `TshQueryApi.kt`、`TshCompiledQueryRegistry.kt`、`TshQueryApiTest.kt`；新增 `TshTreeSitterQueryAdapter.kt`，基于现有 `TSQuery.create`、`TSQueryCursor.create/exec/nextMatch`、`TSQueryMatch`、`TSQueryCapture` 实现编译/执行与 Capture 映射；新增 Adapter 合约测试源码。
 - 已检查现有实现：仓库包含 `TSQuery`、`TSQueryCursor` Java 封装，以及 C++ `TshCompiler` 和 `TshGrammar.dynamic_ts_query`。下一步应在这些既有入口上做 Adapter，不创建第二套 Native Query 引擎。
-- **状态：上述 Kotlin 源码和测试源码已提交；Gradle 构建、JUnit 执行、Native Query lease 已有源码与测试源码；Gradle 构建、JUnit 执行、Tree/Language lease 已有首版源码与测试源码，但尚未验证；ATS 编译执行和设备运行均未验证。Tree-sitter Query Adapter 已有真实 Native 调用代码与 Query lease 管理源码，但尚未通过构建/运行测试。**
+- **状态：上述 Kotlin 源码和测试源码已提交；Gradle 构建、JUnit 执行、Native Query/Tree/Language lease 与协调式 Resource Registry 均尚未验证；宿主所有者迁移尚未完成；ATS 编译执行和设备运行均未验证。Tree-sitter Query Adapter 已有真实 Native 调用代码与 Lease 管理源码，但尚未通过构建/运行测试。**
