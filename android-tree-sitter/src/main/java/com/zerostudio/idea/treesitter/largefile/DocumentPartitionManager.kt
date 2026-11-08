@@ -181,7 +181,7 @@ class DocumentPartitionManager(
         var column = 0L
         var index = checkpoint.first
         while (index < offset) {
-            if (source[index] == '\\n') {
+            if (source[index] == '\n') {
                 row++
                 column = 0L
             } else {
@@ -310,6 +310,11 @@ class ByteBudgetLruCache<K : Any, V : Any>(
             }
         }
     }
+
+    /** Compatibility helpers for callers using the original weighted-cache API. */
+    fun weight(): Long = bytesUsed
+
+    fun removeIf(predicate: (K) -> Boolean) = invalidate { key, _ -> predicate(key) }
 
     override fun close() = lock.write {
         entries.values.forEach(onEvict)

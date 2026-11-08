@@ -4,7 +4,6 @@
  */
 package com.zerostudio.idea.treesitter.largefile
 
-import java.util.LinkedHashMap
 
 /**
  * Builds line-aligned UTF-16 partitions without copying the document.
@@ -144,52 +143,4 @@ class PartitionManager(
         }
         return low.coerceIn(0, partitions.lastIndex)
     }
-}
-
-/**
- * Thread-safe weighted LRU for immutable capture pages and tokenizer checkpoints.
- * Keys should include document version, grammar/theme revision and byte range.
- */
-class BoundedLruCache<K : Any, V : Any>(
-    private val maxWeight: Long,
-    private val weigh: (V) -> Long
-) {
-    init { require(maxWeight > 0) }
-    private val entries = LinkedHashMap<K, V>(16, 0.75f, true)
-    private var currentWeight = 0L
-
-    @Synchronized fun get(key: K): V? = entries[key]
-
-    @Synchronized fun put(key: K, value: V) {
-        val weight = weigh(value).coerceAtLeast(0L)
-        entries.remove(key)?.let { currentWeight -= weigh(it).coerceAtLeast(0L) }
-        if (weight > maxWeight) return
-        entries[key] = value
-        currentWeight += weight
-        val iterator = entries.entries.iterator()
-        while (currentWeight > maxWeight && iterator.hasNext()) {
-            val eldest = iterator.next()
-            currentWeight -= weigh(eldest.value).coerceAtLeast(0L)
-            iterator.remove()
-        }
-    }
-
-    @Synchronized fun removeIf(predicate: (K) -> Boolean) {
-        val iterator = entries.entries.iterator()
-        while (iterator.hasNext()) {
-            val entry = iterator.next()
-            if (predicate(entry.key)) {
-                currentWeight -= weigh(entry.value).coerceAtLeast(0L)
-                iterator.remove()
-            }
-        }
-    }
-
-    @Synchronized fun clear() {
-        entries.clear()
-        currentWeight = 0L
-    }
-
-    @Synchronized fun weight(): Long = currentWeight
-    @Synchronized fun size(): Int = entries.size
 }
