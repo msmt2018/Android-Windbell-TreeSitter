@@ -1003,7 +1003,7 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeApplyDocumentEdi
     const TSPoint old_end_point = nativePointAt(*document->source,
         static_cast<uint32_t>(old_end_byte));
     TSPoint new_end_point = start_point;
-    const auto *inserted_data = reinterpret_cast<const uint8_t *>(nullptr);
+    const uint8_t *inserted_data = nullptr;
     std::vector<jbyte> inserted_for_points(static_cast<size_t>(inserted_size));
     if (inserted_size > 0) {
         env->GetByteArrayRegion(inserted_bytes, 0, inserted_size, inserted_for_points.data());
