@@ -4,7 +4,12 @@
 
 ### Added
 - 建立 TSH 统一 API 架构文档、对象/文本模型、编辑器集成、高亮渲染、TSH 语言、ATS/Regex、诊断和路线图规范。
+- 新增 TshEngine 生命周期门面、结构化结果/诊断、坐标与范围基础类型。
+- 新增实例身份对象注册表、能力描述符和 Provider 注册/发现契约。
+- 新增 API 基础层单元测试源码。
 
 ### Planned
-- 公共 API 基础类型、对象注册与能力发现。
-- 兼容现有 WindbellTshEngine 的门面与迁移适配。
+- 本地 Gradle 编译与测试运行验证。
+- TextDocument/TextBuffer/CoordinateConverter 与增量变更模型。
+- 兼容现有 WindbellTshEngine 的服务接线与迁移适配。
+- TSH Lexer/Parser/AST/Schema/Diagnostics 公共 API。
