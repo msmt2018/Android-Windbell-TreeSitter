@@ -136,7 +136,9 @@ bool TextPartitionIndex::applyEdit(const TextSource &oldSource,
                                    uint64_t startByte, uint64_t oldEndByte,
                                    const void *inserted, uint64_t insertedBytes) noexcept {
     if ((startByte & 1u) || (oldEndByte & 1u) || (insertedBytes & 1u) ||
-        oldEndByte < startByte || oldEndByte > oldSource.sizeBytes() ||\n        startByte > static_cast<uint64_t>(INT64_MAX) || oldEndByte > static_cast<uint64_t>(INT64_MAX) ||\n        insertedBytes > static_cast<uint64_t>(INT64_MAX) ||
+        oldEndByte < startByte || oldEndByte > oldSource.sizeBytes() ||
+        startByte > static_cast<uint64_t>(INT64_MAX) || oldEndByte > static_cast<uint64_t>(INT64_MAX) ||
+        insertedBytes > static_cast<uint64_t>(INT64_MAX) ||
         (insertedBytes && !inserted)) return false;
 
     uint64_t startLine = 0;

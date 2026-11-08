@@ -65,7 +65,7 @@ std::unique_ptr<PieceTreeSource::Node> PieceTreeSource::merge(
         return left;
     }
     right->left = merge(std::move(left), std::move(right->left));
-    updatePieceNode(right.get());
+    updateNode(right.get());
     return right;
 }
 
@@ -93,7 +93,7 @@ bool PieceTreeSource::split(std::unique_ptr<Node> root, uint64_t offset,
         std::unique_ptr<Node> a, b;
         if (!split(std::move(root->left), offset, a, b)) return false;
         root->left = std::move(b);
-        updatePieceNode(root.get());
+        updateNode(root.get());
         left = std::move(a);
         right = std::move(root);
         return true;
@@ -102,7 +102,7 @@ bool PieceTreeSource::split(std::unique_ptr<Node> root, uint64_t offset,
         std::unique_ptr<Node> a, b;
         if (!split(std::move(root->right), offset - left_bytes - root->length, a, b)) return false;
         root->right = std::move(a);
-        updatePieceNode(root.get());
+        updateNode(root.get());
         left = std::move(root);
         right = std::move(b);
         return true;
@@ -110,7 +110,7 @@ bool PieceTreeSource::split(std::unique_ptr<Node> root, uint64_t offset,
     if (offset == left_bytes) {
         auto old_left = std::move(root->left);
         root->left.reset();
-        updatePieceNode(root.get());
+        updateNode(root.get());
         left = std::move(old_left);
         right = std::move(root);
         return true;
@@ -118,7 +118,7 @@ bool PieceTreeSource::split(std::unique_ptr<Node> root, uint64_t offset,
     if (offset == left_bytes + root->length) {
         auto old_right = std::move(root->right);
         root->right.reset();
-        updatePieceNode(root.get());
+        updateNode(root.get());
         left = std::move(root);
         right = std::move(old_right);
         return true;
