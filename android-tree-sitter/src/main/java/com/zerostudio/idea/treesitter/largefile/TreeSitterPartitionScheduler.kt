@@ -1,0 +1,153 @@
+package com.zerostudio.idea.treesitter.largefile
+
+import com.zerostudio.idea.treesitter.TSTree
+import java.util.concurrent.PriorityBlockingQueue
+import java.util.concurrent.ThreadPoolExecutor
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
+
+/**
+ * Viewport-prioritized regional Tree-sitter scheduler.
+ *
+ * The supplied parser callback must parse the complete backing source through a
+ * segmented source and set one included range for [PartitionParseRequest.contextStartUtf16]
+ * ..[PartitionParseRequest.contextEndUtf16]. The overlap is intentionally explicit:
+ * this scheduler does not pretend independent, context-free AST fragments are valid.
+ *
+ * Parsing is serialized by default because a TSParser instance is not concurrently
+ * reusable. Applications may provide separate parser instances via the callback if
+ * they deliberately raise [parallelism].
+ */
+data class PartitionParseRequest(
+    val partition: DocumentPartition,
+    val contextStartUtf16: Long,
+    val contextEndUtf16: Long,
+    val documentVersion: Long,
+    val languageRevision: Long
+)
+
+class TreeSitterPartitionScheduler(
+    private val partitionManager: DocumentPartitionManager,
+    private val astCache: PartitionAstCache,
+    private val contextChars: Long = 8L * 1024L,
+    parallelism: Int = 1,
+    private val onFailure: (PartitionParseRequest, Throwable) -> Unit = { _, _ -> }
+) : AutoCloseable {
+    private val closed = AtomicBoolean(false)
+    private val pending = HashMap<PartitionAstKey, PrioritizedTask>()
+    private val lock = Any()
+    private val executor = ThreadPoolExecutor(
+        parallelism,
+        parallelism,
+        0L,
+        TimeUnit.MILLISECONDS,
+        PriorityBlockingQueue()
+    )
+
+    init {
+        require(contextChars >= 0L)
+        require(parallelism > 0)
+    }
+
+    /**
+     * Queue the visible range and its configured prefetch partitions. The nearest
+     * partition to the viewport center is parsed first; repeated requests are deduped.
+     */
+    fun requestViewport(
+        source: Utf16DocumentSource,
+        startUtf16: Long,
+        endUtf16: Long,
+        languageRevision: Long,
+        parse: (PartitionParseRequest) -> TSTree?
+    ): List<PartitionAstKey> {
+        check(!closed.get()) { "Scheduler is closed" }
+        val plan = partitionManager.planViewport(source, startUtf16, endUtf16)
+        val center = startUtf16 + (endUtf16 - startUtf16) / 2L
+        val keys = ArrayList<PartitionAstKey>(plan.partitions.size)
+        val tasks = ArrayList<PrioritizedTask>(plan.partitions.size)
+
+        for (partition in plan.partitions) {
+            val contextStart = (partition.start - contextChars).coerceAtLeast(0L)
+            val contextEnd = minOf(source.length, safeAdd(partition.endExclusive, contextChars))
+            val key = PartitionAstKey(
+                plan.documentVersion,
+                partition.index,
+                partition.start,
+                partition.endExclusive,
+                contextStart,
+                contextEnd,
+                languageRevision
+            )
+            keys += key
+
+            val cached = astCache.acquire(key)
+            if (cached != null) {
+                cached.close()
+                continue
+            }
+            val distance = distanceToRange(center, partition.start, partition.endExclusive)
+            synchronized(lock) {
+                if (closed.get() || pending.containsKey(key)) continue
+                val request = PartitionParseRequest(
+                    partition, contextStart, contextEnd, plan.documentVersion, languageRevision
+                )
+                val task = PrioritizedTask(distance) {
+                    try {
+                        if (closed.get() || source.version != request.documentVersion) return@PrioritizedTask
+                        val tree = parse(request) ?: return@PrioritizedTask
+                        if (closed.get() || source.version != request.documentVersion) {
+                            tree.close()
+                        } else {
+                            astCache.put(key, tree, partition.endExclusive - partition.start)
+                        }
+                    } catch (error: Throwable) {
+                        onFailure(request, error)
+                    } finally {
+                        synchronized(lock) { pending.remove(key) }
+                    }
+                }
+                pending[key] = task
+                tasks += task
+            }
+        }
+        // All tasks have priorities computed before they enter the priority queue.
+        tasks.forEach { task ->
+            if (!closed.get()) executor.execute(task) else task.cancel()
+        }
+        return keys
+    }
+
+    fun cancelPending() {
+        synchronized(lock) {
+            pending.values.forEach { executor.remove(it); it.cancel() }
+            pending.clear()
+        }
+    }
+
+    override fun close() {
+        if (!closed.compareAndSet(false, true)) return
+        cancelPending()
+        executor.shutdownNow()
+        astCache.close()
+    }
+
+    private inner class PrioritizedTask(
+        private val priority: Long,
+        action: () -> Unit
+    ) : Runnable, Comparable<PrioritizedTask> {
+        private val actionRef = action
+        private val cancelled = AtomicBoolean(false)
+        fun cancel() { cancelled.set(true) }
+        override fun run() { if (!cancelled.get()) actionRef() }
+        override fun compareTo(other: PrioritizedTask): Int = priority.compareTo(other.priority)
+    }
+
+    private fun distanceToRange(position: Long, start: Long, end: Long): Long = when {
+        position < start -> start - position
+        position > end -> position - end
+        else -> 0L
+    }
+
+    private fun safeAdd(a: Long, b: Long): Long =
+        if (Long.MAX_VALUE - a < b) Long.MAX_VALUE else a + b
+}
