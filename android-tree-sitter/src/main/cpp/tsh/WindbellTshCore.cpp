@@ -525,7 +525,9 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
     uint32_t length_chars,
     const std::string& extension,
     std::vector<HighlightSpan>* diagnostic_spans,
-    uint32_t* diagnostic_match_counts
+    uint32_t* diagnostic_match_counts,
+    uint32_t range_start_byte,
+    uint32_t range_end_byte
 ) {
     std::vector<HighlightSpan> final_spans;
     if (diagnostic_match_counts) std::fill(diagnostic_match_counts, diagnostic_match_counts + 4, 0u);
@@ -535,6 +537,11 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
     if (!grammar) return final_spans;
 
     uint32_t total_bytes = length_chars * sizeof(uint16_t);
+    if (range_end_byte == UINT32_MAX) range_end_byte = total_bytes;
+    if ((range_start_byte & 1u) != 0 || (range_end_byte & 1u) != 0 ||
+        range_start_byte > range_end_byte || range_end_byte > total_bytes) {
+        return final_spans;
+    }
     // Avoid pointer arithmetic on a null input pointer for an empty document.
     // Empty buffers are valid inputs (for example, immediately after clearing an editor).
     static const UChar kEmptyInput = 0;
@@ -1016,6 +1023,9 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
             if (!native_query.enabled || !native_query.query) continue;
             TSQueryCursor* q_cursor = ts_query_cursor_new();
             if (!q_cursor) continue;
+            // Restrict Tree-sitter query execution to the requested UTF-16LE byte
+            // window. The AST remains document-wide so node offsets stay absolute.
+            ts_query_cursor_set_byte_range(q_cursor, range_start_byte, range_end_byte);
             ts_query_cursor_exec(q_cursor, native_query.query, ts_tree_root_node(tree));
 
             TSQueryMatch match;
