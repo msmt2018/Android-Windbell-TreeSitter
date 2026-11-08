@@ -67,12 +67,14 @@ public class JNIWriter {
 
 
   private final Types types;
+  private final Elements elements;
   private final TypeMirror stringType;
   private final TypeMirror throwableType;
   private final TypeMirror classType;
 
   public JNIWriter(Types types, Elements elements) {
     this.types = types;
+    this.elements = elements;
 
     this.stringType = elements.getTypeElement("java.lang.String").asType();
     this.throwableType = elements.getTypeElement("java.lang.Throwable").asType();
@@ -947,8 +949,9 @@ public class JNIWriter {
     Elements elems;
     Types types;
 
-    public TypeSignature(Types types) {
+    public TypeSignature(Types types, Elements elems) {
       this.types = types;
+      this.elems = elems;
     }
 
     StringBuilder getParameterSignature(ExecutableElement mType, boolean useFlatname) {
@@ -976,10 +979,12 @@ public class JNIWriter {
     static class JvmTypeVisitor extends SimpleTypeVisitor8<Type, StringBuilder> {
 
       private final Types types;
+      private final Elements elements;
 
-      JvmTypeVisitor(Types types) {
+      JvmTypeVisitor(Types types, Elements elements) {
         super();
         this.types = types;
+        this.elements = elements;
       }
 
       @Override
@@ -1002,8 +1007,10 @@ public class JNIWriter {
 
       private void setDeclaredType(TypeMirror t, StringBuilder s) {
         var tsym = ((TypeElement) types.asElement(t));
-        String classname = tsym.getQualifiedName().toString();
-        classname = classname.replace('.', '/');
+        // JVM descriptors use binary names for nested classes (Outer$Inner),
+        // not source qualified names (Outer.Inner). Replacing every dot in a
+        // qualified name would incorrectly turn the nesting separator into '/'.
+        String classname = elements.getBinaryName(tsym).toString().replace('.', '/');
         s.append("L").append(classname).append(";");
       }
 
@@ -1026,7 +1033,7 @@ public class JNIWriter {
       }
 
       TypeMirror t = types.erasure(type);
-      JvmTypeVisitor jv = new JvmTypeVisitor(types);
+      JvmTypeVisitor jv = new JvmTypeVisitor(types, elems);
       jv.visit(t, sig);
 
       return sig;
