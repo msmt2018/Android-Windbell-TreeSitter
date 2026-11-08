@@ -180,6 +180,7 @@ struct TshColorValue {
 
 struct TshFontAttributes {
     uint16_t flags = 0;
+    uint16_t defined_mask = 0;
 };
 
 struct TshStylePaint {
@@ -198,6 +199,8 @@ struct SchemeColor {
     uint32_t dark_background = 0;
     uint16_t light_font_flags = 0;
     uint16_t dark_font_flags = 0;
+    uint16_t light_font_defined_mask = 0;
+    uint16_t dark_font_defined_mask = 0;
     bool has_light_color = false;
     bool has_dark_color = false;
     bool has_light_background = false;
@@ -209,7 +212,7 @@ struct SchemeColor {
         return {
             {light_color, has_light_color},
             {light_background, has_light_background},
-            {light_font_flags}
+            {light_font_flags, light_font_defined_mask}
         };
     }
 
@@ -217,7 +220,7 @@ struct SchemeColor {
         return {
             {dark_color, has_dark_color},
             {dark_background, has_dark_background},
-            {dark_font_flags}
+            {dark_font_flags, dark_font_defined_mask}
         };
     }
 
@@ -240,8 +243,12 @@ struct SchemeColor {
             dark_background = parent.dark_background;
             has_dark_background = true;
         }
-        light_font_flags |= parent.light_font_flags;
-        dark_font_flags |= parent.dark_font_flags;
+        const uint16_t light_inherit = parent.light_font_defined_mask & static_cast<uint16_t>(~light_font_defined_mask);
+        const uint16_t dark_inherit = parent.dark_font_defined_mask & static_cast<uint16_t>(~dark_font_defined_mask);
+        light_font_flags = static_cast<uint16_t>((light_font_flags & ~light_inherit) | (parent.light_font_flags & light_inherit));
+        dark_font_flags = static_cast<uint16_t>((dark_font_flags & ~dark_inherit) | (parent.dark_font_flags & dark_inherit));
+        light_font_defined_mask |= parent.light_font_defined_mask;
+        dark_font_defined_mask |= parent.dark_font_defined_mask;
     }
 
     // Scheme extension overlays only properties explicitly supplied by child.
@@ -264,8 +271,10 @@ struct SchemeColor {
             dark_background = child.dark_background;
             has_dark_background = true;
         }
-        light_font_flags |= child.light_font_flags;
-        dark_font_flags |= child.dark_font_flags;
+        light_font_flags = static_cast<uint16_t>((light_font_flags & ~child.light_font_defined_mask) | (child.light_font_flags & child.light_font_defined_mask));
+        dark_font_flags = static_cast<uint16_t>((dark_font_flags & ~child.dark_font_defined_mask) | (child.dark_font_flags & child.dark_font_defined_mask));
+        light_font_defined_mask |= child.light_font_defined_mask;
+        dark_font_defined_mask |= child.dark_font_defined_mask;
     }
 };
 

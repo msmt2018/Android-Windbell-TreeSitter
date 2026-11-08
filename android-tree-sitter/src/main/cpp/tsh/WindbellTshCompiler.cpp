@@ -432,6 +432,28 @@ static uint32_t multiplyColorAlpha(uint32_t color, float multiplier) {
     return (color & 0x00FFFFFFu) | (std::min(scaled_alpha, 255u) << 24);
 }
 
+static bool applyFontModifier(SchemeColor& color, bool light_mode, const std::string& name) {
+    uint16_t bit = 0;
+    bool enabled = true;
+    if (name == "B" || name == "bold") bit = 0x01;
+    else if (name == "I" || name == "italic") bit = 0x02;
+    else if (name == "U" || name == "underline") bit = 0x04;
+    else if (name == "S" || name == "strike" || name == "strikethrough") bit = 0x08;
+    else if (name == "dim") bit = 0x10;
+    else if (name == "no-bold") { bit = 0x01; enabled = false; }
+    else if (name == "no-italic") { bit = 0x02; enabled = false; }
+    else if (name == "no-underline") { bit = 0x04; enabled = false; }
+    else if (name == "no-strike" || name == "no-strikethrough") { bit = 0x08; enabled = false; }
+    else if (name == "no-dim") { bit = 0x10; enabled = false; }
+    else return false;
+    uint16_t& flags = light_mode ? color.light_font_flags : color.dark_font_flags;
+    uint16_t& mask = light_mode ? color.light_font_defined_mask : color.dark_font_defined_mask;
+    mask |= bit;
+    if (enabled) flags |= bit;
+    else flags &= static_cast<uint16_t>(~bit);
+    return true;
+}
+
 static bool parseAlphaValue(const TshLexer::Token& token, float& out) {
     if (token.type != TshLexer::TokenType::TOK_NUMBER) return false;
     try {
@@ -1521,6 +1543,7 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
 
                             uint32_t color_val = parseColorHex(color_tok.text);
                             uint16_t flags = 0;
+                            uint16_t font_defined_mask = 0;
                             uint32_t background_color = 0;
                             bool has_background_color = false;
                             float foreground_alpha = 1.0f;
@@ -1546,12 +1569,13 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                                     } else if (flag_tok.text == "bg-alpha" || flag_tok.text == "background-alpha") {
                                         if (!parseAlphaValue(lexer.nextToken(), background_alpha)) return nullptr;
                                     }
-                                    else if (flag_tok.text == "B" || flag_tok.text == "bold") flags |= 0x01;
-                                    else if (flag_tok.text == "I" || flag_tok.text == "italic") flags |= 0x02;
-                                    else if (flag_tok.text == "U" || flag_tok.text == "underline") flags |= 0x04;
-                                    else if (flag_tok.text == "S" || flag_tok.text == "strike" || flag_tok.text == "strikethrough") flags |= 0x08;
-                                    else if (flag_tok.text == "dim") flags |= 0x10;
-                                    else return nullptr;
+                                    else {
+                                        SchemeColor modifier_color;
+                                        if (!applyFontModifier(modifier_color, true, flag_tok.text)) return nullptr;
+                                        const uint16_t mask = modifier_color.light_font_defined_mask;
+                                        flags = static_cast<uint16_t>((flags & ~mask) | (modifier_color.light_font_flags & mask));
+                                        font_defined_mask |= mask;
+                                    }
                                     continue;
                                 }
                                 // Commas are optional: the next identifier begins
@@ -1575,8 +1599,13 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                                 color_entry.has_dark_color = true;
                                 color_entry.explicit_dark_color = true;
                             }
-                            if (is_light) color_entry.light_font_flags |= flags;
-                            else color_entry.dark_font_flags |= flags;
+                            if (is_light) {
+                                color_entry.light_font_flags = static_cast<uint16_t>((color_entry.light_font_flags & ~font_defined_mask) | (flags & font_defined_mask));
+                                color_entry.light_font_defined_mask |= font_defined_mask;
+                            } else {
+                                color_entry.dark_font_flags = static_cast<uint16_t>((color_entry.dark_font_flags & ~font_defined_mask) | (flags & font_defined_mask));
+                                color_entry.dark_font_defined_mask |= font_defined_mask;
+                            }
                             if (has_background_color) {
                                 if (is_light) {
                                     color_entry.light_background = background_color;
@@ -1726,24 +1755,11 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                         }
                         while (modifier.type == TshLexer::TokenType::TOK_AT) {
                             auto flag = lexer.nextToken();
-                            if (flag.text == "B" || flag.text == "bold") {
-                                color.light_font_flags |= 0x01;
-                                color.dark_font_flags |= 0x01;
-                            }
-                            else if (flag.text == "I" || flag.text == "italic") {
-                                color.light_font_flags |= 0x02;
-                                color.dark_font_flags |= 0x02;
-                            } else if (flag.text == "U" || flag.text == "underline") {
-                                color.light_font_flags |= 0x04;
-                                color.dark_font_flags |= 0x04;
-                            } else if (flag.text == "S" || flag.text == "strike" || flag.text == "strikethrough") {
-                                color.light_font_flags |= 0x08;
-                                color.dark_font_flags |= 0x08;
-                            } else if (flag.text == "dim") {
-                                color.light_font_flags |= 0x10;
-                                color.dark_font_flags |= 0x10;
-                            } else if (flag.text == "alpha" || flag.text == "opacity") {
+                            if (flag.text == "alpha" || flag.text == "opacity") {
                                 if (!parseAlphaValue(lexer.nextToken(), foreground_alpha)) return nullptr;
+                            } else {
+                                if (!applyFontModifier(color, true, flag.text) ||
+                                    !applyFontModifier(color, false, flag.text)) return nullptr;
                             }
                             modifier = lexer.nextToken();
                             if (modifier.type == TshLexer::TokenType::TOK_COMMA) {
