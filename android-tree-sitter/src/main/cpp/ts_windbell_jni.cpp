@@ -36,6 +36,18 @@ using namespace windbell::tsh;
 
 namespace {
 
+static std::shared_ptr<SharedNativeMemoryBudget> nativeHighlightBudget() {
+    static const auto budget = []() noexcept {
+        try {
+            // One process-wide capture-cache budget shared by all open documents.
+            return std::make_shared<SharedNativeMemoryBudget>(32u * 1024u * 1024u);
+        } catch (...) {
+            return std::shared_ptr<SharedNativeMemoryBudget>{};
+        }
+    }();
+    return budget;
+}
+
 struct NativeTshDocument {
     std::unique_ptr<windbell::largefile::PieceTreeSource> source;
     TSParser *parser = nullptr;
@@ -43,7 +55,7 @@ struct NativeTshDocument {
     std::string extension;
     uint32_t length_chars = 0;
     uint64_t version = 0;
-    NativeHighlightCache highlight_cache{16u * 1024u * 1024u};
+    NativeHighlightCache highlight_cache{4u * 1024u * 1024u, nativeHighlightBudget()};
     windbell::largefile::TextPartitionIndex partition_index{256};
     std::vector<RegexStateCheckpoint> regex_state_checkpoints;
     std::mutex mutex;

@@ -3,6 +3,7 @@
 #include "WindbellTshCore.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <list>
@@ -11,6 +12,38 @@
 #include <vector>
 
 namespace windbell::tsh {
+
+class SharedNativeMemoryBudget final {
+public:
+    explicit SharedNativeMemoryBudget(size_t limitBytes) noexcept : limit_bytes_(limitBytes) {}
+
+    bool tryAcquire(size_t bytes) noexcept {
+        size_t current = used_bytes_.load(std::memory_order_relaxed);
+        for (;;) {
+            if (bytes > limit_bytes_ - std::min(limit_bytes_, current)) return false;
+            if (used_bytes_.compare_exchange_weak(
+                    current, current + bytes,
+                    std::memory_order_acq_rel, std::memory_order_relaxed)) return true;
+        }
+    }
+
+    void release(size_t bytes) noexcept {
+        size_t current = used_bytes_.load(std::memory_order_relaxed);
+        for (;;) {
+            const size_t amount = std::min(current, bytes);
+            if (used_bytes_.compare_exchange_weak(
+                    current, current - amount,
+                    std::memory_order_acq_rel, std::memory_order_relaxed)) return;
+        }
+    }
+
+    size_t usedBytes() const noexcept { return used_bytes_.load(std::memory_order_relaxed); }
+    size_t limitBytes() const noexcept { return limit_bytes_; }
+
+private:
+    const size_t limit_bytes_;
+    std::atomic<size_t> used_bytes_{0};
+};
 
 /**
  * Per-document bounded native highlight result cache.
@@ -41,8 +74,15 @@ public:
         uint32_t match_counts[4] = {};
     };
 
-    explicit NativeHighlightCache(size_t budgetBytes = 8u * 1024u * 1024u)
-        : budget_bytes_(budgetBytes) {}
+    explicit NativeHighlightCache(
+        size_t budgetBytes = 8u * 1024u * 1024u,
+        std::shared_ptr<SharedNativeMemoryBudget> sharedBudget = nullptr)
+        : budget_bytes_(budgetBytes), shared_budget_(std::move(sharedBudget)) {}
+
+    ~NativeHighlightCache() { clear(); }
+
+    NativeHighlightCache(const NativeHighlightCache &) = delete;
+    NativeHighlightCache &operator=(const NativeHighlightCache &) = delete;
 
     // The document owner serializes cache access. Returning an immutable
     // entry avoids copying potentially millions of spans on every cache hit.
@@ -55,22 +95,31 @@ public:
     }
 
     void put(Key key, Value value) {
-        if (value.spans.size() >
+        if (value.spans.capacity() >
             (static_cast<size_t>(-1) - sizeof(Value)) / sizeof(HighlightSpan)) return;
-        const size_t bytes = value.spans.size() * sizeof(HighlightSpan) + sizeof(Value);
+        const size_t bytes = value.spans.capacity() * sizeof(HighlightSpan) + sizeof(Value);
         if (budget_bytes_ == 0 || bytes > budget_bytes_) return;
         auto existing = entries_.find(key);
         if (existing != entries_.end()) erase(existing);
+        if (shared_budget_ && !shared_budget_->tryAcquire(bytes)) return;
 
         try {
             lru_.push_front(key);
             try {
-                entries_.emplace(key, Entry{std::move(value), lru_.begin(), bytes});
+                const auto inserted = entries_.emplace(
+                    key, Entry{std::move(value), lru_.begin(), bytes});
+                if (!inserted.second) {
+                    lru_.pop_front();
+                    if (shared_budget_) shared_budget_->release(bytes);
+                    return;
+                }
             } catch (...) {
                 lru_.pop_front();
+                if (shared_budget_) shared_budget_->release(bytes);
                 return;
             }
         } catch (...) {
+            if (shared_budget_) shared_budget_->release(bytes);
             return;
         }
         used_bytes_ += bytes;
@@ -85,6 +134,7 @@ public:
     }
 
     void clear() noexcept {
+        if (shared_budget_ && used_bytes_ != 0) shared_budget_->release(used_bytes_);
         entries_.clear();
         lru_.clear();
         used_bytes_ = 0;
@@ -120,13 +170,16 @@ private:
     using Iterator = typename std::unordered_map<Key, Entry, KeyHash>::iterator;
 
     void erase(Iterator it) noexcept {
-        used_bytes_ -= std::min(used_bytes_, it->second.bytes);
+        const size_t released = std::min(used_bytes_, it->second.bytes);
+        used_bytes_ -= released;
+        if (shared_budget_) shared_budget_->release(released);
         lru_.erase(it->second.position);
         entries_.erase(it);
     }
 
     size_t budget_bytes_;
     size_t used_bytes_ = 0;
+    std::shared_ptr<SharedNativeMemoryBudget> shared_budget_;
     std::list<Key> lru_;
     std::unordered_map<Key, Entry, KeyHash> entries_;
 };
