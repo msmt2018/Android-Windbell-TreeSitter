@@ -65,7 +65,7 @@
 - [x] Engine.close 按 Query → Parser/Tree → Language 顺序退役；Native Query Lease Store 增加永久 close，关闭后拒绝 Query 发布，活动 Query Lease 释放后再关闭 Query 和 Language 依赖。
 - [x] Native Resource Lease 支持从仍然持有的 Lease 派生子 Lease；Grammar 已退役时不允许从 Store 重新 acquire，但 Parser 可从其存活的 Language dependency lease 派生 Tree dependency lease；新增退役后 child retain 与并发 retain/release 测试源码。
 - [x] 修复 Query Compiler Native Query 的失败清理路径：统一由外层 finally 释放未转移所有权的 Query，避免错误分支提前 close 后 finally 再次 close；修复 cleanup 变量作用域。
-- [x] 修复 `TSQuery.create(String)` JNI 编码契约：将 Java UTF-16 显式编码为标准 UTF-8，并把真实 UTF-8 字节长度传给 `ts_query_new`；不再混用 `GetStringUTFChars` 的 Modified UTF-8 与 `GetStringLength` 的 UTF-16 长度。Native 返回的 Capture Name/Query String Value 按标准 UTF-8 解码为 Java UTF-16；增加含 `é` 与补充平面 emoji 的 Query 编译/字符串回读测试源码。
+- [x] 修复 `TSQuery.create(String)` JNI 编码契约：将 Java UTF-16 显式编码为标准 UTF-8，并把真实 UTF-8 字节长度传给 `ts_query_new`；不再混用 `GetStringUTFChars` 的 Modified UTF-8 与 `GetStringLength` 的 UTF-16 长度。标准 UTF-8 转换已收敛到 `utils/jni_string`，并接入 Query JNI、TSH DSL 源码加载和动态 Grammar 路径/符号名转换；Native 返回的 Capture Name/Query String Value 按标准 UTF-8 解码为 Java UTF-16；增加含 `é` 与补充平面 emoji 的 Query 编译/字符串回读测试源码。
 - [x] Tree-sitter Compiler/Executor Adapter 增加可选 `TshNativeResourceRegistry` 注入：启用时 Language/Tree Lease 获取经统一协调入口完成；旧底层 Store 注入保留为兼容迁移路径。
 - [ ] 旧宿主所有 Tree/Language/Parser owner 迁移到协调 Registry 的 register/acquire/retire，清除绕过 Store 的直接 close；新 API 应通过 Engine 工厂创建 Compiler/Executor；增加并发/真实 Native 测试。ParserOwner 目前是新 API 的可用源码，不代表旧宿主调用点已迁移。
 - [ ] 审计 Engine.close 与并发 register/retire/compile/execute 的线性化和等待语义；Store 已具备关闭门闩及活动 Lease 延迟释放，但尚未完成全场景并发验证。
