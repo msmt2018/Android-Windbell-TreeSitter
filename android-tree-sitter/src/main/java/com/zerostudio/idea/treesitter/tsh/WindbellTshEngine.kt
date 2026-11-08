@@ -54,7 +54,7 @@ class WindbellTshEngine private constructor() {
         val fontFlags: Int,
         val priority: Int,
         val declarationOrder: Int,
-        /** Native HighlightSource ordinal (ONIG_REGEX, MONARCH, AST_SELECTOR, NATIVE_QUERY). */
+        /** Native HighlightSource ordinal (ONIG_REGEX, REGEX_STATE, AST_SELECTOR, NATIVE_QUERY). */
         val source: Int = 255
     )
 

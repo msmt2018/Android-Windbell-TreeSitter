@@ -126,7 +126,12 @@ static jobjectArray TSTags_extract(
         throwTagsOutOfMemory(env);
         return nullptr;
       }
-      matches.values.push_back(global_match);
+      try {
+        matches.values.push_back(global_match);
+      } catch (...) {
+        env->DeleteGlobalRef(global_match);
+        throw;
+      }
     }
   } catch (const std::bad_alloc &) {
     throwTagsOutOfMemory(env);
