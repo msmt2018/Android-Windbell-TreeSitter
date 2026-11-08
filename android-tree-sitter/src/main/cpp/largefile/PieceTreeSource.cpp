@@ -222,6 +222,8 @@ bool PieceTreeSource::replace(uint64_t startByte, uint64_t oldEndByte,
     if (!valid_ || (startByte & 1u) || (oldEndByte & 1u) ||
         (insertedBytes & 1u) || oldEndByte < startByte ||
         oldEndByte > sizeBytes() || (insertedBytes != 0 && !inserted)) return false;
+    const uint64_t maximumPieces = memory_limit_bytes_ / sizeof(Node);
+    if (countNodes(root_.get()) + (insertedBytes ? 2u : 1u) > maximumPieces) return false;
     if (insertedBytes > memory_limit_bytes_ -
         std::min(memory_limit_bytes_, added_allocated_)) return false;
 

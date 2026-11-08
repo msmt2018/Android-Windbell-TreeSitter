@@ -9,6 +9,7 @@
 #include <cstring>
 #include <string>
 #include <vector>
+#include <random>
 #include <utility>
 #include <unistd.h>
 
@@ -183,7 +184,7 @@ static void testPieceTreeEditsDoNotCopyUnchangedText() {
     for (int i = 0; i < 1024; ++i) {
         original += "line-";
         original += std::to_string(i);
-        original += "\\n";
+        original += "\n";
     }
     std::string utf16;
     utf16.reserve(original.size() * 2);
@@ -197,28 +198,69 @@ static void testPieceTreeEditsDoNotCopyUnchangedText() {
     assert(source.isValid());
     assert(source.sizeBytes() == utf16.size());
     const uint64_t beforePieces = source.pieceCount();
-    const std::string insert = "X\\0Y\\0";
-    assert(source.replace(0, 0, insert.data(), insert.size()));
+    const char insert[] = {'X', 0, 'Y', 0};
+    assert(source.replace(0, 0, insert, sizeof(insert)));
     assert(source.version() == 1);
-    assert(source.sizeBytes() == utf16.size() + insert.size());
+    assert(source.sizeBytes() == utf16.size() + sizeof(insert));
     assert(source.pieceCount() <= beforePieces + 2);
     assert(source.allocatedBytes() < 256u * 1024u);
     TextChunkView view{};
     assert(source.read(0, 64, &view));
     assert(view.size >= insert.size());
-    assert(std::memcmp(view.data, insert.data(), insert.size()) == 0);
+    assert(std::memcmp(view.data, insert, sizeof(insert)) == 0);
 
     const uint64_t removeStart = 2u * 10u;
     assert(source.replace(removeStart, removeStart + 2u * 5u, nullptr, 0));
     assert(source.version() == 2);
-    assert(source.sizeBytes() == utf16.size() + insert.size() - 10u);
+    assert(source.sizeBytes() == utf16.size() + sizeof(insert) - 10u);
     assert(source.replace(source.sizeBytes(), source.sizeBytes(), "Z\\0", 2));
     assert(source.version() == 3);
-    assert(source.sizeBytes() == utf16.size() + insert.size() - 8u);
+    assert(source.sizeBytes() == utf16.size() + sizeof(insert) - 8u);
 
     ::unlink(path);
 }
 
+
+
+static void testPieceTreeRandomEditsMatchReferenceBuffer() {
+    char path[] = "/tmp/windbell-piece-random-XXXXXX";
+    const int fd = ::mkstemp(path);
+    assert(fd >= 0);
+    std::string initial;
+    for (int i = 0; i < 4096; ++i) {
+        initial.push_back(static_cast<char>('a' + (i % 26)));
+        initial.push_back(0);
+    }
+    assert(::write(fd, initial.data(), initial.size()) == static_cast<ssize_t>(initial.size()));
+    ::close(fd);
+
+    auto mapped = std::make_shared<MappedFileSource>(path);
+    assert(mapped->isOpen());
+    PieceTreeSource source(mapped, 8u * 1024u * 1024u);
+    assert(source.isValid());
+    std::string expected = initial;
+    std::mt19937 random(0x57494E44u);
+    for (int iteration = 0; iteration < 750; ++iteration) {
+        const uint64_t units = expected.size() / 2u;
+        const uint64_t a = units == 0 ? 0 : random() % (units + 1u);
+        const uint64_t b = a + (units == a ? 0 : random() % (units - a + 1u));
+        const uint64_t start = a * 2u;
+        const uint64_t end = b * 2u;
+        const uint16_t value = static_cast<uint16_t>('A' + (iteration % 26));
+        const char inserted[2] = {
+            static_cast<char>(value & 0xffu),
+            static_cast<char>((value >> 8u) & 0xffu)
+        };
+        assert(source.replace(start, end, inserted, sizeof(inserted)));
+        expected.replace(static_cast<size_t>(start),
+                         static_cast<size_t>(end - start),
+                         inserted, sizeof(inserted));
+        assert(source.sizeBytes() == expected.size());
+        assert(readAll(source) == expected);
+        assert(source.allocatedBytes() <= 8u * 1024u * 1024u);
+    }
+    ::unlink(path);
+}
 
 int main() {
     testSegmentedTextSource();
@@ -227,6 +269,7 @@ int main() {
     testChunkedStoreHonorsMemoryBudget();
     testMappedFileSource();
     testPieceTreeEditsDoNotCopyUnchangedText();
+    testPieceTreeRandomEditsMatchReferenceBuffer();
     testSparseFilesFromOneToThreeHundredMegabytesUseBoundedWindow();
     return 0;
 }
