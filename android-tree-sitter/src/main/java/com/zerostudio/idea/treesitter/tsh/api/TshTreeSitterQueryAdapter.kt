@@ -94,46 +94,58 @@ class TshTreeSitterQueryCompiler(
         val hash = sha256(source.text)
         val queryId = source.sourceId?.takeIf { it.isNotBlank() } ?: "tsq:$hash"
         val revision = hash
-        queries.withLock {
-            val previous = queries.get(queryId)
-            val objectDescriptor = try {
-                objects.register(nativeQuery, "tree-sitter-query")
-            } catch (error: Throwable) {
-                nativeQuery.close()
-                return failure("TSH-QUERY-REGISTRY-004", "Cannot register native query: ${error.message}", cause = error)
-            }
-            try {
-                leases.register(queryId, objectDescriptor.id, nativeQuery, dependencies = listOf(languageLease))
-                languageLeaseTransferred = true
-            } catch (error: Throwable) {
-                objects.unregister(nativeQuery)
-                nativeQuery.close()
-                return failure("TSH-QUERY-LEASE-001", "Cannot register native query ownership: ${error.message}", cause = error)
-            }
-            val compiled = TshCompiledQuery(
-                queryId = queryId,
-                revision = revision,
-                grammar = grammar,
-                source = source,
-                sourceHash = hash,
-                compilerVersion = compilerVersion,
-                options = options,
-                nativeObjectId = objectDescriptor.id
-            )
-            when (val registered = queries.register(compiled, replace = true)) {
-                is TshResult.Success -> {
-                    val oldId = previous?.nativeObjectId
-                    if (oldId != null && oldId != objectDescriptor.id) {
-                        objects.unregister(oldId)
-                    }
-                    registered
-                }
-                is TshResult.Failure -> {
+        val objectDescriptor = try {
+            objects.register(nativeQuery, "tree-sitter-query")
+        } catch (error: Throwable) {
+            nativeQuery.close()
+            return failure("TSH-QUERY-REGISTRY-004", "Cannot register native query: ${error.message}", cause = error)
+        }
+        val deferredCloseActions = ArrayList<AutoCloseable>(2)
+        try {
+            return queries.withLock {
+                val previous = queries.get(queryId)
+                try {
+                    leases.registerDeferred(
+                        queryId,
+                        objectDescriptor.id,
+                        nativeQuery,
+                        dependencies = listOf(languageLease)
+                    )?.let(deferredCloseActions::add)
+                    languageLeaseTransferred = true
+                } catch (error: Throwable) {
                     objects.unregister(nativeQuery)
-                    leases.retire(queryId)
-                    registered
+                    return failure("TSH-QUERY-LEASE-001", "Cannot register native query ownership: ${error.message}", cause = error)
+                }
+
+                val compiled = TshCompiledQuery(
+                    queryId = queryId,
+                    revision = revision,
+                    grammar = grammar,
+                    source = source,
+                    sourceHash = hash,
+                    compilerVersion = compilerVersion,
+                    options = options,
+                    nativeObjectId = objectDescriptor.id
+                )
+                when (val registered = queries.register(compiled, replace = true)) {
+                    is TshResult.Success -> {
+                        val oldId = previous?.nativeObjectId
+                        if (oldId != null && oldId != objectDescriptor.id) {
+                            objects.unregister(oldId)
+                        }
+                        registered
+                    }
+                    is TshResult.Failure -> {
+                        objects.unregister(nativeQuery)
+                        leases.retireDeferred(queryId).second?.let(deferredCloseActions::add)
+                        registered
+                    }
                 }
             }
+        } finally {
+            // Query replacement may retire the previous Native query immediately. Run all close
+            // actions only after the compiled-query transaction lock has been released.
+            deferredCloseActions.forEach { runCatching { it.close() } }
         }
         } finally {
             if (!languageLeaseTransferred) {
@@ -146,12 +158,19 @@ class TshTreeSitterQueryCompiler(
      * Retires a compiled query. Active executions retain leases; native close is deferred until
      * the final execution lease is released.
      */
-    fun release(queryId: String): Boolean = queries.withLock {
-        val compiled = queries.unregister(queryId) ?: return@withLock false
-        val id = compiled.nativeObjectId ?: return@withLock true
-        objects.unregister(id)
-        leases.retire(queryId)
-        true
+    fun release(queryId: String): Boolean {
+        var deferredClose: AutoCloseable? = null
+        val released = queries.withLock {
+            val compiled = queries.unregister(queryId) ?: return@withLock false
+            val id = compiled.nativeObjectId ?: return@withLock true
+            objects.unregister(id)
+            val retirement = leases.retireDeferred(queryId)
+            deferredClose = retirement.second
+            true
+        }
+        // Native query and its retained Language lease are closed outside the query catalog lock.
+        deferredClose?.let { runCatching { it.close() } }
+        return released
     }
 
     private fun sha256(value: String): String {
