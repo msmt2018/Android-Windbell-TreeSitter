@@ -11,6 +11,9 @@ import androidx.test.platform.app.InstrumentationRegistry
 import com.zerostudio.idea.treesitter.TreeSitter
 import com.zerostudio.idea.treesitter.java.TSLanguageJava
 import com.zerostudio.idea.treesitter.tsh.WindbellTshEngine
+import com.zerostudio.idea.piecetable.PieceTreeTextBufferBuilder
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
@@ -135,4 +138,121 @@ class TshEditorPipelineRenderingTest {
             engine.clearAppearanceOverride("java")
         }
     }
+
+    @Test
+    fun largePieceTreeDocumentStylesAndDrawsAViewportBeyondTheFirstPartition() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        TreeSitter.loadLibrary()
+        System.loadLibrary("tree-sitter-java")
+        val language = TSLanguageJava.getInstance()
+        assertTrue("Java Tree-sitter language must be registered", language.nativeObject != 0L)
+
+        val engine = WindbellTshEngine.instance
+        val tshSource = context.assets.open("tsh/java.tsh")
+            .bufferedReader(Charsets.UTF_8).use { it.readText() }
+        assertTrue(
+            "Java TSH must compile: ${engine.lastCompileDiagnostics}",
+            engine.loadTshSource("java", tshSource, language)
+        )
+        assertTrue(engine.selectScheme("java", "darcula"))
+        engine.setAppearance("java", false)
+
+        // Build a real chunk-backed document larger than the 1 Mi UTF-16
+        // small/large threshold. The target declaration is in a distant partition.
+        val fillerLine = "// partition filler 0123456789 abcdefghijklmnopqrstuvwxyz\\n"
+        val fillerChunk = buildString {
+            repeat(1024) { append(fillerLine) }
+        }
+        val builder = PieceTreeTextBufferBuilder()
+        val chunkCount = 24
+        repeat(chunkCount) { builder.acceptChunk(fillerChunk) }
+        val targetStart = fillerChunk.length * chunkCount
+        val targetLine = "class DistantRenderProbe { int value; }"
+        builder.acceptChunk(targetLine)
+        val targetLineNumber = chunkCount * 1024 + 1
+
+        val highlighter = TshSyntaxHighlighter(language, "java", engine)
+        val editor = EditorView(context)
+        val bitmap = Bitmap.createBitmap(1200, 180, Bitmap.Config.ARGB_8888)
+        val laidOut = CountDownLatch(1)
+        try {
+            InstrumentationRegistry.getInstrumentation().runOnMainSync {
+                editor.setBackgroundColor(Color.WHITE)
+                editor.setTextColor(Color.DKGRAY)
+                editor.setTextSize(16f)
+                editor.setGutterEnabled(false)
+                editor.setSyntaxHighlighter(highlighter)
+                assertTrue(
+                    "Large Piece Tree buffer must be accepted",
+                    editor.setBuffer(builder.build()) { laidOut.countDown() }
+                )
+                editor.measure(
+                    View.MeasureSpec.makeMeasureSpec(bitmap.width, View.MeasureSpec.EXACTLY),
+                    View.MeasureSpec.makeMeasureSpec(bitmap.height, View.MeasureSpec.EXACTLY)
+                )
+                editor.layout(0, 0, bitmap.width, bitmap.height)
+            }
+            assertTrue("Large document layout did not finish", laidOut.await(60, TimeUnit.SECONDS))
+
+            val deadline = SystemClock.uptimeMillis() + 30_000L
+            while (!highlighter.isStyleReady(
+                    targetLineNumber, targetStart, 0, targetLine.length
+                ) && SystemClock.uptimeMillis() < deadline) {
+                SystemClock.sleep(20L)
+            }
+            assertTrue(
+                "Distant TSH partition did not become ready",
+                highlighter.isStyleReady(targetLineNumber, targetStart, 0, targetLine.length)
+            )
+
+            val nameStart = targetLine.indexOf("DistantRenderProbe")
+            val nameEnd = nameStart + "DistantRenderProbe".length
+            var styledColor: Int? = null
+            InstrumentationRegistry.getInstrumentation().runOnMainSync {
+                val styled = highlighter.styleLine(
+                    targetLine, targetLineNumber, targetStart, 0, targetLine.length
+                )
+                assertNotNull("Distant line must receive Android spans", styled)
+                val span = styled!!.getSpans(
+                    nameStart, nameEnd, ForegroundColorSpan::class.java
+                ).firstOrNull {
+                    styled.getSpanStart(it) <= nameStart && styled.getSpanEnd(it) >= nameEnd
+                }
+                assertNotNull("Distant class declaration must receive its TSH type color", span)
+                styledColor = span!!.foregroundColor
+
+                // Exercise the same EditorView -> TextRenderer -> StyledTextPainter path
+                // used by the application after jumping to a distant line.
+                editor.scrollTo(0, (targetLineNumber - 1) * editor.getLineHeight())
+                editor.draw(Canvas(bitmap))
+            }
+
+            val expected = engine.getStylePalette("java", "type")
+            assertNotNull("The selected scheme must provide a type palette", expected)
+            assertEquals(expected!!.lightColor, styledColor)
+            var matchingPixels = 0
+            for (y in 0 until bitmap.height) {
+                for (x in 0 until bitmap.width) {
+                    val pixel = bitmap.getPixel(x, y)
+                    if (Color.alpha(pixel) == 0) continue
+                    val distance =
+                        abs(Color.red(pixel) - Color.red(expected.lightColor)) +
+                        abs(Color.green(pixel) - Color.green(expected.lightColor)) +
+                        abs(Color.blue(pixel) - Color.blue(expected.lightColor))
+                    if (distance <= 72) matchingPixels++
+                }
+            }
+            assertTrue(
+                "Distant large-file TSH type color must reach actual Canvas pixels; pixels=$matchingPixels",
+                matchingPixels > 0
+            )
+        } finally {
+            InstrumentationRegistry.getInstrumentation().runOnMainSync {
+                editor.setSyntaxHighlighter(null)
+            }
+            bitmap.recycle()
+            engine.clearAppearanceOverride("java")
+        }
+    }
+
 }
