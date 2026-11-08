@@ -19,6 +19,7 @@ package x.github.module.editor.model
 import kotlin.text.Regex
 
 import com.zerostudio.idea.piecetable.PieceTreeTextBuffer
+import com.zerostudio.idea.piecetable.PieceTreeSnapshot
 import com.zerostudio.idea.piecetable.SliceEdit
 import com.zerostudio.idea.piecetable.SliceEditResult
 import com.zerostudio.idea.piecetable.common.ApplyEditsResult
@@ -68,6 +69,9 @@ class PieceTreeBuffer(val pieceTree: PieceTreeTextBuffer) : EditorBuffer {
 
     override fun getText(): String = pieceTree.toString()
 
+    override fun createTextSnapshot(): EditorTextSnapshot =
+        PieceTreeEditorTextSnapshot(pieceTree.createSnapshot())
+
     override fun find(
         regex: Regex,
         searchRange: Range,
@@ -91,4 +95,19 @@ class PieceTreeBuffer(val pieceTree: PieceTreeTextBuffer) : EditorBuffer {
     override fun applySliceEdits(edits: List<SliceEdit>): SliceEditResult = pieceTree.applySliceEdits(edits)
 
     override fun toString(): String = pieceTree.toString()
+}
+
+/** Adapts the piece-tree's copy-on-write snapshot without flattening it. */
+private class PieceTreeEditorTextSnapshot(
+    private val snapshot: PieceTreeSnapshot
+) : EditorTextSnapshot {
+    override val length: Int get() = snapshot.length
+    override val version: Long get() = snapshot.versionId.toLong()
+    override fun get(index: Int): Char = snapshot[index]
+    override fun subSequence(startIndex: Int, endIndex: Int): CharSequence =
+        snapshot.subSequence(startIndex, endIndex)
+    override fun substring(startIndex: Int, endIndex: Int): String =
+        snapshot.substring(startIndex, endIndex)
+    override fun getNearestChunk(offset: Int, maxLength: Int): String =
+        snapshot.getNearestChunk(offset, maxLength)
 }
