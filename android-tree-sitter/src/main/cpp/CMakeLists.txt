@@ -136,6 +136,7 @@ add_library(android-tree-sitter SHARED
     largefile/TextSource.cpp
     largefile/ChunkedTextStore.cpp
     largefile/MappedFileSource.cpp
+    largefile/FileWindowSource.cpp
 
     # 原生 JNI 适配层
     main.cc
@@ -191,6 +192,7 @@ if(BUILD_TESTING AND NOT ANDROID)
         largefile/TextSource.cpp
         largefile/ChunkedTextStore.cpp
         largefile/MappedFileSource.cpp
+        largefile/FileWindowSource.cpp
     )
     target_include_directories(windbell_largefile_tests PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}/largefile"
