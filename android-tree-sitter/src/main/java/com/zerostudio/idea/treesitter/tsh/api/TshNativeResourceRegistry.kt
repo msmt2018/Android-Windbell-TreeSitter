@@ -23,7 +23,8 @@ class TshNativeResourceRegistry(
 
     /**
      * Transfers close responsibility to the lease store and publishes the object descriptor.
-     * If publication fails, the just-registered native resource is retired and closed.
+     * If lease registration fails, the object-index entry is rolled back; ownership remains
+     * with the caller because the lease store did not accept the resource.
      */
     fun <T : TSNativeObject> register(
         resource: T,
