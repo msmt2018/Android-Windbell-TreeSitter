@@ -13,7 +13,7 @@
 namespace windbell::tsh {
 
 /**
- * Per-document bounded viewport result cache.
+ * Per-document bounded native highlight result cache.
  *
  * Keys include the document version and the exact UTF-16LE viewport. The
  * caller serializes access with its document lock. Entries are immutable
@@ -44,17 +44,14 @@ public:
     explicit NativeHighlightCache(size_t budgetBytes = 8u * 1024u * 1024u)
         : budget_bytes_(budgetBytes) {}
 
-    bool get(const Key &key, Value *out) {
-        if (!out) return false;
+    // The document owner serializes cache access. Returning an immutable
+    // entry avoids copying potentially millions of spans on every cache hit.
+    // The pointer remains valid until the next mutating cache operation.
+    const Value *find(const Key &key) noexcept {
         auto found = entries_.find(key);
-        if (found == entries_.end()) return false;
-        try {
-            *out = found->second.value;
-            lru_.splice(lru_.begin(), lru_, found->second.position);
-            return true;
-        } catch (...) {
-            return false;
-        }
+        if (found == entries_.end()) return nullptr;
+        lru_.splice(lru_.begin(), lru_, found->second.position);
+        return &found->second.value;
     }
 
     void put(Key key, Value value) {

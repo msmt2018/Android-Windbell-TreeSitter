@@ -1098,10 +1098,9 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
         static_cast<uint32_t>(range_end_byte),
         diagnostics == JNI_TRUE
     };
-    NativeHighlightCache::Value cached;
-    if (document->highlight_cache.get(cache_key, &cached)) {
+    if (const auto *cached = document->highlight_cache.find(cache_key)) {
         return encodeNativeHighlightResult(
-            env, cached.spans, cached.match_counts,
+            env, cached->spans, cached->match_counts,
             diagnostics == JNI_TRUE);
     }
     windbell::largefile::TextChunkView view{};
