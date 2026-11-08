@@ -105,9 +105,9 @@ class StyledTextPainter {
             }
 
             // foreground color
-            paint.color = spans.getSpans(runStart, runEnd, ForegroundColorSpan::class.java)
+            val foreground = spans.getSpans(runStart, runEnd, ForegroundColorSpan::class.java)
                 .maxByOrNull { span -> spans.getSpanFlags(span) and Spanned.SPAN_PRIORITY }
-                ?.foregroundColor ?: plainColor
+            paint.color = foreground?.foregroundColor ?: plainColor
 
             // TSH can declare bold and italic independently. Combine every
             // StyleSpan instead of taking only the first one, otherwise a token
@@ -116,6 +116,23 @@ class StyledTextPainter {
                 .fold(Typeface.NORMAL) { combined, span -> combined or span.style }
             paint.isFakeBoldText = forceBold || (style and Typeface.BOLD) != 0
             paint.textSkewX = if ((style and Typeface.ITALIC) != 0) -0.2f else 0f
+
+            // This renderer is a Canvas painter, so Android does not automatically
+            // run CharacterStyle.updateDrawState() as TextView would. TSH currently
+            // emits a private CharacterStyle for the DSL opacity flag (0x10).
+            // Apply non-built-in styles explicitly after choosing the foreground;
+            // this preserves the selected color while honoring alpha and future
+            // paint-state-only CharacterStyles.
+            for (characterStyle in spans.getSpans(runStart, runEnd, CharacterStyle::class.java)) {
+                if (characterStyle !is ForegroundColorSpan &&
+                    characterStyle !is BackgroundColorSpan &&
+                    characterStyle !is StyleSpan &&
+                    characterStyle !is UnderlineSpan &&
+                    characterStyle !is StrikethroughSpan
+                ) {
+                    characterStyle.updateDrawState(paint)
+                }
+            }
 
             // the text; a tab is only room, up to its stop
             if (hasTabs && TabStops.hasTab(text, runStart, runEnd)) {
