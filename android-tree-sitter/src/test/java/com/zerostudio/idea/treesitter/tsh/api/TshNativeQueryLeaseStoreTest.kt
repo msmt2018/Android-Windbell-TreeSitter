@@ -46,9 +46,11 @@ class TshNativeQueryLeaseStoreTest {
         store.register("same-query", newId, newQuery)
 
         assertNull(store.acquire(oldId))
-        assertNotNull(store.acquire(newId))
+        val newLease = store.acquire(newId)!!
+        assertNotNull(newLease)
         assertEquals(0, oldQuery.closeCalls)
 
+        newLease.close()
         oldLease.close()
         assertEquals(1, oldQuery.closeCalls)
         assertEquals(0, newQuery.closeCalls)
