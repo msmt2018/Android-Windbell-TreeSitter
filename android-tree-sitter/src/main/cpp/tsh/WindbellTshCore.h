@@ -220,6 +220,53 @@ struct SchemeColor {
             {dark_font_flags}
         };
     }
+
+    // Inherit each paint property independently. Font attributes are additive
+    // and must not depend on whether the child defines its own foreground.
+    void inheritMissing(const SchemeColor& parent) {
+        if (!has_light_color && parent.has_light_color) {
+            light_color = parent.light_color;
+            has_light_color = true;
+        }
+        if (!has_dark_color && parent.has_dark_color) {
+            dark_color = parent.dark_color;
+            has_dark_color = true;
+        }
+        if (!has_light_background && parent.has_light_background) {
+            light_background = parent.light_background;
+            has_light_background = true;
+        }
+        if (!has_dark_background && parent.has_dark_background) {
+            dark_background = parent.dark_background;
+            has_dark_background = true;
+        }
+        light_font_flags |= parent.light_font_flags;
+        dark_font_flags |= parent.dark_font_flags;
+    }
+
+    // Scheme extension overlays only properties explicitly supplied by child.
+    void overlay(const SchemeColor& child) {
+        if (child.has_light_color) {
+            light_color = child.light_color;
+            has_light_color = true;
+            explicit_light_color = true;
+        }
+        if (child.has_dark_color) {
+            dark_color = child.dark_color;
+            has_dark_color = true;
+            explicit_dark_color = true;
+        }
+        if (child.has_light_background) {
+            light_background = child.light_background;
+            has_light_background = true;
+        }
+        if (child.has_dark_background) {
+            dark_background = child.dark_background;
+            has_dark_background = true;
+        }
+        light_font_flags |= child.light_font_flags;
+        dark_font_flags |= child.dark_font_flags;
+    }
 };
 
 // 多主题方案实体 (Schemes Block)

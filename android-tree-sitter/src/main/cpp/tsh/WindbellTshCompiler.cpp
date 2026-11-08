@@ -2944,27 +2944,7 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                 child.scope_rules.push_back(std::move(scope_rule));
             }
             for (const auto& entry : child_colors) {
-                auto& target = child.colors[entry.first];
-                if (entry.second.has_light_color) {
-                    target.light_color = entry.second.light_color;
-                    target.has_light_color = true;
-                    target.explicit_light_color = true;
-                }
-                if (entry.second.has_dark_color) {
-                    target.dark_color = entry.second.dark_color;
-                    target.has_dark_color = true;
-                    target.explicit_dark_color = true;
-                }
-                if (entry.second.has_light_background) {
-                    target.light_background = entry.second.light_background;
-                    target.has_light_background = true;
-                }
-                if (entry.second.has_dark_background) {
-                    target.dark_background = entry.second.dark_background;
-                    target.has_dark_background = true;
-                }
-                target.light_font_flags |= entry.second.light_font_flags;
-                target.dark_font_flags |= entry.second.dark_font_flags;
+                child.colors[entry.first].overlay(entry.second);
             }
             for (const auto& entry : child_ui) child.ui_colors[entry.first] = entry.second;
             for (const auto& entry : child_light_ui) child.ui_light_colors[entry.first] = entry.second;
@@ -3092,24 +3072,7 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                 const uint16_t parent_id = grammar->style_name_to_id.at(ancestor);
                 auto parent_color = palette.find(parent_id);
                 if (parent_color != palette.end()) {
-                    if (!own.has_light_color && parent_color->second.has_light_color) {
-                        own.light_color = parent_color->second.light_color;
-                        own.has_light_color = true;
-                        own.light_font_flags |= parent_color->second.light_font_flags;
-                    }
-                    if (!own.has_dark_color && parent_color->second.has_dark_color) {
-                        own.dark_color = parent_color->second.dark_color;
-                        own.has_dark_color = true;
-                        own.dark_font_flags |= parent_color->second.dark_font_flags;
-                    }
-                    if (!own.has_light_background && parent_color->second.has_light_background) {
-                        own.light_background = parent_color->second.light_background;
-                        own.has_light_background = true;
-                    }
-                    if (!own.has_dark_background && parent_color->second.has_dark_background) {
-                        own.dark_background = parent_color->second.dark_background;
-                        own.has_dark_background = true;
-                    }
+                    own.inheritMissing(parent_color->second);
                 }
                 auto parent_definition = grammar->style_definitions.find(ancestor);
                 ancestor = parent_definition == grammar->style_definitions.end() ?
