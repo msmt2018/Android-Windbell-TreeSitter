@@ -18,9 +18,10 @@ MappedFileSource::~MappedFileSource() {
 }
 
 MappedFileSource::MappedFileSource(MappedFileSource &&other) noexcept
-    : mapping_(other.mapping_), size_bytes_(other.size_bytes_) {
+    : mapping_(other.mapping_), size_bytes_(other.size_bytes_), open_(other.open_) {
     other.mapping_ = nullptr;
     other.size_bytes_ = 0;
+    other.open_ = false;
 }
 
 MappedFileSource &MappedFileSource::operator=(MappedFileSource &&other) noexcept {
@@ -28,8 +29,10 @@ MappedFileSource &MappedFileSource::operator=(MappedFileSource &&other) noexcept
     close();
     mapping_ = other.mapping_;
     size_bytes_ = other.size_bytes_;
+    open_ = other.open_;
     other.mapping_ = nullptr;
     other.size_bytes_ = 0;
+    other.open_ = false;
     return *this;
 }
 
@@ -47,6 +50,7 @@ bool MappedFileSource::open(const std::string &path) noexcept {
 
     if (info.st_size == 0) {
         ::close(fd);
+        open_ = true;
         return true;
     }
 
@@ -62,6 +66,7 @@ bool MappedFileSource::open(const std::string &path) noexcept {
 
     mapping_ = mapped;
     size_bytes_ = size;
+    open_ = true;
     return true;
 }
 
@@ -71,10 +76,11 @@ void MappedFileSource::close() noexcept {
         mapping_ = nullptr;
     }
     size_bytes_ = 0;
+    open_ = false;
 }
 
 bool MappedFileSource::isOpen() const noexcept {
-    return mapping_ != nullptr || size_bytes_ == 0;
+    return open_;
 }
 
 uint64_t MappedFileSource::sizeBytes() const noexcept {
@@ -90,6 +96,7 @@ bool MappedFileSource::read(
     out->data = nullptr;
     out->size = 0;
 
+    if (!open_) return false;
     if (offset == size_bytes_) return true;
     if (mapping_ == nullptr || offset > size_bytes_ || maxBytes == 0) return false;
     if (offset > static_cast<uint64_t>(std::numeric_limits<size_t>::max())) return false;
