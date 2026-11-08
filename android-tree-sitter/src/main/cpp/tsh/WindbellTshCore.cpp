@@ -1072,6 +1072,25 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
         macro_spans[i].source = static_cast<uint8_t>(HighlightSource::NATIVE_QUERY);
     }
 
+    // Keep the public range API's output bounded to the requested document
+    // window. Regex and Monarch still evaluate from document start to preserve
+    // multiline matches and stateful tokenizer state; native Tree-sitter queries
+    // are range-restricted above and do not enumerate unrelated captures.
+    auto clip_to_requested_range = [&](std::vector<HighlightSpan>& candidates) {
+        for (auto& span : candidates) {
+            span.start_byte = std::max(span.start_byte, range_start_byte);
+            span.end_byte = std::min(span.end_byte, range_end_byte);
+        }
+        candidates.erase(
+            std::remove_if(candidates.begin(), candidates.end(),
+                [](const HighlightSpan& span) {
+                    return span.start_byte >= span.end_byte;
+                }),
+            candidates.end());
+    };
+    clip_to_requested_range(micro_spans);
+    clip_to_requested_range(macro_spans);
+
     // Preserve producer candidates before overlap resolution, duplicate collapse,
     // clipping and adjacent-fragment merging. These are the actual captures
     // emitted by each pipeline, not merely the surviving renderer spans.
