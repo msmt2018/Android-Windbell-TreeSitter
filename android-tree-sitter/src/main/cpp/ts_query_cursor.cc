@@ -222,7 +222,7 @@ static void TSQueryCursor_setMatchLimit(JNIEnv *env,
                                         jint newLimit) {
   req_nnp(env, cursor);
 #if defined(TSH_TREE_SITTER_HAS_QUERY_CURSOR_OPTIONS)
-  if (rejectQueryCursorReentry(env, (TSQueryCursor *) cursor));
+  if (rejectQueryCursorReentry(env, (TSQueryCursor *) cursor)) return;
 #endif
   ts_query_cursor_set_match_limit((TSQueryCursor *) cursor, newLimit);
 }
@@ -243,7 +243,7 @@ static void TSQueryCursor_setByteRange(JNIEnv *env,
                                        jint end) {
   req_nnp(env, cursor);
 #if defined(TSH_TREE_SITTER_HAS_QUERY_CURSOR_OPTIONS)
-  if (rejectQueryCursorReentry(env, (TSQueryCursor *) cursor));
+  if (rejectQueryCursorReentry(env, (TSQueryCursor *) cursor)) return;
 #endif
   ts_query_cursor_set_byte_range((TSQueryCursor *) cursor, start, end);
 }
@@ -255,7 +255,7 @@ static void TSQueryCursor_setPointRange(JNIEnv *env,
                                         jobject end) {
   req_nnp(env, cursor);
 #if defined(TSH_TREE_SITTER_HAS_QUERY_CURSOR_OPTIONS)
-  if (rejectQueryCursorReentry(env, (TSQueryCursor *) cursor));
+  if (rejectQueryCursorReentry(env, (TSQueryCursor *) cursor)) return;
 #endif
   ts_query_cursor_set_point_range((TSQueryCursor *) cursor,
                                   _unmarshalPoint(env, start),
@@ -292,7 +292,7 @@ static void
 TSQueryCursor_removeMatch(JNIEnv *env, jclass self, jlong cursor, jint id) {
   req_nnp(env, cursor);
 #if defined(TSH_TREE_SITTER_HAS_QUERY_CURSOR_OPTIONS)
-  if (rejectQueryCursorReentry(env, (TSQueryCursor *) cursor));
+  if (rejectQueryCursorReentry(env, (TSQueryCursor *) cursor)) return;
 #endif
   ts_query_cursor_remove_match((TSQueryCursor *) cursor, id);
 }
