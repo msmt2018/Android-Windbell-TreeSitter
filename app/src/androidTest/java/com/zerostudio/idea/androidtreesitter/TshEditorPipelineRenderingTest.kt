@@ -8,6 +8,7 @@ import android.view.View
 import android.text.SpannableStringBuilder
 import android.text.Spanned
 import android.text.style.ForegroundColorSpan
+import android.text.style.StyleSpan
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.zerostudio.idea.treesitter.TreeSitter
@@ -46,7 +47,7 @@ class TshEditorPipelineRenderingTest {
                 }
                 schemes {
                     plain {
-                        light [ outer: #202020, inner: #FF0000 ]
+                        light [ outer: #202020 @bold, inner: #FF0000 ]
                         dark [ outer: #A0A0A0, inner: #FF5555 ]
                     }
                 }
@@ -94,6 +95,25 @@ class TshEditorPipelineRenderingTest {
         )
         val tokenStart = source.indexOf("TOKEN")
         val tokenEnd = tokenStart + "TOKEN".length
+        val tokenStyles = styled.getSpans(tokenStart, tokenEnd, StyleSpan::class.java)
+        assertTrue("Outer TSH font style must be represented on nested token", tokenStyles.isNotEmpty())
+        val outerCapture = viewportCaptures.first {
+            it.styleId == engine.getStyleCatalog("canvas-priority-regression")
+                .first { style -> style.name == "outer" }.styleId
+        }
+        val expectedOuterPriority = viewportCaptures.asSequence()
+            .map { it.priority to it.declarationOrder }
+            .distinct()
+            .sortedWith(compareByDescending<Pair<Int, Int>> { it.first }.thenBy { it.second })
+            .indexOf(outerCapture.priority to outerCapture.declarationOrder)
+            .let { (255 - it).coerceAtLeast(1) }
+        assertTrue(
+            "Font StyleSpan must carry the same native rule precedence",
+            tokenStyles.any {
+                (styled.getSpanFlags(it) and Spanned.SPAN_PRIORITY) ==
+                    (expectedOuterPriority shl Spanned.SPAN_PRIORITY_SHIFT)
+            }
+        )
         val tokenColors = styled.getSpans(
             tokenStart, tokenEnd, ForegroundColorSpan::class.java
         ).filter {
