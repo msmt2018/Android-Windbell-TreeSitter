@@ -31,6 +31,13 @@
 | [TSH DSL 语法与语义契约](tsh-dsl-syntax-and-semantic-contract.md) | Lexer、Parser、AST、类型系统、Schema | 顶层声明、值类型、表达式、引用、语义约束与版本 |
 | [Theme、Style、Font、Color 与 Decoration](theme-style-font-color-api.md) | 主题与样式模型 | Theme get/list/activate、Style resolve/explain、字体与颜色契约 |
 | [TSH 核心能力覆盖矩阵](tsh-core-api-coverage-matrix.md) | DSL 到 Runtime 映射 | 每种语法对应的底层 API、产物和验收要求 |
+| [DSL 完整类型系统与 Schema](dsl-type-system-and-schema-api.md) | AST、Type System、Schema、Validator | 属性类型、单位、默认值、继承、表达式和语义约束 |
+| [ATS 与 Tree-sitter 查询](ats-tree-sitter-query-api.md) | Grammar、ATS Compiler、Query Executor | 查询语法、捕获、谓词、增量查询和生命周期 |
+| [Regex 窗口执行](regex-window-execution-api.md) | Oniguruma、WindowLease、Incremental | 连续缓冲区、跨窗口正确性、增量与安全预算 |
+| [统一 Match 与 Scope](unified-match-scope-api.md) | Match、Capture、Scope、Selector | 双管线结果归一、范围、冲突、作用域语义 |
+| [Attribute、Semantic 与 Highlight](attribute-semantic-highlight-api.md) | Attribute Registry、Semantic Resolver、Highlight | DSL 属性真正进入运行时计算与高亮结果 |
+| [Theme、Style 与 Render 完整契约](theme-style-render-contract-api.md) | Theme、Font、Color、Decoration、Backend | 主题管理、完整字体属性、真实绘制回执 |
+| [Kotlin/JNI/C++ 完整性](native-jni-cpp-completeness-api.md) | Native operation catalog、JNI、C ABI | 接口签名、注解生成、句柄、所有权与生命周期 |
 
 ## 公共 API 设计要求
 
