@@ -13,7 +13,7 @@
 |---|---|---|
 | [Runtime 与 Session](runtime-and-session.md) | Engine、Session、任务与资源 | 多会话隔离、状态机、线程和关闭 |
 | [配置与语言工具](config-and-language-tooling.md) | .tsh、Lexer、Parser、AST、Schema | 编译阶段、诊断、补全、格式化 |
-| [Editor 与对象适配](editor-adapters.md) | Editor、View、Layout、Viewport | 实例注册、Provider 协商、适配等级 |
+
 | [Highlight 与 Render](highlight-and-render-api.md) | 属性、主题、高亮、渲染 | 样式级联、RenderPlan、真实绘制 |
 | [Binding、事件与扩展](binding-events-and-extension.md) | Binding、EventBus、Provider | 对象关系、事件线程、扩展卸载 |
 | [ATS、Regex 与 Match](ats-regex-and-match-api.md) | 双管道匹配 | 统一 Match、优先级、增量和窗口 |
@@ -68,6 +68,6 @@
 - language-intelligence-api.md
 - edit-transaction-undo-redo-command-api.md
 - decorations-gutter-inlay-codelens-api.md（其中 Gutter/Inlay/CodeLens 属宿主；TSH Decoration 以 theme-style-font-color-api.md 为准）
-- editor-adapters.md、workspace-project-document-lifecycle-api.md、accessibility-bidi-virtual-layout-api.md（仅保留必要文本/坐标/渲染适配契约）
+- editor-adapters.md、workspace-project-document-lifecycle-api.md、accessibility-bidi-virtual-layout-api.md、injection-and-language-layer-api.md（仅作宿主集成参考；最小文本/坐标契约以核心 API 定义为准）
 
 嵌入语言语法注入属于 TSH 核心语法能力，见 language-injection-api.md；不得将通用 Editor Language Layer 当作引擎职责。
