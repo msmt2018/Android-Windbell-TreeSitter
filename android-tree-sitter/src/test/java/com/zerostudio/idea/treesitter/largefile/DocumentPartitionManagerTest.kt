@@ -49,6 +49,28 @@ class DocumentPartitionManagerTest {
         assertTrue(closed.contains("bbb"))
     }
 
+
+    @Test fun treeSitterRangeUsesAbsoluteUtf16LeOffsetsAndCrLfRows() {
+        val text = "first\r\n😀second\r\nthird"
+        val source = Source(text)
+        val manager = DocumentPartitionManager(targetPartitionChars = 256)
+        val start = text.indexOf("second").toLong()
+        val end = (text.indexOf("third") + 5).toLong()
+        val range = manager.treeSitterRange(source, start, end)
+        assertEquals(start * 2L, range.startByte.toLong())
+        assertEquals(end * 2L, range.endByte.toLong())
+        assertEquals(1, range.startPoint.row)
+        assertEquals(("😀".length + 0L) * 2L + "second".length * 2L, range.endPoint.column.toLong())
+    }
+
+    @Test fun treeSitterRangeRejectsSurrogatePairSplit() {
+        val source = Source("a😀b")
+        val manager = DocumentPartitionManager()
+        assertThrows(IllegalArgumentException::class.java) {
+            manager.treeSitterRange(source, 2L, 3L)
+        }
+    }
+
     @Test fun checkpointStoreRestoresOnlyMatchingVersionAndInvalidatesSuffix() {
         val store = TokenizerCheckpointStore(8)
         store.put(TokenizerCheckpoint(4, 10, 100, listOf("root", "string")))
