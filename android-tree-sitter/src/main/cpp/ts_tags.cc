@@ -10,10 +10,12 @@
 #include <jni.h>
 
 #include <algorithm>
+#include <cstdint>
+#include <limits>
 #include <memory>
 #include <new>
-#include <vector>
 #include <utility>
+#include <vector>
 
 #include "tree_sitter/api.h"
 #include "utils/ts_obj_utils.h"
@@ -75,14 +77,18 @@ bool tagsProgressCallback(TSQueryCursorState *state) {
 static jobjectArray TSTags_extract(
     JNIEnv *env, jclass,
     jlong query_pointer, jobject root_object,
-    jint start_byte, jint end_byte,
+    jlong start_byte, jlong end_byte,
     jint max_results, jint max_pending_matches) {
   if (query_pointer == 0 || root_object == nullptr) {
     throwTagsIllegalArgument(env, "query and root must be non-null");
     return nullptr;
   }
-  if (start_byte < 0 || end_byte < start_byte) {
-    throwTagsIllegalArgument(env, "Invalid absolute byte range");
+  constexpr jlong kMaxTreeSitterByteOffset =
+      static_cast<jlong>(std::numeric_limits<uint32_t>::max());
+  if (start_byte < 0 || end_byte < start_byte ||
+      end_byte > kMaxTreeSitterByteOffset) {
+    throwTagsIllegalArgument(
+        env, "Invalid absolute byte range: Tree-sitter byte offsets are uint32");
     return nullptr;
   }
   if (max_results < 1 || max_results > 1000000 ||
@@ -91,14 +97,15 @@ static jobjectArray TSTags_extract(
     return nullptr;
   }
 
+  const auto start = static_cast<uint32_t>(start_byte);
+  const auto end = static_cast<uint32_t>(end_byte);
   const TSNode root = _unmarshalNode(env, root_object);
   if (env->ExceptionCheck()) return nullptr;
   if (ts_node_is_null(root) || ts_node_has_changes(root)) {
     throwTagsIllegalArgument(env, "Cannot query tags on a null or changed syntax node");
     return nullptr;
   }
-  if (static_cast<uint32_t>(start_byte) < ts_node_start_byte(root) ||
-      static_cast<uint32_t>(end_byte) > ts_node_end_byte(root)) {
+  if (start < ts_node_start_byte(root) || end > ts_node_end_byte(root)) {
     throwTagsIllegalArgument(env, "Tag query range must be inside the root node");
     return nullptr;
   }
@@ -118,9 +125,7 @@ static jobjectArray TSTags_extract(
     return nullptr;
   }
 
-  ts_query_cursor_set_byte_range(
-      cursor.get(), static_cast<uint32_t>(start_byte),
-      static_cast<uint32_t>(end_byte));
+  ts_query_cursor_set_byte_range(cursor.get(), start, end);
   ts_query_cursor_set_match_limit(
       cursor.get(), static_cast<uint32_t>(max_pending_matches));
 #if defined(TSH_TREE_SITTER_HAS_QUERY_CURSOR_OPTIONS)
@@ -137,7 +142,7 @@ static jobjectArray TSTags_extract(
     matches.reserve(static_cast<size_t>(std::min(max_results, 4096)));
     TSQueryMatch match{};
     while (ts_query_cursor_next_match(cursor.get(), &match)) {
-      if (static_cast<jint>(matches.size()) >= max_results) {
+      if (matches.size() >= static_cast<size_t>(max_results)) {
         throwTagsIllegalState(env, "Tag query exceeded maxResults; no partial result was returned");
         return nullptr;
       }

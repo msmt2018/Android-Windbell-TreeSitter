@@ -29,6 +29,8 @@ public final class TSTags {
    *
    * <p>No partial result is returned when either result or pending-match
    * limits are exceeded. The query and root must remain valid for this call.
+   * Tree-sitter's public byte offsets are unsigned 32-bit values, so Java
+   * {@code long} is used to preserve the full native offset domain.
    *
    * @param query compiled query
    * @param root syntax node used as the query root
@@ -41,8 +43,8 @@ public final class TSTags {
   public static TSQueryMatch[] extract(
       TSQuery query,
       TSNode root,
-      int startByte,
-      int endByte,
+      long startByte,
+      long endByte,
       int maxResults,
       int maxPendingMatches) {
     if (query == null || !query.canAccess()) {
@@ -52,7 +54,7 @@ public final class TSTags {
         || !root.getTree().canAccess() || root.hasChanges()) {
       throw new IllegalArgumentException("Cannot extract tags from an invalid or changed root");
     }
-    if (startByte < 0 || endByte < startByte) {
+    if (startByte < 0 || endByte < startByte || endByte > 0xFFFF_FFFFL) {
       throw new IllegalArgumentException("Invalid absolute byte range");
     }
     if (maxResults < 1 || maxPendingMatches < 1) {
@@ -68,8 +70,8 @@ public final class TSTags {
     static native TSQueryMatch[] extract(
         long query,
         TSNode root,
-        int startByte,
-        int endByte,
+        long startByte,
+        long endByte,
         int maxResults,
         int maxPendingMatches);
   }
