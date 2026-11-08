@@ -394,6 +394,48 @@ class TshEditorPipelineRenderingTest {
     }
 
     @Test
+    fun schemeExtensionPreservesExplicitFontAttributeClears() {
+        val engine = WindbellTshEngine.instance
+        val dsl = """
+            tsh 2 {
+                language { id: "scheme-font-override-regression" extensions: [".sfo"] }
+                styles {
+                    base { scope: "entity.name" }
+                    child { scope: "entity.name.type" parent: "base" }
+                }
+                schemes {
+                    foundation {
+                        light [ base: #FF0000 @bold @italic @underline ]
+                        dark [ base: #AA0000 @bold @italic @underline ]
+                    }
+                    derived {
+                        extends: "foundation"
+                        light [ child: #0000FF @no-bold @no-underline ]
+                        dark [ child: #0000AA @no-bold @no-underline ]
+                    }
+                }
+                defaultScheme: "derived"
+            }
+        """.trimIndent()
+        assertTrue(
+            "Scheme font override DSL must compile: ${engine.lastCompileDiagnostics}",
+            engine.loadTshSource("scheme-font-override-regression", dsl, null)
+        )
+        val palette = engine.getSchemePalette("scheme-font-override-regression", "derived")
+        val baseId = engine.getStylePalette("scheme-font-override-regression", "base")!!.styleId
+        val childId = engine.getStylePalette("scheme-font-override-regression", "child")!!.styleId
+        val base = palette.values.first { it.styleId == baseId }
+        val child = palette.values.first { it.styleId == childId }
+        assertEquals("Base bold survives Scheme inheritance", 0x01, base.lightFontFlags and 0x01)
+        assertEquals("Child explicitly clears inherited bold", 0, child.lightFontFlags and 0x01)
+        assertEquals("Child inherits unspecified italic", 0x02, child.lightFontFlags and 0x02)
+        assertEquals("Child explicitly clears inherited underline", 0, child.lightFontFlags and 0x04)
+        assertEquals("Dark child explicitly clears inherited bold", 0, child.darkFontFlags and 0x01)
+        assertEquals("Dark child inherits unspecified italic", 0x02, child.darkFontFlags and 0x02)
+        assertEquals("Dark child explicitly clears inherited underline", 0, child.darkFontFlags and 0x04)
+    }
+
+    @Test
     fun javaAstSymbolColorReachesEditorCanvas() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         TreeSitter.loadLibrary()

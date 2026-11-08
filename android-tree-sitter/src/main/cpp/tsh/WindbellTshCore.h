@@ -173,6 +173,7 @@ struct TshStyle {
 
 // Typed paint values are the renderer-facing style model. ARGB keeps
 // source alpha intact; presence is independent so transparent colors remain valid.
+// Font defined_mask distinguishes inherited/unset attributes from explicit clears.
 struct TshColorValue {
     uint32_t argb = 0;
     bool present = false;
@@ -224,8 +225,8 @@ struct SchemeColor {
         };
     }
 
-    // Inherit each paint property independently. Font attributes are additive
-    // and must not depend on whether the child defines its own foreground.
+    // Inherit each paint property independently. Font attributes inherit only
+    // where the child has not explicitly set or cleared that attribute.
     void inheritMissing(const SchemeColor& parent) {
         if (!has_light_color && parent.has_light_color) {
             light_color = parent.light_color;
