@@ -13,6 +13,7 @@
 #include <array>
 #include <cstdint>
 #include <string>
+#include <vector>
 
 namespace windbell::largefile {
 
