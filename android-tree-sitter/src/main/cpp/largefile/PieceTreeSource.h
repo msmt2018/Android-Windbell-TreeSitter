@@ -70,7 +70,7 @@ private:
 
     std::shared_ptr<const TextSource> original_;
     std::unique_ptr<Node> root_;
-    std::vector<std::shared_ptr<uint8_t[]>> added_chunks_;
+    std::vector<std::shared_ptr<uint8_t>> added_chunks_;
     uint64_t added_size_ = 0;
     uint64_t added_allocated_ = 0;
     uint64_t memory_limit_bytes_;

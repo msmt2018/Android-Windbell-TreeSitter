@@ -199,7 +199,7 @@ bool PieceTreeSource::appendAdded(const uint8_t *data, uint64_t bytes,
             if (index == added_chunks_.size()) {
                 if (chunkBytes > memory_limit_bytes_ -
                     std::min(memory_limit_bytes_, added_allocated_)) return false;
-                std::shared_ptr<uint8_t[]> chunk(
+                std::shared_ptr<uint8_t> chunk(
                     new (std::nothrow) uint8_t[chunkBytes], std::default_delete<uint8_t[]>());
                 if (!chunk) return false;
                 added_chunks_.push_back(std::move(chunk));

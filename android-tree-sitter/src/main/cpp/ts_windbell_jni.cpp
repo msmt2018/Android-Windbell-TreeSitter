@@ -983,7 +983,7 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeApplyDocumentEdi
             static_cast<uint8_t>(inserted_for_points[static_cast<size_t>(i)])) |
             (static_cast<uint16_t>(static_cast<uint8_t>(
                 inserted_for_points[static_cast<size_t>(i + 1)])) << 8);
-        if (unit == '\\n') {
+        if (unit == '\n') {
             ++new_end_point.row;
             new_end_point.column = 0;
         } else {
