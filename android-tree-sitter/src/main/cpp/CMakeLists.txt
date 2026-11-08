@@ -39,10 +39,18 @@ include(CheckCXXSourceCompiles)
 set(CMAKE_REQUIRED_INCLUDES "${TS_DIR}/lib/include")
 check_cxx_source_compiles("
     #include <tree_sitter/api.h>
-    using ProgressCallback = decltype(((TSQueryCursorOptions*)0)->progress_callback);
+    #include <type_traits>
+    using ProgressCallback = decltype(TSQueryCursorOptions::progress_callback);
+    using ExpectedProgressCallback = bool (*)(TSQueryCursorState *);
     using ExecWithOptions = decltype(&ts_query_cursor_exec_with_options);
+    using ExpectedExecWithOptions = void (*)(
+        TSQueryCursor *, const TSQuery *, TSNode, const TSQueryCursorOptions *);
     using SetMatchLimit = decltype(&ts_query_cursor_set_match_limit);
     using DidExceedMatchLimit = decltype(&ts_query_cursor_did_exceed_match_limit);
+    static_assert(std::is_same<ProgressCallback, ExpectedProgressCallback>::value,
+        \"Tree-sitter progress callback signature is incompatible\");
+    static_assert(std::is_same<ExecWithOptions, ExpectedExecWithOptions>::value,
+        \"Tree-sitter exec-with-options signature is incompatible\");
     static_assert(sizeof(TSQueryCursorOptions) > 0, \"Query cursor options are available\");
     int main() { return 0; }
 " TSH_TREE_SITTER_HAS_QUERY_CURSOR_OPTIONS)
