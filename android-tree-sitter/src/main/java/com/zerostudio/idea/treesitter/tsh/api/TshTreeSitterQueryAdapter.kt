@@ -195,14 +195,23 @@ class TshTreeSitterQueryExecutor(
             val declared = predicateHandlers.flatMap { handler ->
                 runCatching { handler.supportedPredicates.toList() }.getOrDefault(emptyList())
             }.map { it.removePrefix("#") }.toSet()
-            val required = (0 until nativeQuery.patternCount).flatMap { pattern ->
-                nativeQuery.predicatesForPattern(pattern).asSequence()
-                    .takeWhile { it.type != com.zerostudio.idea.treesitter.TSQueryPredicateStep.Type.Done }
-                    .firstOrNull()
-                    ?.takeIf { it.type == com.zerostudio.idea.treesitter.TSQueryPredicateStep.Type.String }
-                    ?.let { listOf(nativeQuery.getStringValueForId(it.valueId)) }
-                    ?: emptyList()
-            }.toSet()
+            val required = buildSet {
+                for (pattern in 0 until nativeQuery.patternCount) {
+                    val steps = nativeQuery.predicatesForPattern(pattern)
+                    var index = 0
+                    while (index < steps.size) {
+                        val nameStep = steps[index]
+                        if (nameStep.type == com.zerostudio.idea.treesitter.TSQueryPredicateStep.Type.String) {
+                            add(nativeQuery.getStringValueForId(nameStep.valueId).removePrefix("#"))
+                        }
+                        while (index < steps.size &&
+                            steps[index].type != com.zerostudio.idea.treesitter.TSQueryPredicateStep.Type.Done) {
+                            index++
+                        }
+                        index++
+                    }
+                }
+            }
             val missing = required - declared
             if (missing.isNotEmpty()) {
                 return failure(
@@ -235,7 +244,10 @@ class TshTreeSitterQueryExecutor(
             // Tree-sitter's match limit bounds pending in-progress matches, not total results.
             // Enforce maxMatches while draining the cursor instead.
             cursor.setByteRange(effectiveRange.startByte, effectiveRange.endByte)
-            predicateHandlers.forEach(cursor::addPredicateHandler)
+            cursor.setPredicateEvaluationEnabled(query.options.enablePredicates)
+            if (query.options.enablePredicates) {
+                predicateHandlers.forEach(cursor::addPredicateHandler)
+            }
             cursor.exec(nativeQuery, root)
 
             val captures = ArrayList<TshCapture>()
