@@ -55,3 +55,17 @@
 ## 完成判定
 
 每项功能分别标记设计、实现、编译验证、自动化运行验证、真实编辑器验证。阶段不能仅凭文件存在或编译通过判定完成。当前首个实现切片为阶段 1 的 API 基础，不代表后续阶段已完成。
+
+## API 规范文档映射
+
+阶段交付必须同步更新对应 API 契约：
+
+- 阶段 1：`api/core-foundation.md`、`api/runtime-and-session.md`。
+- 阶段 2：`api/object-and-text-model.md`、`api/editor-adapters.md`。
+- 阶段 3：`api/config-and-language-tooling.md`。
+- 阶段 4：`api/ats-regex-and-match-api.md`。
+- 阶段 5/6：`api/highlight-and-render-api.md`。
+- 阶段 7：`api/binding-events-and-extension.md`。
+- 全阶段：`api/diagnostics-and-observability.md`、`api/public-api-review-checklist.md`。
+
+新增公共 API 必须先更新契约和示例，再实现接口；实现后补齐测试、兼容性说明和 changelog。没有对应测试与状态标记的文档条目不得标记为已完成。
