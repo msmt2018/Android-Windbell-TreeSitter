@@ -49,3 +49,8 @@ ATS 查询编译结果应缓存，缓存键包括 grammar identity/version、que
 - Query 编译错误包含准确源范围。
 - 并发文档解析互不污染。
 - 旧版本 ParseResult 不会覆盖新版本结果。
+
+
+## ATS 查询契约扩展
+
+ATS/Tree-sitter 查询完整契约见 [ats-tree-sitter-query-api.md](ats-tree-sitter-query-api.md)，其中定义节点/字段/捕获/谓词、编译绑定、增量范围、版本和资源租约。ATS 是 Tree-sitter Query/SCM 的受控简化混合语法，不是第三执行管线。
