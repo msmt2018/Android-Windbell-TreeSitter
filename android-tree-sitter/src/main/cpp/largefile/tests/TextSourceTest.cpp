@@ -1,8 +1,10 @@
 #include "ChunkedTextStore.h"
 #include "MappedFileSource.h"
+#include "FileWindowSource.h"
 
 #include <cassert>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -109,6 +111,19 @@ static void testMappedFileSource() {
 
     source.close();
     assert(!source.isOpen());
+
+    FileWindowSource windowed(path, 16u * 1024u);
+    assert(windowed.isOpen());
+    assert(windowed.sizeBytes() == expected.size());
+    assert(windowed.read(64u * 1024u + 4u, 4096, &view));
+    assert(view.size == 4096);
+    assert(std::memcmp(view.data, expected.data() + 64u * 1024u + 4u, 4096) == 0);
+    assert(windowed.read(64u * 1024u + 8u, 128, &view));
+    assert(view.size == 128);
+    assert(std::memcmp(view.data, expected.data() + 64u * 1024u + 8u, 128) == 0);
+    windowed.close();
+    assert(!windowed.isOpen());
+
     ::unlink(path);
 }
 
