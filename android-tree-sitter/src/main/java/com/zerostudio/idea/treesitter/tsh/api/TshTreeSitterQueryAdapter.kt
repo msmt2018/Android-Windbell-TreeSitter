@@ -25,7 +25,7 @@ class TshTreeSitterQueryCompiler(
     private val objects: TshObjectRegistry,
     private val queries: TshCompiledQueryRegistry,
     private val leases: TshNativeQueryLeaseStore,
-    private val languageLeases: TshNativeResourceLeaseStore,
+    private val languageLeases: TshNativeResourceLeaseStore = TshNativeResourceLeaseStore(),
     private val compilerVersion: String = "treesitter-adapter-1",
     private val resourceRegistry: TshNativeResourceRegistry? = null
 ) : TshAtsCompiler {
@@ -168,7 +168,7 @@ class TshTreeSitterQueryExecutor(
     private val objects: TshObjectRegistry,
     private val queries: TshCompiledQueryRegistry,
     private val leases: TshNativeQueryLeaseStore,
-    private val treeLeases: TshNativeResourceLeaseStore,
+    private val treeLeases: TshNativeResourceLeaseStore = TshNativeResourceLeaseStore(),
     private val predicateHandlers: List<TSPredicateHandler> = emptyList(),
     private val resourceRegistry: TshNativeResourceRegistry? = null
 ) : TshQueryExecutor {
