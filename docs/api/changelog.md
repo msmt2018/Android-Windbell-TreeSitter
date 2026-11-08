@@ -28,7 +28,7 @@
 - Predicate Handler 改为按注册顺序确定性执行；TSH 预检逐个扫描每个 pattern 中的所有 predicate，而不只检查首个 predicate。
 - Query revision 发布、注销和 Executor 的“当前 revision 检查 + Lease acquire”统一通过 `TshCompiledQueryRegistry` 事务锁协调，避免并发替换期间 Registry 指向新 revision、Lease Store 却已退役该 revision的短暂不一致。
 - 新增 `TshNativeQueryLeaseStore` 与生命周期测试源码，覆盖 release 延迟关闭、同 ID 替换和批量退役；Executor 对 predicate 名称执行 Handler 声明覆盖预检。
-- 新增通用 `TshNativeResourceLeaseStore`：资源 Handle 实例校验、Lease 计数、retire 后延迟 close；Tree Executor 接入 Tree Lease，Grammar Language Resolver 改为返回带 objectId 的 Language Handle，Compiler 在 Native Query 编译期间持有 Language Lease；新增资源 Lease 测试源码。
+- 新增通用 `TshNativeResourceLeaseStore`：资源 Handle 实例校验、Lease 计数、retire/retireAll 后延迟 close；Tree Executor 接入 Tree Lease，Grammar Language Resolver 改为返回带 objectId 的 Language Handle，Compiler 在 Native Query 编译期间持有 Language Lease；新增资源 Lease 测试源码。
 
 ### Planned
 - Piece Tree/Rope 索引化坐标映射与 Layout-aware 坐标 Provider。
