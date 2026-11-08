@@ -117,7 +117,6 @@ class TshTreeSitterQueryCompiler(
                 val oldId = previous?.nativeObjectId
                 if (oldId != null && oldId != objectDescriptor.id) {
                     objects.unregister(oldId)
-                    leases.retire(previous.queryId)
                 }
                 registered
             }
@@ -301,8 +300,10 @@ class TshTreeSitterQueryExecutor(
         } catch (error: Throwable) {
             failure("TSH-QUERY-EXEC-016", "Tree-sitter query execution failed: ${error.message}", cause = error)
         } finally {
-            queryLease.close()
+            runCatching { cursor.close() }
         }
+        } finally {
+            queryLease.close()
         }
     }
 }
