@@ -38,6 +38,14 @@ import java.util.concurrent.locks.ReentrantLock;
  */
 public class TSParser extends TSNativeObject {
 
+  /**
+   * Maximum even UTF-16LE byte length representable by this binding's current
+   * signed-int UTF16String storage and Tree-sitter's 32-bit byte offsets.
+   * This is an ABI ceiling, not a promise that a device has enough memory to
+   * parse a document of this size.
+   */
+  public static final int MAX_SUPPORTED_INPUT_BYTES = Integer.MAX_VALUE - 1;
+
   protected final ReentrantLock parseLock = new ReentrantLock();
   protected final Condition parseCondition = parseLock.newCondition();
   protected final AtomicBoolean isParsing = new AtomicBoolean(false);
@@ -180,6 +188,14 @@ public class TSParser extends TSNativeObject {
    */
   public TSTree parseString(TSTree oldTree, UTF16String source) {
     checkAccess();
+    final int sourceByteLength = source.byteLength();
+    if (sourceByteLength < 0 || sourceByteLength > MAX_SUPPORTED_INPUT_BYTES) {
+      throw new IllegalArgumentException(
+          "UTF-16 source exceeds this Tree-sitter binding's supported byte length");
+    }
+    if ((sourceByteLength & 1) != 0) {
+      throw new IllegalArgumentException("UTF-16LE source byte length must be even");
+    }
 
     // Check for reentrancy (same thread calling this method again, before the previous call returned)
     if (parseLock.isHeldByCurrentThread()) {
