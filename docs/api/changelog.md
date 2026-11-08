@@ -24,3 +24,12 @@
 - Highlight/Attribute/Theme/RenderPlan 运行时实现。
 - Binding/EventBus/Provider 版本协商和诊断收集器。
 - 本地 Gradle 编译、自动化测试和真实编辑器渲染验证。
+
+
+### Core DSL/API scope correction
+- 补充 .tsh 配置源、加载/编译/安装/替换/卸载、对象 Catalog 查询和配置事务契约。
+- 补充 TSH DSL v1 顶层声明、类型系统、属性 Schema、表达式、引用和语义诊断契约。
+- 补充 Theme/Style/Font/Color/Decoration API，明确字体族、字重、字形、字号、字距、行高、OpenType 特性、可变字体轴与 fallback。
+- 补充 DSL 能力到 Parser/Resolver/Runtime/Render Backend 的覆盖矩阵，防止只定义语法而没有执行实现。
+- 从核心 API 索引移除通用编辑器功能文档；这些内容仅作为宿主集成边界参考。嵌入语言语法注入保留为 TSH 核心能力。
+- 以上新增内容均为目标契约文档；未据此宣称底层实现、Gradle 构建、自动化测试或设备绘制已经完成。
