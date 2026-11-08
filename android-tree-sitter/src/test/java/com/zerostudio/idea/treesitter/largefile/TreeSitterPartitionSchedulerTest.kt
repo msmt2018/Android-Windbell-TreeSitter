@@ -1,6 +1,8 @@
 package com.zerostudio.idea.treesitter.largefile
 
 import com.zerostudio.idea.treesitter.TSParser
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import com.zerostudio.idea.treesitter.java.TSLanguageJava
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
@@ -24,23 +26,25 @@ class TreeSitterPartitionSchedulerTest {
             val included = manager.treeSitterRange(
                 source, request.contextStartUtf16, request.contextEndUtf16
             )
-            parser.includedRanges = listOf(included)
-            // Stream bounded UTF-16LE windows instead of allocating a direct buffer
-            // proportional to the entire document (which defeats large-file mode).
-            val tree = parser.parse(null, readCallback = { byteOffset, _ ->
-                val start = (byteOffset.toLong() / 2L).coerceAtMost(source.length)
-                if (start >= source.length) {
-                    ByteArray(0)
-                } else {
-                    var end = minOf(source.length, start + 4096L)
-                    if (end < source.length &&
-                        Character.isHighSurrogate(source.text[(end - 1L).toInt()]) &&
-                        Character.isLowSurrogate(source.text[end.toInt()])) {
-                        end--
-                    }
-                    source.text.substring(start.toInt(), end.toInt()).toByteArray(Charsets.UTF_16LE)
+            // Use bounded direct segments. The JNI SegmentedTextSource reads them
+            // independently; no single direct buffer scales with the document size.
+            val segments = ArrayList<ByteBuffer>()
+            var offset = 0
+            while (offset < source.text.length) {
+                var end = minOf(source.text.length, offset + 32 * 1024)
+                if (end < source.text.length &&
+                    Character.isHighSurrogate(source.text[end - 1]) &&
+                    Character.isLowSurrogate(source.text[end])) {
+                    end--
                 }
-            })
+                val segment = ByteBuffer.allocateDirect((end - offset) * 2)
+                    .order(ByteOrder.LITTLE_ENDIAN)
+                for (index in offset until end) segment.putChar(source.text[index])
+                segment.flip()
+                segments += segment
+                offset = end
+            }
+            val tree = parser.parseBuffers(null, segments.toTypedArray(), arrayOf(included))
             latch.countDown()
             tree
         }
