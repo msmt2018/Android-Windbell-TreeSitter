@@ -12,7 +12,7 @@ ChunkedTextStore::ChunkedTextStore(uint64_t memoryLimitBytes, uint32_t chunkByte
       chunk_bytes_(std::max<uint32_t>(2u, chunkBytes & ~1u)) {}
 
 bool ChunkedTextStore::append(const void *data, size_t length) noexcept {
-    if (sealed_ || (length != 0 && data == nullptr)) return false;
+    if (sealed_ || (length != 0 && data == nullptr) || (length & 1u) != 0) return false;
     if (length == 0) return true;
 
     const uint64_t amount = static_cast<uint64_t>(length);
@@ -75,6 +75,7 @@ bool ChunkedTextStore::read(
     out->size = 0;
 
     if (!sealed_) return false;
+    if ((offset & 1u) != 0) return false;
     if (offset == size_bytes_) return true;
     if (offset > size_bytes_ || maxBytes == 0 || chunks_.empty()) return false;
 
@@ -87,9 +88,10 @@ bool ChunkedTextStore::read(
     const uint64_t count = std::min<uint64_t>(
         std::min<uint64_t>(remaining_in_chunk, remaining_in_store), maxBytes);
 
-    if (count == 0 || count > std::numeric_limits<uint32_t>::max()) return false;
+    const uint64_t aligned_count = count & ~uint64_t{1};
+    if (aligned_count == 0 || aligned_count > std::numeric_limits<uint32_t>::max()) return false;
     out->data = chunks_[chunk_index].get() + chunk_offset;
-    out->size = static_cast<uint32_t>(count);
+    out->size = static_cast<uint32_t>(aligned_count);
     return true;
 }
 
