@@ -1031,6 +1031,7 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeApplyDocumentEdi
             inserted_for_points.data(), static_cast<uint64_t>(inserted_size))) {
         document->partition_index.reset();
     }
+    const uint64_t old_source_version = document->source->version();
     ts_tree_delete(document->tree);
     document->tree = next_tree;
     document->source = std::move(next_source);
@@ -1042,7 +1043,6 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeApplyDocumentEdi
     // checkpoints after the replaced range as *candidates* at their shifted byte
     // offsets: they become reusable only after a fresh scan reaches the same
     // offset with an identical Monarch state stack (state convergence).
-    const uint64_t old_source_version = document->source->version() - 1u;
     const uint64_t new_source_version = document->source->version();
     const uint64_t new_partition_version = document->partition_index.version();
     const int64_t byte_delta = static_cast<int64_t>(inserted_size) -
