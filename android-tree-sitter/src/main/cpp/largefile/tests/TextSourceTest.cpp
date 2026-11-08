@@ -2,6 +2,7 @@
 #include "MappedFileSource.h"
 #include "FileWindowSource.h"
 #include "PieceTreeSource.h"
+#include "TextPartitionIndex.h"
 
 #include <cassert>
 #include <cstdio>
@@ -263,6 +264,63 @@ static void testPieceTreeRandomEditsMatchReferenceBuffer() {
     ::unlink(path);
 }
 
+
+static std::string makeUtf16Lines(uint32_t count) {
+    std::string bytes;
+    for (uint32_t i = 0; i < count; ++i) {
+        const std::string line = "line-" + std::to_string(i) + "\n";
+        for (unsigned char c : line) { bytes.push_back(static_cast<char>(c)); bytes.push_back(0); }
+    }
+    return bytes;
+}
+
+static uint64_t utf16LineStart(const std::string &bytes, uint64_t line) {
+    uint64_t current = 0;
+    for (uint64_t offset = 0; offset + 1 < bytes.size(); offset += 2) {
+        if (current == line) return offset;
+        if (bytes[offset] == '\n' && bytes[offset + 1] == 0) ++current;
+    }
+    return bytes.size();
+}
+
+static void testSparsePartitionIndexSurvivesEdits() {
+    char path[] = "/tmp/windbell-partition-index-XXXXXX";
+    const int fd = ::mkstemp(path);
+    assert(fd >= 0);
+    std::string expected = makeUtf16Lines(700);
+    assert(::write(fd, expected.data(), expected.size()) == static_cast<ssize_t>(expected.size()));
+    ::close(fd);
+
+    auto mapped = std::make_shared<MappedFileSource>(path);
+    assert(mapped->isOpen());
+    PieceTreeSource source(mapped, 4u * 1024u * 1024u);
+    TextPartitionIndex index(8);
+    uint64_t line = 0, byte = 0;
+    assert(index.lineForByte(source, utf16LineStart(expected, 500), &line));
+    assert(line == 500);
+    assert(index.byteForLine(source, 640, &byte));
+    assert(byte == utf16LineStart(expected, 640));
+
+    const uint64_t start = utf16LineStart(expected, 100);
+    const uint64_t end = utf16LineStart(expected, 110);
+    const char inserted[] = {
+        'n',0,'e',0,'w',0,'-',0,'a',0,'\n',0,
+        'n',0,'e',0,'w',0,'-',0,'b',0,'\n',0
+    };
+    assert(index.applyEdit(source, start, end, inserted, sizeof(inserted)));
+    assert(source.replace(start, end, inserted, sizeof(inserted)));
+    expected.replace(static_cast<size_t>(start), static_cast<size_t>(end - start),
+                     inserted, sizeof(inserted));
+
+    const uint64_t expectedLine500 = utf16LineStart(expected, 492);
+    assert(index.byteForLine(source, 492, &byte));
+    assert(byte == expectedLine500);
+    assert(index.lineForByte(source, expectedLine500, &line));
+    assert(line == 492);
+    assert(index.version() >= 2);
+    ::unlink(path);
+}
+
 int main() {
     testSegmentedTextSource();
     testChunkedStoreReadsAcrossBoundaries();
@@ -271,6 +329,7 @@ int main() {
     testMappedFileSource();
     testPieceTreeEditsDoNotCopyUnchangedText();
     testPieceTreeRandomEditsMatchReferenceBuffer();
+    testSparsePartitionIndexSurvivesEdits();
     testSparseFilesFromOneToThreeHundredMegabytesUseBoundedWindow();
     return 0;
 }

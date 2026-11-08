@@ -138,6 +138,7 @@ add_library(android-tree-sitter SHARED
     largefile/MappedFileSource.cpp
     largefile/FileWindowSource.cpp
     largefile/PieceTreeSource.cpp
+    largefile/TextPartitionIndex.cpp
 
     # 原生 JNI 适配层
     main.cc
