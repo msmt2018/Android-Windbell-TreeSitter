@@ -55,8 +55,11 @@
 - [x] Native Query lease/refcount：编译器与执行器共享 Lease Store；release/替换先退役，活动执行结束后延迟 close。
 - [x] Tree/Language Native lease 首版源码接入：Tree Executor 持有 Tree Lease；Language Compiler 将 Language Lease 转交为 Query 依赖 Lease，覆盖 Query 整个存活期；共享 Store 负责 retire/retireAll 后延迟 close。
 - [x] 新增 `TshNativeResourceRegistry` 协调 ObjectRegistry 与 Native Resource Lease Store 的注册、类型/实例校验获取、retire/作用域化 retireAll；`TshObjectRegistry.registerUnique` 原子拒绝重复实例发布；补充生命周期测试源码。
+- [x] Resource Registry 先在协调锁内撤销 ID 的获取资格并移除对象索引，再在锁外执行 Native retire/close；增加永久 close 状态，避免 Native close 回调在协调锁内运行。
+- [x] `TshEngine` 持有自己的 Native Resource Lease Store/Registry；Engine.close 先关闭该 Registry 并退役其拥有的 Native 资源，再清理 Provider/Object 索引。
 - [x] Tree-sitter Compiler/Executor Adapter 增加可选 `TshNativeResourceRegistry` 注入：启用时 Language/Tree Lease 获取经统一协调入口完成；旧底层 Store 注入保留为兼容迁移路径。
-- [ ] 宿主所有 Tree/Language owner 迁移到协调 Registry 的 register/acquire/retire，清除绕过 Store 的直接 close；生产构造必须启用协调入口；增加并发/真实 Native 测试。
+- [ ] 宿主所有 Tree/Language/Parser owner 迁移到协调 Registry 的 register/acquire/retire，清除绕过 Store 的直接 close；生产构造必须注入 Engine 所有的协调入口；增加并发/真实 Native 测试。
+- [ ] 审计 Engine.close 与并发 register/retire 的线性化和等待语义；当前已避免 close 回调在 Registry 锁内执行，但尚未完成全场景并发验证。
 - [x] Predicate Handler 结果语义：OK 接受当前表达式、ERR 拒绝当前 match、UNHANDLED 委派下一 Handler；按 Done 分隔表达式并逐个执行，同一 pattern 的多个表达式全部通过才保留 match；按注册顺序确定 Handler 调用顺序。
 - [ ] Tree-sitter incremental edit/changed-range 查询。
 - [ ] 与现有 dynamic_ts_query 及旧 native 方法建立兼容 Adapter。
