@@ -539,39 +539,41 @@ class WindbellTshEngine private constructor() {
                 if (charStart >= charEnd) continue
 
                 val colorDef = palette[span.styleId]
+                // One native rule precedence must govern every visual property,
+                // not only foreground color. Otherwise a lower-priority capture's
+                // bold/italic/underline/opacity can leak through a higher-priority
+                // nested capture even while its text color is correctly resolved.
+                val precedence = ruleOrder[span.priority to span.declarationOrder] ?: 1
+                val spanFlags = Spannable.SPAN_EXCLUSIVE_EXCLUSIVE or
+                    (precedence shl Spanned.SPAN_PRIORITY_SHIFT)
+
                 // Missing colors leave the editor's base foreground untouched.
                 val hasColor = if (darkMode) colorDef?.hasDarkColor == true else colorDef?.hasLightColor == true
                 val color = if (darkMode) colorDef?.darkColor ?: 0 else colorDef?.lightColor ?: 0
                 if (hasColor) {
-                    // Native rule order is priority-descending, declaration-order-ascending.
-                    // Android's larger SPAN_PRIORITY wins, so invert that ordered rank.
-                    // Android exposes only eight priority bits; ranks after 255 share 1. 
-                    val precedence = ruleOrder[span.priority to span.declarationOrder] ?: 1
-                    val spanFlags = Spannable.SPAN_EXCLUSIVE_EXCLUSIVE or
-                        (precedence shl Spanned.SPAN_PRIORITY_SHIFT)
                     spannable.setSpan(ForegroundColorSpan(color), charStart, charEnd, spanFlags)
                 }
 
                 val schemeFlags = if (darkMode) colorDef?.darkFontFlags ?: 0 else colorDef?.lightFontFlags ?: 0
                 val flags = span.fontFlags or schemeFlags
                 if ((flags and 0x01) != 0) {
-                    spannable.setSpan(StyleSpan(android.graphics.Typeface.BOLD), charStart, charEnd, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+                    spannable.setSpan(StyleSpan(android.graphics.Typeface.BOLD), charStart, charEnd, spanFlags)
                 }
                 if ((flags and 0x02) != 0) {
-                    spannable.setSpan(StyleSpan(android.graphics.Typeface.ITALIC), charStart, charEnd, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+                    spannable.setSpan(StyleSpan(android.graphics.Typeface.ITALIC), charStart, charEnd, spanFlags)
                 }
                 if ((flags and 0x04) != 0) {
-                    spannable.setSpan(UnderlineSpan(), charStart, charEnd, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+                    spannable.setSpan(UnderlineSpan(), charStart, charEnd, spanFlags)
                 }
                 if ((flags and 0x08) != 0) {
-                    spannable.setSpan(StrikethroughSpan(), charStart, charEnd, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+                    spannable.setSpan(StrikethroughSpan(), charStart, charEnd, spanFlags)
                 }
                 if ((flags and 0x10) != 0) {
                     spannable.setSpan(object : CharacterStyle() {
                         override fun updateDrawState(textPaint: TextPaint) {
                             textPaint.alpha = minOf(textPaint.alpha, 160)
                         }
-                    }, charStart, charEnd, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+                    }, charStart, charEnd, spanFlags)
                 }
             }
         }
