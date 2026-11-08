@@ -280,9 +280,10 @@ static jlong TSParser_parse(JNIEnv *env,
   // Tree-sitter receives at most 64 KiB per callback instead of a pointer to the
   // entire remaining document. The source owns the bytes for the whole parse.
   const auto source_bytes = static_cast<uint64_t>(source->byte_length());
-  if (source_bytes > UINT32_MAX) {
+  if (source_bytes > UINT32_MAX || (source_bytes & 1u) != 0) {
     ts_parser_internal->endRound();
-    throw_illegal_args(env, "Tree-sitter input exceeds its 32-bit byte-offset limit");
+    throw_illegal_args(env,
+        "Tree-sitter UTF-16LE input must have an even byte length within its 32-bit offset limit");
     return 0;
   }
   windbell::largefile::ContiguousTextSource textSource(source->data(), source_bytes);
