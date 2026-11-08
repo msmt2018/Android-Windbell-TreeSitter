@@ -25,6 +25,7 @@ import com.zerostudio.idea.treesitter.util.TSObjectFactoryProvider;
 import dalvik.annotation.optimization.FastNative;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Iterator;
 import java.util.NoSuchElementException;
 import java.util.Objects;
