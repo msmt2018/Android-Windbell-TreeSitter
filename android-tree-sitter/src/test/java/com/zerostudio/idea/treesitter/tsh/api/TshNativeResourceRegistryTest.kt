@@ -40,9 +40,11 @@ class TshNativeResourceRegistryTest {
         val objects = TshObjectRegistry()
         val leases = TshNativeResourceLeaseStore()
         val registry = TshNativeResourceRegistry(objects, leases)
-        val registration = registry.register(FakeTree(), "syntax-tree")
+        val tree = FakeTree()
+        val registration = registry.register(tree, "syntax-tree")
 
         assertNull(registry.acquire(registration.descriptor.id, TSQuery::class.java))
+        assertNull(registry.acquire(TshNativeResourceLeaseStore.Handle(registration.descriptor.id, FakeTree())))
         val lease = registry.acquire(registration.descriptor.id, TSTree::class.java)
         assertNotNull(lease)
         lease!!.close()
