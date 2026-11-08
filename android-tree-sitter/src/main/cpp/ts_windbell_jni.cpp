@@ -15,6 +15,7 @@
 #include "tsh/WindbellTshCompiler.h"
 #include "utils/ts_exceptions.h"
 #include "utils/ts_preconditions.h"
+#include "utils/jni_string.h"
 #include "ts__log.h"
 
 using namespace windbell::tsh;
@@ -38,21 +39,15 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeLoadTshSource(
         return JNI_FALSE;
     }
 
-    const char* ext = env->GetStringUTFChars(extension_jstr, nullptr);
-    if (!ext) {
-        throw_npe(env, "Failed to extract extension string");
+    std::string ext_str;
+    if (!FNI_GetStandardUtf8(env, extension_jstr, ext_str)) {
         return JNI_FALSE;
     }
-    std::string ext_str(ext);
-    env->ReleaseStringUTFChars(extension_jstr, ext);
 
-    const char* src = env->GetStringUTFChars(tsh_source_jstr, nullptr);
-    if (!src) {
-        throw_npe(env, "Failed to extract TSH source string");
+    std::string src_str;
+    if (!FNI_GetStandardUtf8(env, tsh_source_jstr, src_str)) {
         return JNI_FALSE;
     }
-    std::string src_str(src);
-    env->ReleaseStringUTFChars(tsh_source_jstr, src);
 
     const TSLanguage* ts_lang = reinterpret_cast<const TSLanguage*>(language_ptr);
     
@@ -83,13 +78,10 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeGetPalette(
         return nullptr;
     }
 
-    const char* ext = env->GetStringUTFChars(extension_jstr, nullptr);
-    if (!ext) {
-        throw_npe(env, "Failed to extract extension string");
+    std::string ext_str;
+    if (!FNI_GetStandardUtf8(env, extension_jstr, ext_str)) {
         return nullptr;
     }
-    std::string ext_str(ext);
-    env->ReleaseStringUTFChars(extension_jstr, ext);
 
     auto grammar = WindbellEngine::getInstance().getGrammarByExtension(ext_str);
     if (!grammar) {
@@ -133,13 +125,10 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlight(
     }
 
     TSTree* tree = reinterpret_cast<TSTree*>(tree_ptr);
-    const char* ext = env->GetStringUTFChars(extension_jstr, nullptr);
-    if (!ext) {
-        throw_npe(env, "Failed to extract extension string");
+    std::string ext_str;
+    if (!FNI_GetStandardUtf8(env, extension_jstr, ext_str)) {
         return nullptr;
     }
-    std::string ext_str(ext);
-    env->ReleaseStringUTFChars(extension_jstr, ext);
 
     const jsize len = env->GetStringLength(text_jstr);
     if (len == 0) {
@@ -197,10 +186,8 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeComputeFolds(
     TSTree* tree = reinterpret_cast<TSTree*>(tree_ptr);
     std::string ext_str;
     if (extension_jstr != nullptr) {
-        const char* ext = env->GetStringUTFChars(extension_jstr, nullptr);
-        if (ext) {
-            ext_str = ext;
-            env->ReleaseStringUTFChars(extension_jstr, ext);
+        if (!FNI_GetStandardUtf8(env, extension_jstr, ext_str)) {
+            return nullptr;
         }
     }
 
@@ -251,10 +238,8 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeGetOutline(
     TSTree* tree = reinterpret_cast<TSTree*>(tree_ptr);
     std::string ext_str;
     if (extension_jstr != nullptr) {
-        const char* ext = env->GetStringUTFChars(extension_jstr, nullptr);
-        if (ext) {
-            ext_str = ext;
-            env->ReleaseStringUTFChars(extension_jstr, ext);
+        if (!FNI_GetStandardUtf8(env, extension_jstr, ext_str)) {
+            return nullptr;
         }
     }
 
@@ -281,7 +266,7 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeGetOutline(
         jstring s_byte = env->NewStringUTF(std::to_string(tags[i].start_byte).c_str());
         jstring e_byte = env->NewStringUTF(std::to_string(tags[i].end_byte).c_str());
         jstring kind   = env->NewStringUTF(std::to_string(tags[i].kind).c_str());
-        jstring name   = env->NewStringUTF(tags[i].name);
+        jstring name   = FNI_NewStringFromStandardUtf8(env, tags[i].name);
 
         env->SetObjectArrayElement(strArray, static_cast<jsize>(i * 4 + 0), s_byte);
         env->SetObjectArrayElement(strArray, static_cast<jsize>(i * 4 + 1), e_byte);
@@ -340,8 +325,8 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeGetHoverInfo(
 
     jstring s_byte = env->NewStringUTF(std::to_string(info.start_byte).c_str());
     jstring e_byte = env->NewStringUTF(std::to_string(info.end_byte).c_str());
-    jstring type   = env->NewStringUTF(info.node_type.c_str());
-    jstring detail = env->NewStringUTF(info.detail.c_str());
+    jstring type   = FNI_NewStringFromStandardUtf8(env, info.node_type);
+    jstring detail = FNI_NewStringFromStandardUtf8(env, info.detail);
 
     env->SetObjectArrayElement(arr, 0, s_byte);
     env->SetObjectArrayElement(arr, 1, e_byte);
