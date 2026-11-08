@@ -581,8 +581,8 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
     const UChar* text_end = input_chars ? text_start + total_bytes : text_start;
 
     // Keep intermediate capture memory proportional to the requested viewport.
-    // Regex and Monarch still scan from document start to preserve anchors and
-    // tokenizer state, but captures outside this byte interval are discarded
+    // Regex rules scan from document start to preserve anchors and state transitions,
+    // but captures outside this byte interval are discarded
     // immediately after each producer finishes instead of accumulating for the
     // entire document.
     auto retain_requested_range = [&](std::vector<HighlightSpan>& candidates) {
@@ -1228,8 +1228,8 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
     retain_requested_range(macro_spans);
 
     // Keep the public range API's output bounded to the requested document
-    // window. Regex and Monarch still evaluate from document start to preserve
-    // multiline matches and stateful tokenizer state; native Tree-sitter queries
+    // window. Regex and its state-rule mode still evaluate from document start to preserve
+    // multiline matches and state transitions; native Tree-sitter queries
     // are range-restricted above and do not enumerate unrelated captures.
     auto clip_to_requested_range = [&](std::vector<HighlightSpan>& candidates) {
         for (auto& span : candidates) {

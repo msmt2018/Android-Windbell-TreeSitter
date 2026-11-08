@@ -1769,8 +1769,8 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                 }
             }
 
-            // Monarch-compatible tokenizer states. Rules are compiled to the
-            // same Oniguruma UTF-16 engine used by TextMate-style regex patterns.
+            // Legacy Monarch syntax is compatibility input only. It compiles to
+            // RegexStateRule entries executed by the TSH Regex pipeline.
             else if (tok.text == "monarch") {
                 if (!mark_root_section("monarch")) return nullptr;
                 auto open = lexer.nextToken();
