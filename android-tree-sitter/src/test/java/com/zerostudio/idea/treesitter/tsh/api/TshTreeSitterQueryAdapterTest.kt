@@ -51,7 +51,8 @@ class TshTreeSitterQueryAdapterTest {
         val compiler = TshTreeSitterQueryCompiler(
             languages = TshGrammarLanguageResolver { null },
             objects = TshObjectRegistry(),
-            queries = TshCompiledQueryRegistry()
+            queries = TshCompiledQueryRegistry(),
+            leases = TshNativeQueryLeaseStore()
         )
         val result = compiler.compile(
             TshAtsSource("(identifier) @name", TshQuerySourceLanguage.TREE_SITTER),
@@ -75,7 +76,7 @@ class TshTreeSitterQueryAdapterTest {
         val registry = TshCompiledQueryRegistry()
         val query = compiledQuery(nativeId = TshObjectId(999))
         assertTrue(registry.register(query) is TshResult.Success)
-        val executor = TshTreeSitterQueryExecutor(TshObjectRegistry(), registry)
+        val executor = TshTreeSitterQueryExecutor(TshObjectRegistry(), registry, TshNativeQueryLeaseStore())
         val result = executor.execute(query, tree())
         assertTrue(result is TshResult.Failure)
         assertEquals("TSH-QUERY-EXEC-004", (result as TshResult.Failure).diagnostics.first().code)
