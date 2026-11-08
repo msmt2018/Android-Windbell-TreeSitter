@@ -68,6 +68,10 @@ struct NativeTshDocument {
 
 struct NativeDocumentInput {
     const windbell::largefile::TextSource *source = nullptr;
+    // TSInput uses a null/zero-length result to signal EOF. Preserve the
+    // distinction between a real EOF and an I/O/source failure so a failed
+    // read can never be accepted as a successfully parsed truncated document.
+    bool read_failed = false;
 };
 
 // Pins or exposes the Java edit array without allocating a second native
@@ -110,13 +114,25 @@ static const char *nativeDocumentRead(
     auto *input = static_cast<NativeDocumentInput *>(payload);
     if (!input || !input->source || !bytes_read) {
         if (bytes_read) *bytes_read = 0;
+        if (input) input->read_failed = true;
         return nullptr;
     }
+    *bytes_read = 0;
+    const uint64_t document_size = input->source->sizeBytes();
+    if (byte_index == document_size) return nullptr; // genuine EOF
+    if (byte_index > document_size) {
+        input->read_failed = true;
+        return nullptr;
+    }
+
     windbell::largefile::TextChunkView chunk{};
     if (!input->source->read(
             byte_index, windbell::largefile::kTreeSitterInputChunkBytes, &chunk) ||
-        !chunk.data || chunk.size == 0) {
-        *bytes_read = 0;
+        !chunk.data || chunk.size == 0 ||
+        (chunk.size & 1u) != 0 ||
+        chunk.size > document_size - byte_index ||
+        chunk.size > windbell::largefile::kTreeSitterInputChunkBytes) {
+        input->read_failed = true;
         return nullptr;
     }
     *bytes_read = chunk.size;
@@ -149,10 +165,10 @@ static bool nativePointAt(
     uint64_t row = 0;
     uint64_t line_start = 0;
     if (!line_index.pointForByte(source, byte_offset, &row, &line_start) ||
+        row > std::numeric_limits<uint32_t>::max() ||
         line_start > byte_offset ||
         byte_offset - line_start > std::numeric_limits<uint32_t>::max()) return false;
-    point->row = static_cast<uint32_t>(std::min<uint64_t>(
-        row, std::numeric_limits<uint32_t>::max()));
+    point->row = static_cast<uint32_t>(row);
     point->column = static_cast<uint32_t>(byte_offset - line_start);
     return true;
 }
@@ -954,11 +970,18 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeCreateDocument(
         throw_illegal_state(env, "Unable to initialize Tree-sitter for native document");
         return 0;
     }
-    NativeDocumentInput payload{document->source.get()};
+    NativeDocumentInput payload{document->source.get(), false};
     TSInput input{&payload, nativeDocumentRead, TSInputEncodingUTF16LE, nullptr};
     document->tree = ts_parser_parse(document->parser, nullptr, input);
-    if (!document->tree) {
-        throw_illegal_state(env, "Tree-sitter failed to parse native document");
+    if (!document->tree || payload.read_failed ||
+        ts_node_end_byte(ts_tree_root_node(document->tree)) !=
+            document->source->sizeBytes()) {
+        if (document->tree) {
+            ts_tree_delete(document->tree);
+            document->tree = nullptr;
+        }
+        throw_illegal_state(env,
+            "Tree-sitter input failed or did not cover the complete native document");
         return 0;
     }
     return reinterpret_cast<jlong>(document.release());
@@ -1071,12 +1094,15 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeApplyDocumentEdi
     edit.new_end_point = new_end_point;
     ts_tree_edit(edited_tree, &edit);
 
-    NativeDocumentInput payload{next_source.get()};
+    NativeDocumentInput payload{next_source.get(), false};
     TSInput input{&payload, nativeDocumentRead, TSInputEncodingUTF16LE, nullptr};
     TSTree *next_tree = ts_parser_parse(document->parser, edited_tree, input);
     ts_tree_delete(edited_tree);
-    if (!next_tree) {
-        throw_illegal_state(env, "Tree-sitter incremental reparse failed; original document retained");
+    if (!next_tree || payload.read_failed ||
+        ts_node_end_byte(ts_tree_root_node(next_tree)) != next_source->sizeBytes()) {
+        if (next_tree) ts_tree_delete(next_tree);
+        throw_illegal_state(env,
+            "Tree-sitter input failed or incremental parse did not cover the complete document; original document retained");
         return JNI_FALSE;
     }
 
