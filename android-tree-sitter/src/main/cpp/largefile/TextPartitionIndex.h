@@ -33,9 +33,9 @@ public:
                      uint64_t *byteOffset) noexcept;
 
     // Call after source.replace() succeeds. insertedBytes is UTF-16LE.
-    bool applyEdit(uint64_t startByte, uint64_t oldEndByte,
-                   const void *inserted, uint64_t insertedBytes,
-                   uint64_t newSourceSize) noexcept;
+    bool applyEdit(const TextSource &oldSource,
+                   uint64_t startByte, uint64_t oldEndByte,
+                   const void *inserted, uint64_t insertedBytes) noexcept;
 
     const std::vector<Checkpoint> &checkpoints() const noexcept { return checkpoints_; }
     uint64_t version() const noexcept { return version_; }

@@ -124,25 +124,65 @@ bool TextPartitionIndex::byteForLine(const TextSource &source,
     return scan(source, it->byte_offset, it->line, 0, requestedLine, true, byteOffset);
 }
 
-bool TextPartitionIndex::applyEdit(uint64_t startByte, uint64_t oldEndByte,
-                                   const void *inserted, uint64_t insertedBytes,
-                                   uint64_t newSourceSize) noexcept {
+bool TextPartitionIndex::applyEdit(const TextSource &oldSource,
+                                   uint64_t startByte, uint64_t oldEndByte,
+                                   const void *inserted, uint64_t insertedBytes) noexcept {
     if ((startByte & 1u) || (oldEndByte & 1u) || (insertedBytes & 1u) ||
-        oldEndByte < startByte || (insertedBytes && !inserted)) return false;
+        oldEndByte < startByte || oldEndByte > oldSource.sizeBytes() ||
+        (insertedBytes && !inserted)) return false;
+
+    uint64_t startLine = 0;
     uint64_t removedLines = 0;
-    // The old source is not available here; caller supplies the removed newline
-    // count through a prior lineForByte lookup in the document transaction.
-    (void)removedLines;
-    (void)newSourceSize;
-    (void)inserted;
+    if (!lineForByte(oldSource, startByte, &startLine) ||
+        !countNewlines(oldSource, startByte, oldEndByte, &removedLines)) return false;
+
+    uint64_t insertedLines = 0;
+    const auto *bytes = static_cast<const uint8_t *>(inserted);
+    for (uint64_t i = 0; i + 1 < insertedBytes; i += 2) {
+        const uint16_t unit = static_cast<uint16_t>(bytes[i]) |
+            (static_cast<uint16_t>(bytes[i + 1]) << 8u);
+        if (unit == '\\n') ++insertedLines;
+    }
+
+    const int64_t byteDelta = static_cast<int64_t>(insertedBytes) -
+        static_cast<int64_t>(oldEndByte - startByte);
+    const int64_t lineDelta = static_cast<int64_t>(insertedLines) -
+        static_cast<int64_t>(removedLines);
+    std::vector<Checkpoint> updated;
+    try {
+        updated.reserve(checkpoints_.size() +
+            static_cast<size_t>(insertedLines / stride_lines_) + 2u);
+        for (const auto &checkpoint : checkpoints_) {
+            if (checkpoint.byte_offset <= startByte) updated.push_back(checkpoint);
+        }
+        uint64_t line = startLine;
+        for (uint64_t i = 0; i + 1 < insertedBytes; i += 2) {
+            const uint16_t unit = static_cast<uint16_t>(bytes[i]) |
+                (static_cast<uint16_t>(bytes[i + 1]) << 8u);
+            if (unit == '\\n') {
+                ++line;
+                if (line % stride_lines_ == 0) {
+                    const uint64_t offset = startByte + i + 2u;
+                    if (updated.empty() || updated.back().byte_offset != offset)
+                        updated.push_back({offset, line});
+                }
+            }
+        }
+        for (const auto &checkpoint : checkpoints_) {
+            if (checkpoint.byte_offset < oldEndByte) continue;
+            const int64_t shiftedByte = static_cast<int64_t>(checkpoint.byte_offset) + byteDelta;
+            const int64_t shiftedLine = static_cast<int64_t>(checkpoint.line) + lineDelta;
+            if (shiftedByte < 0 || shiftedLine < 0) continue;
+            const Checkpoint shifted{
+                static_cast<uint64_t>(shiftedByte), static_cast<uint64_t>(shiftedLine)};
+            if (updated.empty() || updated.back().byte_offset < shifted.byte_offset)
+                updated.push_back(shifted);
+        }
+    } catch (...) {
+        return false;
+    }
+    checkpoints_.swap(updated);
     ++version_;
-    // This overload deliberately invalidates the affected suffix. The indexed
-    // prefix remains valid; the next viewport lookup lazily rebuilds checkpoints.
-    auto first = std::lower_bound(checkpoints_.begin(), checkpoints_.end(), startByte,
-        [](const Checkpoint &checkpoint, uint64_t value) {
-            return checkpoint.byte_offset < value;
-        });
-    checkpoints_.erase(first, checkpoints_.end());
     return true;
 }
 
