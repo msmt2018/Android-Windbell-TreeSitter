@@ -123,6 +123,19 @@ class TshTreeSitterQueryCompiler(
         }
     }
 
+    /**
+     * Releases a compiled query owned by this compiler. Call only after all executions using
+     * this revision have completed; TSNativeObject does not provide native reference counting.
+     */
+    fun release(queryId: String): Boolean {
+        val compiled = queries.unregister(queryId) ?: return false
+        val id = compiled.nativeObjectId ?: return true
+        val native = objects.find(id) as? TSQuery ?: return true
+        objects.unregister(id)
+        runCatching { native.close() }
+        return true
+    }
+
     private fun sha256(value: String): String {
         val bytes = MessageDigest.getInstance("SHA-256").digest(value.toByteArray(Charsets.UTF_8))
         return bytes.joinToString("") { "%02x".format(it) }
