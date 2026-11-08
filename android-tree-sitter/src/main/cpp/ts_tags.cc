@@ -21,6 +21,7 @@
 #include "utils/ts_obj_utils.h"
 #include "utils/ts_preconditions.h"
 #include "ts_tags.h"
+#include "ts_highlight.h"
 
 namespace {
 
@@ -200,6 +201,20 @@ static jobjectArray TSTags_extract(
   return result;
 }
 
+static jobjectArray TSHighlight_extract(
+    JNIEnv *env, jclass,
+    jlong query_pointer, jobject root_object,
+    jlong start_byte, jlong end_byte,
+    jint max_results, jint max_pending_matches) {
+  // Highlight queries use the exact same bounded Tree-sitter cursor executor
+  // as tags. The returned captures retain their original capture and pattern
+  // indices; style resolution remains a TSH-layer concern.
+  return TSTags_extract(env, nullptr, query_pointer, root_object,
+                        start_byte, end_byte, max_results,
+                        max_pending_matches);
+}
+
 void TSTags_Native__SetJniMethods(JNINativeMethod *methods, int count) {
   SET_JNI_METHOD(methods, TSTags_Native_extract, TSTags_extract);
+  SET_JNI_METHOD(methods, TSHighlight_Native_extract, TSHighlight_extract);
 }
