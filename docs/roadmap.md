@@ -1,83 +1,122 @@
-# TSH 统一 API 建设路线图
+# TSH 引擎开发计划地图
 
-## 阶段 0：源码审计与契约冻结
-- 审计 Kotlin/Java 公共入口、Native 核心、JNI、配置语法、测试和构建。
-- 建立 API 清单、重复/缺失/断链清单。
-- 定义稳定包结构、坐标和错误模型。
-- 产出：审计报告、API catalog、架构决策记录。
+> 目标：把 .tsh 声明稳定地编译成可执行的双管线规则、统一语义结果和可验证的应用层绘制。TSH 是语法/高亮/样式/渲染引擎，不是通用编辑器框架。
+>
+> 状态口径：**契约**=文档已定义；**源码**=代码已提交；**构建**=目标模块成功编译；**测试**=自动化测试通过；**设备**=真实 Android 控件绘制验证。状态逐项记录，不以文档存在推断实现完成。
 
-## 阶段 1：公共 API 基础
-- TshEngine/TshContext 生命周期门面。
-- 结构化 TshResult/TshError/TshDiagnostic。
-- Object ID、Capability、Descriptor、Registry。
-- Provider 注册/发现契约。
-- 保留 WindbellTshEngine 兼容入口。
+## 架构不变量
 
-## 阶段 2：最小文本与坐标适配
-- TextSnapshot、TextAccessProvider、Position/Range/CoordinateSystem。
-- UTF-8/UTF-16 转换与版本校验。
-- 仅提供 TSH 匹配/渲染所需的最小宿主适配，不实现 Selection/Cursor/EditorSession 等编辑器功能。
+1. 只有两条执行管线：Tree-sitter + ATS；独立 Regex（Oniguruma）。
+2. ATS 是 Tree-sitter Query/SCM 的受控简化混合表达，不是第三个执行引擎。
+3. 两条管线在统一 Match 模型汇合；不混淆各自的执行、范围与错误语义。
+4. 所有 .tsh 属性必须有类型/Schema、编译语义、Runtime consumer 和可验证输出。
+5. Render 必须形成 Plan → Backend Submit → Receipt/Ack → 实际绘制验证闭环。
+6. 旧 WindbellTshEngine/JNI 入口保持兼容，采用 Facade/Adapter 渐进迁移。
+7. 不实现通用 Editor 功能：折叠、Outline、导航、光标/选区、多光标、Undo/Redo、命令、Gutter、Inlay、CodeLens 等由宿主负责。
 
-## 阶段 3：TSH 语言工具链
-- Lexer/Parser/AST/Schema/Validator。
-- 多级诊断、格式化、Schema/类型/语义校验和版本迁移。
-- 版本化语法规范与迁移。
+## 当前基线
 
-## 阶段 4：ATS/Regex 统一结果
-- MatchResult、来源追踪、规则 ID、范围和文档版本。
-- Oniguruma 连续窗口适配。
-- 增量失效和缓存策略。
+| 子系统 | 当前可确认状态 | 尚未证明 |
+|---|---|---|
+| 公共 API 基础 | TshEngine、TshResult、诊断/坐标/对象/Provider 注册、TextSnapshot 等 Kotlin 源码已存在 | 全模块构建、ABI 稳定性、与 Native 执行入口接通 |
+| 旧 TSH 执行入口 | WindbellTshEngine、TshCompiler、WindbellEngine、JNI 入口存在 | 与新 Facade 的完整桥接、错误结构化、所有权治理 |
+| DSL 编译器 | C++ Lexer/Compiler 存在并能解析当前既有子集 | 完整 AST/Schema/类型系统、语义校验、版本迁移 |
+| 双管线 | C++ core 有 Regex 与 Tree-sitter/Query 混合处理 | ATS 完整语法、统一 Match/Scope、Regex 窗口正确性 |
+| 样式/绘制 | 旧 Palette 与 Spannable 前景色/粗体路径存在 | 完整 Font/Color/Decoration、通用 RenderPlan、后端回执及设备覆盖 |
+| 测试 | 部分 Kotlin/C++ 测试源码存在 | 本轮未运行 Gradle/Native 测试，不宣称通过 |
 
-## 阶段 5：DSL 配置管理与样式系统
-- .tsh Source/Loader/Compiler/Repository/Catalog/Transaction。
-- Theme/Style/Font/Color/Scope/Selector/Attribute 的 get/list/resolve/管理 API。
-- Scope、Selector、属性类型、主题继承、颜色空间、完整字体属性和 Decoration。
-- 样式更新与匹配缓存解耦。
+## 开发阶段地图
 
-## 阶段 6：Render 闭环
-- RenderInstruction、RenderProvider、调度和局部失效。
-- Android Canvas/Span Provider 与编辑器原生 Renderer Provider。
-- 真正验证目标编辑器绘制回调。
+### A. 公共 API 基础与类型模型
+- [x] TshResult、Diagnostic、Coordinate、ObjectId、Capability、ObjectRegistry、ProviderRegistry 的首批 Kotlin 源码。
+- [x] TextSnapshot/TextAccessProvider 的最小宿主文本访问契约。
+- [ ] 完成公共 API 构建、二进制兼容和并发/生命周期测试。
+- [ ] 让 TshEngine 通过可替换 Adapter 调用旧 WindbellTshEngine，而不是复制 Native 执行逻辑。
 
-## 阶段 7：Binding/Event/Lifecycle
-- 对象、文档、属性、事件和渲染绑定。
-- 自动解绑、取消异步任务和资源释放。
+### B. DSL 类型系统、Schema 与配置仓库
+- [x] 完整类型系统/Schema 的目标契约文档。
+- [ ] DSL Value/Type/AST 模型 Kotlin 源码。
+- [ ] Schema Registry、属性类型/范围/单位/默认值/枚举/引用校验。
+- [ ] 配置 Artifact、Repository、Catalog、原子 install/replace/unload。
+- [ ] Lexer/Parser AST 与既有 C++ TshCompiler 的语法兼容审计。
+- [ ] C++ Parser/Compiler 逐步补齐 Schema/语义校验，并提供结构化诊断。
+- [ ] DSL v1 fixtures、错误恢复、迁移和兼容性测试。
 
-## 阶段 8：JNI/Native 完整性
-- Java/Kotlin 与 Native 契约同步。
-- 编码、异常、所有权、线程和资源测试。
-- JNI 声明/注册/注解生成同步检查。
+### C. Grammar 与 Tree-sitter + ATS 查询
+- [ ] Grammar/Language Definition Registry、版本和依赖模型。
+- [ ] ATS Lexer/Parser/AST/Compiler，映射为 Tree-sitter Query plan。
+- [ ] Query/Capture/Predicate API、Grammar ABI 绑定和资源租约。
+- [ ] Tree-sitter incremental edit/changed-range 查询。
+- [ ] 与现有 dynamic_ts_query 及旧 native 方法建立兼容 Adapter。
+- [ ] ATS 与原生 Tree-sitter Query 一致性测试。
 
-## 阶段 9：集成、兼容和性能
-- 多类宿主渲染后端参考适配（不扩展通用 Editor 功能）。
-- Robolectric/设备端集成测试。
-- 大文档、增量、Unicode、并发和内存测试。
+### D. 独立 Regex 与窗口执行
+- [ ] Regex Pattern/Options/CompiledRegex API。
+- [ ] Oniguruma WindowLease：稳定连续 buffer、编码和全局 offset 映射。
+- [ ] 有界跨窗口 overlap 与无界模式整段回退/明确拒绝。
+- [ ] 增量 dirty range、锚点/lookaround 语义、取消/超时/预算。
+- [ ] Piece Tree chunk 边界、Unicode、超长行与整段基准对比测试。
 
-## 完成判定
+### E. 统一 Match、Scope、Selector
+- [ ] TshMatch/MatchSet/Capture/Provenance/Revision 统一模型。
+- [ ] Byte/UTF-16 坐标规范化和 stale-result 防护。
+- [ ] Scope path/stack、Selector parser/compiler/specificity。
+- [ ] 双管线 Match 冲突、嵌套、重叠、去重和稳定排序。
+- [ ] 来源追踪和跨管线一致性测试。
 
-每项功能分别标记设计、实现、编译验证、自动化运行验证、真实编辑器验证。阶段不能仅凭文件存在或编译通过判定完成。当前首个实现切片为阶段 1 的 API 基础，不代表后续阶段已完成。
+### F. Attribute、Semantic 与 Highlight
+- [ ] Attribute Registry、TypedAttribute、默认值/继承/合并策略。
+- [ ] Semantic Resolver：Match + Capture + Scope + Selector → Attributes。
+- [ ] Highlight Resolver：Attributes → Theme/Style。
+- [ ] 每个 DSL 属性登记实际 Runtime consumer。
+- [ ] 端到端证明属性从 DSL 到最终 RenderInstruction 的值与来源。
 
-## API 规范文档映射
+### G. Theme、Style、Font、Color、Decoration
+- [ ] Theme/Style get/list/activate/preview/reset/explain。
+- [ ] 字体族、字重、字形、字号/单位、stretch、行高、字距、baseline、OpenType、variable axes、fallback。
+- [ ] ColorSpace/Alpha/Token/变量与颜色混合策略。
+- [ ] Text Decoration 类型、层级、范围、合成与能力降级。
+- [ ] Android 字体资源 Provider 和后端真实属性消费。
 
-阶段交付必须同步更新对应 API 契约：
+### H. Render 闭环
+- [ ] RenderPlan/Instruction/Backend/Capabilities/Receipt API。
+- [ ] Span/Canvas 等宿主绘制适配，核心模块不依赖具体 Editor。
+- [ ] plan revision、局部失效、过期计划拒绝和异步 Ack。
+- [ ] 属性来源 → resolved value → instruction → backend outcome 可追踪。
+- [ ] Android 控件像素/字体/装饰/主题切换设备测试。
 
-- 阶段 1：`api/core-foundation.md`、`api/runtime-and-session.md`。
-- 阶段 2：`api/object-and-text-model.md`、`api/editor-adapters.md`。
-- 阶段 3：`api/config-and-language-tooling.md`、`api/tsh-dsl-syntax-and-semantic-contract.md`。
-- 阶段 5：`api/tsh-file-config-management-api.md`、`api/theme-style-font-color-api.md`、`api/tsh-core-api-coverage-matrix.md`。
-- 阶段 4：`api/ats-regex-and-match-api.md`。
-- 阶段 5/6：`api/highlight-and-render-api.md`。
-- 阶段 7：`api/binding-events-and-extension.md`。
-- 全阶段：`api/diagnostics-and-observability.md`、`api/public-api-review-checklist.md`。
+### I. Native/JNI 完整性
+- [ ] Native operation manifest 与 Kotlin external API 对照。
+- [ ] 类型化 handle/generation/refcount/lease，不把 jlong 当裸指针 API。
+- [ ] JNI/C ABI/C++ 错误码、编码、范围和线程约束。
+- [ ] 注解/KSP/AP 生成、JNI registration 与 C header 同步检查。
+- [ ] 异常边界、重复释放、use-after-free、并发关闭、ASAN/泄漏测试。
+- [ ] 保持旧 JNI 名称/签名兼容，逐项迁移而非一次性破坏。
 
-- 阶段 2：补充 `api/selection-cursor-multicursor-api.md`、`api/symbol-outline-navigation-api.md`。
-- 阶段 3：补充 `api/language-intelligence-api.md`、`api/injection-and-language-layer-api.md`。
-- 阶段 5/6：补充 `api/decorations-gutter-inlay-codelens-api.md`。
-- 阶段 7/9：补充 `api/edit-transaction-undo-redo-command-api.md`。
+### J. 集成、性能与发布
+- [ ] Kotlin 单元测试、C++ 单元测试、JNI 集成测试。
+- [ ] Android API/ABI matrix、真实宿主控件绘制验证。
+- [ ] 大文档、增量、Unicode、并发、内存、超时与性能基准。
+- [ ] 更新 API changelog、迁移指南和实现状态矩阵。
 
-新增公共 API 必须先更新契约和示例，再实现接口；实现后补齐测试、兼容性说明和 changelog。没有对应测试与状态标记的文档条目不得标记为已完成。
+## 本轮实施顺序
 
+1. 先实现 B 的 Kotlin 类型系统、Schema Registry 和配置 Artifact Repository（纯 JVM 层，不伪称已连接 C++ Parser）。
+2. 为该切片补充单元测试和构建验证。
+3. 审计既有 .tsh 语法和 C++ Compiler，制定 DSL v1 兼容表。
+4. 再实现 C/D 的两个执行管线 Adapter，避免先定义一套无法对接旧 Native 的抽象。
+5. 然后贯通 E/F/G/H 的结果与真实绘制闭环。
+6. 最后完成 I 的 Native/JNI 同步与全矩阵验收；期间始终保持旧入口可用。
 
-## 核心边界纠偏
+## API 文档映射
 
-TSH 不实现通用编辑器的折叠、Outline、符号导航、光标/选区、多光标、Undo/Redo、命令、Gutter、Inlay 或 CodeLens。嵌入语言语法注入、Scope/Selector、属性、Theme/Style/Font/Color/Decoration 和真实高亮渲染属于 TSH 核心。每一项 DSL 声明必须映射到 Parser/Schema/Compiler/Runtime/Renderer 的实际消费点。
+- B：`dsl-type-system-and-schema-api.md`、`tsh-file-config-management-api.md`、`tsh-dsl-syntax-and-semantic-contract.md`
+- C：`ats-tree-sitter-query-api.md`、`grammar-and-query-api.md`
+- D：`regex-window-execution-api.md`、`security-and-regex-safety.md`
+- E：`unified-match-scope-api.md`、`scope-selector-and-semantic-api.md`
+- F：`attribute-semantic-highlight-api.md`、`highlight-resolution-and-token-api.md`
+- G/H：`theme-style-render-contract-api.md`、`theme-style-font-color-api.md`、`render-plan-and-invalidation-api.md`
+- I：`native-jni-cpp-completeness-api.md`、`jni-native-bridge-api.md`、`native-handle-and-memory-ownership-api.md`
+- 全阶段：`tsh-core-api-coverage-matrix.md`、`public-api-review-checklist.md`、`changelog.md`
+
+**完成标准：** 每个功能独立记录契约/源码/构建/单测/集成/设备状态。源码提交不等于构建通过；构建通过不等于运行正确；API 可调用不等于 .tsh 属性真实生效或已绘制。
