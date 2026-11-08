@@ -45,16 +45,20 @@ class TshNativeQueryLeaseStore {
     fun register(queryId: String, objectId: TshObjectId, query: TSQuery) {
         require(queryId.isNotBlank())
         require(query.canAccess()) { "Cannot register a closed native query" }
+        var closeNow: Entry? = null
         synchronized(lock) {
             check(byObjectId[objectId] == null) { "Native object ID is already leased" }
             val current = byQueryId[queryId]
-            check(current == null || current.retired) {
-                "Query '$queryId' already has an active native owner"
+            if (current != null) {
+                current.retired = true
+                byQueryId.remove(queryId)
+                closeNow = takeForCloseIfReady(current)
             }
             val entry = Entry(queryId, objectId, query)
             byObjectId[objectId] = entry
             byQueryId[queryId] = entry
         }
+        closeNow?.closeSafely()
     }
 
     /** Atomically obtains a strong execution lease unless the query has begun retirement. */
