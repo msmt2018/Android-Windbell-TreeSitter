@@ -151,9 +151,9 @@ class JavaTshFullTest {
         assertTrue(darculaLightTokens.containsKey("activity.toolbar.background"))
         assertTrue(darculaDarkTokens.containsKey("activity.toolbar.background"))
         assertSame(
-            "Selecting another scheme must reuse the already-decoded palette snapshot.",
             darculaPalette,
-            WindbellTshEngine.instance.getSchemePalette("java", "darcula")
+            WindbellTshEngine.instance.getSchemePalette("java", "darcula"),
+            "Selecting another scheme must reuse the already-decoded palette snapshot."
         )
         repeat(8) {
             val selected = if (it % 2 == 0) "github" else "darcula"
