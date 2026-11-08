@@ -20,6 +20,7 @@
 #include <iostream>
 
 #include "utf16str/UTF16String.h"
+#include "largefile/TextSource.h"
 #include "utils/ts_obj_utils.h"
 #include "utils/ts_exceptions.h"
 #include "utils/ts_preconditions.h"
@@ -113,24 +114,33 @@ static bool TSParser_progressCallback(TSParseState *state) {
   return parser == nullptr || parser->shouldStop();
 }
 
+// Tree-sitter's public input callback uses uint32_t byte offsets. Keep the
+// adapter explicit about that ABI limit, while the underlying TextSource uses
+// uint64_t offsets and can serve independently-addressable large documents.
 struct TSParserInput {
-  const char *bytes;
-  uint32_t length;
+  const windbell::largefile::TextSource *source;
 };
 
 static const char *TSParser_readInput(
     void *payload,
     uint32_t byte_index,
-    TSPoint position,
+    TSPoint /*position*/,
     uint32_t *bytes_read) {
   auto *input = static_cast<TSParserInput *>(payload);
-  if (byte_index >= input->length) {
+  if (input == nullptr || input->source == nullptr || bytes_read == nullptr) {
+    if (bytes_read) *bytes_read = 0;
+    return nullptr;
+  }
+
+  windbell::largefile::TextChunkView chunk{};
+  if (!input->source->read(byte_index, windbell::largefile::kTreeSitterInputChunkBytes, &chunk) ||
+      chunk.data == nullptr || chunk.size == 0) {
     *bytes_read = 0;
     return nullptr;
   }
 
-  *bytes_read = input->length - byte_index;
-  return input->bytes + byte_index;
+  *bytes_read = chunk.size;
+  return chunk.data;
 }
 
 static jlong
@@ -266,14 +276,17 @@ static jlong TSParser_parse(JNIEnv *env,
     return 0;
   }
 
-  // UTF16String already owns the exact UTF-16LE byte sequence expected by
-  // Tree-sitter. Read it directly instead of allocating and copying another
-  // full-document buffer for every parse (especially costly for large files).
-  const char *src_bytes = reinterpret_cast<const char *>(source->data());
-  TSParserInput inputPayload{
-      src_bytes,
-      static_cast<uint32_t>(source->byte_length()),
-  };
+  // Adapt the existing UTF-16LE storage as a bounded, chunk-readable source.
+  // Tree-sitter receives at most 64 KiB per callback instead of a pointer to the
+  // entire remaining document. The source owns the bytes for the whole parse.
+  const auto source_bytes = static_cast<uint64_t>(source->byte_length());
+  if (source_bytes > UINT32_MAX) {
+    ts_parser_internal->endRound();
+    throw_illegal_args(env, "Tree-sitter input exceeds its 32-bit byte-offset limit");
+    return 0;
+  }
+  windbell::largefile::ContiguousTextSource textSource(source->data(), source_bytes);
+  TSParserInput inputPayload{&textSource};
   TSInput input{
       &inputPayload,
       TSParser_readInput,
@@ -287,10 +300,13 @@ static jlong TSParser_parse(JNIEnv *env,
 
   // Tree-sitter 0.26 replaces timeout and cancellation-flag APIs with a
   // progress callback. It returns nullptr when that callback cancels parsing.
+  struct ParseRoundGuard {
+    TSParserInternal *parser;
+    ~ParseRoundGuard() { if (parser) parser->endRound(); }
+  } roundGuard{ts_parser_internal};
+
   ts_parser_internal->markParseStart();
   auto tree = ts_parser_parse_with_options(ts_parser, old_tree, input, options);
-
-  ts_parser_internal->endRound();
   return (jlong) tree;
 }
 
