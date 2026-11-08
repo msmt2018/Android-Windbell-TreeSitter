@@ -44,7 +44,7 @@ void throwTagsIllegalState(JNIEnv *env, const char *message) {
 void throwTagsOutOfMemory(JNIEnv *env) {
   jclass type = env->FindClass("java/lang/OutOfMemoryError");
   if (type) {
-    env->ThrowNew(type, "Unable to allocate native tag query results");
+    env->ThrowNew(type, "Unable to allocate native Tree-sitter query results");
     env->DeleteLocalRef(type);
   }
 }
@@ -75,7 +75,7 @@ bool tagsProgressCallback(TSQueryCursorState *state) {
 
 } // namespace
 
-static jobjectArray TSTags_extract(
+static jobjectArray TSQuery_extractBounded(
     JNIEnv *env, jclass,
     jlong query_pointer, jobject root_object,
     jlong start_byte, jlong end_byte,
@@ -94,7 +94,7 @@ static jobjectArray TSTags_extract(
   }
   if (max_results < 1 || max_results > 1000000 ||
       max_pending_matches < 1 || max_pending_matches > 1000000) {
-    throwTagsIllegalArgument(env, "Tag query limits must be between 1 and 1000000");
+    throwTagsIllegalArgument(env, "Tree-sitter query limits must be between 1 and 1000000");
     return nullptr;
   }
 
@@ -107,7 +107,7 @@ static jobjectArray TSTags_extract(
     return nullptr;
   }
   if (start < ts_node_start_byte(root) || end > ts_node_end_byte(root)) {
-    throwTagsIllegalArgument(env, "Tag query range must be inside the root node");
+    throwTagsIllegalArgument(env, "Tree-sitter query range must be inside the root node");
     return nullptr;
   }
 
@@ -144,7 +144,7 @@ static jobjectArray TSTags_extract(
     TSQueryMatch match{};
     while (ts_query_cursor_next_match(cursor.get(), &match)) {
       if (matches.size() >= static_cast<size_t>(max_results)) {
-        throwTagsIllegalState(env, "Tag query exceeded maxResults; no partial result was returned");
+        throwTagsIllegalState(env, "Tree-sitter query exceeded maxResults; no partial result was returned");
         return nullptr;
       }
       OwnedQueryMatch owned;
@@ -164,13 +164,13 @@ static jobjectArray TSTags_extract(
 #if defined(TSH_TREE_SITTER_HAS_QUERY_CURSOR_OPTIONS)
   if (progress_budget.cancelled) {
     throwTagsIllegalState(env,
-        "Tag query exceeded its native work budget; no partial result was returned");
+        "Tree-sitter query exceeded its native work budget; no partial result was returned");
     return nullptr;
   }
 #endif
   if (ts_query_cursor_did_exceed_match_limit(cursor.get())) {
     throwTagsIllegalState(env,
-        "Tag query exceeded maxPendingMatches; no partial result was returned");
+        "Tree-sitter query exceeded maxPendingMatches; no partial result was returned");
     return nullptr;
   }
 
@@ -201,6 +201,16 @@ static jobjectArray TSTags_extract(
   return result;
 }
 
+static jobjectArray TSTags_extract(
+    JNIEnv *env, jclass,
+    jlong query_pointer, jobject root_object,
+    jlong start_byte, jlong end_byte,
+    jint max_results, jint max_pending_matches) {
+  return TSQuery_extractBounded(env, nullptr, query_pointer, root_object,
+                                start_byte, end_byte, max_results,
+                                max_pending_matches);
+}
+
 static jobjectArray TSHighlight_extract(
     JNIEnv *env, jclass,
     jlong query_pointer, jobject root_object,
@@ -209,7 +219,7 @@ static jobjectArray TSHighlight_extract(
   // Highlight queries use the exact same bounded Tree-sitter cursor executor
   // as tags. The returned captures retain their original capture and pattern
   // indices; style resolution remains a TSH-layer concern.
-  return TSTags_extract(env, nullptr, query_pointer, root_object,
+  return TSQuery_extractBounded(env, nullptr, query_pointer, root_object,
                         start_byte, end_byte, max_results,
                         max_pending_matches);
 }
