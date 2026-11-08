@@ -62,12 +62,23 @@ class TshSyntaxHighlighter(
     private data class LargeSession(
         val snapshot: EditorTextSnapshot,
         val source: CharSequenceUtf16DocumentSource,
-        val partitions: DocumentPartitionManager,
         /** Native-owned PieceTreeSource + incremental Tree-sitter tree. */
         val nativeHandle: Long,
+        val lengthChars: AtomicLong,
         val captureIndexes: ByteBudgetLruCache<Int, CaptureIntervalIndex>,
         val ticket: Long
     )
+
+    private data class NativeEdit(
+        val startByte: Long,
+        val oldEndByte: Long,
+        val insertedUtf16Le: ByteArray,
+        val insertedChars: Int,
+        val deletedChars: Int
+    )
+
+    private val nativeEditLock = Any()
+    private val pendingNativeEdits = ArrayList<NativeEdit>()
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val generation = AtomicLong()
@@ -100,16 +111,51 @@ class TshSyntaxHighlighter(
     }
 
     override fun onTextReplaced(buffer: EditorBuffer) {
+        synchronized(nativeEditLock) { pendingNativeEdits.clear() }
         captureIndex = CaptureIntervalIndex(emptyList())
         scheduleParse(buffer)
     }
 
     override fun onTextChanged(change: EditorDocument.AppliedChange) {
-        // The editor batches changes and calls onEditFinished once per edit.
+        // EditorDocument reports changes bottom-up in pre-edit coordinates. Preserve
+        // that order: nativeApplyDocumentEdit consumes exactly the same transaction
+        // sequence and copies only the inserted slice, never the unchanged document.
+        val inserted = change.insertedText()
+        val bytes = ByteArray(inserted.length * 2)
+        for (index in inserted.indices) {
+            val unit = inserted[index].code
+            bytes[index * 2] = (unit and 0xFF).toByte()
+            bytes[index * 2 + 1] = (unit ushr 8).toByte()
+        }
+        synchronized(nativeEditLock) {
+            pendingNativeEdits += NativeEdit(
+                startByte = change.rangeOffset.toLong() * 2L,
+                oldEndByte = (change.rangeOffset.toLong() + change.deletedTextLength) * 2L,
+                insertedUtf16Le = bytes,
+                insertedChars = inserted.length,
+                deletedChars = change.deletedTextLength
+            )
+        }
     }
 
     override fun onEditFinished() {
-        host?.buffer?.let(::scheduleParse)
+        val active: LargeSession?
+        val edits: List<NativeEdit>
+        synchronized(nativeEditLock) {
+            active = largeSession
+            if (active == null) {
+                // Large-document initialization may still be consuming its original
+                // immutable snapshot. Keep transactions queued for it to replay.
+                if (host?.buffer?.length?.let { it < LARGE_DOCUMENT_THRESHOLD_CHARS } == true || !parsing) {
+                    host?.buffer?.let(::scheduleParse)
+                }
+                return
+            }
+            edits = pendingNativeEdits.toList()
+            pendingNativeEdits.clear()
+        }
+        if (edits.isEmpty()) return
+        applyNativeEdits(active, edits)
     }
 
     override fun styleLine(
@@ -294,13 +340,8 @@ class TshSyntaxHighlighter(
                 }
                 snapshot.getNearestChunk(start, count)
             }
-            val manager = DocumentPartitionManager(
-                targetPartitionChars = PARTITION_CHARS,
-                prefetchPartitions = 0
-            )
-            // Keep only sparse viewport metadata in Kotlin. The actual document,
-            // Piece Tree edits, Tree-sitter tree and TSH captures live in JNI.
-            manager.rebuild(source)
+            // Native owns the canonical Piece Tree and sparse partition index. Kotlin
+            // does not rebuild a second full-document index for each edit.
             currentCoroutineContext().ensureActive()
             if (generation.get() != ticket) throw CancellationException("Stale document snapshot")
 
@@ -337,18 +378,28 @@ class TshSyntaxHighlighter(
             )
             captureIndexes = createdCaptureIndexes
             val active = LargeSession(
-                snapshot, source, manager, nativeHandle, createdCaptureIndexes, ticket
+                snapshot, source, nativeHandle, AtomicLong(snapshot.length.toLong()),
+                createdCaptureIndexes, ticket
             )
             if (generation.get() == ticket) {
-                largeSession = active
+                synchronized(nativeEditLock) {
+                    val queued = pendingNativeEdits.toList()
+                    pendingNativeEdits.clear()
+                    for (edit in queued) {
+                        check(engine.applyNativeDocumentEdit(
+                            nativeHandle, edit.startByte, edit.oldEndByte, edit.insertedUtf16Le
+                        )) { "Unable to replay edit into newly-created native document" }
+                        active.lengthChars.addAndGet(edit.insertedChars.toLong() - edit.deletedChars.toLong())
+                    }
+                    largeSession = active
+                }
                 nativeHandle = 0L
                 captureIndexes = null
                 parsing = false
                 Log.i(
                     TAG,
                     "Native large-file TSH ready: extension=.$extension version=${snapshot.version} " +
-                        "utf16Length=${snapshot.length} partitions=${manager.snapshot().size} " +
-                        "source=PieceTreeSnapshot->NativePieceTree"
+                        "utf16Length=${active.lengthChars.get()} source=PieceTreeSnapshot->NativePieceTree"
                 )
                 host?.invalidateStyles()
                 host?.invalidateStructure()
@@ -412,23 +463,19 @@ class TshSyntaxHighlighter(
         queryEndUtf16: Int
     ): List<WindbellTshEngine.HighlightSpan> {
         if (generation.get() != active.ticket || largeSession !== active) return emptyList()
-        val partitions = active.partitions.planViewport(active.source, start, end).partitions
+        val partitions = nativeViewportPartitions(active, start, end)
         val result = ArrayList<WindbellTshEngine.HighlightSpan>()
         for (partition in partitions) {
             val index = active.captureIndexes.get(partition.index)
-            if (index == null) {
-                requestLargePartition(active, partition.start, partition.endExclusive)
-            } else {
-                result += index.query(queryStartUtf16, queryEndUtf16)
-            }
+            if (index == null) requestLargePartition(active, partition.start, partition.endExclusive)
+            else result += index.query(queryStartUtf16, queryEndUtf16)
         }
         return result
     }
 
     private fun requestLargeViewport(active: LargeSession, start: Long, end: Long) {
         if (generation.get() != active.ticket || largeSession !== active) return
-        val partitions = active.partitions.planViewport(active.source, start, end).partitions
-        partitions.forEach { partition ->
+        nativeViewportPartitions(active, start, end).forEach { partition ->
             if (active.captureIndexes.get(partition.index) == null) {
                 requestLargePartition(active, partition.start, partition.endExclusive)
             }
@@ -437,9 +484,16 @@ class TshSyntaxHighlighter(
 
     private fun requestLargePartition(active: LargeSession, start: Long, end: Long) {
         if (generation.get() != active.ticket || largeSession !== active) return
-        val partition = active.partitions.partitionAt(
-            active.source,
-            start.coerceIn(0L, active.source.length)
+        val safeStart = start.coerceIn(0L, active.lengthChars.get())
+        val partitionIndex = (safeStart / PARTITION_CHARS).toInt()
+        val partitionStart = partitionIndex.toLong() * PARTITION_CHARS
+        val partition = DocumentPartition(
+            index = partitionIndex,
+            start = partitionStart,
+            endExclusive = minOf(active.lengthChars.get(), partitionStart + PARTITION_CHARS),
+            firstLine = 0L,
+            lineCount = 0L,
+            version = active.ticket
         )
         if (active.captureIndexes.get(partition.index) != null) return
 
@@ -467,6 +521,61 @@ class TshSyntaxHighlighter(
                 if (generation.get() == active.ticket) {
                     Log.e(TAG, "Native viewport TSH failed: extension=.$extension partition=${partition.index}", error)
                 }
+            }
+        }
+    }
+
+    private fun nativeViewportPartitions(
+        active: LargeSession,
+        start: Long,
+        end: Long
+    ): List<DocumentPartition> {
+        val length = active.lengthChars.get()
+        if (length <= 0L || start >= end || start >= length) return emptyList()
+        val boundedStart = start.coerceAtLeast(0L)
+        val boundedEnd = end.coerceAtMost(length)
+        if (boundedStart >= boundedEnd) return emptyList()
+        val first = boundedStart / PARTITION_CHARS
+        val last = (boundedEnd - 1L) / PARTITION_CHARS
+        return (first..last).map { index ->
+            val partStart = index * PARTITION_CHARS
+            DocumentPartition(
+                index = index.toInt(),
+                start = partStart,
+                endExclusive = minOf(length, partStart + PARTITION_CHARS),
+                firstLine = 0L,
+                lineCount = 0L,
+                version = active.ticket
+            )
+        }
+    }
+
+    private fun applyNativeEdits(active: LargeSession, edits: List<NativeEdit>) {
+        scope.launch(Dispatchers.IO) {
+            if (generation.get() != active.ticket || largeSession !== active) return@launch
+            try {
+                var earliestOffset = Long.MAX_VALUE
+                for (edit in edits) {
+                    check(engine.applyNativeDocumentEdit(
+                        active.nativeHandle, edit.startByte, edit.oldEndByte, edit.insertedUtf16Le
+                    )) { "Native incremental Tree-sitter edit failed" }
+                    earliestOffset = minOf(earliestOffset, edit.startByte / 2L)
+                    active.lengthChars.addAndGet(
+                        edit.insertedChars.toLong() - edit.deletedChars.toLong()
+                    )
+                }
+                // Lexical state can flow to EOF. Keep the prefix cache and invalidate
+                // every page from the first affected partition onward; native TSH
+                // checkpoints are versioned and will be recomputed from a valid state.
+                val firstInvalid = (earliestOffset / PARTITION_CHARS).toInt()
+                active.captureIndexes.invalidate { key, _ -> key >= firstInvalid }
+                if (generation.get() == active.ticket && largeSession === active) {
+                    host?.invalidateStyles()
+                    host?.invalidateStructure()
+                }
+            } catch (error: Throwable) {
+                Log.e(TAG, "Native incremental edit failed; rebuilding the native session", error)
+                if (generation.get() == active.ticket) host?.buffer?.let(::scheduleParse)
             }
         }
     }
