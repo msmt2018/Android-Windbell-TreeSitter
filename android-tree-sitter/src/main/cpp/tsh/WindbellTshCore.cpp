@@ -1388,7 +1388,7 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                     query_spans.push_back(span);
                 }
             }
-bool query_incomplete = ts_query_cursor_did_exceed_match_limit(cursor);
+            bool query_incomplete = ts_query_cursor_did_exceed_match_limit(cursor);
 #if defined(TSH_TREE_SITTER_HAS_QUERY_CURSOR_OPTIONS)
             query_incomplete = query_incomplete || query_budget.cancelled;
 #endif
