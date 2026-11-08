@@ -106,10 +106,11 @@ class TshSchemaRegistry {
         for ((name, value) in declaration.properties) {
             val property = schema.properties[name]
             if (property == null) {
-                val severity = when (schema.unknownPropertyPolicy) {
-                    TshSchemaUnknownPropertyPolicy.ERROR -> TshDiagnosticSeverity.ERROR
-                    TshSchemaUnknownPropertyPolicy.WARNING -> TshDiagnosticSeverity.WARNING
-                    TshSchemaUnknownPropertyPolicy.IGNORE -> null
+                val severity = when {
+                    schema.unknownPropertyPolicy == TshSchemaUnknownPropertyPolicy.IGNORE -> null
+                    mode == TshValidationMode.LENIENT -> TshDiagnosticSeverity.WARNING
+                    schema.unknownPropertyPolicy == TshSchemaUnknownPropertyPolicy.WARNING -> TshDiagnosticSeverity.WARNING
+                    else -> TshDiagnosticSeverity.ERROR
                 }
                 if (severity != null) diagnostics += diagnostic(
                     "TSH-SCHEMA-003", severity, "Unknown property '\$name' in \${declaration.kind}"
