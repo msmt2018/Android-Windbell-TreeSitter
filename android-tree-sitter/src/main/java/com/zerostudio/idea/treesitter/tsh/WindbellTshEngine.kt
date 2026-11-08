@@ -171,8 +171,11 @@ class WindbellTshEngine private constructor() {
             val defaultScheme = nativeGetDefaultScheme(extension)
             if (defaultScheme != null) defaultSchemeCache[extension] = defaultScheme
             for (schemeName in schemes) {
-                schemePaletteCache["$extension::$schemeName"] =
-                    readSchemePalette(extension, schemeName)
+                // Empty native results are transient/unavailable states, not cache hits.
+                // Only retain a palette after at least one style has been decoded.
+                readSchemePalette(extension, schemeName).takeIf { it.isNotEmpty() }?.let {
+                    schemePaletteCache["$extension::$schemeName"] = it
+                }
                 schemeThemeTokenCache["$extension::$schemeName::light"] =
                     readSchemeThemeTokens(extension, schemeName, false)
                 schemeThemeTokenCache["$extension::$schemeName::dark"] =
@@ -214,8 +217,14 @@ class WindbellTshEngine private constructor() {
     fun getSchemePalette(extension: String, schemeName: String): Map<Int, StylePalette> {
         if (schemeName !in listSchemes(extension)) return emptyMap()
         val cacheKey = "$extension::$schemeName"
-        return schemePaletteCache[cacheKey]
-            ?: readSchemePalette(extension, schemeName).also { schemePaletteCache[cacheKey] = it }
+        schemePaletteCache[cacheKey]?.takeIf { it.isNotEmpty() }?.let { return it }
+        val resolved = readSchemePalette(extension, schemeName)
+        if (resolved.isNotEmpty()) {
+            schemePaletteCache[cacheKey] = resolved
+        } else {
+            schemePaletteCache.remove(cacheKey)
+        }
+        return resolved
     }
 
     private fun readSchemePalette(extension: String, schemeName: String): Map<Int, StylePalette> {
@@ -245,9 +254,13 @@ class WindbellTshEngine private constructor() {
 
     private fun reloadPalette(extension: String, schemeName: String) {
         val cacheKey = "$extension::$schemeName"
-        val schemePalette = schemePaletteCache[cacheKey]
-            ?: readSchemePalette(extension, schemeName).also { schemePaletteCache[cacheKey] = it }
-        paletteCache[extension] = schemePalette
+        val schemePalette = schemePaletteCache[cacheKey]?.takeIf { it.isNotEmpty() }
+            ?: readSchemePalette(extension, schemeName).also { resolved ->
+                if (resolved.isNotEmpty()) schemePaletteCache[cacheKey] = resolved
+                else schemePaletteCache.remove(cacheKey)
+            }
+        if (schemePalette.isNotEmpty()) paletteCache[extension] = schemePalette
+        else paletteCache.remove(extension)
     }
 
     fun matchesFirstLine(extension: String, line: String): Boolean =
@@ -395,6 +408,7 @@ class WindbellTshEngine private constructor() {
 
     fun getStylePalette(extension: String, styleName: String): StylePalette? {
         val style = getStyleCatalog(extension).firstOrNull { it.name == styleName } ?: return null
+        ensurePalette(extension)
         return paletteCache[extension]?.get(style.styleId)
     }
 
@@ -416,15 +430,12 @@ class WindbellTshEngine private constructor() {
         val scheme = selectedSchemes[extension] ?: getDefaultScheme(extension) ?: return false
         selectedSchemes[extension] = scheme
         val cacheKey = "$extension::$scheme"
-        val cachedScheme = schemePaletteCache[cacheKey]
-        val resolved = if (!cachedScheme.isNullOrEmpty()) {
-            cachedScheme
-        } else {
-            // Do not preserve an earlier empty read forever. Retry the native
-            // palette source so a later attach can recover actual .tsh colors.
-            readSchemePalette(extension, scheme).also {
-                schemePaletteCache[cacheKey] = it
-            }
+        val cachedScheme = schemePaletteCache[cacheKey]?.takeIf { it.isNotEmpty() }
+        val resolved = cachedScheme ?: readSchemePalette(extension, scheme).also {
+            // Empty results are deliberately not cached: the native grammar may
+            // become palette-ready after an asynchronous restore/registration.
+            if (it.isNotEmpty()) schemePaletteCache[cacheKey] = it
+            else schemePaletteCache.remove(cacheKey)
         }
         if (resolved.isNotEmpty()) {
             paletteCache[extension] = resolved
