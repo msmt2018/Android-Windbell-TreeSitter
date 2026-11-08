@@ -82,6 +82,47 @@ class StyledTextPainterRenderingTest {
 
 
     @Test
+    fun customCharacterStyleAlphaDoesNotLeakIntoFollowingRun() {
+        val text = SpannableString("MMMMMMMM")
+        text.setSpan(
+            ForegroundColorSpan(Color.RED),
+            0,
+            4,
+            Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+        )
+        text.setSpan(
+            ForegroundColorSpan(Color.BLUE),
+            4,
+            8,
+            Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+        )
+        text.setSpan(
+            object : CharacterStyle() {
+                override fun updateDrawState(textPaint: TextPaint) {
+                    textPaint.alpha = minOf(textPaint.alpha, 96)
+                }
+            },
+            0,
+            4,
+            Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+        )
+
+        val bitmap = render(text)
+        assertTrue(
+            "The first run should be translucent red",
+            hasPixel(bitmap, 8, 78) { red, green, blue ->
+                red > 180 && green in 80..230 && blue in 80..230
+            }
+        )
+        assertTrue(
+            "The following run must restore the base alpha and remain opaque blue",
+            hasPixel(bitmap, 78, 175) { red, green, blue ->
+                red < 8 && green < 8 && blue > 245
+            }
+        )
+    }
+
+    @Test
     fun backgroundColorIsPaintedAcrossTheRow() {
         val text = SpannableString("MMMM")
         text.setSpan(
