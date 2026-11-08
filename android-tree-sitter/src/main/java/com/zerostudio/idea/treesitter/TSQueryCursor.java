@@ -24,7 +24,7 @@ import com.zerostudio.idea.treesitter.predicate.TSPredicateHandler.Result;
 import com.zerostudio.idea.treesitter.util.TSObjectFactoryProvider;
 import dalvik.annotation.optimization.FastNative;
 import java.util.ArrayList;
-import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.Iterator;
 import java.util.NoSuchElementException;
 import java.util.Objects;
@@ -40,7 +40,7 @@ public class TSQueryCursor extends TSNativeObject implements Iterable<TSQueryMat
   private boolean predicateEvaluationEnabled = true;
   protected TSNode targetNode = null;
   protected TSQuery execQuery = null;
-  protected final Set<TSPredicateHandler> predicateHandlers = new HashSet<>();
+  protected final Set<TSPredicateHandler> predicateHandlers = new LinkedHashSet<>();
 
   protected TSQueryCursor() {
     this(Native.newCursor());
