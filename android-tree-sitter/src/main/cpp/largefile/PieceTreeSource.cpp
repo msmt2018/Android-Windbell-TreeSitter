@@ -27,7 +27,8 @@ PieceTreeSource::PieceTreeSource(std::shared_ptr<const TextSource> original,
     : original_(std::move(original)), memory_limit_bytes_(memoryLimitBytes) {
     if (!original_ || (original_->sizeBytes() & 1u) != 0) return;
     const uint64_t size = original_->sizeBytes();
-    if (size != 0) root_ = makeNode(Buffer::Original, 0, size);
+    if (size != 0 && memory_limit_bytes_ >= sizeof(Node))
+        root_ = makeNode(Buffer::Original, 0, size);
     valid_ = size == 0 || static_cast<bool>(root_);
 }
 
@@ -143,9 +144,16 @@ uint64_t PieceTreeSource::countNodes(const Node *node) noexcept {
 bool PieceTreeSource::appendAdded(const uint8_t *data, uint64_t bytes,
                                   uint64_t *startOffset) noexcept {
     if (!startOffset || (bytes != 0 && !data) || (bytes & 1u) != 0) return false;
-    if (bytes > memory_limit_bytes_ - std::min(memory_limit_bytes_, added_allocated_)) return false;
-    *startOffset = added_size_;
     constexpr uint64_t chunkBytes = 64u * 1024u;
+    const uint64_t tailCapacity = added_allocated_ - added_size_;
+    const uint64_t bytesBeyondTail = bytes > tailCapacity ? bytes - tailCapacity : 0;
+    if (bytesBeyondTail > std::numeric_limits<uint64_t>::max() - (chunkBytes - 1u))
+        return false;
+    const uint64_t requiredChunks = bytesBeyondTail == 0 ? 0 :
+        (bytesBeyondTail + chunkBytes - 1u) / chunkBytes;
+    if (requiredChunks > (memory_limit_bytes_ -
+        std::min(memory_limit_bytes_, added_allocated_)) / chunkBytes) return false;
+    *startOffset = added_size_;
     uint64_t consumed = 0;
     try {
         while (consumed < bytes) {
