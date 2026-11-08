@@ -36,6 +36,9 @@ include_directories("${TS_DIR}/lib/include")
 # vendored tree-sitter-lib is upgraded, the same TSH source automatically
 # enables bounded query execution and cancellation.
 include(CheckCXXSourceCompiles)
+# Re-evaluate the complete ABI probe after its source changes; otherwise a
+# stale cached success from an earlier, weaker probe could enable the code.
+unset(TSH_TREE_SITTER_HAS_QUERY_CURSOR_OPTIONS CACHE)
 set(CMAKE_REQUIRED_INCLUDES "${TS_DIR}/lib/include")
 check_cxx_source_compiles("
     #include <tree_sitter/api.h>
