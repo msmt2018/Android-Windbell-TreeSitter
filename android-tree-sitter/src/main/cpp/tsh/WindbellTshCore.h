@@ -249,6 +249,26 @@ struct SchemeColor {
         };
     }
 
+    // Typed paint is the compiler-facing mutation API. These adapters keep the
+    // existing storage layout stable while all parsing moves to typed values.
+    void setLightPaint(const TshStylePaint& paint) {
+        light_color = paint.foreground.argb;
+        has_light_color = paint.foreground.present;
+        light_background = paint.background.argb;
+        has_light_background = paint.background.present;
+        light_font_flags = paint.font.flags;
+        light_font_defined_mask = paint.font.defined_mask;
+    }
+
+    void setDarkPaint(const TshStylePaint& paint) {
+        dark_color = paint.foreground.argb;
+        has_dark_color = paint.foreground.present;
+        dark_background = paint.background.argb;
+        has_dark_background = paint.background.present;
+        dark_font_flags = paint.font.flags;
+        dark_font_defined_mask = paint.font.defined_mask;
+    }
+
     // Inherit each paint property independently. Font attributes inherit only
     // where the child has not explicitly set or cleared that attribute.
     void inheritMissing(const SchemeColor& parent) {
