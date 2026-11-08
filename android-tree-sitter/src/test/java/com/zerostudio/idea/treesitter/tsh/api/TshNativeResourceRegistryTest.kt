@@ -61,6 +61,7 @@ class TshNativeResourceRegistryTest {
         val firstRegistration = firstRegistry.register(first, "syntax-tree")
         val secondRegistration = secondRegistry.register(second, "syntax-tree")
         val active = secondRegistry.acquire(secondRegistration.descriptor.id, TSTree::class.java)!!
+        assertNull(firstRegistry.acquire(secondRegistration.descriptor.id, TSTree::class.java))
 
         assertEquals(1, firstRegistry.retireAll())
         assertNull(objects.find(firstRegistration.descriptor.id))
