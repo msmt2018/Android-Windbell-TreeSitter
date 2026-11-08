@@ -85,6 +85,24 @@ public class QueryTest extends TreeSitterTest {
     }
   }
 
+
+  @Test
+  public void testQueryUsesStandardUtf8ForSupplementaryCharacters() {
+    final String expected = "é😀";
+    final String source = "((identifier) @name (#eq? @name \"" + expected + "\"))";
+    try (final TSQuery query = TSQuery.create(TSLanguageJava.getInstance(), source)) {
+      assertThat(query.canAccess()).isTrue();
+      boolean found = false;
+      for (int i = 0; i < query.getStringCount(); i++) {
+        if (expected.equals(query.getStringValueForId(i))) {
+          found = true;
+          break;
+        }
+      }
+      assertThat(found).isTrue();
+    }
+  }
+
   @Test
   public void testQuerySyntaxError() throws Exception {
     try (TSQuery query = TSQuery.create(TSLanguageJava.getInstance(), "(class_declaration")) {
