@@ -15,6 +15,17 @@ interface Utf16DocumentSource {
     val length: Long
     val version: Long
     operator fun get(offset: Long): Char
+
+    /** Reads a bounded sequential window. Implementations with chunk storage should override. */
+    fun readChunk(offset: Long, maxChars: Int): CharSequence {
+        require(offset >= 0L && maxChars > 0)
+        if (offset >= length) return ""
+        val count = minOf(maxChars.toLong(), length - offset).toInt()
+        return buildString(count) {
+            var index = offset
+            repeat(count) { append(get(index++)) }
+        }
+    }
 }
 
 data class DocumentPartition(
@@ -78,22 +89,32 @@ class DocumentPartitionManager(
         val pointIndex = ArrayList<PointCheckpoint>()
         pointIndex.add(PointCheckpoint(0L, 0L, 0L))
         while (offset < source.length) {
-            val ch = source[offset]
-            if (ch == '\n') {
-                line++
-                column = 0L
-                if (line == nextLineCheckpoint) {
-                    starts.add(offset + 1L)
-                    nextLineCheckpoint += lineCheckpointStride
+            val chunk = source.readChunk(
+                offset,
+                minOf(SOURCE_SCAN_CHUNK_CHARS.toLong(), source.length - offset).toInt()
+            )
+            require(chunk.isNotEmpty() && chunk.length <= SOURCE_SCAN_CHUNK_CHARS) {
+                "Utf16DocumentSource.readChunk must return a non-empty bounded window before EOF"
+            }
+            for (local in chunk.indices) {
+                val ch = chunk[local]
+                if (ch == '\n') {
+                    line++
+                    column = 0L
+                    if (line == nextLineCheckpoint) {
+                        starts.add(offset + local + 1L)
+                        nextLineCheckpoint += lineCheckpointStride
+                    }
+                } else {
+                    column++
                 }
-            } else {
-                column++
+                val absolute = offset + local + 1L
+                if (absolute >= nextPointCheckpoint) {
+                    pointIndex.add(PointCheckpoint(absolute, line, column))
+                    nextPointCheckpoint = absolute + POINT_CHECKPOINT_STRIDE
+                }
             }
-            offset++
-            if (offset >= nextPointCheckpoint) {
-                pointIndex.add(PointCheckpoint(offset, line, column))
-                nextPointCheckpoint = offset + POINT_CHECKPOINT_STRIDE
-            }
+            offset += chunk.length
         }
         val checkpoints = starts.toLongArray()
 
@@ -155,8 +176,8 @@ class DocumentPartitionManager(
 
     /**
      * Builds a Tree-sitter range with absolute UTF-16LE byte offsets and byte-based
-     * TSPoint columns. The sparse line index bounds point calculation to at most
-     * [lineCheckpointStride] lines rather than rescanning from the document start.
+     * TSPoint columns. Fixed-stride offset checkpoints also bound the scan for
+     * extremely long single-line files, where line-only checkpoints are insufficient.
      */
     fun treeSitterRange(source: Utf16DocumentSource, startUtf16: Long, endUtf16: Long): TSRange {
         require(startUtf16 >= 0L && endUtf16 >= startUtf16 && endUtf16 <= source.length)
@@ -197,13 +218,22 @@ class DocumentPartitionManager(
         var column = checkpoint.column
         var index = checkpoint.offset
         while (index < offset) {
-            if (source[index] == '\n') {
-                row++
-                column = 0L
-            } else {
-                column++
+            val chunk = source.readChunk(
+                index,
+                minOf(SOURCE_SCAN_CHUNK_CHARS.toLong(), offset - index).toInt()
+            )
+            require(chunk.isNotEmpty() && chunk.length <= offset - index) {
+                "Utf16DocumentSource.readChunk returned an invalid point-lookup window"
             }
-            index++
+            for (ch in chunk) {
+                if (ch == '\n') {
+                    row++
+                    column = 0L
+                } else {
+                    column++
+                }
+                index++
+            }
         }
         require(row <= Int.MAX_VALUE && column * 2L <= Int.MAX_VALUE) {
             "Tree-sitter TSPoint exceeds signed 32-bit coordinates"
@@ -262,14 +292,22 @@ class DocumentPartitionManager(
 
     private companion object {
         const val POINT_CHECKPOINT_STRIDE = 64L * 1024L
+        const val SOURCE_SCAN_CHUNK_CHARS = 64 * 1024
     }
 
     private fun countNewlines(source: Utf16DocumentSource, start: Long, end: Long): Long {
         var count = 0L
         var i = start
         while (i < end) {
-            if (source[i] == '\n') count++
-            i++
+            val chunk = source.readChunk(
+                i,
+                minOf(SOURCE_SCAN_CHUNK_CHARS.toLong(), end - i).toInt()
+            )
+            require(chunk.isNotEmpty() && chunk.length <= end - i) {
+                "Utf16DocumentSource.readChunk returned an invalid partition window"
+            }
+            count += chunk.count { it == '\n' }
+            i += chunk.length
         }
         return count
     }

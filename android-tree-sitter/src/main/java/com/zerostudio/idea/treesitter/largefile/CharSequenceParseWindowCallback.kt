@@ -43,9 +43,20 @@ class CharSequenceParseWindowCallback(
 /** Stable random-access source for partitioning immutable editor snapshots. */
 class CharSequenceUtf16DocumentSource(
     private val source: CharSequence,
-    override val version: Long
+    override val version: Long,
+    private val chunkReader: (startUtf16: Int, maxChars: Int) -> CharSequence = { start, count ->
+        source.subSequence(start, start + count)
+    }
 ) : Utf16DocumentSource {
     override val length: Long get() = source.length.toLong()
+
+    override fun readChunk(offset: Long, maxChars: Int): CharSequence {
+        require(offset >= 0L && maxChars > 0)
+        if (offset >= length) return ""
+        val start = offset.toInt()
+        val count = minOf(maxChars.toLong(), length - offset).toInt()
+        return chunkReader(start, count)
+    }
 
     override fun get(offset: Long): Char {
         if (offset < 0L || offset >= source.length.toLong()) {

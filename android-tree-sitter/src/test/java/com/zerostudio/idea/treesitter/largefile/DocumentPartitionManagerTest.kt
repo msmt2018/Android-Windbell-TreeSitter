@@ -93,4 +93,17 @@ class DocumentPartitionManagerTest {
         assertTrue(manager.pointCheckpointCount in 2..40)
     }
 
+    @Test fun partitionIndexUsesBoundedSequentialSourceWindows() {
+        val text = ("line-".repeat(100) + "\n").repeat(4000)
+        var reads = 0
+        val source = CharSequenceUtf16DocumentSource(text, 12L) { start, count ->
+            reads++
+            text.subSequence(start, start + count)
+        }
+        val manager = DocumentPartitionManager(targetPartitionChars = 64 * 1024)
+        manager.rebuild(source)
+        assertTrue(manager.snapshot().isNotEmpty())
+        assertTrue(reads < 100)
+    }
+
 }
