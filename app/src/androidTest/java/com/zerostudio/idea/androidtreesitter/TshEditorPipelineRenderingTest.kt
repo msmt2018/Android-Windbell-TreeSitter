@@ -428,7 +428,7 @@ class TshEditorPipelineRenderingTest {
         assertEquals("Earlier background value survives", Color.GREEN, token.lightBackground)
         assertEquals("Earlier bold attribute survives", 0x01, token.lightFontFlags and 0x01)
         assertEquals("Earlier italic attribute survives", 0x02, token.lightFontFlags and 0x02)
-        assertEquals("Dark foreground uses last declaration", Color.BLUE and 0x00FFFFFF or (0xAA shl 24), token.darkColor)
+        assertEquals("Dark foreground uses last declaration", Color.rgb(0, 0, 170), token.darkColor)
         assertEquals("Dark background survives", Color.rgb(0, 170, 0), token.darkBackground)
         assertEquals("Dark bold survives", 0x01, token.darkFontFlags and 0x01)
         assertEquals("Dark italic survives", 0x02, token.darkFontFlags and 0x02)
