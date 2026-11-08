@@ -49,12 +49,13 @@ class TshTreeSitterQueryCompiler(
         } ?: return failure("TSH-QUERY-GRAMMAR-002", "No live Tree-sitter language is registered for '${grammar.languageId}'")
         val languageLease = languageLeases.acquire(languageHandle)
             ?: return failure("TSH-QUERY-GRAMMAR-003", "Resolved Tree-sitter language is retired, closed, or not registered")
-        return languageLease.use {
-            val language = it.resource
+        var languageLeaseTransferred = false
+        try {
+            val language = languageLease.resource
             val nativeQuery = try {
                 TSQuery.create(language, source.text)
             } catch (error: Throwable) {
-                return@use failure("TSH-QUERY-COMPILE-001", "Tree-sitter query creation failed: ${error.message}", cause = error)
+                return failure("TSH-QUERY-COMPILE-001", "Tree-sitter query creation failed: ${error.message}", cause = error)
             }
 
         if (!nativeQuery.canAccess()) {
@@ -98,7 +99,8 @@ class TshTreeSitterQueryCompiler(
                 return failure("TSH-QUERY-REGISTRY-004", "Cannot register native query: ${error.message}", cause = error)
             }
             try {
-                leases.register(queryId, objectDescriptor.id, nativeQuery)
+                leases.register(queryId, objectDescriptor.id, nativeQuery, dependencies = listOf(languageLease))
+                languageLeaseTransferred = true
             } catch (error: Throwable) {
                 objects.unregister(nativeQuery)
                 nativeQuery.close()
@@ -129,6 +131,10 @@ class TshTreeSitterQueryCompiler(
                 }
             }
         }
+        } finally {
+            if (!languageLeaseTransferred) {
+                languageLease.close()
+            }
         }
     }
 
