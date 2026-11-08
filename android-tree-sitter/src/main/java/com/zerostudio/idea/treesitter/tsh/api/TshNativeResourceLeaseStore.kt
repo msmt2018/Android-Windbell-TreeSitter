@@ -32,6 +32,16 @@ class TshNativeResourceLeaseStore {
         val objectId: TshObjectId get() = entry.objectId
         private var released = false
 
+        /**
+         * Creates a child lease from this already-held lease. Unlike store.acquire(), retain()
+         * remains valid after retirement because the caller already owns a live reference.
+         */
+        fun retain(): Lease<T>? = synchronized(lock) {
+            if (released || entry.closed) return@synchronized null
+            entry.leases++
+            Lease(entry)
+        }
+
         override fun close() {
             val closeNow = synchronized(lock) {
                 if (released) return
