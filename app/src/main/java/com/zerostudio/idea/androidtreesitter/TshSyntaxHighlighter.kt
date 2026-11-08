@@ -60,6 +60,7 @@ class TshSyntaxHighlighter(
         val lengthChars: AtomicLong,
         val captureIndexes: ByteBudgetLruCache<Int, CaptureIntervalIndex>,
         val ticket: Long,
+        val documentRevision: AtomicLong = AtomicLong(),
         val nativeMutex: Mutex = Mutex(),
         val partitionWork: ConcurrentHashMap<Int, PartitionWork> = ConcurrentHashMap()
     )
@@ -502,6 +503,7 @@ class TshSyntaxHighlighter(
         if (active.captureIndexes.get(partition.index) != null) return
         val work = PartitionWork()
         if (active.partitionWork.putIfAbsent(partition.index, work) != null) return
+        val requestedRevision = active.documentRevision.get()
 
         // One native document handle has one serialized operation stream. Viewport
         // highlighting, incremental edits and close must never race on its parser/tree.
@@ -514,7 +516,8 @@ class TshSyntaxHighlighter(
                 work.state = PartitionWorkState.RUNNING
                 val flat = active.nativeMutex.withLock {
                     currentCoroutineContext().ensureActive()
-                    if (generation.get() != active.ticket || largeSession !== active) {
+                    if (generation.get() != active.ticket || largeSession !== active ||
+                        active.documentRevision.get() != requestedRevision) {
                         throw CancellationException("Stale native viewport request")
                     }
                     engine.highlightNativeDocument(
@@ -526,7 +529,8 @@ class TshSyntaxHighlighter(
                     )
                 }
                 val spans = decodeNativeSpans(flat)
-                if (generation.get() == active.ticket && largeSession === active) {
+                if (generation.get() == active.ticket && largeSession === active &&
+                    active.documentRevision.get() == requestedRevision) {
                     // Empty IntArray is a valid completed result and is cached as such.
                     active.captureIndexes.put(partition.index, CaptureIntervalIndex(spans))
                     work.state = PartitionWorkState.SUCCEEDED
@@ -596,14 +600,17 @@ class TshSyntaxHighlighter(
                     }
                     // Lexical state can flow to EOF. Invalidate downstream captures
                     // and failed-work markers only after the edit transaction completes.
+                    active.documentRevision.incrementAndGet()
                     val firstInvalid = (earliestOffset / PARTITION_CHARS).toInt()
                     active.captureIndexes.invalidate { key, _ -> key >= firstInvalid }
-                    active.partitionWork.entries.removeIf { it.key >= firstInvalid }
+                    active.partitionWork.keys.filter { it >= firstInvalid }.forEach(active.partitionWork::remove)
                     if (generation.get() == active.ticket && largeSession === active) {
                         host?.invalidateStyles()
                         host?.invalidateStructure()
                     }
                 }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
             } catch (error: Throwable) {
                 Log.e(TAG, "Native incremental edit failed; rebuilding the native session", error)
                 if (generation.get() == active.ticket) host?.buffer?.let(::scheduleParse)
@@ -657,4 +664,4 @@ class TshSyntaxHighlighter(
                 .onFailure { Log.w(TAG, "Failed to close native TSH capture cache", it) }
         }
     }
-}}
+}
