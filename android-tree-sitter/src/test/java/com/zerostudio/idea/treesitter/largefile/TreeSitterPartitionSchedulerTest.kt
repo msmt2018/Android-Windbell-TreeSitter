@@ -27,6 +27,8 @@ class TreeSitterPartitionSchedulerTest {
         }
         assertTrue(requests.isNotEmpty())
         assertTrue(latch.await(5, TimeUnit.SECONDS))
+        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5)
+        while (cache.size == 0 && System.nanoTime() < deadline) Thread.sleep(10)
         // At least one tree has been admitted; the scheduler may still be filling prefetch.
         assertTrue(cache.size > 0)
         scheduler.close()
