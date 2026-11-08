@@ -7,7 +7,7 @@ TSH（Tree Sitter Highlighting / Windbell-TSH）面向 Android 和可扩展编�
 | 文档 | 内容 |
 |---|---|
 | [总体架构](architecture/overview.md) | 分层、模块边界、数据流和架构原则 |
-| [API 总目录](api/README.md) | 公共 API 体系、稳定性和命名规范 |
+| [API 总目录](api/README.md) | 公共 API 体系、稳定性和命名规范 |\n| [首轮源码审计](audit/current-baseline.md) | 现有 TSH 能力、缺口、风险和迁移基线 |
 | [对象与文本模型](api/object-and-text-model.md) | 编辑器、View、Document、Buffer、坐标与范围 |
 | [编辑器集成](guides/editor-integration.md) | 自动发现、Provider、适配等级与接入流程 |
 | [高亮与渲染](guides/highlight-render-pipeline.md) | .tsh 到真实编辑器绘制的完整链路 |
