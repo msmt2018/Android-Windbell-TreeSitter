@@ -35,9 +35,10 @@
 
 ### B. DSL 类型系统、Schema 与配置仓库
 - [x] 完整类型系统/Schema 的目标契约文档。
-- [ ] DSL Value/Type/AST 模型 Kotlin 源码。
-- [ ] Schema Registry、属性类型/范围/单位/默认值/枚举/引用校验。
-- [ ] 配置 Artifact、Repository、Catalog、原子 install/replace/unload。
+- [x] DSL Value/Type/Declaration/Document Kotlin 模型源码（Parser-neutral typed AST 基础）。
+- [x] Schema Registry：类型、单位、默认值、范围、枚举、版本、能力和未知属性策略校验。
+- [x] Config Artifact/Repository/Catalog：get/list/install/乐观并发 replace/unload。
+- [x] Schema 与 Config Repository 首批 JUnit 测试源码。
 - [ ] Lexer/Parser AST 与既有 C++ TshCompiler 的语法兼容审计。
 - [ ] C++ Parser/Compiler 逐步补齐 Schema/语义校验，并提供结构化诊断。
 - [ ] DSL v1 fixtures、错误恢复、迁移和兼容性测试。
@@ -101,12 +102,13 @@
 
 ## 本轮实施顺序
 
-1. 先实现 B 的 Kotlin 类型系统、Schema Registry 和配置 Artifact Repository（纯 JVM 层，不伪称已连接 C++ Parser）。
-2. 为该切片补充单元测试和构建验证。
-3. 审计既有 .tsh 语法和 C++ Compiler，制定 DSL v1 兼容表。
-4. 再实现 C/D 的两个执行管线 Adapter，避免先定义一套无法对接旧 Native 的抽象。
-5. 然后贯通 E/F/G/H 的结果与真实绘制闭环。
-6. 最后完成 I 的 Native/JNI 同步与全矩阵验收；期间始终保持旧入口可用。
+1. [x] 实现 B 的 Kotlin 类型系统、Schema Registry 和配置 Artifact Repository（纯 JVM 层，尚未连接 C++ Parser）。
+2. [x] 为该切片补充单元测试源码。
+3. [ ] 执行 Gradle 构建与测试并修复实际编译问题。
+4. 审计既有 .tsh 语法和 C++ Compiler，制定 DSL v1 兼容表。
+5. 再实现 C/D 的两个执行管线 Adapter，避免先定义一套无法对接旧 Native 的抽象。
+6. 然后贯通 E/F/G/H 的结果与真实绘制闭环。
+7. 最后完成 I 的 Native/JNI 同步与全矩阵验收；期间始终保持旧入口可用。
 
 ## API 文档映射
 
@@ -120,3 +122,12 @@
 - 全阶段：`tsh-core-api-coverage-matrix.md`、`public-api-review-checklist.md`、`changelog.md`
 
 **完成标准：** 每个功能独立记录契约/源码/构建/单测/集成/设备状态。源码提交不等于构建通过；构建通过不等于运行正确；API 可调用不等于 .tsh 属性真实生效或已绘制。
+
+
+## 最近一次源码提交
+
+- 新增 `TshDslModel.kt`：DSL 版本、值类型、单位、颜色空间、声明种类和 Parser-neutral declaration/document 模型。
+- 新增 `TshSchemaRegistry.kt`：声明 Schema 注册、重复注册保护、类型/单位/范围/枚举/默认值/版本/能力校验、严格/宽松未知属性策略。
+- 新增 `TshConfigRepository.kt`：不可变 ConfigArtifact、Catalog 描述、get/list/install/replace/unload 和 expected-revision 乐观并发保护。
+- 新增 `TshDslSchemaRepositoryTest.kt`：默认值、类型/单位、未知属性、能力缺失、宽松模式、配置版本替换测试源码。
+- **状态：源码已提交；Gradle 构建、测试运行、C++ Parser 接入和 Native 运行均未验证。**
