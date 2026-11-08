@@ -94,7 +94,7 @@ class TreeSitterPartitionSchedulerTest {
     }
 
     @Test fun windowedNativeParserConsumesBoundedUtf16Chunks() {
-        val text = ("class A { int value; String emoji = \"😀\"; }\\n").repeat(12000)
+        val text = ("class A { int value; String emoji = \"😀\"; }\n").repeat(12000)
         val parser = TSParser.create().apply { setLanguage(TSLanguageJava.getInstance()) }
         var maxRead = 0
         val callback = CharSequenceParseWindowCallback(text) { start, maxChars ->
