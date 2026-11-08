@@ -1027,12 +1027,20 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeApplyDocumentEdi
 
     // Prepare the sparse line index transactionally against the old source.
     // If parsing fails, the live document keeps its original index unchanged.
-    auto next_partition_index = document->partition_index;
-    if (!next_partition_index.applyEdit(
+    std::unique_ptr<windbell::largefile::TextPartitionIndex> next_partition_index;
+    try {
+        next_partition_index =
+            std::make_unique<windbell::largefile::TextPartitionIndex>(document->partition_index);
+    } catch (...) {
+        inserted.release();
+        throw_illegal_state(env, "Unable to allocate transactional native line-index snapshot");
+        return JNI_FALSE;
+    }
+    if (!next_partition_index->applyEdit(
             *document->source, static_cast<uint64_t>(start_byte),
             static_cast<uint64_t>(old_end_byte), inserted_data,
             static_cast<uint64_t>(inserted_size))) {
-        next_partition_index.reset();
+        next_partition_index->reset();
     }
     inserted.release();
 
@@ -1064,7 +1072,7 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeApplyDocumentEdi
     ts_tree_delete(document->tree);
     document->tree = next_tree;
     document->source = std::move(next_source);
-    document->partition_index = std::move(next_partition_index);
+    document->partition_index = std::move(*next_partition_index);
     document->length_chars = static_cast<uint32_t>(new_size / 2u);
     ++document->version;
     document->highlight_cache.clear();
@@ -1078,24 +1086,30 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeApplyDocumentEdi
     const int64_t byte_delta = static_cast<int64_t>(inserted_size) -
         static_cast<int64_t>(old_end_byte - start_byte);
     std::vector<MonarchStateCheckpoint> retained;
-    retained.reserve(document->monarch_checkpoints.size());
-    for (auto checkpoint : document->monarch_checkpoints) {
-        if (checkpoint.source_version != old_source_version) continue;
-        if (checkpoint.byte_offset <= static_cast<uint64_t>(start_byte)) {
-            checkpoint.source_version = new_source_version;
-            checkpoint.partition_version = new_partition_version;
-            retained.push_back(std::move(checkpoint));
-            continue;
+    bool checkpoints_copied = true;
+    try {
+        retained.reserve(document->monarch_checkpoints.size());
+        for (auto checkpoint : document->monarch_checkpoints) {
+            if (checkpoint.source_version != old_source_version) continue;
+            if (checkpoint.byte_offset <= static_cast<uint64_t>(start_byte)) {
+                checkpoint.source_version = new_source_version;
+                checkpoint.partition_version = new_partition_version;
+                retained.push_back(std::move(checkpoint));
+                continue;
+            }
+            if (checkpoint.byte_offset >= static_cast<uint64_t>(old_end_byte)) {
+                const int64_t shifted = static_cast<int64_t>(checkpoint.byte_offset) + byte_delta;
+                if (shifted < 0 || shifted > static_cast<int64_t>(new_size)) continue;
+                checkpoint.byte_offset = static_cast<uint64_t>(shifted);
+                // Keep the old source version until a new scan proves convergence.
+                retained.push_back(std::move(checkpoint));
+            }
         }
-        if (checkpoint.byte_offset >= static_cast<uint64_t>(old_end_byte)) {
-            const int64_t shifted = static_cast<int64_t>(checkpoint.byte_offset) + byte_delta;
-            if (shifted < 0 || shifted > static_cast<int64_t>(new_size)) continue;
-            checkpoint.byte_offset = static_cast<uint64_t>(shifted);
-            // Keep the old source version until a new scan proves convergence.
-            retained.push_back(std::move(checkpoint));
-        }
+    } catch (...) {
+        checkpoints_copied = false;
     }
-    document->monarch_checkpoints.swap(retained);
+    if (checkpoints_copied) document->monarch_checkpoints.swap(retained);
+    else document->monarch_checkpoints.clear();
     return JNI_TRUE;
 }
 

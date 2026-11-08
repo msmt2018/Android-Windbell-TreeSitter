@@ -193,10 +193,14 @@ bool PieceTreeSource::appendAdded(const uint8_t *data, uint64_t bytes,
     // Allocate every required chunk and reserve the destination vector before
     // changing logical size or writing into the current tail. A failed append
     // therefore cannot leave a partially advanced append arena behind.
+    if (requiredChunks > static_cast<uint64_t>(std::numeric_limits<size_t>::max()) ||
+        requiredChunks > static_cast<uint64_t>(std::numeric_limits<size_t>::max() -
+                                               added_chunks_.size())) return false;
+    const size_t requiredChunkCount = static_cast<size_t>(requiredChunks);
     std::vector<std::shared_ptr<uint8_t>> pending;
     try {
-        pending.reserve(static_cast<size_t>(requiredChunks));
-        added_chunks_.reserve(added_chunks_.size() + static_cast<size_t>(requiredChunks));
+        pending.reserve(requiredChunkCount);
+        added_chunks_.reserve(added_chunks_.size() + requiredChunkCount);
         for (uint64_t i = 0; i < requiredChunks; ++i) {
             std::shared_ptr<uint8_t> chunk(
                 new (std::nothrow) uint8_t[chunkBytes], std::default_delete<uint8_t[]>());
@@ -233,7 +237,9 @@ bool PieceTreeSource::readAdded(uint64_t offset, uint32_t maxBytes,
     constexpr uint64_t chunkBytes = 64u * 1024u;
     if (offset > added_size_ || (offset & 1u) || maxBytes < 2u) return false;
     if (offset == added_size_) return true;
-    const size_t index = static_cast<size_t>(offset / chunkBytes);
+    const uint64_t index64 = offset / chunkBytes;
+    if (index64 > static_cast<uint64_t>(std::numeric_limits<size_t>::max())) return false;
+    const size_t index = static_cast<size_t>(index64);
     const size_t local = static_cast<size_t>(offset % chunkBytes);
     if (index >= added_chunks_.size()) return false;
     const uint64_t count = std::min<uint64_t>(
