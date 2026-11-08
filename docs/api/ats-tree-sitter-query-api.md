@@ -56,3 +56,13 @@ CompiledQuery 必须绑定 grammar identity/version、ABI 和 fingerprint；只�
 - 验证 Native Query/Tree/Cursor 在异常、并发和关闭情况下无 use-after-free。\n- 验证 query release/替换与 execute 并发时由 Query lease/refcount 保证安全；目前仅有源码与单测源码，尚未运行。
 - 验证 Tree/Language close 与 execute 并发安全；当前仍未满足。
 - 执行 Gradle/JUnit、Native 单测和 Android 集成测试；没有执行的验证不得标记完成。
+
+### Predicate handler 结果语义
+
+现有 `TSQueryCursor` 的 Predicate Handler 接口现已按结果过滤匹配：
+- `OK`：当前 Handler 已处理并接受该 match，停止尝试后续 Handler。
+- `ERR`：当前 predicate 对该 match 不成立，丢弃该 match 并继续读取下一个 Native match。
+- `UNHANDLED`：当前 Handler 不负责该 predicate，继续尝试后续 Handler。
+- 所有 Handler 均返回 `UNHANDLED` 时，predicate match 不通过；TSH Executor 会先校验所有 pattern 中每个 predicate 的名称均有 Handler 声明支持，避免进入此状态。
+
+`TSQueryCursor.setPredicateEvaluationEnabled(false)` 可关闭 Java Handler 求值并原样返回 Native matches；TSH 根据 `TshQueryCompileOptions.enablePredicates` 设置此开关。启用 predicate 时，Executor 会逐个扫描 pattern 的 predicate step 序列（每段以 `Done` 结束），而不是只检查第一个 predicate。
