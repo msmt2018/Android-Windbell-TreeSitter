@@ -91,6 +91,6 @@ Tree Executor 从 `TshObjectRegistry` 解析 TSTree 后，必须成功 acquire �
 
 ### Coordinated native resource registry
 
-新增 `TshNativeResourceRegistry` 作为宿主侧 Tree/Language 资源入口。它封装 `TshObjectRegistry` 与 `TshNativeResourceLeaseStore`，提供统一 register、带 Java 类型令牌或实例 Handle 的 acquire、retire、作用域化 retireAll 和活动 Lease 计数。retireAll 只退役当前协调器登记的资源，不会误退役共享底层 Store 中其他 owner 的资源。retire 先让 Lease Store 拒绝新获取，再从对象索引注销；已取得的 Lease 仍保持 Native 资源存活，直到最后一次 close。
+新增 `TshNativeResourceRegistry` 作为宿主侧 Tree/Language 资源入口，并在 `TshObjectRegistry` 增加原子 `registerUnique`，避免多个协调器并发发布同一实例时误注销其他 owner 的对象索引。它封装 `TshObjectRegistry` 与 `TshNativeResourceLeaseStore`，提供统一 register、带 Java 类型令牌或实例 Handle 的 acquire、retire、作用域化 retireAll 和活动 Lease 计数。retireAll 只退役当前协调器登记的资源，不会误退役共享底层 Store 中其他 owner 的资源。retire 先让 Lease Store 拒绝新获取，再从对象索引注销；已取得的 Lease 仍保持 Native 资源存活，直到最后一次 close。
 
 该 Facade 和测试目前仅有源码提交。Tree-sitter Compiler/Executor Adapter 已支持注入协调 Registry，启用后 Language/Tree Lease 通过统一入口获取；旧 Store 直连仍保留为兼容路径。宿主生产装配尚未全面迁移；因此不能将“资源所有权已统一”或“并发关闭已验证”标记为完成。后续需把 Grammar/Tree owner 与 Executor 迁移到协调入口，并执行 Gradle/JUnit/Native 并发测试。
