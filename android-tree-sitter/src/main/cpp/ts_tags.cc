@@ -94,9 +94,9 @@ static jobject TSQuery_extractBounded(
         env, "Invalid absolute byte range: Tree-sitter byte offsets are uint32");
     return nullptr;
   }
-  if (max_results < 1 || max_results > 1000000 ||
+  if (max_results < 1 || max_results > 250000 ||
       max_pending_matches < 1 || max_pending_matches > 1000000) {
-    throwTagsIllegalArgument(env, "Tree-sitter query limits must be between 1 and 1000000");
+    throwTagsIllegalArgument(env, "maxResults must be between 1 and 250000; maxPendingMatches must be between 1 and 1000000");
     return nullptr;
   }
 
@@ -168,6 +168,8 @@ static jobject TSQuery_extractBounded(
   std::vector<OwnedQueryMatch> matches;
   size_t capture_count_for_spans = 0;
   size_t query_match_count = 0;
+  size_t query_capture_count = 0;
+  constexpr size_t kMaxQueryCaptures = 500000;
   try {
     matches.reserve(static_cast<size_t>(std::min(max_results, 4096)));
     TSQueryMatch match{};
@@ -177,6 +179,11 @@ static jobject TSQuery_extractBounded(
         return nullptr;
       }
       ++query_match_count;
+      if (match.capture_count > kMaxQueryCaptures - query_capture_count) {
+        throwTagsIllegalState(env, "Tree-sitter query exceeded maxCaptures; no partial result was returned");
+        return nullptr;
+      }
+      query_capture_count += match.capture_count;
       OwnedQueryMatch owned;
       owned.id = match.id;
       owned.pattern_index = match.pattern_index;
