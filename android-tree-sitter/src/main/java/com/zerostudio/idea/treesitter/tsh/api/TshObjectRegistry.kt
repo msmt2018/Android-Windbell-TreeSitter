@@ -45,6 +45,33 @@ class TshObjectRegistry {
         }
     }
 
+    /**
+     * Registers a new instance only if it has never been published. Unlike [register], this does
+     * not update an existing descriptor; it is used by ownership-transfer coordinators that must
+     * not accidentally adopt or unregister another owner's resource.
+     */
+    fun registerUnique(
+        instance: Any,
+        type: String,
+        capabilities: TshCapabilitySet = TshCapabilitySet.EMPTY,
+        metadata: Map<String, String> = emptyMap()
+    ): TshObjectDescriptor {
+        require(type.isNotBlank()) { "type must not be blank" }
+        synchronized(lock) {
+            check(byInstance[instance] == null) { "The object instance is already registered" }
+            val descriptor = TshObjectDescriptor(
+                id = TshObjectId(nextId.getAndIncrement()),
+                type = type,
+                capabilities = capabilities,
+                metadata = metadata.toMap(),
+                registeredAtNanos = System.nanoTime()
+            )
+            byInstance[instance] = descriptor
+            byId[descriptor.id] = instance
+            return descriptor
+        }
+    }
+
     fun find(instance: Any): TshObjectDescriptor? =
         synchronized(lock) { byInstance[instance] }
 
