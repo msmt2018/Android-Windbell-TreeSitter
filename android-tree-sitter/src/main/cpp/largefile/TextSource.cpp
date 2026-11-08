@@ -2,8 +2,63 @@
 
 #include <algorithm>
 #include <limits>
+#include <utility>
 
 namespace windbell::largefile {
+
+SegmentedTextSource::SegmentedTextSource(
+    std::vector<TextSegment> segments,
+    uint64_t totalBytes
+) noexcept : segments_(std::move(segments)), total_bytes_(totalBytes) {
+    uint64_t accumulated = 0;
+    for (const auto &segment : segments_) {
+        if ((segment.size & 1u) != 0 || (segment.size != 0 && segment.data == nullptr) ||
+            segment.size > std::numeric_limits<uint64_t>::max() - accumulated) {
+            return;
+        }
+        accumulated += segment.size;
+    }
+    valid_ = accumulated == total_bytes_ && (total_bytes_ & 1u) == 0;
+}
+
+uint64_t SegmentedTextSource::sizeBytes() const noexcept {
+    return total_bytes_;
+}
+
+bool SegmentedTextSource::isValid() const noexcept {
+    return valid_;
+}
+
+bool SegmentedTextSource::read(
+    uint64_t offset,
+    uint32_t maxBytes,
+    TextChunkView *out
+) const noexcept {
+    if (out == nullptr) return false;
+    out->data = nullptr;
+    out->size = 0;
+    if (!valid_ || (offset & 1u) != 0 || maxBytes < 2u) return false;
+    if (offset == total_bytes_) return true;
+    if (offset > total_bytes_) return false;
+
+    uint64_t base = 0;
+    for (const auto &segment : segments_) {
+        const uint64_t end = base + segment.size;
+        if (offset < end) {
+            const uint64_t local = offset - base;
+            const uint64_t available = segment.size - local;
+            uint64_t count = std::min<uint64_t>(available, maxBytes);
+            count &= ~uint64_t{1};
+            if (count == 0 || local > static_cast<uint64_t>(
+                    std::numeric_limits<size_t>::max())) return false;
+            out->data = segment.data + static_cast<size_t>(local);
+            out->size = static_cast<uint32_t>(count);
+            return true;
+        }
+        base = end;
+    }
+    return false;
+}
 
 ContiguousTextSource::ContiguousTextSource(const void *data, uint64_t sizeBytes) noexcept
     : data_(static_cast<const char *>(data)), size_bytes_(sizeBytes) {}
