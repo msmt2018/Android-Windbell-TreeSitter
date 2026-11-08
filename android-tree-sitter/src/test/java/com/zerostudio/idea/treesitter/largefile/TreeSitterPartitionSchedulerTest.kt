@@ -4,8 +4,6 @@ import com.zerostudio.idea.treesitter.TSParser
 import com.zerostudio.idea.treesitter.java.TSLanguageJava
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
-import java.nio.ByteBuffer
-import java.nio.ByteOrder
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
@@ -23,13 +21,26 @@ class TreeSitterPartitionSchedulerTest {
         val scheduler = TreeSitterPartitionScheduler(manager, cache, contextChars = 32)
         val latch = CountDownLatch(1)
         val requests = scheduler.requestViewport(source, 300, 500, 1) { request ->
-            val bytes = ByteBuffer.allocateDirect(source.text.length * 2).order(ByteOrder.LITTLE_ENDIAN)
-            source.text.forEach { bytes.putChar(it) }
-            bytes.flip()
             val included = manager.treeSitterRange(
                 source, request.contextStartUtf16, request.contextEndUtf16
             )
-            val tree = parser.parseBuffers(null, arrayOf(bytes), arrayOf(included))
+            parser.includedRanges = listOf(included)
+            // Stream bounded UTF-16LE windows instead of allocating a direct buffer
+            // proportional to the entire document (which defeats large-file mode).
+            val tree = parser.parse(null, readCallback = { byteOffset, _ ->
+                val start = (byteOffset.toLong() / 2L).coerceAtMost(source.length)
+                if (start >= source.length) {
+                    ByteArray(0)
+                } else {
+                    var end = minOf(source.length, start + 4096L)
+                    if (end < source.length &&
+                        Character.isHighSurrogate(source.text[(end - 1L).toInt()]) &&
+                        Character.isLowSurrogate(source.text[end.toInt()])) {
+                        end--
+                    }
+                    source.text.substring(start.toInt(), end.toInt()).toByteArray(Charsets.UTF_16LE)
+                }
+            })
             latch.countDown()
             tree
         }

@@ -126,8 +126,12 @@ class TreeSitterPartitionScheduler(
             if (task != null) tasks += task
         }
         // All tasks have priorities computed before they enter the priority queue.
-        tasks.forEach { task ->
-            if (!closed.get()) executor.execute(task) else task.cancel()
+        synchronized(lock) {
+            if (closed.get()) {
+                tasks.forEach { it.cancel() }
+            } else {
+                tasks.forEach(executor::execute)
+            }
         }
         return keys
     }
@@ -143,12 +147,19 @@ class TreeSitterPartitionScheduler(
         if (!closed.compareAndSet(false, true)) return
         cancelPending()
         executor.shutdownNow()
-        try {
-            executor.awaitTermination(5L, TimeUnit.SECONDS)
-        } catch (interrupted: InterruptedException) {
-            Thread.currentThread().interrupt()
+        // A running parser callback may still be using a tree or preparing one for
+        // admission. Never close the native AST cache while a worker can still touch it.
+        var interrupted = false
+        while (!executor.isTerminated) {
+            try {
+                executor.awaitTermination(1L, TimeUnit.SECONDS)
+            } catch (_: InterruptedException) {
+                interrupted = true
+                executor.shutdownNow()
+            }
         }
         astCache.close()
+        if (interrupted) Thread.currentThread().interrupt()
     }
 
     private inner class PrioritizedTask(
