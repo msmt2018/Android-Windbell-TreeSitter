@@ -99,6 +99,31 @@ static jobject TSQuery_extractBounded(
     return nullptr;
   }
 
+  std::vector<jint> styles;
+  if (style_ids != nullptr) {
+    const jsize style_count = env->GetArrayLength(style_ids);
+    const uint32_t query_capture_count = ts_query_capture_count(
+        reinterpret_cast<const TSQuery *>(query_pointer));
+    if (style_count != static_cast<jsize>(query_capture_count)) {
+      throwTagsIllegalArgument(env, "styleIds length must equal the query capture count");
+      return nullptr;
+    }
+    if (max_spans < 1 || max_spans > 4000000) {
+      throwTagsIllegalArgument(env, "maxSpans must be between 1 and 4000000");
+      return nullptr;
+    }
+    try {
+      styles.resize(static_cast<size_t>(style_count));
+    } catch (const std::bad_alloc &) {
+      throwTagsOutOfMemory(env);
+      return nullptr;
+    }
+    if (style_count > 0) {
+      env->GetIntArrayRegion(style_ids, 0, style_count, styles.data());
+      if (env->ExceptionCheck()) return nullptr;
+    }
+  }
+
   const auto start = static_cast<uint32_t>(start_byte);
   const auto end = static_cast<uint32_t>(end_byte);
   const TSNode root = _unmarshalNode(env, root_object);
@@ -140,6 +165,7 @@ static jobject TSQuery_extractBounded(
 #endif
 
   std::vector<OwnedQueryMatch> matches;
+  size_t capture_count_for_spans = 0;
   try {
     matches.reserve(static_cast<size_t>(std::min(max_results, 4096)));
     TSQueryMatch match{};
@@ -152,8 +178,28 @@ static jobject TSQuery_extractBounded(
       owned.id = match.id;
       owned.pattern_index = match.pattern_index;
       if (match.capture_count > 0) {
-        owned.captures.assign(
-            match.captures, match.captures + match.capture_count);
+        if (style_ids == nullptr) {
+          owned.captures.assign(
+              match.captures, match.captures + match.capture_count);
+        } else {
+          for (uint32_t capture_index = 0;
+               capture_index < match.capture_count; ++capture_index) {
+            const TSQueryCapture &capture = match.captures[capture_index];
+            if (capture.index >= styles.size()) {
+              throwTagsIllegalState(env, "Native query returned an invalid capture index");
+              return nullptr;
+            }
+            if (styles[capture.index] < 0) continue;
+            size_t emitted = capture_count_for_spans;
+            if (emitted >= static_cast<size_t>(max_spans)) {
+              throwTagsIllegalState(env,
+                  "Tree-sitter query exceeded maxSpans; no partial result was returned");
+              return nullptr;
+            }
+            ++capture_count_for_spans;
+            owned.captures.push_back(capture);
+          }
+        }
       }
       matches.push_back(std::move(owned));
     }
@@ -176,41 +222,12 @@ static jobject TSQuery_extractBounded(
   }
 
   if (style_ids != nullptr) {
-    const jsize style_count = env->GetArrayLength(style_ids);
-    const uint32_t query_capture_count = ts_query_capture_count(
-        reinterpret_cast<const TSQuery *>(query_pointer));
-    if (style_count != static_cast<jsize>(query_capture_count)) {
-      throwTagsIllegalArgument(env, "styleIds length must equal the query capture count");
-      return nullptr;
-    }
-    if (max_spans < 1 || max_spans > 4000000) {
-      throwTagsIllegalArgument(env, "maxSpans must be between 1 and 4000000");
-      return nullptr;
-    }
-    std::vector<jint> styles;
     std::vector<jlong> packed;
     try {
-      styles.resize(static_cast<size_t>(style_count));
-      if (style_count > 0) {
-        env->GetIntArrayRegion(style_ids, 0, style_count, styles.data());
-        if (env->ExceptionCheck()) return nullptr;
-      }
-      packed.reserve(std::min<size_t>(
-          static_cast<size_t>(max_spans) * 6,
-          static_cast<size_t>(matches.size()) * 12));
+      packed.reserve(capture_count_for_spans * 6);
       for (const auto &owned : matches) {
         for (const TSQueryCapture &capture : owned.captures) {
-          if (capture.index >= styles.size()) {
-            throwTagsIllegalState(env, "Native query returned an invalid capture index");
-            return nullptr;
-          }
           const jint style_id = styles[capture.index];
-          if (style_id < 0) continue;
-          if (packed.size() / 6 >= static_cast<size_t>(max_spans)) {
-            throwTagsIllegalState(env,
-                "Tree-sitter query exceeded maxSpans; no partial result was returned");
-            return nullptr;
-          }
           const uint32_t capture_start = ts_node_start_byte(capture.node);
           const uint32_t capture_end = ts_node_end_byte(capture.node);
           if (capture_end < capture_start) {
