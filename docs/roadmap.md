@@ -45,7 +45,7 @@
 - [ ] DSL v1 fixtures、错误恢复、迁移和兼容性测试。
 
 ### C. Grammar 与 Tree-sitter + ATS 查询
-- [x] Grammar Descriptor、UTF-8 ByteRange、Query Source/Options、CompiledQuery、SyntaxTreeSnapshot、Capture、ExecutionBudget、Result 等 Kotlin API 模型。
+- [x] Grammar Descriptor、带输入编码契约的 Native ByteRange、Query Source/Options、CompiledQuery、SyntaxTreeSnapshot、Capture、ExecutionBudget、Result 等 Kotlin API 模型。
 - [x] TshAtsCompiler/TshQueryExecutor 公共接口与 Grammar fingerprint 兼容检查。
 - [x] CompiledQuery Registry：重复注册保护、替换、查询、Grammar 兼容查找和注销。
 - [x] 查询 API 首批单元测试源码（范围、Grammar fingerprint、Registry、stale result）。
