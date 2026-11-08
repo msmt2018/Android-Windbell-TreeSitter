@@ -33,3 +33,11 @@
 - 补充 DSL 能力到 Parser/Resolver/Runtime/Render Backend 的覆盖矩阵，防止只定义语法而没有执行实现。
 - 从核心 API 索引移除通用编辑器功能文档；这些内容仅作为宿主集成边界参考。嵌入语言语法注入保留为 TSH 核心能力。
 - 以上新增内容均为目标契约文档；未据此宣称底层实现、Gradle 构建、自动化测试或设备绘制已经完成。
+
+
+### Complete core API contract set
+- 新增 DSL 完整类型系统与 Schema、ATS/Tree-sitter 查询、Regex 窗口执行、统一 Match/Scope、Attribute/Semantic/Highlight、Theme/Style/Render、Kotlin/JNI/C++ 完整性七份契约文档。
+- 明确 Oniguruma 只接收生命周期内稳定的连续缓冲区；对无法证明跨窗口等价的正则必须整段回退或明确拒绝。
+- 明确每个 DSL 属性必须有 Schema、类型、语义、运行时 consumer 和验收测试，不能只声明不执行。
+- 明确 JNI/Kotlin/C++ 签名、生成注解、注册表、句柄所有权、错误码和资源释放的一致性门槛。
+- 所有新增内容均为目标契约；尚未证明对应实现、编译、自动化测试或设备端渲染已完成。
