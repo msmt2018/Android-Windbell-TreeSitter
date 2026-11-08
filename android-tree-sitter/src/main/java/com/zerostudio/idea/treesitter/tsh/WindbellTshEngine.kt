@@ -655,7 +655,6 @@ class WindbellTshEngine private constructor() {
         if (documentHandle != 0L) nativeCloseDocument(documentHandle)
     }
 
-    @FastNative
     private external fun nativeCreateDocument(
         reader: NativeTextWindowReader,
         byteLength: Long,
@@ -664,7 +663,6 @@ class WindbellTshEngine private constructor() {
         extension: String
     ): Long
 
-    @FastNative
     private external fun nativeHighlightDocument(
         documentHandle: Long,
         diagnostics: Boolean,
@@ -672,7 +670,6 @@ class WindbellTshEngine private constructor() {
         rangeEndByte: Long
     ): IntArray?
 
-    @FastNative
     private external fun nativeCloseDocument(documentHandle: Long)
 
     @FastNative

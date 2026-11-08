@@ -585,6 +585,7 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
         if (rule.type == RegexRuleType::BLOCK && rule.onig_start && rule.onig_end) {
             matchBlockRecursive(rule, text_start, text_end, text_start, text_end, micro_spans,
                 diagnostic_match_counts ? &diagnostic_match_counts[0] : nullptr);
+            retain_requested_range(micro_spans);
             continue;
         }
 
@@ -653,6 +654,7 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
             }
         }
         onig_region_free(region, 1);
+        retain_requested_range(micro_spans);
     }
     retain_requested_range(micro_spans);
 
@@ -719,10 +721,11 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
             if (!matched_rule) {
                 const UChar* next = advanceOneUtf16CodePoint(text_start + position, text_end);
                 const uint32_t end = static_cast<uint32_t>(next - text_start);
-                if (grammar->monarch_has_default_style && end > position) {
+                if (grammar->monarch_has_default_style && end > position &&
+                    end > range_start_byte && position < range_end_byte) {
                     HighlightSpan span;
-                    span.start_byte = position;
-                    span.end_byte = end;
+                    span.start_byte = std::max(position, range_start_byte);
+                    span.end_byte = std::min(end, range_end_byte);
                     span.style_id = grammar->monarch_default_style_id;
                     span.priority = 0;
                     span.declaration_order = 0;
@@ -775,10 +778,11 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                 }
             }
             if (has_resolved_style && match_end > match_start &&
-                (match_start & 1u) == 0 && (match_end & 1u) == 0) {
+                (match_start & 1u) == 0 && (match_end & 1u) == 0 &&
+                match_end > range_start_byte && match_start < range_end_byte) {
                 HighlightSpan span;
-                span.start_byte = match_start;
-                span.end_byte = match_end;
+                span.start_byte = std::max(match_start, range_start_byte);
+                span.end_byte = std::min(match_end, range_end_byte);
                 span.style_id = resolved_style_id;
                 span.priority = matched_rule->priority;
                 span.declaration_order = matched_rule->declaration_order;
@@ -1007,7 +1011,11 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                     span.priority = ast_rule.priority;
                     span.declaration_order = ast_rule.declaration_order;
                     span.allow_overlap = ast_rule.allow_overlap ? 1 : 0;
-                    macro_spans.push_back(span);
+                    if (span.end_byte > range_start_byte && span.start_byte < range_end_byte) {
+                        span.start_byte = std::max(span.start_byte, range_start_byte);
+                        span.end_byte = std::min(span.end_byte, range_end_byte);
+                        macro_spans.push_back(span);
+                    }
                 }
             }
 
