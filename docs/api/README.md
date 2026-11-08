@@ -26,13 +26,11 @@
 | [缓存与性能](cache-and-performance-api.md) | Scheduler、Cache、Backpressure | 任务优先级、缓存失效、性能预算 |
 | [安全与 Regex 防护](security-and-regex-safety.md) | Regex、配置、Provider 安全 | 超时、资源配额、隔离和 SafeMode |
 | [测试与兼容性](testing-and-compatibility-api.md) | API/Provider/Native 版本治理 | 测试分层、兼容策略和发布门槛 |
-| [平台与线程契约](platform-and-threading-api.md) | 模块边界、Dispatcher、回调 | UI 线程、并发、重入和模块依赖 |
-| [Symbol、Outline、Folding 与 Navigation](symbol-outline-navigation-api.md) | 符号、折叠与导航 | 符号树、折叠区间、定义目标和版本校验 |
-| [Selection、Cursor 与 Multi-Cursor](selection-cursor-multicursor-api.md) | 光标与选择 | 主/次光标、选区、矩形选择和事件订阅 |
-| [Language Intelligence](language-intelligence-api.md) | 语言智能 | Completion、Hover、Definition、References、Rename |
-| [Injection 与 Language Layer](injection-and-language-layer-api.md) | 嵌入语言 | 语言层级、范围映射、增量失效与资源限制 |
-| [Decoration、Gutter、Inlay 与 CodeLens](decorations-gutter-inlay-codelens-api.md) | 装饰与边栏 | 所有权、样式合成、渲染能力和交互命令 |
-| [EditTransaction、Undo/Redo 与 Command](edit-transaction-undo-redo-command-api.md) | 编辑事务 | 版本校验、原子应用、撤销栈所有权和命令安全 |
+| [平台与线程契约](platform-and-threading-api.md) | 模块边界、Dispatcher、回调 | 并发、重入和模块依赖 |
+| [.tsh 文件与配置对象管理](tsh-file-config-management-api.md) | 配置源、Artifact、Catalog、Transaction | load/reload/install/replace/unload，Theme/Font/Color 等 get/list 管理 |
+| [TSH DSL 语法与语义契约](tsh-dsl-syntax-and-semantic-contract.md) | Lexer、Parser、AST、类型系统、Schema | 顶层声明、值类型、表达式、引用、语义约束与版本 |
+| [Theme、Style、Font、Color 与 Decoration](theme-style-font-color-api.md) | 主题与样式模型 | Theme get/list/activate、Style resolve/explain、字体与颜色契约 |
+| [TSH 核心能力覆盖矩阵](tsh-core-api-coverage-matrix.md) | DSL 到 Runtime 映射 | 每种语法对应的底层 API、产物和验收要求 |
 
 ## 公共 API 设计要求
 
@@ -60,3 +58,16 @@
 ## 兼容迁移
 
 现有 WindbellTshEngine 保留为兼容执行入口。新 API 通过 Facade/Adapter 逐步委托旧实现，避免一次性破坏 JNI、ATS/Regex 或现有调用方。每个迁移项必须有旧 API -> 新 API 映射、弃用周期和回归测试。
+
+
+## 宿主集成参考（非 TSH 核心 API）
+
+以下文档仅用于说明宿主 Editor 可如何消费 TSH，不构成 TSH 引擎公共 API，也不得据此扩展编辑器框架职责：
+- symbol-outline-navigation-api.md
+- selection-cursor-multicursor-api.md
+- language-intelligence-api.md
+- edit-transaction-undo-redo-command-api.md
+- decorations-gutter-inlay-codelens-api.md（其中 Gutter/Inlay/CodeLens 属宿主；TSH Decoration 以 theme-style-font-color-api.md 为准）
+- editor-adapters.md、workspace-project-document-lifecycle-api.md、accessibility-bidi-virtual-layout-api.md（仅保留必要文本/坐标/渲染适配契约）
+
+嵌入语言语法注入属于 TSH 核心语法能力，见 language-injection-api.md；不得将通用 Editor Language Layer 当作引擎职责。
