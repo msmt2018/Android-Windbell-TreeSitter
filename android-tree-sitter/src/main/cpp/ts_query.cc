@@ -38,7 +38,7 @@ static bool append_standard_utf8(JNIEnv *env, std::string &out, jstring source) 
     return false; // JVM exception is pending.
   }
 
-  out.reserve(static_cast<size_t>(length) * 3);
+  out.reserve(static_cast<size_t>(length));
   for (jsize i = 0; i < length; ++i) {
     uint32_t code_point = chars[i];
     if (code_point >= 0xD800 && code_point <= 0xDBFF) {
