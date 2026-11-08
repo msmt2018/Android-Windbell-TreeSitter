@@ -24,7 +24,7 @@ GrammarProvider → TshParserSession → TshSyntaxTreeSnapshot → TshAtsCompile
 - `TshQueryExecutionBudget` / `TshQueryCancellation`：执行预算与协作式取消契约。
 - `TshAtsCompiler` / `TshQueryExecutor`：编译和执行接口。
 - `TshCompiledQueryRegistry`：编译查询注册、替换、查找和 Grammar 兼容检查。
-- `TshEngine.createTreeSitterQueryCompiler/Executor`：使用 Engine 统一拥有的对象索引、CompiledQuery catalog、Native Query Lease Store 和 Native Resource Registry；生产装配优先使用 Engine 工厂，不要为同一 Engine 创建彼此独立的 Lease Store。
+- `TshEngine.createTreeSitterQueryCompiler/Executor` 与 `openTreeSitterParser`：使用 Engine 统一拥有的对象索引、CompiledQuery catalog、Native Query Lease Store 和 Native Resource Registry；生产装配优先使用 Engine 工厂，不要为同一 Engine 创建彼此独立的 Lease Store。
 
 注意：这些是公共模型和扩展点。Tree-sitter 原生查询 Adapter 已实现源码，但 ATS parser/compiler 尚未实现；源码提交不代表已构建或通过 Native 运行测试。
 
