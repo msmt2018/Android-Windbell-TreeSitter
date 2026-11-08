@@ -78,6 +78,93 @@ static bool tshUtf16SliceToUtf8(
     return true;
 }
 
+// Compare literal AST text predicates directly against a random-access
+// UTF-16LE source. This avoids allocating a node-sized UTF-16 buffer and a
+// second UTF-8 copy for common equals/prefix/suffix selectors on large files.
+static bool tshSourceMatchesUtf8Literal(
+    const windbell::largefile::TextSource& source,
+    uint64_t start_byte,
+    uint64_t end_byte,
+    const std::string& expected,
+    uint8_t mode // 0=equals, 1=prefix, 2=suffix
+) {
+    if (start_byte > end_byte || end_byte > source.sizeBytes() ||
+        ((start_byte | end_byte) & 1u)) return false;
+    if (mode == 0 && end_byte - start_byte > expected.size() * 2ULL) return false;
+    if (mode == 1 && start_byte == end_byte) return expected.empty();
+    if (mode == 2 && start_byte == end_byte) return expected.empty();
+    if (expected.empty()) return mode != 0 || start_byte == end_byte;
+
+    std::string tail;
+    if (mode == 2) tail.reserve(expected.size());
+    size_t output_index = 0;
+    uint16_t pending_high = 0;
+    bool prefix_complete = false;
+    auto emit = [&](uint32_t cp) -> bool {
+        char encoded[4];
+        size_t count = 0;
+        if (cp <= 0x7F) encoded[count++] = static_cast<char>(cp);
+        else if (cp <= 0x7FF) {
+            encoded[count++] = static_cast<char>(0xC0 | (cp >> 6));
+            encoded[count++] = static_cast<char>(0x80 | (cp & 0x3F));
+        } else if (cp <= 0xFFFF) {
+            encoded[count++] = static_cast<char>(0xE0 | (cp >> 12));
+            encoded[count++] = static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
+            encoded[count++] = static_cast<char>(0x80 | (cp & 0x3F));
+        } else {
+            encoded[count++] = static_cast<char>(0xF0 | (cp >> 18));
+            encoded[count++] = static_cast<char>(0x80 | ((cp >> 12) & 0x3F));
+            encoded[count++] = static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
+            encoded[count++] = static_cast<char>(0x80 | (cp & 0x3F));
+        }
+        if (mode == 1 && prefix_complete) return true;
+        for (size_t i = 0; i < count; ++i) {
+            if (mode == 0 || mode == 1) {
+                if (output_index >= expected.size() || encoded[i] != expected[output_index])
+                    return false;
+                ++output_index;
+                if (mode == 1 && output_index == expected.size()) prefix_complete = true;
+            } else {
+                tail.push_back(encoded[i]);
+                if (tail.size() > expected.size()) tail.erase(tail.begin());
+            }
+        }
+        return true;
+    };
+
+    uint64_t offset = start_byte;
+    while (offset < end_byte) {
+        windbell::largefile::TextChunkView chunk{};
+        const uint32_t request = static_cast<uint32_t>(std::min<uint64_t>(
+            windbell::largefile::kTreeSitterInputChunkBytes, end_byte - offset));
+        if (!source.read(offset, request, &chunk) || !chunk.data || chunk.size == 0 ||
+            (chunk.size & 1u) || chunk.size > end_byte - offset) return false;
+        for (uint32_t i = 0; i < chunk.size; i += 2) {
+            const auto* bytes = reinterpret_cast<const uint8_t*>(chunk.data);
+            const uint16_t unit = static_cast<uint16_t>(bytes[i]) |
+                (static_cast<uint16_t>(bytes[i + 1]) << 8);
+            if (pending_high) {
+                if (unit < 0xDC00 || unit > 0xDFFF) return false;
+                const uint32_t cp = 0x10000u +
+                    ((static_cast<uint32_t>(pending_high) - 0xD800u) << 10) +
+                    (static_cast<uint32_t>(unit) - 0xDC00u);
+                pending_high = 0;
+                if (!emit(cp)) return false;
+            } else if (unit >= 0xD800 && unit <= 0xDBFF) {
+                pending_high = unit;
+            } else if (unit >= 0xDC00 && unit <= 0xDFFF) {
+                return false;
+            } else if (!emit(unit)) return false;
+            if (mode == 1 && prefix_complete) return true;
+        }
+        offset += chunk.size;
+    }
+    if (pending_high) return false;
+    if (mode == 0) return output_index == expected.size();
+    if (mode == 1) return prefix_complete;
+    return tail == expected;
+}
+
 static bool tshUtf8ToUtf16(const std::string& input, std::vector<UChar>& output) {
     output.clear();
     for (size_t i = 0; i < input.size();) {
@@ -1051,6 +1138,21 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                     const uint32_t text_end = ts_node_end_byte(node);
                     if (text_start > text_end || text_end > total_bytes ||
                         (text_start & 1u) || (text_end & 1u)) continue;
+
+                    // Literal-only selectors are evaluated as a bounded stream.
+                    // text_regex remains on the contiguous Oniguruma adapter until
+                    // a semantics-preserving streaming regex backend is integrated.
+                    if (text_source && !ast_rule.text_regex) {
+                        if (ast_rule.has_text_equals &&
+                            !tshSourceMatchesUtf8Literal(*text_source, text_start, text_end,
+                                ast_rule.text_equals, 0)) continue;
+                        if (ast_rule.has_text_prefix &&
+                            !tshSourceMatchesUtf8Literal(*text_source, text_start, text_end,
+                                ast_rule.text_prefix, 1)) continue;
+                        if (ast_rule.has_text_suffix &&
+                            !tshSourceMatchesUtf8Literal(*text_source, text_start, text_end,
+                                ast_rule.text_suffix, 2)) continue;
+                    } else {
                     std::string node_text_storage;
                     std::vector<UChar> node_text_window((text_end - text_start) / sizeof(UChar));
                     const UChar* node_source = nullptr;
@@ -1089,6 +1191,7 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                             regex_begin, regex_end, regex_region, ONIG_OPTION_NONE);
                         onig_region_free(regex_region, 1);
                         if (regex_result < 0) continue;
+                    }
                     }
                 }
 
