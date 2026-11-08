@@ -1,11 +1,14 @@
 package com.zerostudio.idea.treesitter.tsh.api
 
+import com.zerostudio.idea.treesitter.TSLanguage
 import com.zerostudio.idea.treesitter.TSQuery
 import com.zerostudio.idea.treesitter.TSTree
 import org.junit.Assert.*
 import org.junit.Test
 
 class TshEngineNativeResourceLifecycleTest {
+    private class FakeLanguage : TSLanguage("fake", 1L)
+
     private class FakeQuery : TSQuery(1L) {
         var closeCalls = 0
         override fun close() {
@@ -97,5 +100,19 @@ class TshEngineNativeResourceLifecycleTest {
         } catch (_: IllegalStateException) {
             // Expected.
         }
+    }
+
+    @Test
+    fun engineCannotOpenParserAfterClose() {
+        val engine = TshEngine.create()
+        val language = FakeLanguage()
+        val handle = TshNativeResourceLeaseStore.Handle(TshObjectId(901L), language)
+        val grammar = TshGrammarDescriptor("fake", "1", 15, "fake-fingerprint")
+
+        engine.close()
+
+        val result = engine.openTreeSitterParser(handle, grammar)
+        assertTrue(result is TshResult.Failure)
+        assertFalse(language.canAccess().not())
     }
 }\n
