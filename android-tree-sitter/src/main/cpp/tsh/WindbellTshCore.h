@@ -280,6 +280,13 @@ public:
     ~TshGrammar();
 };
 
+struct MonarchStateCheckpoint {
+    uint64_t byte_offset = 0;
+    uint64_t source_version = 0;
+    uint64_t partition_version = 0;
+    std::vector<std::string> state_stack;
+};
+
 class WindbellEngine {
 public:
     static WindbellEngine& getInstance() {
@@ -301,7 +308,10 @@ public:
         uint32_t* diagnostic_match_counts = nullptr,
         uint32_t range_start_byte = 0,
         uint32_t range_end_byte = UINT32_MAX,
-        const windbell::largefile::TextSource* text_source = nullptr
+        const windbell::largefile::TextSource* text_source = nullptr,
+        std::vector<MonarchStateCheckpoint>* monarch_checkpoints = nullptr,
+        uint64_t source_version = 0,
+        uint64_t partition_version = 0
     );
 
 private:

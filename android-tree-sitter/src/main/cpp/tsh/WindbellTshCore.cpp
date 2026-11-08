@@ -538,7 +538,10 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
     uint32_t* diagnostic_match_counts,
     uint32_t range_start_byte,
     uint32_t range_end_byte,
-    const windbell::largefile::TextSource* text_source
+    const windbell::largefile::TextSource* text_source,
+    std::vector<MonarchStateCheckpoint>* monarch_checkpoints,
+    uint64_t source_version,
+    uint64_t partition_version
 ) {
     std::vector<HighlightSpan> final_spans;
     if (diagnostic_match_counts) std::fill(diagnostic_match_counts, diagnostic_match_counts + 4, 0u);
@@ -680,6 +683,43 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
     // not need a second token model.
     if (!grammar->monarch_states.empty()) {
         std::vector<std::string> state_stack{grammar->monarch_start_state};
+        uint32_t position = 0;
+        uint32_t next_checkpoint = 64u * 1024u;
+        // Checkpoints are reusable only for the exact immutable source and
+        // partition snapshots from which their tokenizer state was produced.
+        if (monarch_checkpoints) {
+            const MonarchStateCheckpoint* nearest = nullptr;
+            for (const auto& checkpoint : *monarch_checkpoints) {
+                if (checkpoint.source_version != source_version ||
+                    checkpoint.partition_version != partition_version ||
+                    checkpoint.byte_offset > range_start_byte ||
+                    checkpoint.state_stack.empty()) continue;
+                if (!nearest || checkpoint.byte_offset > nearest->byte_offset)
+                    nearest = &checkpoint;
+            }
+            if (nearest) {
+                position = static_cast<uint32_t>(nearest->byte_offset);
+                state_stack = nearest->state_stack;
+                next_checkpoint = ((position / (64u * 1024u)) + 1u) * (64u * 1024u);
+            } else {
+                // A stale checkpoint set cannot be mixed with the current
+                // source version. Drop it before producing replacement entries.
+                monarch_checkpoints->clear();
+            }
+        }
+        auto save_monarch_checkpoint = [&]() {
+            if (!monarch_checkpoints || position < next_checkpoint) return;
+            MonarchStateCheckpoint checkpoint;
+            checkpoint.byte_offset = position;
+            checkpoint.source_version = source_version;
+            checkpoint.partition_version = partition_version;
+            checkpoint.state_stack = state_stack;
+            if (monarch_checkpoints->empty() ||
+                monarch_checkpoints->back().byte_offset < position) {
+                monarch_checkpoints->push_back(std::move(checkpoint));
+            }
+            next_checkpoint = ((position / (64u * 1024u)) + 1u) * (64u * 1024u);
+        };
         OnigRegion* monarch_region = onig_region_new();
         OnigRegion* monarch_case_region = onig_region_new();
         if (!monarch_region || !monarch_case_region) {
@@ -687,7 +727,6 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
             if (monarch_case_region) onig_region_free(monarch_case_region, 1);
             return final_spans;
         }
-        uint32_t position = 0;
         uint32_t zero_width_steps = 0;
         while (position < total_bytes) {
             const MonarchRule* matched_rule = nullptr;
@@ -744,6 +783,7 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                 }
                 position = end;
                 zero_width_steps = 0;
+                save_monarch_checkpoint();
                 continue;
             }
 
@@ -828,10 +868,12 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
             } else if (match_end > position) {
                 position = match_end;
                 zero_width_steps = 0;
+                save_monarch_checkpoint();
             } else {
                 const UChar* next = advanceOneUtf16CodePoint(text_start + position, text_end);
                 position = static_cast<uint32_t>(next - text_start);
                 if (++zero_width_steps > 64) zero_width_steps = 0;
+                save_monarch_checkpoint();
             }
         }
         onig_region_free(monarch_case_region, 1);

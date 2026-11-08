@@ -46,6 +46,7 @@ struct NativeTshDocument {
     uint64_t version = 0;
     NativeHighlightCache highlight_cache{16u * 1024u * 1024u};
     windbell::largefile::TextPartitionIndex partition_index{256};
+    std::vector<MonarchStateCheckpoint> monarch_checkpoints;
     std::mutex mutex;
 
     ~NativeTshDocument() {
@@ -1036,6 +1037,7 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeApplyDocumentEdi
     document->length_chars = static_cast<uint32_t>(new_size / 2u);
     ++document->version;
     document->highlight_cache.clear();
+    document->monarch_checkpoints.clear();
     return JNI_TRUE;
 }
 
@@ -1128,7 +1130,9 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
         diagnostics == JNI_TRUE ? &candidates : nullptr,
         diagnostics == JNI_TRUE ? counts : nullptr,
         static_cast<uint32_t>(range_start_byte),
-        static_cast<uint32_t>(range_end_byte), document->source.get());
+        static_cast<uint32_t>(range_end_byte), document->source.get(),
+        &document->monarch_checkpoints, document->source->version(),
+        document->partition_index.version());
     if (diagnostics == JNI_TRUE) spans = std::move(candidates);
     NativeHighlightCache::Value cache_value;
     cache_value.spans = spans;
