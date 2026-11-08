@@ -56,7 +56,9 @@ static bool analyzeBoundedRegexWidth(
     };
 
     while (i < pattern.size()) {
-        uint64_t atom_width = 1;
+        // Even a case-folded literal can match a supplementary Unicode scalar.
+        // Two UTF-16 code units is the conservative maximum for one atom.
+        uint64_t atom_width = 2;
         const unsigned char c = static_cast<unsigned char>(pattern[i++]);
         if (c == '(' || c == ')' || c == '|' || c == '^' || c == '$')
             return false;
