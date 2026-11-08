@@ -407,11 +407,31 @@ class WindbellTshEngine private constructor() {
      * which silently turns every syntax span into uncoloured text.
      */
     fun ensurePalette(extension: String): Boolean {
-        if (paletteCache.containsKey(extension)) return true
+        // A cache entry can exist while containing no decoded styles: this happens
+        // when an editor attaches during grammar restoration/registration and the
+        // first native palette read races the grammar owner. Treat an empty map as
+        // unavailable, not as a successful warm cache.
+        paletteCache[extension]?.takeIf { it.isNotEmpty() }?.let { return true }
+
         val scheme = selectedSchemes[extension] ?: getDefaultScheme(extension) ?: return false
         selectedSchemes[extension] = scheme
-        reloadPalette(extension, scheme)
-        return paletteCache.containsKey(extension)
+        val cacheKey = "$extension::$scheme"
+        val cachedScheme = schemePaletteCache[cacheKey]
+        val resolved = if (!cachedScheme.isNullOrEmpty()) {
+            cachedScheme
+        } else {
+            // Do not preserve an earlier empty read forever. Retry the native
+            // palette source so a later attach can recover actual .tsh colors.
+            readSchemePalette(extension, scheme).also {
+                schemePaletteCache[cacheKey] = it
+            }
+        }
+        if (resolved.isNotEmpty()) {
+            paletteCache[extension] = resolved
+            return true
+        }
+        paletteCache.remove(extension)
+        return false
     }
 
     /** Returns every scheme declared by the loaded .tsh document. */
