@@ -365,8 +365,8 @@ bool PieceTreeSource::replace(uint64_t startByte, uint64_t oldEndByte,
     const uint64_t currentPieces = countNodes(root_.get());
     const uint64_t splitNodes = insertedBytes ? 3u : 2u;
     const uint64_t height = root_ ? root_->subtree_height : 0u;
-    const uint64_t transientNodes = height > (std::numeric_limits<uint64_t>::max() - 8u) / 4u
-        ? std::numeric_limits<uint64_t>::max() : 4u * height + 8u;
+    const uint64_t transientNodes = height > (std::numeric_limits<uint64_t>::max() - 16u) / 8u
+        ? std::numeric_limits<uint64_t>::max() : 8u * height + 16u;
     if (currentPieces > maximumPieces ||
         splitNodes > maximumPieces - currentPieces ||
         transientNodes > maximumPieces - currentPieces - splitNodes) return false;

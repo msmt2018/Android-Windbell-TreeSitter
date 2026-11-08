@@ -954,8 +954,8 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeCreateDocument(
 
 /**
  * Applies one UTF-16LE edit to the native document and incrementally reparses
- * from the edited Tree-sitter tree. The immutable old mapping remains alive
- * until the new mapping and tree have both been created successfully.
+ * from the edited Tree-sitter tree. The old file-window source and persistent
+ * Piece Tree remain valid until the candidate source and syntax tree commit.
  */
 JNIEXPORT jboolean JNICALL
 Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeApplyDocumentEdit(
@@ -1159,7 +1159,7 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
             return nullptr;
         }
         if (view.size == total_bytes) {
-            // Unedited mmap-backed documents remain zero-copy.
+            // A source that fits in the first bounded window remains zero-copy.
             input = reinterpret_cast<const uint16_t *>(view.data);
         } else {
             // The legacy Regex/Monarch entry point requires one contiguous UTF-16
