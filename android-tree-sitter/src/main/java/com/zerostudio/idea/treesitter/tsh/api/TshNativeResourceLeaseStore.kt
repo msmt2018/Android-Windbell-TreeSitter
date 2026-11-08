@@ -37,7 +37,7 @@ class TshNativeResourceLeaseStore {
          * remains valid after retirement because the caller already owns a live reference.
          */
         fun retain(): Lease<T>? = synchronized(lock) {
-            if (released || entry.closed) return@synchronized null
+            if (released || entry.closed || !entry.resource.canAccess()) return@synchronized null
             entry.leases++
             Lease(entry)
         }
