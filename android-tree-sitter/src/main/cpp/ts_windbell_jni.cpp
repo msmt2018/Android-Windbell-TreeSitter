@@ -864,6 +864,19 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeCreateDocument(
     }
     const std::string backing_path(path.data());
     bool ok = ::ftruncate(fd, static_cast<off_t>(byte_length)) == 0;
+    std::vector<jbyte> window;
+    if (ok && byte_length > 0) {
+        try {
+            window.resize(static_cast<size_t>(std::min<uint64_t>(
+                windbell::largefile::kTreeSitterInputChunkBytes,
+                static_cast<uint64_t>(byte_length))));
+        } catch (...) {
+            ::close(fd);
+            ::unlink(backing_path.c_str());
+            throw_illegal_state(env, "Unable to allocate bounded JNI document transfer window");
+            return 0;
+        }
+    }
     uint64_t offset = 0;
     while (ok && offset < static_cast<uint64_t>(byte_length)) {
         const jint requested = static_cast<jint>(std::min<uint64_t>(
@@ -883,12 +896,11 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeCreateDocument(
             ok = false;
             break;
         }
-        std::vector<jbyte> window(static_cast<size_t>(count));
         env->GetByteArrayRegion(bytes, 0, count, window.data());
         env->DeleteLocalRef(bytes);
         if (env->ExceptionCheck() ||
             !writeAllAt(fd, reinterpret_cast<const uint8_t *>(window.data()),
-                        window.size(), offset)) {
+                        static_cast<size_t>(count), offset)) {
             ok = false;
             break;
         }
