@@ -114,4 +114,42 @@ class TshNativeQueryLeaseStoreTest {
         assertEquals(1, newQuery.closeCalls)
     }
 
+
+    @Test
+    fun closePermanentlyRejectsNewQueryRegistration() {
+        val store = TshNativeQueryLeaseStore()
+        store.close()
+        val query = FakeQuery()
+        try {
+            store.register("after-close", TshObjectId(501L), query)
+            fail("Expected a closed Native query store to reject registration")
+        } catch (_: IllegalStateException) {
+            // The caller retains ownership when publication is rejected.
+            query.close()
+        }
+        assertEquals(1, query.closeCalls)
+    }
+
+    @Test
+    fun closeDefersQueryAndGrammarDependencyUntilActiveLeaseEnds() {
+        val store = TshNativeQueryLeaseStore()
+        val query = FakeQuery()
+        var languageLeaseCloseCalls = 0
+        store.register(
+            "engine-close",
+            TshObjectId(502L),
+            query,
+            dependencies = listOf(AutoCloseable { languageLeaseCloseCalls++ })
+        )
+        val active = store.acquire(TshObjectId(502L))!!
+
+        store.close()
+        assertEquals(0, query.closeCalls)
+        assertEquals(0, languageLeaseCloseCalls)
+        assertNull(store.acquire(TshObjectId(502L)))
+
+        active.close()
+        assertEquals(1, query.closeCalls)
+        assertEquals(1, languageLeaseCloseCalls)
+    }
 }
