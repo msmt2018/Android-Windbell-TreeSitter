@@ -5,6 +5,11 @@
 package com.zerostudio.idea.treesitter;
 
 import com.zerostudio.idea.treesitter.annotations.GenerateNativeHeaders;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.List;
+import java.util.Objects;
 
 /**
  * Bounded native Tree-sitter highlight-capture extraction.
@@ -44,6 +49,70 @@ public final class TSHighlight {
     }
     return Native.extract(query.getNativeObject(), root, startByte, endByte,
         maxResults, maxPendingMatches);
+  }
+
+
+  /**
+   * Convert query captures into render-ready spans using a capture-indexed
+   * style table. A negative style ID suppresses that capture. Byte offsets
+   * are widened as unsigned uint32 values and are never interpreted as
+   * signed Java ints. Overlapping captures are preserved.
+   *
+   * <p>This conversion does not copy source text. The returned list is sorted
+   * by start byte, then end byte, pattern index, and capture index.
+   */
+  public static List<TSHighlightSpan> toSpans(
+      TSQuery query, TSQueryMatch[] matches, int[] styleIds, int maxSpans) {
+    Objects.requireNonNull(query, "query");
+    Objects.requireNonNull(matches, "matches");
+    Objects.requireNonNull(styleIds, "styleIds");
+    if (!query.canAccess()) {
+      throw new IllegalArgumentException("Cannot map highlights with an invalid query");
+    }
+    if (maxSpans < 1) {
+      throw new IllegalArgumentException("maxSpans must be positive");
+    }
+    final int captureCount = query.getCaptureCount();
+    if (styleIds.length != captureCount) {
+      throw new IllegalArgumentException("styleIds must contain one entry per query capture");
+    }
+
+    final List<TSHighlightSpan> spans = new ArrayList<>();
+    for (TSQueryMatch match : matches) {
+      if (match == null) {
+        throw new IllegalArgumentException("Highlight matches cannot contain null");
+      }
+      final TSQueryCapture[] captures = match.getCaptures();
+      if (captures == null) continue;
+      for (TSQueryCapture capture : captures) {
+        if (capture == null || capture.getNode() == null
+            || !capture.getNode().canAccess()) {
+          throw new IllegalStateException("Highlight query contains an invalid capture node");
+        }
+        final int captureId = capture.getIndex();
+        if (captureId < 0 || captureId >= captureCount) {
+          throw new IllegalStateException("Highlight capture id is outside the query table");
+        }
+        final int styleId = styleIds[captureId];
+        if (styleId < 0) continue;
+        final TSNode node = capture.getNode();
+        final long start = Integer.toUnsignedLong(node.getStartByte());
+        final long end = Integer.toUnsignedLong(node.getEndByte());
+        if (end < start) {
+          throw new IllegalStateException("Highlight capture has an invalid byte range");
+        }
+        if (spans.size() >= maxSpans) {
+          throw new IllegalStateException("Highlight query exceeded maxSpans; no partial result was returned");
+        }
+        spans.add(new TSHighlightSpan(start, end, captureId, match.getPatternIndex(),
+            styleId, match.getId()));
+      }
+    }
+    spans.sort(Comparator.comparingLong(TSHighlightSpan::getStartByte)
+        .thenComparingLong(TSHighlightSpan::getEndByte)
+        .thenComparingInt(TSHighlightSpan::getPatternIndex)
+        .thenComparingInt(TSHighlightSpan::getCaptureId));
+    return Collections.unmodifiableList(spans);
   }
 
   @GenerateNativeHeaders(fileName = "highlight")
