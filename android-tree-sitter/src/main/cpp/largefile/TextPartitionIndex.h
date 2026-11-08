@@ -32,7 +32,7 @@ public:
     bool byteForLine(const TextSource &source, uint64_t line,
                      uint64_t *byteOffset) noexcept;
 
-    // Call after source.replace() succeeds. insertedBytes is UTF-16LE.
+    // Prepare checkpoint deltas against the old source before source.replace().
     bool applyEdit(const TextSource &oldSource,
                    uint64_t startByte, uint64_t oldEndByte,
                    const void *inserted, uint64_t insertedBytes) noexcept;

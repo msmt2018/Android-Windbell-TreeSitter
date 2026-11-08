@@ -196,6 +196,7 @@ if(BUILD_TESTING AND NOT ANDROID)
         largefile/MappedFileSource.cpp
         largefile/FileWindowSource.cpp
         largefile/PieceTreeSource.cpp
+        largefile/TextPartitionIndex.cpp
     )
     target_include_directories(windbell_largefile_tests PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}/largefile"

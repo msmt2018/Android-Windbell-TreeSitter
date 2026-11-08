@@ -145,7 +145,7 @@ bool TextPartitionIndex::applyEdit(const TextSource &oldSource,
     for (uint64_t i = 0; i + 1 < insertedBytes; i += 2) {
         const uint16_t unit = static_cast<uint16_t>(bytes[i]) |
             (static_cast<uint16_t>(bytes[i + 1]) << 8u);
-        if (unit == '\\n') ++insertedLines;
+        if (unit == '\n') ++insertedLines;
     }
 
     const int64_t byteDelta = static_cast<int64_t>(insertedBytes) -
@@ -163,7 +163,7 @@ bool TextPartitionIndex::applyEdit(const TextSource &oldSource,
         for (uint64_t i = 0; i + 1 < insertedBytes; i += 2) {
             const uint16_t unit = static_cast<uint16_t>(bytes[i]) |
                 (static_cast<uint16_t>(bytes[i + 1]) << 8u);
-            if (unit == '\\n') {
+            if (unit == '\n') {
                 ++line;
                 if (line % stride_lines_ == 0) {
                     const uint64_t offset = startByte + i + 2u;
