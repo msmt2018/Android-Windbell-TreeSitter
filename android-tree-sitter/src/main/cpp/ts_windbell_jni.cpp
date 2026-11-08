@@ -16,6 +16,7 @@
 
 #include "tsh/WindbellTshCore.h"
 #include "tsh/WindbellTshCompiler.h"
+#include "tsh/NativeHighlightCache.h"
 #include "largefile/MappedFileSource.h"
 #include <cerrno>
 #include <cstdlib>
@@ -40,6 +41,8 @@ struct NativeTshDocument {
     std::string extension;
     std::string backing_directory;
     uint32_t length_chars = 0;
+    uint64_t version = 0;
+    NativeHighlightCache highlight_cache{16u * 1024u * 1024u};
     std::mutex mutex;
 
     ~NativeTshDocument() {
@@ -1046,6 +1049,8 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeApplyDocumentEdi
     document->tree = next_tree;
     document->source = std::move(next_source);
     document->length_chars = static_cast<uint32_t>(new_size / 2u);
+    ++document->version;
+    document->highlight_cache.clear();
     return JNI_TRUE;
 }
 
@@ -1069,6 +1074,18 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
         throw_illegal_args(env, "Native TSH range must be ordered UTF-16LE byte offsets");
         return nullptr;
     }
+    NativeHighlightCache::Key cache_key{
+        document->version,
+        static_cast<uint32_t>(range_start_byte),
+        static_cast<uint32_t>(range_end_byte),
+        diagnostics == JNI_TRUE
+    };
+    NativeHighlightCache::Value cached;
+    if (document->highlight_cache.get(cache_key, &cached)) {
+        return encodeNativeHighlightResult(
+            env, cached.spans, cached.match_counts,
+            diagnostics == JNI_TRUE);
+    }
     windbell::largefile::TextChunkView view{};
     const uint16_t *input = nullptr;
     if (total_bytes != 0) {
@@ -1089,6 +1106,10 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
         static_cast<uint32_t>(range_start_byte),
         static_cast<uint32_t>(range_end_byte));
     if (diagnostics == JNI_TRUE) spans = std::move(candidates);
+    NativeHighlightCache::Value cache_value;
+    cache_value.spans = spans;
+    std::copy(std::begin(counts), std::end(counts), std::begin(cache_value.match_counts));
+    document->highlight_cache.put(cache_key, std::move(cache_value));
     return encodeNativeHighlightResult(env, spans, counts, diagnostics == JNI_TRUE);
 }
 
