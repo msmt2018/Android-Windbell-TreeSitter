@@ -81,9 +81,12 @@ class TshEditorPipelineRenderingTest {
             captures.any { it.styleId == innerId && it.priority == 100 }
         )
 
+        // The editor's interval index returns captures in source-offset order,
+        // which intentionally differs from native priority order for nested spans.
+        val viewportCaptures = CaptureIntervalIndex(captures).query(0, source.length)
         val styled = SpannableStringBuilder(source)
         engine.applyHighlightSpansToSpannable(
-            spans = captures,
+            spans = viewportCaptures,
             documentOffset = 0,
             text = source,
             extension = "canvas-priority-regression",
