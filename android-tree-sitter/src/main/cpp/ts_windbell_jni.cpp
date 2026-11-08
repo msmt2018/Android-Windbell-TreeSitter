@@ -58,6 +58,40 @@ struct NativeDocumentInput {
     const windbell::largefile::TextSource *source = nullptr;
 };
 
+// Pins or exposes the Java edit array without allocating a second native
+// vector. The native Piece Tree copies only the inserted bytes into its
+// append-only storage; the old document contents are never materialized.
+class ScopedByteArrayElements final {
+public:
+    ScopedByteArrayElements(JNIEnv *env, jbyteArray array, jsize length) noexcept
+        : env_(env), array_(array) {
+        if (env_ && array_ && length > 0) {
+            data_ = env_->GetByteArrayElements(array_, nullptr);
+        }
+    }
+    ~ScopedByteArrayElements() { release(); }
+    ScopedByteArrayElements(const ScopedByteArrayElements &) = delete;
+    ScopedByteArrayElements &operator=(const ScopedByteArrayElements &) = delete;
+
+    const uint8_t *data() const noexcept {
+        return reinterpret_cast<const uint8_t *>(data_);
+    }
+    bool valid(jsize length) const noexcept {
+        return length == 0 || data_ != nullptr;
+    }
+    void release() noexcept {
+        if (data_) {
+            env_->ReleaseByteArrayElements(array_, data_, JNI_ABORT);
+            data_ = nullptr;
+        }
+    }
+
+private:
+    JNIEnv *env_ = nullptr;
+    jbyteArray array_ = nullptr;
+    jbyte *data_ = nullptr;
+};
+
 static const char *nativeDocumentRead(
     void *payload, uint32_t byte_index, TSPoint, uint32_t *bytes_read
 ) {
@@ -939,18 +973,13 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeApplyDocumentEdi
         return JNI_FALSE;
     }
 
-    // Build an isolated Piece Tree candidate. The immutable mmap and append
-    // chunks are shared; unchanged document bytes are never copied to a new file.
+    // Build an isolated Piece Tree candidate. The original file-window source and
+    // immutable append chunks are shared; unchanged document bytes are never copied.
     // Only the tree nodes and inserted UTF-16LE bytes are newly allocated.
     auto next_source = document->source->clone();
     if (!next_source) {
         throw_illegal_state(env, "Unable to clone native Piece Tree transaction");
         return JNI_FALSE;
-    }
-    std::vector<jbyte> inserted_for_points(static_cast<size_t>(inserted_size));
-    if (inserted_size > 0) {
-        env->GetByteArrayRegion(inserted_bytes, 0, inserted_size, inserted_for_points.data());
-        if (env->ExceptionCheck()) return JNI_FALSE;
     }
     TSPoint start_point{};
     TSPoint old_end_point{};
@@ -961,12 +990,15 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeApplyDocumentEdi
         throw_illegal_state(env, "Native line index could not resolve Tree-sitter edit coordinates");
         return JNI_FALSE;
     }
+
+    ScopedByteArrayElements inserted(env, inserted_bytes, inserted_size);
+    if (!inserted.valid(inserted_size)) return JNI_FALSE;
+    const uint8_t *inserted_data = inserted.data();
+
     TSPoint new_end_point = start_point;
     for (jsize i = 0; i + 1 < inserted_size; i += 2) {
-        const uint16_t unit = static_cast<uint16_t>(
-            static_cast<uint8_t>(inserted_for_points[static_cast<size_t>(i)])) |
-            (static_cast<uint16_t>(static_cast<uint8_t>(
-                inserted_for_points[static_cast<size_t>(i + 1)])) << 8);
+        const uint16_t unit = static_cast<uint16_t>(inserted_data[i]) |
+            (static_cast<uint16_t>(inserted_data[i + 1]) << 8);
         if (unit == '\n') {
             ++new_end_point.row;
             new_end_point.column = 0;
@@ -976,11 +1008,22 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeApplyDocumentEdi
     }
     if (!next_source->replace(
             static_cast<uint64_t>(start_byte), static_cast<uint64_t>(old_end_byte),
-            inserted_for_points.empty() ? nullptr : inserted_for_points.data(),
-            static_cast<uint64_t>(inserted_size))) {
+            inserted_data, static_cast<uint64_t>(inserted_size))) {
+        inserted.release();
         throw_illegal_state(env, "Native Piece Tree rejected the edit (memory budget or range)");
         return JNI_FALSE;
     }
+
+    // Prepare the sparse line index transactionally against the old source.
+    // If parsing fails, the live document keeps its original index unchanged.
+    auto next_partition_index = document->partition_index;
+    if (!next_partition_index.applyEdit(
+            *document->source, static_cast<uint64_t>(start_byte),
+            static_cast<uint64_t>(old_end_byte), inserted_data,
+            static_cast<uint64_t>(inserted_size))) {
+        next_partition_index.reset();
+    }
+    inserted.release();
 
     TSTree *edited_tree = ts_tree_copy(document->tree);
     if (!edited_tree) {
@@ -1006,19 +1049,11 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeApplyDocumentEdi
         return JNI_FALSE;
     }
 
-    // Preserve unaffected native line checkpoints and shift the suffix by
-    // the edit's byte/line deltas. If the sparse index cannot update, reset it;
-    // correctness never depends on the optional index.
-    if (!document->partition_index.applyEdit(
-            *document->source, static_cast<uint64_t>(start_byte),
-            static_cast<uint64_t>(old_end_byte),
-            inserted_for_points.data(), static_cast<uint64_t>(inserted_size))) {
-        document->partition_index.reset();
-    }
     const uint64_t old_source_version = document->source->version();
     ts_tree_delete(document->tree);
     document->tree = next_tree;
     document->source = std::move(next_source);
+    document->partition_index = std::move(next_partition_index);
     document->length_chars = static_cast<uint32_t>(new_size / 2u);
     ++document->version;
     document->highlight_cache.clear();
