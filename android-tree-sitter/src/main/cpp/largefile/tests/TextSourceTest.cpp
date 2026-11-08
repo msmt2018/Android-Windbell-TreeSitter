@@ -236,6 +236,42 @@ static void testPieceTreeEditsDoNotCopyUnchangedText() {
 
 
 
+static void testPieceTreeUsesBoundedFileWindowAfterUnlink() {
+    char path[] = "/tmp/windbell-piece-window-XXXXXX";
+    const int fd = ::mkstemp(path);
+    assert(fd >= 0);
+    std::string initial;
+    for (int i = 0; i < 80u * 1024u; ++i) {
+        initial.push_back(static_cast<char>('a' + (i % 26)));
+        initial.push_back(0);
+    }
+    assert(::write(fd, initial.data(), initial.size()) ==
+           static_cast<ssize_t>(initial.size()));
+    ::close(fd);
+
+    auto window = std::make_shared<FileWindowSource>(path, 64u * 1024u);
+    assert(window->isOpen());
+    assert(window->sizeBytes() == initial.size());
+    // Native JNI unlinks the backing path once the descriptor is open.
+    assert(::unlink(path) == 0);
+    PieceTreeSource source(
+        std::static_pointer_cast<const TextSource>(window), 2u * 1024u * 1024u);
+    assert(source.isValid());
+    assert(source.sizeBytes() == initial.size());
+
+    TextChunkView view{};
+    assert(source.read(64u * 1024u - 8u, 64u, &view));
+    assert(view.size == 64u);
+    assert(std::memcmp(view.data, initial.data() + 64u * 1024u - 8u, 64u) == 0);
+
+    const char inserted[] = {'X', 0, 'Y', 0};
+    assert(source.replace(64u * 1024u, 64u * 1024u, inserted, sizeof(inserted)));
+    std::string expected = initial;
+    expected.insert(64u * 1024u, inserted, sizeof(inserted));
+    assert(source.sizeBytes() == expected.size());
+    assert(readAll(source) == expected);
+}
+
 static void testCopyTextRangeAcrossPieceBoundaries() {
     char path[] = "/tmp/windbell-copy-range-XXXXXX";
     const int fd = ::mkstemp(path);
@@ -404,6 +440,7 @@ int main() {
     testPieceTreeEditsDoNotCopyUnchangedText();
     testPieceTreeRandomEditsMatchReferenceBuffer();
     testPieceTreeSnapshotIsolatedAndSharesBacking();
+    testPieceTreeUsesBoundedFileWindowAfterUnlink();
     testCopyTextRangeAcrossPieceBoundaries();
     testSparsePartitionIndexSurvivesEdits();
     testSparseFilesFromOneToThreeHundredMegabytesUseBoundedWindow();

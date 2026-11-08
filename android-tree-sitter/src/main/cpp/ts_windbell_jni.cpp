@@ -41,7 +41,6 @@ struct NativeTshDocument {
     TSParser *parser = nullptr;
     TSTree *tree = nullptr;
     std::string extension;
-    std::string backing_directory;
     uint32_t length_chars = 0;
     uint64_t version = 0;
     NativeHighlightCache highlight_cache{16u * 1024u * 1024u};
@@ -87,27 +86,6 @@ static bool writeAllAt(int fd, const uint8_t *data, size_t length, uint64_t offs
         if (count < 0 && errno == EINTR) continue;
         if (count <= 0) return false;
         written += static_cast<size_t>(count);
-    }
-    return true;
-}
-static bool copySourceRange(
-    const windbell::largefile::TextSource &source,
-    int destination_fd,
-    uint64_t source_offset,
-    uint64_t length,
-    uint64_t destination_offset
-) {
-    uint64_t copied = 0;
-    while (copied < length) {
-        windbell::largefile::TextChunkView chunk{};
-        const uint32_t request = static_cast<uint32_t>(std::min<uint64_t>(
-            windbell::largefile::kTreeSitterInputChunkBytes, length - copied));
-        if (!source.read(source_offset + copied, request, &chunk) ||
-            !chunk.data || chunk.size == 0 || chunk.size > length - copied) return false;
-        if (!writeAllAt(destination_fd,
-                reinterpret_cast<const uint8_t *>(chunk.data), chunk.size,
-                destination_offset + copied)) return false;
-        copied += chunk.size;
     }
     return true;
 }
@@ -912,7 +890,6 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeCreateDocument(
         return 0;
     }
     document->extension = extension;
-    document->backing_directory = directory;
     document->length_chars = static_cast<uint32_t>(static_cast<uint64_t>(byte_length) / 2u);
     document->parser = ts_parser_new();
     if (!document->parser || !ts_parser_set_language(
