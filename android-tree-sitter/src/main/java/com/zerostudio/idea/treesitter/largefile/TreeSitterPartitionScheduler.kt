@@ -67,8 +67,19 @@ class TreeSitterPartitionScheduler(
         val tasks = ArrayList<PrioritizedTask>(plan.partitions.size)
 
         for (partition in plan.partitions) {
-            val contextStart = (partition.start - contextChars).coerceAtLeast(0L)
-            val contextEnd = minOf(source.length, safeAdd(partition.endExclusive, contextChars))
+            var contextStart = (partition.start - contextChars).coerceAtLeast(0L)
+            var contextEnd = minOf(source.length, safeAdd(partition.endExclusive, contextChars))
+            // Context windows must not split a UTF-16 surrogate pair either.
+            if (contextStart > 0L && contextStart < source.length &&
+                Character.isHighSurrogate(source[contextStart - 1L]) &&
+                Character.isLowSurrogate(source[contextStart])) {
+                contextStart--
+            }
+            if (contextEnd > 0L && contextEnd < source.length &&
+                Character.isHighSurrogate(source[contextEnd - 1L]) &&
+                Character.isLowSurrogate(source[contextEnd])) {
+                contextEnd++
+            }
             val key = PartitionAstKey(
                 plan.documentVersion,
                 partition.index,
@@ -86,29 +97,33 @@ class TreeSitterPartitionScheduler(
                 continue
             }
             val distance = distanceToRange(center, partition.start, partition.endExclusive)
-            synchronized(lock) {
-                if (closed.get() || pending.containsKey(key)) continue
-                val request = PartitionParseRequest(
-                    partition, contextStart, contextEnd, plan.documentVersion, languageRevision
-                )
-                val task = PrioritizedTask(distance) {
-                    try {
-                        if (closed.get() || source.version != request.documentVersion) return@PrioritizedTask
-                        val tree = parse(request) ?: return@PrioritizedTask
-                        if (closed.get() || source.version != request.documentVersion) {
-                            tree.close()
-                        } else {
-                            astCache.put(key, tree, partition.endExclusive - partition.start)
+            val task = synchronized(lock) {
+                if (closed.get() || pending.containsKey(key)) {
+                    null
+                } else {
+                    val request = PartitionParseRequest(
+                        partition, contextStart, contextEnd, plan.documentVersion, languageRevision
+                    )
+                    val queued = PrioritizedTask(distance) {
+                        try {
+                            if (closed.get() || source.version != request.documentVersion) return@PrioritizedTask
+                            val tree = parse(request) ?: return@PrioritizedTask
+                            if (closed.get() || source.version != request.documentVersion) {
+                                tree.close()
+                            } else {
+                                astCache.put(key, tree, partition.endExclusive - partition.start)
+                            }
+                        } catch (error: Throwable) {
+                            onFailure(request, error)
+                        } finally {
+                            synchronized(lock) { pending.remove(key) }
                         }
-                    } catch (error: Throwable) {
-                        onFailure(request, error)
-                    } finally {
-                        synchronized(lock) { pending.remove(key) }
                     }
+                    pending[key] = queued
+                    queued
                 }
-                pending[key] = task
-                tasks += task
             }
+            if (task != null) tasks += task
         }
         // All tasks have priorities computed before they enter the priority queue.
         tasks.forEach { task ->
