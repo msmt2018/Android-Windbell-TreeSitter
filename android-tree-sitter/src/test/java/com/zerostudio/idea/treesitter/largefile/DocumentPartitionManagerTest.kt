@@ -118,4 +118,30 @@ class DocumentPartitionManagerTest {
         assertTrue(randomReads < 100)
     }
 
+    @Test fun viewportPlanIncludesEveryPartitionIntersectingALongLine() {
+        val source = object : Utf16DocumentSource {
+            override val length = 220_000L
+            override val version = 19L
+            override fun get(offset: Long): Char = 'x'
+            override fun readChunk(offset: Long, maxChars: Int): CharSequence =
+                "x".repeat(minOf(maxChars.toLong(), length - offset).toInt())
+        }
+        val manager = DocumentPartitionManager(
+            targetPartitionChars = 64L * 1024L,
+            prefetchPartitions = 0
+        )
+        manager.rebuild(source)
+
+        val plan = manager.planViewport(source, 0L, source.length)
+        assertTrue(plan.partitions.size >= 3)
+        assertEquals(0L, plan.partitions.first().start)
+        assertEquals(source.length, plan.partitions.last().endExclusive)
+        for (index in 1 until plan.partitions.size) {
+            assertEquals(
+                plan.partitions[index - 1].endExclusive,
+                plan.partitions[index].start
+            )
+        }
+    }
+
 }

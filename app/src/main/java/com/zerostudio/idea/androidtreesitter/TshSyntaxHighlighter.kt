@@ -124,9 +124,7 @@ class TshSyntaxHighlighter(
         val spans = if (active != null) {
             val offset = lineStartOffset.toLong().coerceIn(0L, active.source.length)
             val endOffset = minOf(active.source.length, offset + text.length.toLong())
-            requestLargeViewport(active, offset, endOffset)
-            val partition = active.partitions.partitionAt(active.source, offset)
-            active.captureIndexes.get(partition.index)?.query(lineStartOffset, lineEnd).orEmpty()
+            queryLargeCaptures(active, offset, endOffset, lineStartOffset, lineEnd)
         } else {
             captureIndex.query(lineStartOffset, lineEnd)
         }
@@ -163,14 +161,19 @@ class TshSyntaxHighlighter(
         val active = largeSession ?: return !parsing
         if (lineStartOffset < 0) return false
         val offset = lineStartOffset.toLong().coerceIn(0L, active.source.length)
-        val partition = active.partitions.partitionAt(active.source, offset)
-        if (active.captureIndexes.get(partition.index) != null) return true
-        requestLargeViewport(
-            active,
-            offset,
-            minOf(active.source.length, offset + maxOf(1, end - start).toLong())
+        val endOffset = minOf(
+            active.source.length,
+            offset + maxOf(1, end - start).toLong()
         )
-        return false
+        val partitions = active.partitions.planViewport(active.source, offset, endOffset).partitions
+        var ready = true
+        for (partition in partitions) {
+            if (active.captureIndexes.get(partition.index) == null) {
+                ready = false
+                requestLargePartition(active, partition.start, partition.endExclusive)
+            }
+        }
+        return ready
     }
 
     fun createBracketMatcher(): PlainBracketMatcher? {
@@ -284,7 +287,7 @@ class TshSyntaxHighlighter(
             if (generation.get() != ticket) throw CancellationException("Stale document snapshot")
 
             val createdAstCache = PartitionAstCache(AST_CACHE_BYTES) { length ->
-                maxOf(128L * 1024L, length * 32L)
+                maxOf(128L * 1024L, length * 64L)
             }
             astCache = createdAstCache
             val createdScheduler = TreeSitterPartitionScheduler(
@@ -300,7 +303,7 @@ class TshSyntaxHighlighter(
             scheduler = createdScheduler
             val createdCaptureIndexes = ByteBudgetLruCache<Int, CaptureIntervalIndex>(
                 CAPTURE_CACHE_BYTES,
-                { index -> 64L + index.size.toLong() * 48L }
+                { index -> 96L + index.size.toLong() * 96L }
             )
             captureIndexes = createdCaptureIndexes
 
@@ -382,16 +385,55 @@ class TshSyntaxHighlighter(
         }
     }
 
+    private fun queryLargeCaptures(
+        active: LargeSession,
+        start: Long,
+        end: Long,
+        queryStartUtf16: Int,
+        queryEndUtf16: Int
+    ): List<WindbellTshEngine.HighlightSpan> {
+        if (generation.get() != active.ticket || largeSession !== active) return emptyList()
+        val partitions = active.partitions.planViewport(active.source, start, end).partitions
+        val result = ArrayList<WindbellTshEngine.HighlightSpan>()
+        for (partition in partitions) {
+            val index = active.captureIndexes.get(partition.index)
+            if (index == null) {
+                requestLargePartition(active, partition.start, partition.endExclusive)
+            } else {
+                result += index.query(queryStartUtf16, queryEndUtf16)
+            }
+        }
+        return result
+    }
+
     private fun requestLargeViewport(active: LargeSession, start: Long, end: Long) {
         if (generation.get() != active.ticket || largeSession !== active) return
-        val partition = active.partitions.partitionAt(active.source, start.coerceIn(0L, active.source.length))
+        val partitions = active.partitions.planViewport(active.source, start, end).partitions
+        partitions.forEach { partition ->
+            if (active.captureIndexes.get(partition.index) == null) {
+                requestLargePartition(active, partition.start, partition.endExclusive)
+            }
+        }
+    }
+
+    private fun requestLargePartition(active: LargeSession, start: Long, end: Long) {
+        if (generation.get() != active.ticket || largeSession !== active) return
+        val partition = active.partitions.partitionAt(
+            active.source,
+            start.coerceIn(0L, active.source.length)
+        )
         if (active.captureIndexes.get(partition.index) != null) return
 
         // A capture page may have been evicted while its AST remains cached. Invalidate
         // that AST key so the scheduler reruns the bounded TSH capture pass for this page.
         active.astCache.invalidate { it.partitionIndex == partition.index }
         try {
-            active.scheduler.requestViewport(active.source, start, end, active.ticket) { request ->
+            active.scheduler.requestViewport(
+                active.source,
+                partition.start,
+                partition.endExclusive,
+                active.ticket
+            ) { request ->
                 parseLargePartition(active, request)
             }
         } catch (error: IllegalStateException) {
