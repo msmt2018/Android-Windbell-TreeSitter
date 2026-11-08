@@ -1119,38 +1119,43 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
             // Unedited mmap-backed documents remain zero-copy.
             input = reinterpret_cast<const uint16_t *>(view.data);
         } else {
-            // Transitional compatibility path: the legacy TSH entry point still
-            // accepts one contiguous UTF-16 buffer. Keep edited documents working
-            // until the source-native Regex/Monarch/AST scanners are wired in.
-            // This is deliberately isolated here so it can be removed when the
-            // TextSource-based TSH API lands; edits themselves remain Piece Tree
-            // transactions and never rewrite unchanged source bytes.
-            if ((total_bytes / 2u) > static_cast<uint64_t>(
-                    std::numeric_limits<size_t>::max() / sizeof(uint16_t))) {
-                throw_illegal_args(env, "Native TSH compatibility buffer exceeds addressable memory");
-                return nullptr;
-            }
-            try {
-                compatibility_window.resize(static_cast<size_t>(total_bytes / 2u));
-            } catch (...) {
-                throw_illegal_state(env, "Unable to allocate temporary TSH compatibility buffer");
-                return nullptr;
-            }
-            uint64_t copied = 0;
-            while (copied < total_bytes) {
-                windbell::largefile::TextChunkView chunk{};
-                const uint32_t request = static_cast<uint32_t>(std::min<uint64_t>(
-                    windbell::largefile::kTreeSitterInputChunkBytes, total_bytes - copied));
-                if (!document->source->read(copied, request, &chunk) ||
-                    !chunk.data || chunk.size == 0 || chunk.size > total_bytes - copied) {
-                    throw_illegal_state(env, "Failed to stream edited Piece Tree into legacy TSH input");
-                    return nullptr;
+            // The legacy Regex/Monarch entry point requires one contiguous UTF-16
+            // buffer. Rebuilding it after edits defeats Piece Tree storage and can
+            // consume hundreds of MiB, preventing large-file viewport rendering.
+            // Retain this bridge only for modest documents. For larger edited Piece
+            // Trees, leave input null so TextSource-backed Tree-sitter queries still
+            // produce absolute captures for the renderer. Regex/Monarch need their
+            // own source-windowed scanners before they can run in this mode.
+            constexpr uint64_t kMaxLegacyCompatibilityBytes = 32ULL * 1024ULL * 1024ULL;
+            if (total_bytes <= kMaxLegacyCompatibilityBytes) {
+                try {
+                    compatibility_window.resize(static_cast<size_t>(total_bytes / 2u));
+                } catch (...) {
+                    compatibility_window.clear();
                 }
-                std::memcpy(reinterpret_cast<uint8_t *>(compatibility_window.data()) + copied,
-                    chunk.data, chunk.size);
-                copied += chunk.size;
+                if (!compatibility_window.empty()) {
+                    uint64_t copied = 0;
+                    while (copied < total_bytes) {
+                        windbell::largefile::TextChunkView chunk{};
+                        const uint32_t request = static_cast<uint32_t>(std::min<uint64_t>(
+                            windbell::largefile::kTreeSitterInputChunkBytes, total_bytes - copied));
+                        if (!document->source->read(copied, request, &chunk) ||
+                            !chunk.data || chunk.size == 0 || chunk.size > total_bytes - copied) {
+                            throw_illegal_state(env, "Failed to stream edited Piece Tree into legacy TSH input");
+                            return nullptr;
+                        }
+                        std::memcpy(reinterpret_cast<uint8_t *>(compatibility_window.data()) + copied,
+                            chunk.data, chunk.size);
+                        copied += chunk.size;
+                    }
+                    input = compatibility_window.data();
+                }
+            } else {
+                __android_log_print(ANDROID_LOG_WARN, "WindbellTSH",
+                    "Skipping legacy contiguous Regex/Monarch input for edited large document (%llu bytes); "
+                    "continuing with TextSource-backed Tree-sitter captures",
+                    static_cast<unsigned long long>(total_bytes));
             }
-            input = compatibility_window.data();
         }
     }
     std::vector<HighlightSpan> candidates;
