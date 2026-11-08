@@ -1,6 +1,6 @@
 # ATS 与 Tree-sitter 统一查询 API 契约
 
-> 状态：API 数据模型、Compiler/Executor 接口和 CompiledQuery Registry 已有首批 Kotlin 源码；ATS 编译器、Tree-sitter Adapter、Native 生命周期和实际执行尚未实现或验证。仅 Tree-sitter + ATS 查询管线；Regex 保持独立，不引入第三管线。
+> 状态：API 数据模型、CompiledQuery Registry、基于既有 TSQuery/TSQueryCursor 的 Tree-sitter Compiler/Executor Adapter 已有 Kotlin 源码；ATS Lexer/Parser/Compiler、Native lease/refcount、增量查询和真实 Native 验证仍未完成。仅 Tree-sitter + ATS 查询管线；Regex 保持独立，不引入第三管线。
 
 ## 1. 分层
 
@@ -25,7 +25,7 @@ GrammarProvider → TshParserSession → TshSyntaxTreeSnapshot → TshAtsCompile
 - `TshAtsCompiler` / `TshQueryExecutor`：编译和执行接口。
 - `TshCompiledQueryRegistry`：编译查询注册、替换、查找和 Grammar 兼容检查。
 
-注意：这些是公共模型和扩展点，不代表已有 ATS parser/compiler 或真实 Tree-sitter query 执行实现。
+注意：这些是公共模型和扩展点。Tree-sitter 原生查询 Adapter 已实现源码，但 ATS parser/compiler 尚未实现；源码提交不代表已构建或通过 Native 运行测试。
 
 ## 4. Grammar 绑定与兼容
 
@@ -43,7 +43,7 @@ CompiledQuery 必须绑定 grammar identity/version、ABI 和 fingerprint；只�
 
 仓库已有 `TSQuery`、`TSQueryCursor` Java 封装；`TSQuery.create(TSLanguage, String)` 创建原生查询，`TSQueryCursor.exec(TSQuery, TSNode)` 执行查询，Cursor 支持 byte range、match limit 和 PredicateHandler。C++ TSH 侧已有 `TshGrammar.dynamic_ts_query`，由 `TshCompiler` 使用 `ts_query_new` 编译动态查询。
 
-下一步应实现 Kotlin Adapter，复用这些既有对象及其 Native 所有权规则。不能以新的 Kotlin 模型伪造 native pointer，也不能绕开 `TSNativeObject` 生命周期。Adapter 执行期间必须保证 Grammar/Query/Tree/Cursor 均可访问，执行结束后按明确的 owner 规则释放 Cursor，不得提前关闭调用方持有的 Query/Tree。
+当前 `TshTreeSitterQueryCompiler` 已通过 `TSQuery.create(language, source)` 编译原生 S-expression Query，并把 `TSQuery` 注册到 `TshObjectRegistry`；编译失败映射为结构化诊断（包含 Native error type 与 UTF-8 byte offset）。ATS source 会被明确拒绝，不会被当作 Tree-sitter S-expression 误解析。\n\n当前 `TshTreeSitterQueryExecutor` 通过 `TSQueryCursor.create()`、`setByteRange()`、`exec()`、`nextMatch()` 执行，并把 `TSQueryMatch` / `TSQueryCapture` 转为 TSH Capture。它只关闭自己创建的 Cursor；Query 由 Compiler 管理并通过 `release(queryId)` 显式释放，Tree/Language 仍由调用方持有。替换同 queryId 的编译结果时会释放旧 Query。**当前没有 Native refcount/lease，调用方必须保证 Query release、Tree/Language close 不与执行并发。**
 
 ## 8. 错误与生命周期
 
@@ -53,5 +53,5 @@ CompiledQuery 必须绑定 grammar identity/version、ABI 和 fingerprint；只�
 
 - 同一查询在 ATS 源码和等价 Tree-sitter Query 上产生一致 capture。
 - 验证字段、匿名节点、量化、predicate、Unicode byte range、增量 changed range、取消、预算耗尽和版本失效。
-- 验证 Native Query/Tree/Cursor 在异常、并发和关闭情况下无 use-after-free。
+- 验证 Native Query/Tree/Cursor 在异常、并发和关闭情况下无 use-after-free。\n- 验证 query release 与 execute 并发时由 lease/refcount 保证安全；当前尚不满足，属于未完成项。
 - 执行 Gradle/JUnit、Native 单测和 Android 集成测试；没有执行的验证不得标记完成。
