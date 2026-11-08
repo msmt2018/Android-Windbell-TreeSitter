@@ -14,10 +14,10 @@ public final class TSHighlightSpan {
   private final int captureId;
   private final int patternIndex;
   private final int styleId;
-  private final int matchId;
+  private final long matchId;
 
   public TSHighlightSpan(long startByte, long endByte, int captureId,
-      int patternIndex, int styleId, int matchId) {
+      int patternIndex, int styleId, long matchId) {
     if (startByte < 0 || endByte < startByte || endByte > 0xFFFF_FFFFL) {
       throw new IllegalArgumentException("Invalid highlight byte range");
     }
@@ -37,5 +37,5 @@ public final class TSHighlightSpan {
   public int getCaptureId() { return captureId; }
   public int getPatternIndex() { return patternIndex; }
   public int getStyleId() { return styleId; }
-  public int getMatchId() { return matchId; }
+  public long getMatchId() { return matchId; }
 }

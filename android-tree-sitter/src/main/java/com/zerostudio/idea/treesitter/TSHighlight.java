@@ -153,7 +153,7 @@ public final class TSHighlight {
       spans.add(new TSHighlightSpan(
           packed[i], packed[i + 1], Math.toIntExact(packed[i + 2]),
           Math.toIntExact(packed[i + 3]), Math.toIntExact(packed[i + 4]),
-          Math.toIntExact(packed[i + 5])));
+          packed[i + 5]));
     }
     return Collections.unmodifiableList(spans);
   }
