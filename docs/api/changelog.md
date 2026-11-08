@@ -41,3 +41,11 @@
 - 明确每个 DSL 属性必须有 Schema、类型、语义、运行时 consumer 和验收测试，不能只声明不执行。
 - 明确 JNI/Kotlin/C++ 签名、生成注解、注册表、句柄所有权、错误码和资源释放的一致性门槛。
 - 所有新增内容均为目标契约；尚未证明对应实现、编译、自动化测试或设备端渲染已完成。
+
+
+### Kotlin API source implementation started
+- 新增 Parser-neutral DSL typed value/declaration/document 模型及 DSL version、unit、color-space 类型。
+- 新增线程安全 Schema Registry，支持声明属性类型、单位、默认值、数值边界、枚举、版本、能力要求及未知属性策略校验。
+- 新增不可变 ConfigArtifact 与内存 ConfigRepository，支持 get/list/install/replace/unload 和 expected-revision 乐观并发检查。
+- 新增 Schema/Repository 单元测试源码，覆盖默认值、类型/单位、未知属性、能力、宽松校验和 revision 冲突。
+- 本轮仅实现 JVM API 基础层；尚未接入 C++ TshCompiler/Native registry，未运行 Gradle 或测试。
