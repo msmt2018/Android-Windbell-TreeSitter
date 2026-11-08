@@ -27,8 +27,6 @@ class TshTreeSitterQueryCompiler(
     private val compilerVersion: String = "treesitter-adapter-1"
 ) : TshAtsCompiler {
 
-    private val registrationLock = Any()
-
     override fun compile(
         source: TshAtsSource,
         grammar: TshGrammarDescriptor,
@@ -90,7 +88,7 @@ class TshTreeSitterQueryCompiler(
         val hash = sha256(source.text)
         val queryId = source.sourceId?.takeIf { it.isNotBlank() } ?: "tsq:$hash"
         val revision = hash
-        synchronized(registrationLock) {
+        queries.withLock {
             val previous = queries.get(queryId)
             val objectDescriptor = try {
                 objects.register(nativeQuery, "tree-sitter-query")
@@ -136,7 +134,7 @@ class TshTreeSitterQueryCompiler(
      * Retires a compiled query. Active executions retain leases; native close is deferred until
      * the final execution lease is released.
      */
-    fun release(queryId: String): Boolean = synchronized(registrationLock) {
+    fun release(queryId: String): Boolean = queries.withLock {
         val compiled = queries.unregister(queryId) ?: return@synchronized false
         val id = compiled.nativeObjectId ?: return@synchronized true
         objects.unregister(id)
@@ -174,11 +172,16 @@ class TshTreeSitterQueryExecutor(
         if (query.nativeObjectId == null) {
             return failure("TSH-QUERY-EXEC-002", "Compiled query has no registered native query handle")
         }
-        val registered = queries.get(query.queryId)
-        if (registered?.revision != query.revision || registered.nativeObjectId != query.nativeObjectId) {
+        val acquisition = queries.withLock {
+            val registered = queries.get(query.queryId)
+            val isCurrent = registered?.revision == query.revision &&
+                registered.nativeObjectId == query.nativeObjectId
+            isCurrent to if (isCurrent) leases.acquire(query.nativeObjectId) else null
+        }
+        if (!acquisition.first) {
             return failure("TSH-QUERY-EXEC-003", "Compiled query is not the active registered revision")
         }
-        val queryLease = leases.acquire(query.nativeObjectId)
+        val queryLease = acquisition.second
             ?: return failure("TSH-QUERY-EXEC-004", "Native query is missing, retired, or currently unavailable")
         try {
         val nativeQuery = queryLease.query
