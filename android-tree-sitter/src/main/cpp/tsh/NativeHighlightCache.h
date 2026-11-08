@@ -136,6 +136,93 @@ public:
         }
     }
 
+    // Rebase cached viewport results across one committed text edit. Entries
+    // intersecting the edit or any Tree-sitter changed range are discarded;
+    // unaffected entries keep their spans and receive the new document versions.
+    // If rebuilding the bounded cache fails, clear it rather than expose stale data.
+    void rebaseAfterEdit(
+        uint64_t newVersion, uint64_t newSourceVersion, uint64_t newPartitionVersion,
+        uint32_t editStart, uint32_t oldEditEnd, uint32_t insertedBytes,
+        const std::vector<std::pair<uint32_t, uint32_t>> &dirtyRanges
+    ) noexcept {
+        const int64_t delta = static_cast<int64_t>(insertedBytes) -
+            static_cast<int64_t>(oldEditEnd - editStart);
+        std::list<Key> nextLru;
+        std::unordered_map<Key, Entry, KeyHash> nextEntries;
+        try {
+            nextEntries.reserve(entries_.size());
+            for (const Key &oldKey : lru_) {
+                auto found = entries_.find(oldKey);
+                if (found == entries_.end()) continue;
+                Key key = oldKey;
+                if (key.end_byte <= editStart) {
+                    // Entire cached range is before the edit.
+                } else if (key.start_byte >= oldEditEnd &&
+                           !(editStart == oldEditEnd && key.start_byte < editStart)) {
+                    const int64_t start = static_cast<int64_t>(key.start_byte) + delta;
+                    const int64_t end = static_cast<int64_t>(key.end_byte) + delta;
+                    if (start < 0 || end < start || end > UINT32_MAX) continue;
+                    key.start_byte = static_cast<uint32_t>(start);
+                    key.end_byte = static_cast<uint32_t>(end);
+                } else {
+                    continue; // The cached viewport overlaps replaced text.
+                }
+                bool intersectsDirty = false;
+                for (const auto &range : dirtyRanges) {
+                    if (key.start_byte < range.second && range.first < key.end_byte) {
+                        intersectsDirty = true;
+                        break;
+                    }
+                }
+                if (intersectsDirty) continue;
+                Value value = found->second.value;
+                bool spansValid = true;
+                for (auto &span : value.spans) {
+                    if (span.end_byte <= editStart) continue;
+                    if (span.start_byte >= oldEditEnd &&
+                        !(editStart == oldEditEnd && span.start_byte < editStart)) {
+                        const int64_t start = static_cast<int64_t>(span.start_byte) + delta;
+                        const int64_t end = static_cast<int64_t>(span.end_byte) + delta;
+                        if (start < 0 || end < start || end > UINT32_MAX) {
+                            spansValid = false;
+                            break;
+                        }
+                        span.start_byte = static_cast<uint32_t>(start);
+                        span.end_byte = static_cast<uint32_t>(end);
+                    } else {
+                        spansValid = false;
+                        break;
+                    }
+                }
+                if (!spansValid) continue;
+                key.version = newVersion;
+                key.source_version = newSourceVersion;
+                key.partition_version = newPartitionVersion;
+                nextLru.push_back(key);
+                auto position = std::prev(nextLru.end());
+                nextEntries.emplace(key, Entry{std::move(value), position, found->second.bytes});
+            }
+        } catch (...) {
+            clear();
+            return;
+        }
+        entries_.swap(nextEntries);
+        lru_.swap(nextLru);
+        // Cache accounting is unchanged for retained entries only. Recompute it
+        // because invalidated entries released their memory from this cache.
+        size_t retainedBytes = 0;
+        for (const auto &entry : entries_) {
+            if (entry.second.bytes > static_cast<size_t>(-1) - retainedBytes) {
+                clear();
+                return;
+            }
+            retainedBytes += entry.second.bytes;
+        }
+        const size_t released = used_bytes_ - std::min(used_bytes_, retainedBytes);
+        if (shared_budget_ && released) shared_budget_->release(released);
+        used_bytes_ = retainedBytes;
+    }
+
     void clear() noexcept {
         if (shared_budget_ && used_bytes_ != 0) shared_budget_->release(used_bytes_);
         entries_.clear();
