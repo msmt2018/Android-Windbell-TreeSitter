@@ -59,8 +59,8 @@ class TshSyntaxHighlighter(
         val nativeHandle: Long,
         val lengthChars: AtomicLong,
         val captureIndexes: ByteBudgetLruCache<Int, CaptureIntervalIndex>,
-        val pendingPartitions: MutableSet<Int> = ConcurrentHashMap.newKeySet(),
-        val ticket: Long
+        val ticket: Long,
+        val pendingPartitions: MutableSet<Int> = ConcurrentHashMap.newKeySet()
     )
 
     private data class NativeEdit(
