@@ -366,6 +366,20 @@ static void testSparsePartitionIndexSurvivesEdits() {
     assert(index.lineForByte(source, expectedLine500, &line));
     assert(line == 492);
     assert(index.version() >= 2);
+
+    // Exercise every row after a line-count-changing edit. lineForByte must
+    // return the row counted during its single bounded scan, including exact
+    // checkpoint boundaries and EOF.
+    const uint64_t resultingLines = 692;
+    for (uint64_t expectedLine = 0; expectedLine < resultingLines; ++expectedLine) {
+        const uint64_t lineStart = utf16LineStart(expected, expectedLine);
+        assert(index.lineForByte(source, lineStart, &line));
+        assert(line == expectedLine);
+        assert(index.byteForLine(source, expectedLine, &byte));
+        assert(byte == lineStart);
+    }
+    assert(index.lineForByte(source, source.sizeBytes(), &line));
+    assert(line == resultingLines);
     ::unlink(path);
 }
 
