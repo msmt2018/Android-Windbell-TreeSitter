@@ -517,7 +517,19 @@ class WindbellTshEngine private constructor() {
                 for (old in oldSpans) spannable.removeSpan(old)
             }
 
-            for ((spanIndex, span) in spans.withIndex()) {
+            // CaptureIntervalIndex and viewport queries may reorder captures by source
+            // offset. Derive Android priority from the native rule ordering metadata,
+            // never from the incidental order of this particular result list.
+            val ruleOrder = spans.asSequence()
+                .map { it.priority to it.declarationOrder }
+                .distinct()
+                .sortedWith(
+                    compareByDescending<Pair<Int, Int>> { it.first }.thenBy { it.second }
+                )
+                .mapIndexed { index, key -> key to (255 - index).coerceAtLeast(1) }
+                .toMap()
+
+            for (span in spans) {
                 val globalStart = span.startByte shr 1
                 val globalEnd = span.endByte shr 1
                 val localStart = globalStart - documentOffset
@@ -531,12 +543,10 @@ class WindbellTshEngine private constructor() {
                 val hasColor = if (darkMode) colorDef?.hasDarkColor == true else colorDef?.hasLightColor == true
                 val color = if (darkMode) colorDef?.darkColor ?: 0 else colorDef?.lightColor ?: 0
                 if (hasColor) {
-                    // Native returns captures in paint order: higher-priority captures
-                    // precede lower-priority captures. Android resolves overlapping spans
-                    // in the opposite direction (larger SPAN_PRIORITY wins), so invert the
-                    // native index. Keep the value in Android's 8-bit priority field.
-                    // More than 255 ordered captures necessarily share priority buckets.
-                    val precedence = (spans.size - spanIndex).coerceIn(1, 255)
+                    // Native rule order is priority-descending, declaration-order-ascending.
+                    // Android's larger SPAN_PRIORITY wins, so invert that ordered rank.
+                    // Android exposes only eight priority bits; ranks after 255 share 1. 
+                    val precedence = ruleOrder[span.priority to span.declarationOrder] ?: 1
                     val spanFlags = Spannable.SPAN_EXCLUSIVE_EXCLUSIVE or
                         (precedence shl Spanned.SPAN_PRIORITY_SHIFT)
                     spannable.setSpan(ForegroundColorSpan(color), charStart, charEnd, spanFlags)

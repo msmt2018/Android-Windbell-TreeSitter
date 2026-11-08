@@ -64,9 +64,10 @@ class TshEditorPipelineRenderingTest {
                 ]
             }
         """.trimIndent()
+        val compiled = engine.loadTshSource("canvas-priority-regression", dsl, null)
         assertTrue(
             "Nested-priority TSH DSL must compile: undefined",
-            engine.loadTshSource("canvas-priority-regression", dsl, null)
+            compiled
         )
         assertTrue(engine.ensurePalette("canvas-priority-regression"))
         engine.setAppearance("canvas-priority-regression", false)
