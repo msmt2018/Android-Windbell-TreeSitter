@@ -13,6 +13,7 @@
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#include <cstdlib>
 
 #include "tsh/WindbellTshCore.h"
 #include "tsh/WindbellTshCompiler.h"
@@ -58,6 +59,9 @@ struct NativeTshDocument {
     NativeHighlightCache highlight_cache{4u * 1024u * 1024u, nativeHighlightBudget()};
     windbell::largefile::TextPartitionIndex partition_index{256};
     std::vector<RegexStateCheckpoint> regex_state_checkpoints;
+    // Half-open line intervals invalidated by the latest committed edit.
+    // Kept in new-document coordinates; consumed by incremental capture work.
+    std::vector<std::pair<uint64_t, uint64_t>> dirty_line_intervals;
     std::mutex mutex;
 
     ~NativeTshDocument() {
@@ -73,6 +77,54 @@ struct NativeDocumentInput {
     // read can never be accepted as a successfully parsed truncated document.
     bool read_failed = false;
 };
+
+using DirtyLineInterval = std::pair<uint64_t, uint64_t>;
+
+static bool appendDirtyLineInterval(
+    const windbell::largefile::TextSource &source,
+    windbell::largefile::TextPartitionIndex &index,
+    uint64_t startByte, uint64_t endByte,
+    std::vector<DirtyLineInterval> *intervals
+) noexcept {
+    if (!intervals || startByte > endByte || endByte > source.sizeBytes() ||
+        (startByte & 1u) || (endByte & 1u)) return false;
+    uint64_t firstLine = 0, firstLineStart = 0;
+    uint64_t lastLine = 0, lastLineStart = 0;
+    if (!index.pointForByte(source, startByte, &firstLine, &firstLineStart) ||
+        !index.pointForByte(source, endByte, &lastLine, &lastLineStart)) return false;
+    // The end is exclusive. If it is exactly at the next line start, that
+    // next line is not part of the changed byte range.
+    uint64_t endExclusive = lastLine + 1u;
+    if (endByte > startByte && endByte == lastLineStart) endExclusive = lastLine;
+    if (endExclusive <= firstLine) endExclusive = firstLine + 1u;
+    try { intervals->emplace_back(firstLine, endExclusive); }
+    catch (...) { return false; }
+    return true;
+}
+
+static bool normalizeDirtyLineIntervals(
+    std::vector<DirtyLineInterval> *intervals
+) noexcept {
+    if (!intervals) return false;
+    try {
+        std::sort(intervals->begin(), intervals->end(),
+            [](const DirtyLineInterval &a, const DirtyLineInterval &b) {
+                return a.first < b.first || (a.first == b.first && a.second < b.second);
+            });
+        size_t output = 0;
+        for (const auto &range : *intervals) {
+            if (range.first >= range.second) continue;
+            if (output && range.first <= (*intervals)[output - 1].second) {
+                (*intervals)[output - 1].second = std::max(
+                    (*intervals)[output - 1].second, range.second);
+            } else {
+                (*intervals)[output++] = range;
+            }
+        }
+        intervals->resize(output);
+    } catch (...) { return false; }
+    return true;
+}
 
 // Pins or exposes the Java edit array without allocating a second native
 // vector. The native Piece Tree copies only the inserted bytes into its
@@ -1097,12 +1149,53 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeApplyDocumentEdi
     NativeDocumentInput payload{next_source.get(), false};
     TSInput input{&payload, nativeDocumentRead, TSInputEncodingUTF16LE, nullptr};
     TSTree *next_tree = ts_parser_parse(document->parser, edited_tree, input);
-    ts_tree_delete(edited_tree);
     if (!next_tree || payload.read_failed ||
         ts_node_end_byte(ts_tree_root_node(next_tree)) != next_source->sizeBytes()) {
         if (next_tree) ts_tree_delete(next_tree);
+        ts_tree_delete(edited_tree);
+        ts_parser_reset(document->parser);
         throw_illegal_state(env,
             "Tree-sitter input failed or incremental parse did not cover the complete document; original document retained");
+        return JNI_FALSE;
+    }
+
+    // Prepare syntax invalidation before committing any candidate document state.
+    // Compare the edited old tree (already in new-document coordinates) with the
+    // newly parsed tree. Also include the literal edit range: leaf text can change
+    // without producing a structural changed range.
+    std::vector<DirtyLineInterval> next_dirty_intervals;
+    TSRange *changed_ranges = nullptr;
+    uint32_t changed_count = 0;
+    try {
+        next_dirty_intervals.reserve(static_cast<size_t>(changed_count) + 2u);
+    } catch (...) {
+        ts_tree_delete(next_tree);
+        ts_tree_delete(edited_tree);
+        throw_illegal_state(env, "Unable to allocate native dirty-range transaction");
+        return JNI_FALSE;
+    }
+    changed_ranges = ts_tree_get_changed_ranges(edited_tree, next_tree, &changed_count);
+    bool dirty_ranges_ok = changed_ranges != nullptr || changed_count == 0;
+    for (uint32_t i = 0; dirty_ranges_ok && i < changed_count; ++i) {
+        dirty_ranges_ok = appendDirtyLineInterval(
+            *next_source, *next_partition_index,
+            changed_ranges[i].start_byte, changed_ranges[i].end_byte,
+            &next_dirty_intervals);
+    }
+    std::free(changed_ranges);
+    const uint64_t insertedEnd = static_cast<uint64_t>(start_byte) +
+        static_cast<uint64_t>(inserted_size);
+    if (dirty_ranges_ok) {
+        dirty_ranges_ok = appendDirtyLineInterval(
+            *next_source, *next_partition_index,
+            static_cast<uint64_t>(start_byte), insertedEnd,
+            &next_dirty_intervals);
+    }
+    if (dirty_ranges_ok) dirty_ranges_ok = normalizeDirtyLineIntervals(&next_dirty_intervals);
+    ts_tree_delete(edited_tree);
+    if (!dirty_ranges_ok) {
+        ts_tree_delete(next_tree);
+        throw_illegal_state(env, "Unable to map Tree-sitter changed ranges into native line intervals");
         return JNI_FALSE;
     }
 
@@ -1113,6 +1206,10 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeApplyDocumentEdi
     document->partition_index = std::move(*next_partition_index);
     document->length_chars = static_cast<uint32_t>(new_size / 2u);
     ++document->version;
+    document->dirty_line_intervals.swap(next_dirty_intervals);
+    // Until NativeHighlightCache supports interval-level eviction, clear its
+    // entries conservatively. Dirty intervals are retained for the next
+    // incremental ATS capture implementation instead of being discarded.
     document->highlight_cache.clear();
 
     // Keep tokenizer checkpoints before the edit as immediately reusable. Keep
