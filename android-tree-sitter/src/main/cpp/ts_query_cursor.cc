@@ -18,6 +18,7 @@
 #include <iostream>
 #include <memory>
 #include <mutex>
+#include <new>
 #include <unordered_map>
 
 #include "utils/ts_obj_utils.h"
@@ -118,7 +119,16 @@ static void TSQueryCursor_execWithOptions(JNIEnv *env,
   TSQueryCursor *native_cursor = (TSQueryCursor *) cursor;
   releaseQueryProgressCallback(env, native_cursor);
 
-  auto state = std::make_unique<QueryProgressCallbackState>();
+  std::unique_ptr<QueryProgressCallbackState> state(
+      new (std::nothrow) QueryProgressCallbackState());
+  if (!state) {
+    jclass exception_class = env->FindClass("java/lang/OutOfMemoryError");
+    if (exception_class) {
+      env->ThrowNew(exception_class, "Unable to allocate query progress callback state");
+      env->DeleteLocalRef(exception_class);
+    }
+    return;
+  }
   state->callback = env->NewGlobalRef(callback);
   if (!state->callback) return;
   jclass callback_class = env->GetObjectClass(callback);

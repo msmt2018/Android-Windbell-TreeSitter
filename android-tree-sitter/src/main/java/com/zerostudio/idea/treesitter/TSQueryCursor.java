@@ -316,10 +316,8 @@ public class TSQueryCursor extends TSNativeObject implements Iterable<TSQueryMat
 
     static native void delete(long cursor);
 
-    @FastNative
     static native void exec(long cursor, long query, TSNode node);
 
-    @FastNative
     static native void execWithOptions(
       long cursor, long query, TSNode node, ProgressCallback callback);
 
