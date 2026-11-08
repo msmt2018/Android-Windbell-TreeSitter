@@ -567,7 +567,7 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
     const UChar* text_start = input_chars
         ? reinterpret_cast<const UChar*>(input_chars)
         : &kEmptyInput;
-    const UChar* text_end = text_start + total_bytes;
+    const UChar* text_end = input_chars ? text_start + total_bytes : text_start;
 
     // Keep intermediate capture memory proportional to the requested viewport.
     // Regex and Monarch still scan from document start to preserve anchors and
