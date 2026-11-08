@@ -394,6 +394,47 @@ class TshEditorPipelineRenderingTest {
     }
 
     @Test
+    fun repeatedSchemeEntriesOverlayOnlyExplicitPaintAttributes() {
+        val engine = WindbellTshEngine.instance
+        val dsl = """
+            tsh 2 {
+                language { id: "repeated-paint-overlay-regression" extensions: [".rpo"] }
+                styles {
+                    token { scope: "constant.numeric" }
+                }
+                schemes {
+                    plain {
+                        light [
+                            token: #FF0000 @bg #00FF00 @bold @italic,
+                            token: #0000FF
+                        ]
+                        dark [
+                            token: #AA0000 @bg #00AA00 @bold @italic,
+                            token: #0000AA
+                        ]
+                    }
+                }
+                defaultScheme: "plain"
+            }
+        """.trimIndent()
+        assertTrue(
+            "Repeated Scheme paint entries must compile: ${engine.lastCompileDiagnostics}",
+            engine.loadTshSource("repeated-paint-overlay-regression", dsl, null)
+        )
+        val token = engine.getStylePalette("repeated-paint-overlay-regression", "token")
+        assertNotNull("Repeated-entry palette must exist", token)
+        assertEquals("Last explicit foreground wins", Color.BLUE, token!!.lightColor)
+        assertEquals("Earlier background remains present", true, token.hasLightBackground)
+        assertEquals("Earlier background value survives", Color.GREEN, token.lightBackground)
+        assertEquals("Earlier bold attribute survives", 0x01, token.lightFontFlags and 0x01)
+        assertEquals("Earlier italic attribute survives", 0x02, token.lightFontFlags and 0x02)
+        assertEquals("Dark foreground uses last declaration", Color.BLUE and 0x00FFFFFF or (0xAA shl 24), token.darkColor)
+        assertEquals("Dark background survives", Color.rgb(0, 170, 0), token.darkBackground)
+        assertEquals("Dark bold survives", 0x01, token.darkFontFlags and 0x01)
+        assertEquals("Dark italic survives", 0x02, token.darkFontFlags and 0x02)
+    }
+
+    @Test
     fun schemeExtensionPreservesExplicitFontAttributeClears() {
         val engine = WindbellTshEngine.instance
         val dsl = """
