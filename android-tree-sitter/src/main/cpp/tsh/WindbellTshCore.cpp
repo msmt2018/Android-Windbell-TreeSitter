@@ -8,6 +8,7 @@
 #include <cstring>
 #include <limits>
 #include <functional>
+#include <memory>
 #include <unordered_set>
 #include <string_view>
 #include "ts__log.h"
@@ -1317,36 +1318,42 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
         // sources into a synthetic aggregate program.
         for (const auto& native_query : grammar->native_queries) {
             if (!native_query.enabled || !native_query.query) continue;
-            TSQueryCursor* q_cursor = ts_query_cursor_new();
-            if (!q_cursor) continue;
-            // Restrict Tree-sitter query execution to the requested UTF-16LE byte
-            // window. The AST remains document-wide so node offsets stay absolute.
-            if (!ts_query_cursor_set_byte_range(q_cursor, range_start_byte, range_end_byte)) {
-                ts_query_cursor_delete(q_cursor);
-                continue;
-            }
-// Bound in-progress capture state on every supported Tree-sitter version.
-            // The 0.28 progress callback below adds a separate work bound.
-            constexpr uint32_t kQueryMatchLimit = 4096;
-            ts_query_cursor_set_match_limit(q_cursor, kQueryMatchLimit);
 #if defined(TSH_TREE_SITTER_HAS_QUERY_CURSOR_OPTIONS)
-            // 0.28 provides cooperative work cancellation. A cancelled/overflowed
-            // query is discarded atomically: never publish partial captures as a
-            // complete highlight result.
+            // Tree-sitter 0.28 retains the options pointer in TSQueryCursor and
+            // invokes it from subsequent next_match calls. Declare callback state
+            // before the owning cursor so the cursor is destroyed first on unwind.
             TshQueryProgressBudget query_budget;
             TSQueryCursorOptions query_options{};
             query_options.payload = &query_budget;
             query_options.progress_callback = tshQueryProgressCallback;
+#endif
+            std::unique_ptr<TSQueryCursor, decltype(&ts_query_cursor_delete)> q_cursor(
+                ts_query_cursor_new(), &ts_query_cursor_delete);
+            if (!q_cursor) continue;
+            TSQueryCursor* cursor = q_cursor.get();
+
+            // Restrict Tree-sitter query execution to the requested UTF-16LE byte
+            // window. The AST remains document-wide so node offsets stay absolute.
+            if (!ts_query_cursor_set_byte_range(cursor, range_start_byte, range_end_byte)) {
+                continue;
+            }
+            // Bound in-progress capture state on every supported Tree-sitter version.
+            // The 0.28 progress callback below adds a separate work bound.
+            constexpr uint32_t kQueryMatchLimit = 4096;
+            ts_query_cursor_set_match_limit(cursor, kQueryMatchLimit);
+#if defined(TSH_TREE_SITTER_HAS_QUERY_CURSOR_OPTIONS)
+            // A cancelled/overflowed query is discarded atomically: never publish
+            // partial captures as a complete highlight result.
             ts_query_cursor_exec_with_options(
-                q_cursor, native_query.query, ts_tree_root_node(tree), &query_options);
+                cursor, native_query.query, ts_tree_root_node(tree), &query_options);
 #else
-            ts_query_cursor_exec(q_cursor, native_query.query, ts_tree_root_node(tree));
+            ts_query_cursor_exec(cursor, native_query.query, ts_tree_root_node(tree));
 #endif
             std::vector<HighlightSpan> query_spans;
             TSQueryMatch match;
             uint32_t match_order = 0;
             uint32_t accepted_match_count = 0;
-            while (ts_query_cursor_next_match(q_cursor, &match)) {
+            while (ts_query_cursor_next_match(cursor, &match)) {
                 const uint32_t current_order = match_order++;
                 auto pattern_metadata = native_query.pattern_metadata.find(match.pattern_index);
                 if (pattern_metadata != native_query.pattern_metadata.end() &&
@@ -1381,7 +1388,7 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                     query_spans.push_back(span);
                 }
             }
-bool query_incomplete = ts_query_cursor_did_exceed_match_limit(q_cursor);
+bool query_incomplete = ts_query_cursor_did_exceed_match_limit(cursor);
 #if defined(TSH_TREE_SITTER_HAS_QUERY_CURSOR_OPTIONS)
             query_incomplete = query_incomplete || query_budget.cancelled;
 #endif
@@ -1389,7 +1396,9 @@ bool query_incomplete = ts_query_cursor_did_exceed_match_limit(q_cursor);
                 if (diagnostic_match_counts) diagnostic_match_counts[3] += accepted_match_count;
                 macro_spans.insert(macro_spans.end(), query_spans.begin(), query_spans.end());
             }
-            ts_query_cursor_delete(q_cursor);
+            // Explicitly destroy the cursor while its 0.28 options and payload
+            // are still alive. The unique_ptr also covers early exits/exceptions.
+            q_cursor.reset();
         }
     }
     for (size_t i = native_query_span_begin; i < macro_spans.size(); ++i) {
