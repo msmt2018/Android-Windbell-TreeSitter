@@ -9,6 +9,7 @@ add_executable(windbell_largefile_tests
     ../ChunkedTextStore.cpp
     ../MappedFileSource.cpp
     ../FileWindowSource.cpp
+    ../PieceTreeSource.cpp
 )
 
 target_include_directories(windbell_largefile_tests PRIVATE ..)
