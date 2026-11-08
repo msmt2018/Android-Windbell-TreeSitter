@@ -74,4 +74,23 @@ class TshNativeQueryLeaseStoreTest {
         lease.close()
         assertEquals(1, leased.closeCalls)
     }
+
+    @Test
+    fun dependentLanguageLeaseLivesUntilRetiredQueryAndExecutionsClose() {
+        val store = TshNativeQueryLeaseStore()
+        val query = FakeQuery()
+        var languageLeaseCloseCalls = 0
+        val dependency = AutoCloseable { languageLeaseCloseCalls++ }
+        val id = TshObjectId(30L)
+        store.register("query-with-language", id, query, dependencies = listOf(dependency))
+
+        val execution = store.acquire(id)!!
+        assertTrue(store.retire("query-with-language"))
+        assertEquals(0, query.closeCalls)
+        assertEquals(0, languageLeaseCloseCalls)
+
+        execution.close()
+        assertEquals(1, query.closeCalls)
+        assertEquals(1, languageLeaseCloseCalls)
+    }
 }
