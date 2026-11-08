@@ -46,3 +46,12 @@ Regex 必须定义字符编码、flags、region、最大输入范围、超时/�
 - 超时、取消、无效 Query、未知 Grammar 都有诊断。
 - UTF-8 byte 到 UTF-16 范围转换覆盖补充平面和组合字符。
 - 大文件/ Piece Tree 场景不要求无条件 flatten 全文。
+
+
+## 双管线专门契约
+
+- ATS 与 Tree-sitter：见 [ats-tree-sitter-query-api.md](ats-tree-sitter-query-api.md)。
+- Regex 连续窗口、跨窗口等价、增量和 Oniguruma buffer lease：见 [regex-window-execution-api.md](regex-window-execution-api.md)。
+- 统一 Match/Scope 与冲突：见 [unified-match-scope-api.md](unified-match-scope-api.md)。
+
+两管线只在 Match 结果层汇合，不共享或混淆底层执行器。
