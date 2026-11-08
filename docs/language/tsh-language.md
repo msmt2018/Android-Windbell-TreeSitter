@@ -1,8 +1,8 @@
 # TSH 语言与 .tsh 配置工具链
 
-## 1. 目标
+## 1. 目标与边界
 
-.tsh 不仅是运行时配置文件，也应拥有完整的语言服务：词法分析、语法分析、AST、Schema、类型/语义校验、诊断、补全、Hover、定义、引用、重命名、格式化、快速修复、迁移和调试。
+.tsh 是 TSH 引擎的声明式配置语言。核心工具链负责加载、词法分析、语法分析、AST、Schema/类型/语义校验、编译、诊断、格式化与版本迁移。Completion/Hover 等语言编辑体验可由宿主工具消费，但不是 TSH 执行引擎 API 的职责。
 
 ## 2. 工具链阶段
 
@@ -27,3 +27,12 @@
 ## 5. 当前已知基线
 
 现有 Native TshCompiler 提供 .tsh 源码到 TshGrammar 的编译入口，当前 Kotlin API 的 loadTshSource 返回 Boolean。该接口没有暴露完整诊断列表、AST、Schema、格式化或语言服务结果。上述功能属于待建设目标，不能标记为已完成。
+
+
+## 6. 配置对象与管理 API
+
+应用必须能通过 ConfigRepository/Catalog 查询和管理 .tsh 编译产物：配置源 load/reload/validate/compile/install/replace/unload；Theme/Style/Font/Color/Scope/Selector/Attribute/Grammar/Query/Regex/Injection 对象 get/list/resolve；Theme preview/activate/reset；Style resolve/explain。运行时对象不可变，变更经 ConfigTransaction 或新的 .tsh 源重新编译并原子替换。详细契约见 api/tsh-file-config-management-api.md。
+
+## 7. DSL 属性和底层语义契约
+
+每个可写属性必须在 Schema 中声明名称、类型、默认值、单位、继承与合并策略、能力要求和版本。字体必须覆盖 family、weight、style、size、stretch、lineHeight、letterSpacing、baselineShift、OpenType features、variable axes、fallback 和 synthesis；颜色必须定义格式、alpha 与颜色空间；Decoration 必须定义类型、范围、层级和合成。Parser 接受语法不代表 Runtime 已执行，必须由底层 Resolver/Render Backend 消费并完成真实绘制。见 api/tsh-dsl-syntax-and-semantic-contract.md 与 api/theme-style-font-color-api.md。
