@@ -1,5 +1,7 @@
 package com.zerostudio.idea.treesitter.tsh.api
 
+import java.util.Collections
+
 data class TshConfigArtifact(
     val configId: String,
     val revision: String,
@@ -37,22 +39,24 @@ class TshConfigRepository {
     fun install(artifact: TshConfigArtifact): TshResult<TshConfigDescriptor> = synchronized(lock) {
         if (artifacts.containsKey(artifact.configId)) {
             return@synchronized failure("TSH-CONFIG-001",
-                "Config '\${artifact.configId}' is already installed; use replace")
+                "Config '${artifact.configId}' is already installed; use replace")
         }
-        artifacts[artifact.configId] = artifact
-        TshResult.Success(descriptor(artifact))
+        val snapshot = freeze(artifact)
+        artifacts[artifact.configId] = snapshot
+        TshResult.Success(descriptor(snapshot))
     }
 
     fun replace(artifact: TshConfigArtifact, expectedRevision: String): TshResult<TshConfigDescriptor> =
         synchronized(lock) {
             val current = artifacts[artifact.configId]
-                ?: return@synchronized failure("TSH-CONFIG-002", "Config '\${artifact.configId}' is not installed")
+                ?: return@synchronized failure("TSH-CONFIG-002", "Config '${artifact.configId}' is not installed")
             if (current.revision != expectedRevision) {
                 return@synchronized failure("TSH-CONFIG-003",
-                    "Config revision changed; expected '\$expectedRevision' but found '\${current.revision}'")
+                    "Config revision changed; expected '$expectedRevision' but found '${current.revision}'")
             }
-            artifacts[artifact.configId] = artifact
-            TshResult.Success(descriptor(artifact))
+            val snapshot = freeze(artifact)
+            artifacts[artifact.configId] = snapshot
+            TshResult.Success(descriptor(snapshot))
         }
 
     fun get(configId: String): TshConfigArtifact? = synchronized(lock) { artifacts[configId] }
@@ -61,10 +65,10 @@ class TshConfigRepository {
     fun unload(configId: String, expectedRevision: String? = null): TshResult<Boolean> =
         synchronized(lock) {
             val current = artifacts[configId]
-                ?: return@synchronized failure("TSH-CONFIG-004", "Config '\$configId' is not installed")
+                ?: return@synchronized failure("TSH-CONFIG-004", "Config '$configId' is not installed")
             if (expectedRevision != null && current.revision != expectedRevision) {
                 return@synchronized failure("TSH-CONFIG-003",
-                    "Config revision changed; expected '\$expectedRevision' but found '\${current.revision}'")
+                    "Config revision changed; expected '$expectedRevision' but found '${current.revision}'")
             }
             artifacts.remove(configId)
             TshResult.Success(true)
@@ -76,14 +80,42 @@ class TshConfigRepository {
         configId = artifact.configId,
         revision = artifact.revision,
         sourceId = artifact.sourceId,
-        languageIds = artifact.document.declarations
+        languageIds = Collections.unmodifiableSet(artifact.document.declarations
             .filter { it.kind == TshDslDeclarationKind.LANGUAGE }
             .mapNotNull { declaration ->
                 (declaration.properties["id"] as? TshDslValue.StringValue)?.value ?: declaration.id
-            }.toSet(),
+            }.toSet()),
         declarationCount = artifact.document.declarations.size,
         compiledAtEpochMillis = artifact.compiledAtEpochMillis
     )
+
+    private fun freeze(artifact: TshConfigArtifact): TshConfigArtifact {
+        fun freezeValue(value: TshDslValue): TshDslValue = when (value) {
+            is TshDslValue.ArrayValue -> TshDslValue.ArrayValue(
+                Collections.unmodifiableList(value.values.map(::freezeValue))
+            )
+            is TshDslValue.ObjectValue -> {
+                val copy = LinkedHashMap<String, TshDslValue>()
+                value.values.forEach { (key, nested) -> copy[key] = freezeValue(nested) }
+                TshDslValue.ObjectValue(Collections.unmodifiableMap(copy))
+            }
+            is TshDslValue.FontFamilyValue -> TshDslValue.FontFamilyValue(
+                Collections.unmodifiableList(value.families.toList())
+            )
+            is TshDslValue.RegexValue -> value.copy(options = Collections.unmodifiableSet(value.options.toSet()))
+            else -> value
+        }
+        val declarations = artifact.document.declarations.map { declaration ->
+            val properties = LinkedHashMap<String, TshDslValue>()
+            declaration.properties.forEach { (key, value) -> properties[key] = freezeValue(value) }
+            declaration.copy(properties = Collections.unmodifiableMap(properties))
+        }
+        return artifact.copy(
+            document = artifact.document.copy(
+                declarations = Collections.unmodifiableList(declarations)
+            )
+        )
+    }
 
     private fun failure(code: String, message: String) =
         TshResult.Failure(listOf(TshDiagnostic(
