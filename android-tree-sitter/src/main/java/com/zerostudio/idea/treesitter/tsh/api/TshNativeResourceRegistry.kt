@@ -33,10 +33,7 @@ class TshNativeResourceRegistry(
         capabilities: TshCapabilitySet = TshCapabilitySet.EMPTY,
         metadata: Map<String, String> = emptyMap()
     ): Registration<T> = synchronized(lock) {
-        check(objects.find(resource) == null) {
-            "Native resource is already published; retire it before registering again"
-        }
-        val descriptor = objects.register(resource, type, capabilities, metadata)
+        val descriptor = objects.registerUnique(resource, type, capabilities, metadata)
         try {
             val handle = leases.register(descriptor.id, resource)
             ownedIds.add(descriptor.id)
