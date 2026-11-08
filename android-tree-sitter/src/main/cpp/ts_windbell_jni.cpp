@@ -514,15 +514,17 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlight(
     jstring text_jstr,
     jstring extension_jstr,
     jboolean diagnostics,
-    jint range_start_byte,
-    jint range_end_byte
+    jlong range_start_byte,
+    jlong range_end_byte
 ) {
     if (!text_jstr || !extension_jstr) {
         throw_npe(env, "text or extension cannot be null");
         return nullptr;
     }
     if (range_start_byte < 0 || range_end_byte < 0 ||
-        (range_start_byte & 1) != 0 || (range_end_byte & 1) != 0 ||
+        static_cast<uint64_t>(range_start_byte) > UINT32_MAX ||
+        static_cast<uint64_t>(range_end_byte) > UINT32_MAX ||
+        (range_start_byte & 1LL) != 0 || (range_end_byte & 1LL) != 0 ||
         range_start_byte > range_end_byte) {
         throw_illegal_args(env, "TSH byte range must be ordered, non-negative UTF-16LE byte offsets");
         return nullptr;
