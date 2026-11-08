@@ -33,12 +33,16 @@ PieceTreeSource::PieceTreeSource(std::shared_ptr<const TextSource> original,
     valid_ = size == 0 || static_cast<bool>(root_);
 }
 
+PieceTreeSource::PieceTreeSource(std::shared_ptr<const TextSource> original,
+                                 uint64_t memoryLimitBytes, SnapshotTag) noexcept
+    : original_(std::move(original)), memory_limit_bytes_(memoryLimitBytes), valid_(true) {}
+
 PieceTreeSource::~PieceTreeSource() = default;
 
 std::unique_ptr<PieceTreeSource> PieceTreeSource::clone() const noexcept {
     auto copy = std::unique_ptr<PieceTreeSource>(
-        new (std::nothrow) PieceTreeSource(original_, memory_limit_bytes_));
-    if (!copy || !copy->valid_) return nullptr;
+        new (std::nothrow) PieceTreeSource(original_, memory_limit_bytes_, SnapshotTag{}));
+    if (!copy) return nullptr;
     // The treap is persistent. Only the root reference is copied; all unchanged
     // subtrees remain shared and become private only along a later edit path.
     copy->root_ = root_;

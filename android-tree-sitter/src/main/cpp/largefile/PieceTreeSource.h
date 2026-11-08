@@ -46,7 +46,11 @@ public:
 
 private:
     enum class Buffer : uint8_t { Original, Added };
+    struct SnapshotTag {};
     struct Node;
+
+    PieceTreeSource(std::shared_ptr<const TextSource> original,
+                    uint64_t memoryLimitBytes, SnapshotTag) noexcept;
 
     static uint64_t subtreeBytes(const std::shared_ptr<Node> &node) noexcept;
     static uint64_t countNodes(const Node *node) noexcept;
