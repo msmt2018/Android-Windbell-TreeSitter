@@ -1,10 +1,18 @@
 package com.zerostudio.idea.treesitter.tsh.api
 
+import com.zerostudio.idea.treesitter.TSQuery
 import com.zerostudio.idea.treesitter.TSTree
 import org.junit.Assert.*
 import org.junit.Test
 
 class TshEngineNativeResourceLifecycleTest {
+    private class FakeQuery : TSQuery(1L) {
+        var closeCalls = 0
+        override fun close() {
+            closeCalls++
+        }
+    }
+
     private class FakeTree : TSTree(1L) {
         var closeCalls = 0
         override fun close() {
@@ -53,4 +61,41 @@ class TshEngineNativeResourceLifecycleTest {
             // Expected.
         }
     }
-}
+
+    @Test
+    fun engineCloseRetiresQueriesBeforeGrammarResourcesAndDefersActiveQuery() {
+        val engine = TshEngine.create()
+        val query = FakeQuery()
+        var grammarLeaseCloseCalls = 0
+        val id = TshObjectId(900L)
+        engine.nativeQueryLeases.register(
+            "engine-query",
+            id,
+            query,
+            dependencies = listOf(AutoCloseable { grammarLeaseCloseCalls++ })
+        )
+        val active = engine.nativeQueryLeases.acquire(id)!!
+
+        engine.close()
+
+        assertEquals(0, query.closeCalls)
+        assertEquals(0, grammarLeaseCloseCalls)
+        assertNull(engine.nativeQueryLeases.acquire(id))
+
+        active.close()
+        assertEquals(1, query.closeCalls)
+        assertEquals(1, grammarLeaseCloseCalls)
+    }
+
+    @Test
+    fun engineCannotCreateQueryAdaptersAfterClose() {
+        val engine = TshEngine.create()
+        engine.close()
+        try {
+            engine.createTreeSitterQueryExecutor()
+            fail("Expected a closed Engine to reject adapter creation")
+        } catch (_: IllegalStateException) {
+            // Expected.
+        }
+    }
+}\n
