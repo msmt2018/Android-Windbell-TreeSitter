@@ -1,10 +1,31 @@
 #include "TextSource.h"
 
-#include <algorithm>
+#include <algorithm>\n#include <cstring>
 #include <limits>
 #include <utility>
 
 namespace windbell::largefile {
+
+bool copyTextRange(const TextSource &source, uint64_t offset,
+                   uint64_t length, void *destination) noexcept {
+    if ((offset & 1u) || (length & 1u) ||
+        offset > source.sizeBytes() || length > source.sizeBytes() - offset ||
+        (length != 0 && !destination) ||
+        length > static_cast<uint64_t>(std::numeric_limits<size_t>::max())) return false;
+    auto *output = static_cast<uint8_t *>(destination);
+    uint64_t copied = 0;
+    while (copied < length) {
+        TextChunkView chunk{};
+        const uint32_t request = static_cast<uint32_t>(std::min<uint64_t>(
+            kTreeSitterInputChunkBytes, length - copied));
+        if (!source.read(offset + copied, request, &chunk) ||
+            !chunk.data || chunk.size == 0 || (chunk.size & 1u) != 0 ||
+            chunk.size > length - copied) return false;
+        std::memcpy(output + static_cast<size_t>(copied), chunk.data, chunk.size);
+        copied += chunk.size;
+    }
+    return true;
+}
 
 SegmentedTextSource::SegmentedTextSource(
     std::vector<TextSegment> segments,

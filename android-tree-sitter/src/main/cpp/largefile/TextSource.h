@@ -30,6 +30,13 @@ public:
     virtual bool read(uint64_t offset, uint32_t maxBytes, TextChunkView *out) const noexcept = 0;
 };
 
+// Copy a bounded UTF-16LE range from any source implementation. This is the
+// common window materializer for consumers such as Oniguruma that require a
+// contiguous input pointer; it never allocates and never copies outside the
+// caller-selected window.
+bool copyTextRange(const TextSource &source, uint64_t offset,
+                   uint64_t length, void *destination) noexcept;
+
 /**
  * Zero-copy adapter for existing contiguous UTF-16LE storage.
  *
