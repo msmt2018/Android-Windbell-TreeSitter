@@ -14,6 +14,9 @@ class TshEngine private constructor(val options: TshEngineOptions) : AutoCloseab
     val objects: TshObjectRegistry = TshObjectRegistry()
     val providers: TshProviderRegistry = TshProviderRegistry()
     private val nativeResourceLeases = TshNativeResourceLeaseStore()
+    /** Shared query catalog and Native query leases for every adapter created by this Engine. */
+    val compiledQueries: TshCompiledQueryRegistry = TshCompiledQueryRegistry()
+    val nativeQueryLeases: TshNativeQueryLeaseStore = TshNativeQueryLeaseStore()
     /** Engine-owned coordinator; resources registered here are retired when the engine closes. */
     val nativeResources: TshNativeResourceRegistry =
         TshNativeResourceRegistry(objects, nativeResourceLeases)
@@ -44,6 +47,42 @@ class TshEngine private constructor(val options: TshEngineOptions) : AutoCloseab
         }
     }
 
+    /**
+     * Creates a compiler wired to this Engine's object index, query catalog, Native query lease
+     * store, and Native resource coordinator. Do not construct a second independent store for
+     * queries belonging to this Engine.
+     */
+    fun createTreeSitterQueryCompiler(
+        languages: TshGrammarLanguageResolver,
+        compilerVersion: String = "treesitter-adapter-1"
+    ): TshTreeSitterQueryCompiler {
+        check(state != TshEngineState.CLOSED) { "TSH engine is closed" }
+        return TshTreeSitterQueryCompiler(
+            languages = languages,
+            objects = objects,
+            queries = compiledQueries,
+            leases = nativeQueryLeases,
+            languageLeases = nativeResourceLeases,
+            compilerVersion = compilerVersion,
+            resourceRegistry = nativeResources
+        )
+    }
+
+    /** Creates an executor sharing the exact Native query/resource stores owned by this Engine. */
+    fun createTreeSitterQueryExecutor(
+        predicateHandlers: List<com.zerostudio.idea.treesitter.predicate.TSPredicateHandler> = emptyList()
+    ): TshTreeSitterQueryExecutor {
+        check(state != TshEngineState.CLOSED) { "TSH engine is closed" }
+        return TshTreeSitterQueryExecutor(
+            objects = objects,
+            queries = compiledQueries,
+            leases = nativeQueryLeases,
+            treeLeases = nativeResourceLeases,
+            predicateHandlers = predicateHandlers,
+            resourceRegistry = nativeResources
+        )
+    }
+
     fun requireInitialized(): TshResult<TshEngine> =
         if (state == TshEngineState.INITIALIZED) {
             TshResult.Success(this)
@@ -63,7 +102,10 @@ class TshEngine private constructor(val options: TshEngineOptions) : AutoCloseab
     override fun close() {
         val previous = stateRef.getAndSet(TshEngineState.CLOSED)
         if (previous != TshEngineState.CLOSED) {
-            // Retire Native resources before clearing the strong object index.
+            // Retire queries first: each compiled query may retain a Grammar Language lease.
+            // Then retire Trees, Parsers and Languages owned by the resource coordinator.
+            nativeQueryLeases.close()
+            compiledQueries.clear()
             nativeResources.close()
             providers.clear()
             objects.clear()
