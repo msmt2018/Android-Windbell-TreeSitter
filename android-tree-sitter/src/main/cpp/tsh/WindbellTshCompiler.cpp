@@ -1584,10 +1584,16 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
 
                             auto& color_entry = scheme.colors[sid];
                             if (is_light) {
-                                color_entry.setLightPaint(paint);
+                                // Multiple declarations for one style compose:
+                                // supplied values override, omitted properties survive.
+                                TshStylePaint merged = color_entry.lightPaint();
+                                merged.overlay(paint);
+                                color_entry.setLightPaint(merged);
                                 color_entry.explicit_light_color = true;
                             } else {
-                                color_entry.setDarkPaint(paint);
+                                TshStylePaint merged = color_entry.darkPaint();
+                                merged.overlay(paint);
+                                color_entry.setDarkPaint(merged);
                                 color_entry.explicit_dark_color = true;
                             }
                         }
