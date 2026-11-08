@@ -2,8 +2,9 @@
  * Read-only memory-mapped file source.
  *
  * Mapping is demand-paged by the operating system: opening a large file does
- * not eagerly copy its contents into a native heap buffer. The mapping remains
- * stable for the lifetime of this object and is safe for concurrent readers.
+ * not eagerly copy its contents into a native heap buffer. The source is a
+ * read-only UTF-16LE snapshot view. The backing file must not be truncated or
+ * rewritten while mapped; callers should map immutable snapshots, not live edit files.
  */
 #pragma once
 
