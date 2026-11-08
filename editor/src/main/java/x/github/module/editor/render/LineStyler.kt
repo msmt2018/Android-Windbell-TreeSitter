@@ -27,8 +27,10 @@ import android.text.Spanned
  *     }
  *
  * The editor asks once per row it is about to paint, and paints what comes back with
- * [StyledTextPainter]. The spans it understands are ForegroundColorSpan,
- * BackgroundColorSpan, StyleSpan (bold, italic) and UnderlineSpan.
+ * [StyledTextPainter]. It paints ForegroundColorSpan, BackgroundColorSpan,
+ * StyleSpan (bold, italic), UnderlineSpan and StrikethroughSpan. Paint-state-only
+ * CharacterStyles are also applied explicitly by the Canvas painter; unlike TextView,
+ * this renderer does not automatically dispatch CharacterStyle.updateDrawState().
  *
  * It is called on the main thread, while drawing: it has to be quick. A styler that
  * needs time to work things out (parsing) does that elsewhere and answers from what
