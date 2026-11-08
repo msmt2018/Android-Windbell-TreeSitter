@@ -5,93 +5,72 @@
  *  modify it under the terms of the GNU Lesser General Public
  *  License as published by the Free Software Foundation; either
  *  version 2.1 of the License, or (at your option) any later version.
- *
- *  android-tree-sitter library is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- *  Lesser General Public License for more details.
- *
- *   You should have received a copy of the GNU General Public License
- *  along with android-tree-sitter.  If not, see <https://www.gnu.org/licenses/>.
  */
 
 package com.zerostudio.idea.treesitter;
 
 import com.zerostudio.idea.treesitter.annotations.GenerateNativeHeaders;
-import java.util.Objects;
 
 /**
- * Native query-backed tag extraction.
+ * Bounded native tag extraction built on Tree-sitter query matches.
  *
- * <p>Tag semantics are defined by the supplied Tree-sitter query. A common
- * convention is to use captures such as {@code @definition}, {@code @reference},
- * {@code @name}, and {@code @scope}; this class deliberately does not impose
- * language-specific capture names.
- *
- * <p>Returned matches own Java-side node values and remain usable independently
- * of the temporary native query cursor. Byte ranges use the source document's
- * absolute Tree-sitter byte coordinates.
+ * <p>This API deliberately returns ordinary query matches. Language-specific
+ * tag semantics (definition/reference classification and metadata) remain
+ * the responsibility of the query and its capture names; this layer owns
+ * bounded execution and safe JNI transfer only.
  */
 public final class TSTags {
-
-  private static final int DEFAULT_MAX_RESULTS = 100_000;
-  private static final int DEFAULT_MAX_PENDING_MATCHES = 4_096;
 
   private TSTags() {
   }
 
   /**
-   * Extract query matches from a syntax subtree.
+   * Extract query matches from an absolute byte range within {@code root}.
    *
-   * @param query compiled tag query
-   * @param root root node to search
-   * @param startByte inclusive absolute start byte
-   * @param endByte exclusive absolute end byte
-   * @return all query matches in traversal order
-   * @throws IllegalArgumentException for invalid arguments or ranges
-   * @throws IllegalStateException if either safety limit is exceeded
+   * <p>No partial result is returned when either result or pending-match
+   * limits are exceeded. The query and root must remain valid for this call.
+   *
+   * @param query compiled query
+   * @param root syntax node used as the query root
+   * @param startByte absolute inclusive start byte, in document coordinates
+   * @param endByte absolute exclusive end byte, in document coordinates
+   * @param maxResults maximum number of completed matches to materialize
+   * @param maxPendingMatches Tree-sitter in-progress match limit
+   * @return query matches, including their original pattern and capture data
    */
   public static TSQueryMatch[] extract(
-      TSQuery query, TSNode root, int startByte, int endByte) {
-    return extract(query, root, startByte, endByte,
-        DEFAULT_MAX_RESULTS, DEFAULT_MAX_PENDING_MATCHES);
-  }
-
-  /**
-   * Extract query matches with explicit memory/work safety limits.
-   *
-   * @param maxResults maximum number of returned matches (1..1,000,000)
-   * @param maxPendingMatches Tree-sitter in-progress match limit (1..1,000,000)
-   */
-  public static TSQueryMatch[] extract(
-      TSQuery query, TSNode root, int startByte, int endByte,
-      int maxResults, int maxPendingMatches) {
-    Objects.requireNonNull(query, "query");
-    Objects.requireNonNull(root, "root");
+      TSQuery query,
+      TSNode root,
+      int startByte,
+      int endByte,
+      int maxResults,
+      int maxPendingMatches) {
+    if (query == null || !query.canAccess()) {
+      throw new IllegalArgumentException("Cannot extract tags with an invalid query");
+    }
+    if (root == null || !root.canAccess() || root.getTree() == null
+        || !root.getTree().canAccess() || root.hasChanges()) {
+      throw new IllegalArgumentException("Cannot extract tags from an invalid or changed root");
+    }
     if (startByte < 0 || endByte < startByte) {
-      throw new IllegalArgumentException("Invalid byte range");
+      throw new IllegalArgumentException("Invalid absolute byte range");
     }
-    if (maxResults < 1 || maxResults > 1_000_000) {
-      throw new IllegalArgumentException("maxResults must be between 1 and 1000000");
+    if (maxResults < 1 || maxPendingMatches < 1) {
+      throw new IllegalArgumentException("Tag query limits must be positive");
     }
-    if (maxPendingMatches < 1 || maxPendingMatches > 1_000_000) {
-      throw new IllegalArgumentException(
-          "maxPendingMatches must be between 1 and 1000000");
-    }
-    query.checkAccess();
-    root.checkAccess();
-    if (!query.canAccess() || !root.canAccess() ||
-        !root.getTree().canAccess() || root.hasChanges()) {
-      throw new IllegalArgumentException("Cannot extract tags from invalid or changed nodes");
-    }
-    return Native.extract(query.getNativeObject(), root, startByte, endByte,
+    return Native.extract(
+        query.getNativeObject(), root, startByte, endByte,
         maxResults, maxPendingMatches);
   }
 
   @GenerateNativeHeaders(fileName = "tags")
   private static final class Native {
     static native TSQueryMatch[] extract(
-        long query, TSNode root, int startByte, int endByte,
-        int maxResults, int maxPendingMatches);
+        long query,
+        TSNode root,
+        int startByte,
+        int endByte,
+        int maxResults,
+        int maxPendingMatches);
   }
 }
