@@ -2,14 +2,20 @@ package com.zerostudio.idea.treesitter.tsh.api
 
 import com.zerostudio.idea.treesitter.TSQuery
 import com.zerostudio.idea.treesitter.TSTree
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import org.junit.Assert.*
 import org.junit.Test
 
 class TshNativeResourceRegistryTest {
     private class FakeTree : TSTree(1L) {
         var closeCalls = 0
+        var onClose: (() -> Unit)? = null
+
         override fun close() {
             closeCalls++
+            onClose?.invoke()
         }
     }
 
@@ -50,6 +56,7 @@ class TshNativeResourceRegistryTest {
         lease!!.close()
         assertTrue(registry.retire(registration.descriptor.id))
     }
+
     @Test
     fun retireAllOnlyRetiresResourcesOwnedByThisCoordinator() {
         val objects = TshObjectRegistry()
@@ -88,7 +95,7 @@ class TshNativeResourceRegistryTest {
             other.register(tree, "syntax-tree")
             fail("Expected duplicate native resource publication to fail")
         } catch (_: IllegalStateException) {
-            // Expected: the second coordinator must not adopt or unregister the first owner's ID.
+            // The second coordinator must not adopt or unregister the first owner's ID.
         }
 
         assertSame(tree, objects.find(registration.descriptor.id))
@@ -98,4 +105,38 @@ class TshNativeResourceRegistryTest {
         assertEquals(1, tree.closeCalls)
     }
 
+    @Test
+    fun nativeCloseCallbackRunsOutsideCoordinatorLock() {
+        val objects = TshObjectRegistry()
+        val leases = TshNativeResourceLeaseStore()
+        val registry = TshNativeResourceRegistry(objects, leases)
+        val tree = FakeTree()
+        val registration = registry.register(tree, "syntax-tree")
+        val callbackCompleted = CountDownLatch(1)
+        val completedBeforeCloseReturned = AtomicBoolean(false)
+
+        tree.onClose = {
+            Thread {
+                registry.acquire(registration.descriptor.id, TSTree::class.java)
+                callbackCompleted.countDown()
+            }.start()
+            completedBeforeCloseReturned.set(callbackCompleted.await(2, TimeUnit.SECONDS))
+        }
+
+        assertTrue(registry.retire(registration.descriptor.id))
+        assertTrue("A close callback must not wait on the coordinator lock", completedBeforeCloseReturned.get())
+        assertEquals(1, tree.closeCalls)
+    }
+
+    @Test
+    fun closePermanentlyRejectsNewRegistrations() {
+        val registry = TshNativeResourceRegistry(TshObjectRegistry(), TshNativeResourceLeaseStore())
+        registry.close()
+        try {
+            registry.register(FakeTree(), "syntax-tree")
+            fail("Expected a closed registry to reject registration")
+        } catch (_: IllegalStateException) {
+            // Expected.
+        }
+    }
 }
