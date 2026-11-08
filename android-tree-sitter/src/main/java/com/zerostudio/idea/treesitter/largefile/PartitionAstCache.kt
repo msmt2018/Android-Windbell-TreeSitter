@@ -42,16 +42,14 @@ class PartitionAstCache(
         var evictWhenReleased: Boolean = false
     )
 
-    inner class Lease internal constructor(
-        val tree: TSTree,
-        private val key: PartitionAstKey
-    ) : AutoCloseable {
+    inner class Lease internal constructor(private val entry: Entry) : AutoCloseable {
+        val tree: TSTree get() = entry.tree
         private var released = false
         override fun close() {
             synchronized(lock) {
                 if (released) return
                 released = true
-                releaseLocked(key)
+                releaseLocked(entry)
             }
         }
     }
@@ -91,7 +89,7 @@ class PartitionAstCache(
         if (closed) return@synchronized null
         val entry = entries[key] ?: return@synchronized null
         entry.leases++
-        Lease(entry.tree, key)
+        Lease(entry)
     }
 
     fun invalidate(predicate: (PartitionAstKey) -> Boolean) {
@@ -123,13 +121,20 @@ class PartitionAstCache(
         if (previous.leases == 0) previous.tree.close() else previous.evictWhenReleased = true
     }
 
-    private fun releaseLocked(key: PartitionAstKey) {
-        val entry = entries[key] ?: return
+    private fun releaseLocked(entry: Entry) {
         check(entry.leases > 0) { "Unbalanced AST lease release" }
         entry.leases--
         if (entry.leases == 0 && entry.evictWhenReleased) {
-            entries.remove(key)
-            usedBytes -= entry.weight
+            // The entry may already have been removed from the LRU map by
+            // invalidation/pressure eviction. The lease itself retains ownership.
+            val iterator = entries.entries.iterator()
+            while (iterator.hasNext()) {
+                if (iterator.next().value === entry) {
+                    iterator.remove()
+                    usedBytes -= entry.weight
+                    break
+                }
+            }
             entry.tree.close()
         }
     }
