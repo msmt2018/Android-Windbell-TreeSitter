@@ -12,12 +12,14 @@ struct PieceTreeSource::Node {
     uint64_t source_offset;
     uint64_t length;
     uint64_t subtree_bytes;
+    uint64_t subtree_pieces;
     uint64_t priority;
     std::unique_ptr<Node> left;
     std::unique_ptr<Node> right;
 
     Node(Buffer b, uint64_t o, uint64_t n, uint64_t p) noexcept
-        : buffer(b), source_offset(o), length(n), subtree_bytes(n), priority(p) {}
+        : buffer(b), source_offset(o), length(n), subtree_bytes(n),
+          subtree_pieces(1), priority(p) {}
 };
 
 PieceTreeSource::PieceTreeSource(std::shared_ptr<const TextSource> original,
@@ -48,6 +50,9 @@ void PieceTreeSource::updateNode(Node *node) noexcept {
     node->subtree_bytes = node->length +
         (node->left ? node->left->subtree_bytes : 0) +
         (node->right ? node->right->subtree_bytes : 0);
+    node->subtree_pieces = 1 +
+        (node->left ? node->left->subtree_pieces : 0) +
+        (node->right ? node->right->subtree_pieces : 0);
 }
 
 std::unique_ptr<PieceTreeSource::Node> PieceTreeSource::merge(
@@ -132,7 +137,7 @@ bool PieceTreeSource::split(std::unique_ptr<Node> root, uint64_t offset,
 }
 
 uint64_t PieceTreeSource::countNodes(const Node *node) noexcept {
-    return node ? 1 + countNodes(node->left.get()) + countNodes(node->right.get()) : 0;
+    return node ? node->subtree_pieces : 0;
 }
 
 bool PieceTreeSource::appendAdded(const uint8_t *data, uint64_t bytes,
@@ -222,10 +227,18 @@ bool PieceTreeSource::replace(uint64_t startByte, uint64_t oldEndByte,
     if (!valid_ || (startByte & 1u) || (oldEndByte & 1u) ||
         (insertedBytes & 1u) || oldEndByte < startByte ||
         oldEndByte > sizeBytes() || (insertedBytes != 0 && !inserted)) return false;
-    const uint64_t maximumPieces = memory_limit_bytes_ / sizeof(Node);
-    if (countNodes(root_.get()) + (insertedBytes ? 2u : 1u) > maximumPieces) return false;
-    if (insertedBytes > memory_limit_bytes_ -
+    constexpr uint64_t chunkBytes = 64u * 1024u;
+    const uint64_t tailCapacity = added_allocated_ - added_size_;
+    const uint64_t bytesBeyondTail = insertedBytes > tailCapacity
+        ? insertedBytes - tailCapacity : 0;
+    const uint64_t additionalChunks = bytesBeyondTail == 0 ? 0 :
+        ((bytesBeyondTail + chunkBytes - 1u) / chunkBytes) * chunkBytes;
+    if (additionalChunks > memory_limit_bytes_ -
         std::min(memory_limit_bytes_, added_allocated_)) return false;
+    const uint64_t projectedAdded = added_allocated_ + additionalChunks;
+    const uint64_t maximumPieces = (memory_limit_bytes_ - projectedAdded) / sizeof(Node);
+    const uint64_t splitNodes = insertedBytes ? 3u : 2u;
+    if (countNodes(root_.get()) + splitNodes > maximumPieces) return false;
 
     // Allocate/append inserted bytes before mutating the tree. The only data
     // copied is the insertion itself; old pieces remain references.
