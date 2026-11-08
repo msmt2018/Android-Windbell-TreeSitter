@@ -79,8 +79,11 @@ This correction is source-only at present. It has not been compiled or exercised
 
 ### Native Tree/Language resource lease contract
 
-`TshNativeResourceLeaseStore` 是 Tree 和 Language 共用的 Native resource ownership store。注册时所有权转交给 Store；资源 owner 必须使用 `retire(objectId)` 结束资源，不得直接调用 `close()`。退役后拒绝新 Lease，已有执行持有的 Lease 继续有效，最后一个 Lease 释放时才调用 Native wrapper 的 `close()`。Store 以 objectId 和资源实例双重校验 Handle，防止错误实例借用同一 ID。
+`TshNativeResourceLeaseStore` 是 Tree 和 Language 共用的 Native resource ownership store。注册时所有权转交给 Store；资源 owner 必须使用 `retire(objectId)` 结束资源，不得直接调用 `close()`。退役后拒绝新 Lease，已有执行持有的 Lease 继续有效，最后一个 Lease 释放时才调用 Native wrapper 的 `close()`。Query Lease Store 还支持依赖 Lease：编译成功后把 Language Lease 绑定到 Query，保证 Tree-sitter Query 可能引用的 Grammar 静态数据在 Query 退役前始终有效；Query 关闭后再释放 Language Lease。Store 以 objectId 和资源实例双重校验 Handle，防止错误实例借用同一 ID。
 
-Tree Executor 从 `TshObjectRegistry` 解析 TSTree 后，必须成功 acquire 对应 Handle 才能访问 root/capture；finally 释放 Tree Lease。Grammar Language Resolver 不再返回裸 TSLanguage，而返回 `TshNativeResourceLeaseStore.Handle<TSLanguage>`；Compiler acquire Language Lease 并覆盖整个 `TSQuery.create` 调用。对外部 Grammar，这同时保护 TSLanguage 的 `dlclose` 生命周期。
+Tree Executor 从 `TshObjectRegistry` 解析 TSTree 后，必须成功 acquire 对应 Handle 才能访问 root/capture；finally 释放 Tree Lease。Grammar Language Resolver 不再返回裸 TSLanguage，而返回 `TshNativeResourceLeaseStore.Handle<TSLanguage>`；Compiler acquire Language Lease 并将其作为 Query 的依赖 Lease 转交给 Query Lease Store；它覆盖编译和整个 Query 存活期，直到 Query 退役且最后一个执行 Lease 释放后才关闭。对外部 Grammar，这同时保护 TSLanguage 的 `dlclose` 生命周期。
 
 当前仍有明确边界：直接从其他代码调用 `TSTree.close()` / `TSLanguage.close()` 会绕过 Store；所有权契约要求宿主迁移到 retire。此改动只保护经过同一个 Store 注册和退役的资源，不会自动拦截任意旧调用点。源码与测试源码已提交，未运行 Gradle/JUnit/Native 测试。
+
+
+**关键生命周期约束：** Tree-sitter Query 可能依赖 Grammar Language 的静态数据/动态库代码。仅在 `TSQuery.create` 调用期间持有 Language Lease 不够。因此 Compiler 将 Language Lease 转交给 `TshNativeQueryLeaseStore` 作为 Query 的依赖 Lease；Query 正常执行时，Query Lease 间接保证 Language Lease 存活。只有 Query 已退役、活动 Query Lease 清零、Native Query close 完成后，依赖 Language Lease 才释放并允许 `TSLanguage.close()/dlclose`。
