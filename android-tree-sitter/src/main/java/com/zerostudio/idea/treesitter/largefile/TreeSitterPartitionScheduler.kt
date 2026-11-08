@@ -143,6 +143,11 @@ class TreeSitterPartitionScheduler(
         if (!closed.compareAndSet(false, true)) return
         cancelPending()
         executor.shutdownNow()
+        try {
+            executor.awaitTermination(5L, TimeUnit.SECONDS)
+        } catch (interrupted: InterruptedException) {
+            Thread.currentThread().interrupt()
+        }
         astCache.close()
     }
 
