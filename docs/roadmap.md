@@ -20,7 +20,7 @@
 |---|---|---|
 | 公共 API 基础 | TshEngine、TshResult、诊断/坐标/对象/Provider 注册、TextSnapshot 等 Kotlin 源码已存在 | 全模块构建、ABI 稳定性、与 Native 执行入口接通 |
 | DSL | Parser-neutral typed AST、Schema Registry、Config Repository Kotlin 源码已提交 | .tsh Lexer/Parser、C++ Compiler Schema 接入、Gradle 构建与测试 |
-| ATS/Tree-sitter | Query/Grammar/ByteRange/Capture/Result 数据契约、Compiler/Executor 接口、CompiledQuery Registry 源码已提交 | ATS Lexer/Parser/Compiler 实现、TSQuery/TSQueryCursor Adapter、Native lease、增量查询与测试运行 |
+| ATS/Tree-sitter | Query 数据契约、Registry、基于既有 TSQuery/TSQueryCursor 的 Kotlin Compiler/Executor Adapter 与错误映射源码已提交 | ATS Lexer/Parser、Native lease/refcount、增量查询、真实 Native 测试与构建验证 |
 | 旧 TSH 执行入口 | WindbellTshEngine、TshCompiler、WindbellEngine、JNI 入口存在 | 与新 Facade 的完整桥接、错误结构化、所有权治理 |
 | 双管线 | C++ core 有 Regex 与 Tree-sitter/Query 混合处理 | ATS 完整语法、统一 Match/Scope、Regex 窗口正确性 |
 | 样式/绘制 | 旧 Palette 与 Spannable 前景色/粗体路径存在 | 完整 Font/Color/Decoration、通用 RenderPlan、后端回执及设备覆盖 |
@@ -51,9 +51,9 @@
 - [x] 查询 API 首批单元测试源码（范围、Grammar fingerprint、Registry、stale result）。
 - [ ] Grammar/Language Definition Registry、版本和依赖模型。
 - [ ] ATS Lexer/Parser/AST/Compiler，映射为 Tree-sitter Query plan。
-- [ ] 基于现有 TSQuery/TSQueryCursor 的 Kotlin Adapter 和 Native Query lease。
+- [x] 基于现有 TSQuery/TSQueryCursor 的 Kotlin Compiler/Executor Adapter：Query 编译、Cursor 执行、Capture 转换、Grammar 检查、结构化错误和 Cursor finally-close。\n- [ ] Native Query lease/refcount；当前编译器提供显式 release，调用方必须保证 release 不与 execute 并发。
 - [ ] Tree-sitter incremental edit/changed-range 查询。
-- [ ] 与现有 dynamic_ts_query 及旧 native 方法建立兼容 Adapter。
+- [ ] 与现有 dynamic_ts_query 及旧 native 方法建立兼容 Adapter。\n- [ ] 实现可中断 Native 执行/真实 step budget；当前 Cursor 不暴露 VM steps，取消只能在两次 nextMatch 调用之间检查。
 - [ ] ATS 与原生 Tree-sitter Query 一致性测试。
 
 ### D. 独立 Regex 与窗口执行
@@ -134,6 +134,6 @@
 ## 最近一次源码提交
 
 - DSL：新增 `TshDslModel.kt`、`TshSchemaRegistry.kt`、`TshConfigRepository.kt` 与对应测试源码。
-- ATS/Tree-sitter：新增 `TshQueryApi.kt`（Grammar/ByteRange/Source/Options/CompiledQuery/SyntaxTreeSnapshot/Capture/Result/Compiler/Executor）、`TshCompiledQueryRegistry.kt` 与 `TshQueryApiTest.kt`。
+- ATS/Tree-sitter：新增 `TshQueryApi.kt`、`TshCompiledQueryRegistry.kt`、`TshQueryApiTest.kt`；新增 `TshTreeSitterQueryAdapter.kt`，基于现有 `TSQuery.create`、`TSQueryCursor.create/exec/nextMatch`、`TSQueryMatch`、`TSQueryCapture` 实现编译/执行与 Capture 映射；新增 Adapter 合约测试源码。
 - 已检查现有实现：仓库包含 `TSQuery`、`TSQueryCursor` Java 封装，以及 C++ `TshCompiler` 和 `TshGrammar.dynamic_ts_query`。下一步应在这些既有入口上做 Adapter，不创建第二套 Native Query 引擎。
-- **状态：上述 Kotlin 源码和测试源码已提交；Gradle 构建、JUnit 执行、Native lease、ATS 编译执行和设备运行均未验证。**
+- **状态：上述 Kotlin 源码和测试源码已提交；Gradle 构建、JUnit 执行、Native lease/refcount、ATS 编译执行和设备运行均未验证。Tree-sitter Query Adapter 已有真实 Native 调用代码，但尚未通过构建/运行测试。**
