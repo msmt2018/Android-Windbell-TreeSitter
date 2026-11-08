@@ -21,9 +21,121 @@
 
 #include "ts_query.h"
 
+#include <cstdint>
+#include <limits>
+#include <string>
+#include <vector>
+
 void fillQuery(JNIEnv *, jobject, uint32_t, TSQueryError);
 int query_quantifier_id(JNIEnv *env, TSQuantifier quantifier);
 jint getErrorType(TSQueryError);
+
+/** Converts Java UTF-16 code units to standard UTF-8 (not JNI Modified UTF-8). */
+static bool append_standard_utf8(JNIEnv *env, std::string &out, jstring source) {
+  const jsize length = env->GetStringLength(source);
+  const jchar *chars = env->GetStringChars(source, nullptr);
+  if (chars == nullptr) {
+    return false; // JVM exception is pending.
+  }
+
+  out.reserve(static_cast<size_t>(length) * 3);
+  for (jsize i = 0; i < length; ++i) {
+    uint32_t code_point = chars[i];
+    if (code_point >= 0xD800 && code_point <= 0xDBFF) {
+      if (i + 1 >= length || chars[i + 1] < 0xDC00 || chars[i + 1] > 0xDFFF) {
+        env->ReleaseStringChars(source, chars);
+        throw_illegal_args(env, "Query source contains an unpaired UTF-16 high surrogate");
+        return false;
+      }
+      code_point = 0x10000 + ((code_point - 0xD800) << 10) +
+                   (static_cast<uint32_t>(chars[++i]) - 0xDC00);
+    } else if (code_point >= 0xDC00 && code_point <= 0xDFFF) {
+      env->ReleaseStringChars(source, chars);
+      throw_illegal_args(env, "Query source contains an unpaired UTF-16 low surrogate");
+      return false;
+    }
+
+    if (code_point <= 0x7F) {
+      out.push_back(static_cast<char>(code_point));
+    } else if (code_point <= 0x7FF) {
+      out.push_back(static_cast<char>(0xC0 | (code_point >> 6)));
+      out.push_back(static_cast<char>(0x80 | (code_point & 0x3F)));
+    } else if (code_point <= 0xFFFF) {
+      out.push_back(static_cast<char>(0xE0 | (code_point >> 12)));
+      out.push_back(static_cast<char>(0x80 | ((code_point >> 6) & 0x3F)));
+      out.push_back(static_cast<char>(0x80 | (code_point & 0x3F)));
+    } else {
+      out.push_back(static_cast<char>(0xF0 | (code_point >> 18)));
+      out.push_back(static_cast<char>(0x80 | ((code_point >> 12) & 0x3F)));
+      out.push_back(static_cast<char>(0x80 | ((code_point >> 6) & 0x3F)));
+      out.push_back(static_cast<char>(0x80 | (code_point & 0x3F)));
+    }
+  }
+
+  env->ReleaseStringChars(source, chars);
+  return true;
+}
+
+/** Creates a Java String from standard UTF-8 bytes returned by Tree-sitter. */
+static jstring new_string_from_standard_utf8(JNIEnv *env,
+                                             const char *bytes,
+                                             uint32_t length) {
+  std::vector<jchar> utf16;
+  utf16.reserve(length);
+  uint32_t i = 0;
+  while (i < length) {
+    const uint8_t first = static_cast<uint8_t>(bytes[i]);
+    uint32_t code_point = 0xFFFD;
+    uint32_t count = 1;
+    if (first <= 0x7F) {
+      code_point = first;
+    } else if (first >= 0xC2 && first <= 0xDF && i + 1 < length) {
+      const uint8_t b1 = static_cast<uint8_t>(bytes[i + 1]);
+      if ((b1 & 0xC0) == 0x80) {
+        code_point = ((first & 0x1F) << 6) | (b1 & 0x3F);
+        count = 2;
+      }
+    } else if (first >= 0xE0 && first <= 0xEF && i + 2 < length) {
+      const uint8_t b1 = static_cast<uint8_t>(bytes[i + 1]);
+      const uint8_t b2 = static_cast<uint8_t>(bytes[i + 2]);
+      const uint32_t candidate = ((first & 0x0F) << 12) |
+                                 ((b1 & 0x3F) << 6) | (b2 & 0x3F);
+      if ((b1 & 0xC0) == 0x80 && (b2 & 0xC0) == 0x80 &&
+          candidate >= 0x800 && !(candidate >= 0xD800 && candidate <= 0xDFFF)) {
+        code_point = candidate;
+        count = 3;
+      }
+    } else if (first >= 0xF0 && first <= 0xF4 && i + 3 < length) {
+      const uint8_t b1 = static_cast<uint8_t>(bytes[i + 1]);
+      const uint8_t b2 = static_cast<uint8_t>(bytes[i + 2]);
+      const uint8_t b3 = static_cast<uint8_t>(bytes[i + 3]);
+      const uint32_t candidate = ((first & 0x07) << 18) |
+                                 ((b1 & 0x3F) << 12) |
+                                 ((b2 & 0x3F) << 6) | (b3 & 0x3F);
+      if ((b1 & 0xC0) == 0x80 && (b2 & 0xC0) == 0x80 &&
+          (b3 & 0xC0) == 0x80 && candidate >= 0x10000 &&
+          candidate <= 0x10FFFF) {
+        code_point = candidate;
+        count = 4;
+      }
+    }
+
+    i += count;
+    if (code_point <= 0xFFFF) {
+      utf16.push_back(static_cast<jchar>(code_point));
+    } else {
+      code_point -= 0x10000;
+      utf16.push_back(static_cast<jchar>(0xD800 + (code_point >> 10)));
+      utf16.push_back(static_cast<jchar>(0xDC00 + (code_point & 0x3FF)));
+    }
+  }
+
+  if (utf16.size() > static_cast<size_t>(std::numeric_limits<jsize>::max())) {
+    throw_illegal_args(env, "Tree-sitter UTF-8 string exceeds the Java String length limit");
+    return nullptr;
+  }
+  return env->NewString(utf16.data(), static_cast<jsize>(utf16.size()));
+}
 
 static jlong TSQuery_newQuery(JNIEnv *env,
                               jclass self,
@@ -31,18 +143,25 @@ static jlong TSQuery_newQuery(JNIEnv *env,
                               jlong language,
                               jstring source) {
   req_nnp(env, language);
-  const char *c_source;
-  uint32_t source_length = env->GetStringLength(source);
-  c_source = env->GetStringUTFChars(source, nullptr);
-  auto error_offset = new uint32_t;
-  auto error_type = new TSQueryError;
+  req_nnp(env, source, "Query source");
+
+  std::string source_utf8;
+  if (!append_standard_utf8(env, source_utf8, source)) {
+    return 0;
+  }
+  if (source_utf8.size() > std::numeric_limits<uint32_t>::max()) {
+    throw_illegal_args(env, "Query source exceeds Tree-sitter's byte length limit");
+    return 0;
+  }
+
+  uint32_t error_offset = 0;
+  TSQueryError error_type = TSQueryErrorNone;
   TSQuery *query = ts_query_new((TSLanguage *) language,
-                                c_source,
-                                source_length,
-                                error_offset,
-                                error_type);
-  fillQuery(env, queryObject, *error_offset, *error_type);
-  env->ReleaseStringUTFChars(source, c_source);
+                                source_utf8.data(),
+                                static_cast<uint32_t>(source_utf8.size()),
+                                &error_offset,
+                                &error_type);
+  fillQuery(env, queryObject, error_offset, error_type);
   return (jlong) query;
 }
 
@@ -125,7 +244,7 @@ TSQuery_captureNameForId(JNIEnv *env, jclass self, jlong query, jint id) {
   uint32_t count;
   const char
       *name = ts_query_capture_name_for_id((TSQuery *) query, id, &count);
-  return (jstring) env->NewStringUTF(name);
+  return new_string_from_standard_utf8(env, name, count);
 }
 
 static jstring
@@ -133,7 +252,7 @@ TSQuery_stringValueForId(JNIEnv *env, jclass self, jlong query, jint id) {
   req_nnp(env, query);
   uint32_t count;
   const char *str = ts_query_string_value_for_id((TSQuery *) query, id, &count);
-  return env->NewStringUTF(str);
+  return new_string_from_standard_utf8(env, str, count);
 }
 
 void fillQuery(JNIEnv *env,
