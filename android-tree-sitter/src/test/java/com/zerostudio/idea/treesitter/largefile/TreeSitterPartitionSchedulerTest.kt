@@ -1,8 +1,6 @@
 package com.zerostudio.idea.treesitter.largefile
 
 import com.zerostudio.idea.treesitter.TSParser
-import java.nio.ByteBuffer
-import java.nio.ByteOrder
 import com.zerostudio.idea.treesitter.java.TSLanguageJava
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
@@ -26,25 +24,7 @@ class TreeSitterPartitionSchedulerTest {
             val included = manager.treeSitterRange(
                 source, request.contextStartUtf16, request.contextEndUtf16
             )
-            // Use bounded direct segments. The JNI SegmentedTextSource reads them
-            // independently; no single direct buffer scales with the document size.
-            val segments = ArrayList<ByteBuffer>()
-            var offset = 0
-            while (offset < source.text.length) {
-                var end = minOf(source.text.length, offset + 32 * 1024)
-                if (end < source.text.length &&
-                    Character.isHighSurrogate(source.text[end - 1]) &&
-                    Character.isLowSurrogate(source.text[end])) {
-                    end--
-                }
-                val segment = ByteBuffer.allocateDirect((end - offset) * 2)
-                    .order(ByteOrder.LITTLE_ENDIAN)
-                for (index in offset until end) segment.putChar(source.text[index])
-                segment.flip()
-                segments += segment
-                offset = end
-            }
-            val tree = parser.parseBuffers(null, segments.toTypedArray(), arrayOf(included))
+            val tree = parser.parseWindowed(null, source.text, arrayOf(included))
             latch.countDown()
             tree
         }
@@ -57,4 +37,13 @@ class TreeSitterPartitionSchedulerTest {
         scheduler.close()
         parser.close()
     }
+    @Test fun windowedCallbackKeepsUtf16SurrogatePairsInsideChunkBoundaries() {
+        val text = "aaaaa😀b"
+        val callback = CharSequenceParseWindowCallback(text)
+        val first = callback.read(0L, 12)
+        assertEquals("aaaaa", String(first, Charsets.UTF_16LE))
+        val second = callback.read(first.size.toLong(), 12)
+        assertEquals("😀b", String(second, Charsets.UTF_16LE))
+    }
+
 }

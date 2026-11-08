@@ -123,6 +123,73 @@ struct TSParserInput {
   const windbell::largefile::TextSource *source;
 };
 
+class CallbackTextSource final : public windbell::largefile::TextSource {
+public:
+  CallbackTextSource(JNIEnv *env, jobject callback, jmethodID readMethod,
+                     uint64_t sizeBytes) noexcept
+      : env_(env), callback_(callback), read_method_(readMethod), size_bytes_(sizeBytes) {}
+
+  uint64_t sizeBytes() const noexcept override { return size_bytes_; }
+
+  bool failed() const noexcept { return failed_; }
+
+  bool read(uint64_t offset, uint32_t maxBytes,
+            windbell::largefile::TextChunkView *out) const noexcept override {
+    if (out == nullptr) return false;
+    out->data = nullptr;
+    out->size = 0;
+    if (offset == size_bytes_) return true;
+    if (offset > size_bytes_ || (offset & 1u) != 0 || maxBytes < 2u) {
+      failed_ = true;
+      return false;
+    }
+
+    jbyteArray bytes = reinterpret_cast<jbyteArray>(env_->CallObjectMethod(
+        callback_, read_method_, static_cast<jlong>(offset), static_cast<jint>(maxBytes)));
+    if (env_->ExceptionCheck() || bytes == nullptr) {
+      if (bytes != nullptr) env_->DeleteLocalRef(bytes);
+      failed_ = true;
+      return false;
+    }
+
+    const jsize length = env_->GetArrayLength(bytes);
+    if (length <= 0 || (length & 1) != 0 ||
+        static_cast<uint32_t>(length) > maxBytes ||
+        static_cast<uint64_t>(length) > size_bytes_ - offset) {
+      env_->DeleteLocalRef(bytes);
+      failed_ = true;
+      return false;
+    }
+
+    try {
+      buffer_.resize(static_cast<size_t>(length));
+    } catch (...) {
+      env_->DeleteLocalRef(bytes);
+      failed_ = true;
+      return false;
+    }
+    env_->GetByteArrayRegion(bytes, 0, length,
+                             reinterpret_cast<jbyte *>(buffer_.data()));
+    env_->DeleteLocalRef(bytes);
+    if (env_->ExceptionCheck()) {
+      failed_ = true;
+      return false;
+    }
+
+    out->data = buffer_.data();
+    out->size = static_cast<uint32_t>(length);
+    return true;
+  }
+
+private:
+  JNIEnv *env_;
+  jobject callback_;
+  jmethodID read_method_;
+  uint64_t size_bytes_;
+  mutable std::vector<char> buffer_;
+  mutable bool failed_ = false;
+};
+
 static const char *TSParser_readInput(
     void *payload,
     uint32_t byte_index,
@@ -406,6 +473,67 @@ static jlong TSParser_parseBuffers(
       ts_parser_parse_with_options(ts_parser, old_tree, input, options));
 }
 
+static jlong TSParser_parseWindowed(
+    JNIEnv *env,
+    jclass clazz,
+    jlong parser,
+    jlong tree_pointer,
+    jobject callback,
+    jlong byte_length) {
+  req_nnp(env, parser, "parser");
+  req_nnp(env, callback, "window callback");
+  if (byte_length < 0 ||
+      static_cast<uint64_t>(byte_length) > UINT32_MAX ||
+      (byte_length & 1LL) != 0) {
+    throw_illegal_args(env,
+        "Windowed UTF-16LE input length must be even and fit Tree-sitter's 32-bit byte offsets");
+    return 0;
+  }
+
+  auto *parser_internal = reinterpret_cast<TSParserInternal *>(parser);
+  TSParser *ts_parser = parser_internal->getParser(env);
+  if (ts_parser == nullptr || env->ExceptionCheck()) return 0;
+
+  jclass callback_class = env->GetObjectClass(callback);
+  if (callback_class == nullptr) return 0;
+  jmethodID read_method = env->GetMethodID(callback_class, "read", "(JI)[B");
+  env->DeleteLocalRef(callback_class);
+  if (read_method == nullptr || env->ExceptionCheck()) return 0;
+
+  if (!parser_internal->beginRound(env)) return 0;
+  struct ParseRoundGuard {
+    TSParserInternal *parser;
+    ~ParseRoundGuard() { if (parser) parser->endRound(); }
+  } roundGuard{parser_internal};
+
+  CallbackTextSource source(
+      env, callback, read_method, static_cast<uint64_t>(byte_length));
+  TSParserInput inputPayload{&source};
+  TSInput input{
+      &inputPayload,
+      TSParser_readInput,
+      TSInputEncodingUTF16LE,
+      nullptr,
+  };
+  TSParseOptions options{
+      parser_internal,
+      TSParser_progressCallback,
+  };
+
+  TSTree *old_tree = tree_pointer == 0 ? nullptr : reinterpret_cast<TSTree *>(tree_pointer);
+  parser_internal->markParseStart();
+  TSTree *tree = ts_parser_parse_with_options(ts_parser, old_tree, input, options);
+  if (env->ExceptionCheck() || source.failed()) {
+    if (tree != nullptr) ts_tree_delete(tree);
+    if (!env->ExceptionCheck()) {
+      throw_illegal_state(env,
+          "Window callback returned an invalid or incomplete UTF-16LE chunk");
+    }
+    return 0;
+  }
+  return reinterpret_cast<jlong>(tree);
+}
+
 static jboolean
 TSParser_requestCancellation(
     JNIEnv *env,
@@ -432,6 +560,7 @@ void TSParser_Native__SetJniMethods(JNINativeMethod *methods, int count) {
   SET_JNI_METHOD(methods, TSParser_Native_getIncludedRanges, TSParser_getIncludedRanges);
   SET_JNI_METHOD(methods, TSParser_Native_parse, TSParser_parse);
   SET_JNI_METHOD(methods, TSParser_Native_parseBuffers, TSParser_parseBuffers);
+  SET_JNI_METHOD(methods, TSParser_Native_parseWindowed, TSParser_parseWindowed);
   SET_JNI_METHOD(methods, TSParser_Native_requestCancellation,
                  TSParser_requestCancellation);
 }
