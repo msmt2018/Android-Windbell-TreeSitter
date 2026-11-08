@@ -14,8 +14,6 @@ static void testChunkedStoreReadsAcrossBoundaries() {
     std::string first(64u * 1024u, 'a');
     std::string second(17u * 1024u, 'b');
     assert(store.append(first.data(), first.size()));
-    // The unused tail of the first allocated chunk remains usable even when
-    // the allocation budget is fully committed.
     assert(store.append(second.data(), second.size()));
     assert(store.sizeBytes() == first.size() + second.size());
     assert(store.allocatedBytes() == 2u * 64u * 1024u);
@@ -33,9 +31,24 @@ static void testChunkedStoreReadsAcrossBoundaries() {
     assert(!store.append("x", 1));
 }
 
+static void testChunkedStoreReusesAllocatedTail() {
+    ChunkedTextStore store(64u * 1024u, 64u * 1024u);
+    const std::string first(32u * 1024u, 'a');
+    const std::string second(32u * 1024u, 'b');
+    assert(store.append(first.data(), first.size()));
+    assert(store.append(second.data(), second.size()));
+    assert(store.allocatedBytes() == 64u * 1024u);
+    assert(store.sizeBytes() == 64u * 1024u);
+    store.seal();
+
+    TextChunkView view{};
+    assert(store.read(32u * 1024u, 1024, &view));
+    assert(view.data[0] == 'b');
+}
+
 static void testChunkedStoreHonorsMemoryBudget() {
     ChunkedTextStore store(64u * 1024u, 64u * 1024u);
-    const std::string data(64u * 1024u + 1, 'x');
+    const std::string data(64u * 1024u + 2, 'x');
     assert(!store.append(data.data(), data.size()));
     // The failed append may have filled its first chunk; size remains a valid
     // prefix and the store is intentionally discarded by the caller.
@@ -73,6 +86,7 @@ static void testMappedFileSource() {
 
 int main() {
     testChunkedStoreReadsAcrossBoundaries();
+    testChunkedStoreReusesAllocatedTail();
     testChunkedStoreHonorsMemoryBudget();
     testMappedFileSource();
     return 0;
