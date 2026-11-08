@@ -32,7 +32,7 @@
 - 新增 `TshNativeResourceRegistry` 协调对象索引与 Native 资源所有权：统一注册、按 Native 类型及实例身份校验的 Lease 获取、先退役后注销对象索引、仅退役本协调器所有资源的作用域化 retireAll；新增注册/获取/退役/批量退役生命周期测试源码。
 - 修正 Native Resource Registry 锁边界：在协调锁内先撤销资源的公开获取资格并移除对象索引，之后在锁外调用 Lease Store retire，避免 Native close 回调在协调器锁内运行；新增永久 close 状态与对应测试源码。
 - `TshNativeQueryLeaseStore` 新增 `registerDeferred` / `retireDeferred`，允许 Query catalog 在事务锁内原子切换 revision/标记退役，并将旧 Query 与其 Language 依赖 Lease 的实际 close action 延后到锁外执行；新增 deferred close 测试源码。
-- `TshEngine` 新增自有 Native Resource Lease Store/Registry；`TshEngine.close()` 关闭该 Registry 并退役其拥有的 Native 资源，然后清理 Provider/Object 索引。
+- `TshEngine` 新增自有 Native Resource Lease Store/Registry；`TshEngine.close()` 关闭该 Registry 并退役其拥有的 Native 资源，然后清理 Provider/Object 索引；新增 Engine close/活动 Lease 延迟释放/关闭后拒绝注册测试源码。
 - `TshTreeSitterQueryCompiler` / `TshTreeSitterQueryExecutor` 新增可选协调 Registry 注入；启用后 Language/Tree Lease 获取经统一入口完成，旧 Store 直连构造仍保留作为兼容迁移路径，Lease Store 构造参数提供默认值以兼容既有短参数列表。宿主生产装配尚未全面迁移。
 
 ### Planned
