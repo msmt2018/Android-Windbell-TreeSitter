@@ -29,3 +29,16 @@
 文档写了语法，不等于 Parser 接受；Parser 接受，不等于 Schema/TypeChecker 正确；Compiler 生成对象，不等于运行时管线消费；Resolver 算出颜色/字体，不等于应用层绘制；RenderPlan 生成，不等于 Backend 已提交；Backend 提交，不等于真实控件正确呈现。
 
 每个矩阵单元必须单独维护实现与验证状态。当前本矩阵是验收规范，不是实现报告。
+
+
+## 七组 API 文档映射
+
+1. DSL 类型系统与 Schema：`dsl-type-system-and-schema-api.md`。
+2. ATS/Tree-sitter 查询：`ats-tree-sitter-query-api.md`。
+3. Regex 连续窗口与增量：`regex-window-execution-api.md`。
+4. 统一 Match/Scope/Selector：`unified-match-scope-api.md`。
+5. Attribute/Semantic/Highlight：`attribute-semantic-highlight-api.md`。
+6. Theme/Style/Font/Color/Render：`theme-style-render-contract-api.md`。
+7. Kotlin/JNI/C++ 同步：`native-jni-cpp-completeness-api.md`。
+
+对每项能力，发布状态需分别记录：DSL 语法、Parser、Schema、Compiler lowering、Runtime consumer、Native bridge、Render consumer、单元测试、集成测试、设备验证。任一环节缺失都不能标为完整支持。
