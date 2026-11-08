@@ -88,6 +88,12 @@ class TshSyntaxHighlighter(
 
     override fun onAttached(host: SyntaxHighlighter.Host) {
         this.host = host
+        // A native grammar can outlive the UI object that originally loaded it.
+        // Restore its active scheme palette before either the small- or large-file
+        // renderer starts applying capture IDs to Android spans.
+        if (!engine.ensurePalette(extension)) {
+            Log.w(TAG, "No active TSH color palette available for extension=.$extension")
+        }
         Log.i(TAG, "Attached to EditorView: extension=.$extension textLength=${host.buffer.length}")
         scheduleParse(host.buffer)
     }
