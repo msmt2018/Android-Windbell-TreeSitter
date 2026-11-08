@@ -106,7 +106,8 @@ std::shared_ptr<PieceTreeSource::Node> PieceTreeSource::cloneShallow(
         copy->right = node->right;
         return copy;
     } catch (...) {
-        delete raw;
+        // shared_ptr's raw-pointer constructor deletes raw if control-block
+        // allocation fails; deleting it again here would double-free.
         return nullptr;
     }
 }
@@ -151,7 +152,8 @@ std::shared_ptr<PieceTreeSource::Node> PieceTreeSource::makeNode(
     try {
         return std::shared_ptr<Node>(raw);
     } catch (...) {
-        delete raw;
+        // shared_ptr's raw-pointer constructor deletes raw if control-block
+        // allocation fails; deleting it again here would double-free.
         return nullptr;
     }
 }
