@@ -87,7 +87,7 @@ static void testMappedFileSource() {
     char path[] = "/tmp/windbell-largefile-XXXXXX";
     const int fd = ::mkstemp(path);
     assert(fd >= 0);
-    const std::string expected(128u * 1024u + 37u, 'z');
+    const std::string expected(128u * 1024u + 36u, 'z');
     size_t written = 0;
     while (written < expected.size()) {
         const ssize_t n = ::write(fd, expected.data() + written, expected.size() - written);
@@ -103,7 +103,7 @@ static void testMappedFileSource() {
     assert(source.sizeBytes() == expected.size());
 
     TextChunkView view{};
-    assert(source.read(64u * 1024u + 5u, 1024, &view));
+    assert(source.read(64u * 1024u + 4u, 1024, &view));
     assert(view.size == 1024);
     assert(std::memcmp(view.data, expected.data() + 64u * 1024u + 5u, 1024) == 0);
 
