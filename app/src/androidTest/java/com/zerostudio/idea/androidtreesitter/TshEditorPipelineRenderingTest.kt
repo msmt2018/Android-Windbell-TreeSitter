@@ -361,6 +361,39 @@ class TshEditorPipelineRenderingTest {
     }
 
     @Test
+    fun childStyleCanExplicitlyDisableInheritedFontAttributes() {
+        val engine = WindbellTshEngine.instance
+        val dsl = """
+            tsh 2 {
+                language { id: "font-override-regression" extensions: [".for"] }
+                styles {
+                    base { scope: "entity.name" }
+                    child { scope: "entity.name.type" parent: "base" }
+                }
+                schemes {
+                    plain {
+                        light [ base: #FF0000 @bold @italic @underline, child: #0000FF @no-bold @no-underline ]
+                        dark [ base: #AA0000 @bold @italic @underline, child: #0000AA @no-bold @no-underline ]
+                    }
+                }
+                defaultScheme: "plain"
+            }
+        """.trimIndent()
+        assertTrue(
+            "Explicit font override DSL must compile: ${engine.lastCompileDiagnostics}",
+            engine.loadTshSource("font-override-regression", dsl, null)
+        )
+        val child = engine.getStylePalette("font-override-regression", "child")
+        assertNotNull("Child palette must exist", child)
+        assertEquals("Child bold must be explicitly disabled", 0, child!!.lightFontFlags and 0x01)
+        assertEquals("Parent italic must still be inherited", 0x02, child.lightFontFlags and 0x02)
+        assertEquals("Child underline must be explicitly disabled", 0, child.lightFontFlags and 0x04)
+        assertEquals("Dark child bold must be explicitly disabled", 0, child.darkFontFlags and 0x01)
+        assertEquals("Dark parent italic must still be inherited", 0x02, child.darkFontFlags and 0x02)
+        assertEquals("Dark child underline must be explicitly disabled", 0, child.darkFontFlags and 0x04)
+    }
+
+    @Test
     fun javaAstSymbolColorReachesEditorCanvas() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         TreeSitter.loadLibrary()
