@@ -18,6 +18,7 @@
 #include "tsh/WindbellTshCompiler.h"
 #include "largefile/MappedFileSource.h"
 #include <cerrno>
+#include <cstdlib>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -744,6 +745,174 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlight(
         span_index += count;
     }
     return result;
+}
+
+
+
+/**
+ * Native-owned file-backed UTF-16LE document session. Source acquisition,
+ * parsing and TSH execution are performed by this JNI engine; the callback
+ * only returns bounded byte windows.
+ */
+JNIEXPORT jlong JNICALL
+Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeCreateDocument(
+    JNIEnv *env, jobject, jobject reader, jlong byte_length,
+    jstring temporary_directory, jlong language_pointer, jstring extension_jstr
+) {
+    if (!reader || !temporary_directory || !extension_jstr || language_pointer == 0) {
+        throw_npe(env, "Native document source, directory, extension and language are required");
+        return 0;
+    }
+    if (byte_length < 0 || static_cast<uint64_t>(byte_length) > UINT32_MAX ||
+        (byte_length & 1LL) != 0) {
+        throw_illegal_args(env, "Native TSH input must be even UTF-16LE bytes within Tree-sitter's 32-bit offset range");
+        return 0;
+    }
+    const char *dir_chars = env->GetStringUTFChars(temporary_directory, nullptr);
+    const char *ext_chars = env->GetStringUTFChars(extension_jstr, nullptr);
+    if (!dir_chars || !ext_chars) {
+        if (dir_chars) env->ReleaseStringUTFChars(temporary_directory, dir_chars);
+        if (ext_chars) env->ReleaseStringUTFChars(extension_jstr, ext_chars);
+        return 0;
+    }
+    const std::string directory(dir_chars), extension(ext_chars);
+    env->ReleaseStringUTFChars(temporary_directory, dir_chars);
+    env->ReleaseStringUTFChars(extension_jstr, ext_chars);
+    if (directory.empty()) {
+        throw_illegal_args(env, "A writable application cache directory is required");
+        return 0;
+    }
+    jclass reader_class = env->GetObjectClass(reader);
+    if (!reader_class) return 0;
+    jmethodID read_method = env->GetMethodID(reader_class, "read", "(JI)[B");
+    env->DeleteLocalRef(reader_class);
+    if (!read_method || env->ExceptionCheck()) return 0;
+
+    std::string pattern = directory;
+    if (pattern.back() != '/') pattern.push_back('/');
+    pattern += ".windbell-tsh-XXXXXX";
+    std::vector<char> path(pattern.begin(), pattern.end());
+    path.push_back('\0');
+    const int fd = ::mkstemp(path.data());
+    if (fd < 0) {
+        throw_illegal_state(env, "Cannot create native document backing file");
+        return 0;
+    }
+    const std::string backing_path(path.data());
+    bool ok = ::ftruncate(fd, static_cast<off_t>(byte_length)) == 0;
+    uint64_t offset = 0;
+    while (ok && offset < static_cast<uint64_t>(byte_length)) {
+        const jint requested = static_cast<jint>(std::min<uint64_t>(
+            windbell::largefile::kTreeSitterInputChunkBytes,
+            static_cast<uint64_t>(byte_length) - offset));
+        auto bytes = reinterpret_cast<jbyteArray>(env->CallObjectMethod(
+            reader, read_method, static_cast<jlong>(offset), requested));
+        if (env->ExceptionCheck() || !bytes) {
+            if (bytes) env->DeleteLocalRef(bytes);
+            ok = false;
+            break;
+        }
+        const jsize count = env->GetArrayLength(bytes);
+        if (count <= 0 || (count & 1) || count > requested ||
+            static_cast<uint64_t>(count) > static_cast<uint64_t>(byte_length) - offset) {
+            env->DeleteLocalRef(bytes);
+            ok = false;
+            break;
+        }
+        std::vector<jbyte> window(static_cast<size_t>(count));
+        env->GetByteArrayRegion(bytes, 0, count, window.data());
+        env->DeleteLocalRef(bytes);
+        if (env->ExceptionCheck() ||
+            !writeAllAt(fd, reinterpret_cast<const uint8_t *>(window.data()),
+                        window.size(), offset)) {
+            ok = false;
+            break;
+        }
+        offset += static_cast<uint64_t>(count);
+    }
+    ::close(fd);
+    if (!ok || offset != static_cast<uint64_t>(byte_length)) {
+        ::unlink(backing_path.c_str());
+        if (!env->ExceptionCheck()) {
+            throw_illegal_state(env, "Native source callback returned an invalid or incomplete UTF-16LE window");
+        }
+        return 0;
+    }
+
+    auto document = std::make_unique<NativeTshDocument>();
+    document->source = std::make_unique<windbell::largefile::MappedFileSource>();
+    if (!document->source->open(backing_path)) {
+        ::unlink(backing_path.c_str());
+        throw_illegal_state(env, "Unable to memory-map native document source");
+        return 0;
+    }
+    ::unlink(backing_path.c_str());
+    document->extension = extension;
+    document->length_chars = static_cast<uint32_t>(static_cast<uint64_t>(byte_length) / 2u);
+    document->parser = ts_parser_new();
+    if (!document->parser || !ts_parser_set_language(
+            document->parser, reinterpret_cast<const TSLanguage *>(language_pointer))) {
+        throw_illegal_state(env, "Unable to initialize Tree-sitter for native document");
+        return 0;
+    }
+    NativeDocumentInput payload{document->source.get()};
+    TSInput input{&payload, nativeDocumentRead, TSInputEncodingUTF16LE, nullptr};
+    document->tree = ts_parser_parse(document->parser, nullptr, input);
+    if (!document->tree) {
+        throw_illegal_state(env, "Tree-sitter failed to parse native document");
+        return 0;
+    }
+    return reinterpret_cast<jlong>(document.release());
+}
+
+JNIEXPORT jintArray JNICALL
+Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocument(
+    JNIEnv *env, jobject, jlong document_pointer, jboolean diagnostics,
+    jlong range_start_byte, jlong range_end_byte
+) {
+    auto *document = reinterpret_cast<NativeTshDocument *>(document_pointer);
+    if (!document) {
+        throw_npe(env, "Native document handle cannot be null");
+        return nullptr;
+    }
+    std::lock_guard<std::mutex> lock(document->mutex);
+    const uint64_t total_bytes = document->source->sizeBytes();
+    if (range_start_byte < 0 || range_end_byte < 0 ||
+        static_cast<uint64_t>(range_start_byte) > total_bytes ||
+        static_cast<uint64_t>(range_end_byte) > total_bytes ||
+        (range_start_byte & 1LL) || (range_end_byte & 1LL) ||
+        range_start_byte > range_end_byte) {
+        throw_illegal_args(env, "Native TSH range must be ordered UTF-16LE byte offsets");
+        return nullptr;
+    }
+    windbell::largefile::TextChunkView view{};
+    const uint16_t *input = nullptr;
+    if (total_bytes != 0) {
+        if (!document->source->read(0, UINT32_MAX, &view) ||
+            !view.data || view.size != total_bytes) {
+            throw_illegal_state(env, "Mapped native document cannot expose its contiguous source view");
+            return nullptr;
+        }
+        input = reinterpret_cast<const uint16_t *>(view.data);
+    }
+    std::vector<HighlightSpan> candidates;
+    uint32_t counts[4] = {};
+    auto spans = WindbellEngine::getInstance().highlightHybrid(
+        ts_tree_language(document->tree), document->tree, input,
+        document->length_chars, document->extension,
+        diagnostics == JNI_TRUE ? &candidates : nullptr,
+        diagnostics == JNI_TRUE ? counts : nullptr,
+        static_cast<uint32_t>(range_start_byte),
+        static_cast<uint32_t>(range_end_byte));
+    if (diagnostics == JNI_TRUE) spans = std::move(candidates);
+    return encodeNativeHighlightResult(env, spans, counts, diagnostics == JNI_TRUE);
+}
+
+JNIEXPORT void JNICALL
+Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeCloseDocument(
+    JNIEnv *, jobject, jlong document_pointer
+) {
+    delete reinterpret_cast<NativeTshDocument *>(document_pointer);
 }
 
 } // extern "C"

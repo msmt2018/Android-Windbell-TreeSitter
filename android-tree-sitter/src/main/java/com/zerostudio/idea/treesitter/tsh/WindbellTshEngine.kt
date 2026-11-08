@@ -14,12 +14,12 @@ import com.zerostudio.idea.treesitter.TSTree
 import dalvik.annotation.optimization.FastNative
 import java.util.concurrent.ConcurrentHashMap
 import java.io.File
+import com.zerostudio.idea.treesitter.TreeSitter
 
 /** Supplies bounded UTF-16LE windows to the native document engine. */
 fun interface NativeTextWindowReader {
     fun read(byteOffset: Long, maxBytes: Int): ByteArray
 }
-import com.zerostudio.idea.treesitter.TreeSitter
 /**
  * Windbell Treesitter Highlighting Configuration Engine (Windbell-TSH)
  * Provides the dual-backend highlighting bridge and DSL-backed style rendering.
