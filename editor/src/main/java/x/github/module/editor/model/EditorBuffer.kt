@@ -93,6 +93,14 @@ interface EditorBuffer {
     /** The whole text. */
     fun getText(): String
 
+    /**
+     * Creates an immutable, versioned view for background consumers such as
+     * syntax parsers. Piece-tree buffers override this without flattening the
+     * document; simple/custom buffers retain a compatible String-backed default.
+     * The returned snapshot is safe to read while subsequent edits are applied.
+     */
+    fun createTextSnapshot(): EditorTextSnapshot = StringEditorTextSnapshot(getText())
+
     /** The matches of [regex] in [searchRange], in document order. */
     fun find(
         regex: Regex,
@@ -167,3 +175,28 @@ interface EditorBuffer {
 
 // offset and length in one key
 private fun spanKey(offset: Int, length: Int): Long = (offset.toLong() shl 32) or (length.toLong() and 0xFFFFFFFFL)
+
+/** Immutable UTF-16 document snapshot with bounded sequential reads. */
+interface EditorTextSnapshot : CharSequence {
+    /** Monotonically increasing source version where available. */
+    val version: Long
+
+    /** Returns a bounded chunk beginning at the requested UTF-16 offset. */
+    fun getNearestChunk(offset: Int, maxLength: Int = 64 * 1024): String
+
+    /** Copies only the requested range. */
+    fun substring(startIndex: Int, endIndex: Int = length): String
+}
+
+private class StringEditorTextSnapshot(private val text: String) : EditorTextSnapshot {
+    override val length: Int get() = text.length
+    override val version: Long = 0L
+    override fun get(index: Int): Char = text[index]
+    override fun subSequence(startIndex: Int, endIndex: Int): CharSequence = text.subSequence(startIndex, endIndex)
+    override fun substring(startIndex: Int, endIndex: Int): String = text.substring(startIndex, endIndex)
+    override fun getNearestChunk(offset: Int, maxLength: Int): String {
+        require(offset >= 0) { "offset must be non-negative" }
+        if (offset >= length) return ""
+        return text.substring(offset, minOf(length, offset + maxLength.coerceAtLeast(1)))
+    }
+}
