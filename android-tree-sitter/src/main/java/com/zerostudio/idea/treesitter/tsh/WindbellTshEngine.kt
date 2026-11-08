@@ -538,6 +538,13 @@ class WindbellTshEngine private constructor() {
         }
     }
 
+    /**
+     * Computes captures intersecting a UTF-16LE byte range. Native Tree-sitter
+     * queries are range-restricted; regex and Monarch retain document-start
+     * context to preserve multiline matching and tokenizer state, then their
+     * emitted spans are clipped to this range. This bounds returned results,
+     * but is not yet a fully windowed regex/Monarch execution path.
+     */
     fun computeHighlights(
         tree: TSTree?,
         text: String,
