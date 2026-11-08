@@ -324,26 +324,20 @@ public class TSQueryCursor extends TSNativeObject implements Iterable<TSQueryMat
     static native void execWithOptions(
       long cursor, long query, TSNode node, ProgressCallback callback);
 
-    @FastNative
     static native boolean exceededMatchLimit(long cursor);
 
-    @FastNative
     static native void setMatchLimit(long cursor, int newLimit);
 
-    @FastNative
     static native int getMatchLimit(long cursor);
 
-    @FastNative
     static native void setByteRange(long cursor, int start, int end);
 
-    @FastNative
     static native void setPointRange(long cursor, TSPoint start, TSPoint end);
 
     // This method must not use FastNative: Tree-sitter may call the Java
     // progress callback while nextMatch is executing.
     static native TSQueryMatch nextMatch(long cursor);
 
-    @FastNative
     static native void removeMatch(long cursor, int id);
   }
 }
