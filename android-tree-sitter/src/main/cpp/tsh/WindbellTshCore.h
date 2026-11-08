@@ -23,7 +23,7 @@ namespace windbell::tsh {
 
 enum class HighlightSource : uint8_t {
     ONIG_REGEX = 0,
-    MONARCH = 1,
+    REGEX_STATE = 1,
     AST_SELECTOR = 2,
     NATIVE_QUERY = 3,
     UNKNOWN = 255
@@ -74,14 +74,14 @@ struct CompiledRegexRule {
     uint32_t regex_options = 0;
 };
 
-struct MonarchCase {
+struct RegexStateCase {
     regex_t* matcher = nullptr;
     uint16_t style_id = 0;
     std::string token_name;
     bool is_default = false;
 };
 
-struct MonarchRule {
+struct RegexStateRule {
     regex_t* pattern = nullptr;
     uint16_t style_id = 0;
     std::string token_name;
@@ -90,7 +90,7 @@ struct MonarchRule {
     std::string next_state;
     std::string push_state;
     std::string switch_state;
-    std::vector<MonarchCase> cases;
+    std::vector<RegexStateCase> cases;
     bool pop = false;
     bool rematch = false;
     bool enabled = true;
@@ -262,13 +262,13 @@ public:
     uint32_t default_regex_options = ONIG_OPTION_DEFAULT;
 
     std::vector<CompiledRegexRule> regex_rules;
-    std::unordered_map<std::string, std::vector<MonarchRule>> monarch_states;
-    std::unordered_map<std::string, std::string> monarch_variables;
-    std::string monarch_token_postfix;
-    std::string monarch_start_state = "root";
-    uint16_t monarch_default_style_id = 0;
-    std::string monarch_default_style_name;
-    bool monarch_has_default_style = false;
+    std::unordered_map<std::string, std::vector<RegexStateRule>> regex_states;
+    std::unordered_map<std::string, std::string> regex_variables;
+    std::string regex_token_postfix;
+    std::string regex_start_state = "root";
+    uint16_t regex_default_style_id = 0;
+    std::string regex_default_style_name;
+    bool regex_has_default_style = false;
     std::vector<AstSelectorRule> ast_selector_rules;
     // Immutable dispatch tables built once at compile time. Field selectors
     // are indexed by their owner symbol; ordinary selectors by target symbol.
@@ -280,7 +280,7 @@ public:
     ~TshGrammar();
 };
 
-struct MonarchStateCheckpoint {
+struct RegexStateCheckpoint {
     uint64_t byte_offset = 0;
     uint64_t source_version = 0;
     uint64_t partition_version = 0;
@@ -309,7 +309,7 @@ public:
         uint32_t range_start_byte = 0,
         uint32_t range_end_byte = UINT32_MAX,
         const windbell::largefile::TextSource* text_source = nullptr,
-        std::vector<MonarchStateCheckpoint>* monarch_checkpoints = nullptr,
+        std::vector<RegexStateCheckpoint>* regex_state_checkpoints = nullptr,
         uint64_t source_version = 0,
         uint64_t partition_version = 0
     );

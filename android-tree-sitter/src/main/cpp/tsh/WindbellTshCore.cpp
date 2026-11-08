@@ -293,7 +293,7 @@ TshGrammar::~TshGrammar() {
         }
     };
     for (auto& rule : regex_rules) release_rule(rule);
-    for (auto& state : monarch_states) {
+    for (auto& state : regex_states) {
         for (auto& rule : state.second) {
             if (rule.pattern) {
                 onig_free(rule.pattern);
@@ -549,7 +549,7 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
     uint32_t range_start_byte,
     uint32_t range_end_byte,
     const windbell::largefile::TextSource* text_source,
-    std::vector<MonarchStateCheckpoint>* monarch_checkpoints,
+    std::vector<RegexStateCheckpoint>* regex_state_checkpoints,
     uint64_t source_version,
     uint64_t partition_version
 ) {
@@ -696,20 +696,19 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
     for (auto& span : micro_spans) {
         span.source = static_cast<uint8_t>(HighlightSource::ONIG_REGEX);
     }
-    const size_t monarch_span_begin = micro_spans.size();
+    const size_t regex_state_span_begin = micro_spans.size();
 
-    // Monarch stateful tokenizer. It runs on the same UTF-16 buffer as
-    // Oniguruma rules and emits the same span ABI, so the Android renderer does
-    // not need a second token model.
-    if (input_chars && !grammar->monarch_states.empty()) {
-        std::vector<std::string> state_stack{grammar->monarch_start_state};
+    // Stateful Regex rules run inside the same Regex pipeline and emit the same
+    // capture ABI as ordinary Regex rules; there is no separate token model.
+    if (input_chars && !grammar->regex_states.empty()) {
+        std::vector<std::string> state_stack{grammar->regex_start_state};
         uint32_t position = 0;
         uint64_t next_checkpoint = 64u * 1024u;
         // Checkpoints are reusable only for the exact immutable source and
         // partition snapshots from which their tokenizer state was produced.
-        if (monarch_checkpoints) {
-            const MonarchStateCheckpoint* nearest = nullptr;
-            for (const auto& checkpoint : *monarch_checkpoints) {
+        if (regex_state_checkpoints) {
+            const RegexStateCheckpoint* nearest = nullptr;
+            for (const auto& checkpoint : *regex_state_checkpoints) {
                 if (checkpoint.source_version != source_version ||
                     checkpoint.partition_version != partition_version ||
                     checkpoint.byte_offset > range_start_byte ||
@@ -724,7 +723,7 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                 // An edit shifts old suffix checkpoints by its byte delta, so
                 // their offsets need not remain aligned to the fixed stride.
                 // Visit the nearest stale candidate exactly to test convergence.
-                for (const auto& checkpoint : *monarch_checkpoints) {
+                for (const auto& checkpoint : *regex_state_checkpoints) {
                     if (checkpoint.source_version != source_version &&
                         checkpoint.byte_offset > position) {
                         next_checkpoint = std::min(next_checkpoint, checkpoint.byte_offset);
@@ -733,27 +732,27 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
             } else {
                 // A stale checkpoint set cannot be mixed with the current
                 // source version. Drop it before producing replacement entries.
-                monarch_checkpoints->clear();
+                regex_state_checkpoints->clear();
             }
         }
-        auto save_monarch_checkpoint = [&]() {
-            if (!monarch_checkpoints || position < next_checkpoint) return;
-            MonarchStateCheckpoint checkpoint;
+        auto save_regex_state_checkpoint = [&]() {
+            if (!regex_state_checkpoints || position < next_checkpoint) return;
+            RegexStateCheckpoint checkpoint;
             checkpoint.byte_offset = position;
             checkpoint.source_version = source_version;
             checkpoint.partition_version = partition_version;
             checkpoint.state_stack = state_stack;
             bool converged = false;
             auto stale = std::find_if(
-                monarch_checkpoints->begin(), monarch_checkpoints->end(),
-                [&](const MonarchStateCheckpoint& candidate) {
+                regex_state_checkpoints->begin(), regex_state_checkpoints->end(),
+                [&](const RegexStateCheckpoint& candidate) {
                     return candidate.source_version != source_version &&
                         candidate.byte_offset == position;
                 });
-            if (stale != monarch_checkpoints->end()) {
+            if (stale != regex_state_checkpoints->end()) {
                 if (stale->state_stack == state_stack) {
                     const uint64_t stale_version = stale->source_version;
-                    for (auto& candidate : *monarch_checkpoints) {
+                    for (auto& candidate : *regex_state_checkpoints) {
                         if (candidate.source_version == stale_version &&
                             candidate.byte_offset >= position) {
                             candidate.source_version = source_version;
@@ -765,31 +764,31 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                     // The edit changed lexical state at this checkpoint. Keep
                     // later candidates: a subsequent checkpoint may still be
                     // the first point where the tokenizer state converges.
-                    monarch_checkpoints->erase(stale);
+                    regex_state_checkpoints->erase(stale);
                 }
             }
-            if (!converged && (monarch_checkpoints->empty() ||
-                monarch_checkpoints->back().byte_offset < position)) {
-                monarch_checkpoints->push_back(std::move(checkpoint));
+            if (!converged && (regex_state_checkpoints->empty() ||
+                regex_state_checkpoints->back().byte_offset < position)) {
+                regex_state_checkpoints->push_back(std::move(checkpoint));
             }
             // Bound persistent tokenizer metadata independently from the
             // source size. 8192 checkpoints cover 512 MiB at 64 KiB spacing.
-            constexpr size_t kMaxMonarchCheckpoints = 8192;
-            if (monarch_checkpoints->size() > kMaxMonarchCheckpoints) {
-                monarch_checkpoints->erase(
-                    monarch_checkpoints->begin(),
-                    monarch_checkpoints->begin() +
-                        (monarch_checkpoints->size() - kMaxMonarchCheckpoints));
+            constexpr size_t kMaxRegexStateCheckpoints = 8192;
+            if (regex_state_checkpoints->size() > kMaxRegexStateCheckpoints) {
+                regex_state_checkpoints->erase(
+                    regex_state_checkpoints->begin(),
+                    regex_state_checkpoints->begin() +
+                        (regex_state_checkpoints->size() - kMaxRegexStateCheckpoints));
             }
             next_checkpoint =
                 ((static_cast<uint64_t>(position) / (64u * 1024u)) + 1u) *
                 (64u * 1024u);
         };
-        OnigRegion* monarch_region = onig_region_new();
-        OnigRegion* monarch_case_region = onig_region_new();
-        if (!monarch_region || !monarch_case_region) {
-            if (monarch_region) onig_region_free(monarch_region, 1);
-            if (monarch_case_region) onig_region_free(monarch_case_region, 1);
+        OnigRegion* state_region = onig_region_new();
+        OnigRegion* state_case_region = onig_region_new();
+        if (!state_region || !state_case_region) {
+            if (state_region) onig_region_free(state_region, 1);
+            if (state_case_region) onig_region_free(state_case_region, 1);
             return final_spans;
         }
         uint32_t zero_width_steps = 0;
@@ -798,20 +797,20 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
         // state transitions), but the next iteration must not scan the tail of
         // a multi-hundred-megabyte document merely to answer one viewport.
         while (position < total_bytes && position < range_end_byte) {
-            const MonarchRule* matched_rule = nullptr;
+            const RegexStateRule* matched_rule = nullptr;
             std::unordered_set<std::string> include_path;
-            std::function<const MonarchRule*(const std::string&)> find_rule =
-                [&](const std::string& state_name) -> const MonarchRule* {
+            std::function<const RegexStateRule*(const std::string&)> find_rule =
+                [&](const std::string& state_name) -> const RegexStateRule* {
                     if (!include_path.insert(state_name).second) return nullptr;
-                    auto state = grammar->monarch_states.find(state_name);
-                    if (state == grammar->monarch_states.end()) {
+                    auto state = grammar->regex_states.find(state_name);
+                    if (state == grammar->regex_states.end()) {
                         include_path.erase(state_name);
                         return nullptr;
                     }
                     for (const auto& candidate : state->second) {
                         if (!candidate.enabled) continue;
                         if (!candidate.include_state.empty()) {
-                            if (const MonarchRule* included = find_rule(candidate.include_state)) {
+                            if (const RegexStateRule* included = find_rule(candidate.include_state)) {
                                 include_path.erase(state_name);
                                 return included;
                             }
@@ -822,7 +821,7 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                             text_start,
                             text_end,
                             text_start + position,
-                            monarch_region,
+                            state_region,
                             ONIG_OPTION_NONE
                         );
                         if (length >= 0) {
@@ -835,36 +834,36 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                 };
 
             const std::string active_state = state_stack.empty() ?
-                grammar->monarch_start_state : state_stack.back();
+                grammar->regex_start_state : state_stack.back();
             matched_rule = find_rule(active_state);
             if (!matched_rule) {
                 const UChar* next = advanceOneUtf16CodePoint(text_start + position, text_end);
                 const uint32_t end = static_cast<uint32_t>(next - text_start);
-                if (grammar->monarch_has_default_style && end > position &&
+                if (grammar->regex_has_default_style && end > position &&
                     end > range_start_byte && position < range_end_byte) {
                     HighlightSpan span;
                     span.start_byte = std::max(position, range_start_byte);
                     span.end_byte = std::min(end, range_end_byte);
-                    span.style_id = grammar->monarch_default_style_id;
+                    span.style_id = grammar->regex_default_style_id;
                     span.priority = 0;
                     span.declaration_order = 0;
                     micro_spans.push_back(span);
                 }
                 position = end;
                 zero_width_steps = 0;
-                save_monarch_checkpoint();
+                save_regex_state_checkpoint();
                 continue;
             }
 
             if (diagnostic_match_counts) ++diagnostic_match_counts[1];
-            const uint32_t match_start = monarch_region->beg[0] >= 0 ?
-                static_cast<uint32_t>(monarch_region->beg[0]) : position;
-            const uint32_t match_end = monarch_region->end[0] >= 0 ?
-                static_cast<uint32_t>(monarch_region->end[0]) : position;
+            const uint32_t match_start = state_region->beg[0] >= 0 ?
+                static_cast<uint32_t>(state_region->beg[0]) : position;
+            const uint32_t match_end = state_region->end[0] >= 0 ?
+                static_cast<uint32_t>(state_region->end[0]) : position;
             uint16_t resolved_style_id = matched_rule->style_id;
             bool has_resolved_style = matched_rule->has_style;
             if (!matched_rule->cases.empty()) {
-                const MonarchCase* default_case = nullptr;
+                const RegexStateCase* default_case = nullptr;
                 bool case_matched = false;
                 for (const auto& case_entry : matched_rule->cases) {
                     if (case_entry.is_default) {
@@ -877,7 +876,7 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                         text_start,
                         text_end,
                         text_start + match_start,
-                        monarch_case_region,
+                        state_case_region,
                         ONIG_OPTION_NONE
                     );
                     if (case_length >= 0 &&
@@ -917,7 +916,7 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
             if (matched_rule->pop || matched_rule->next_state == "@pop") {
                 if (state_stack.size() > 1) state_stack.pop_back();
             } else if (matched_rule->next_state == "@popall") {
-                state_stack.assign(1, grammar->monarch_start_state);
+                state_stack.assign(1, grammar->regex_start_state);
             } else if (matched_rule->next_state == "@push") {
                 state_stack.push_back(state_stack.back());
             } else if (!matched_rule->next_state.empty()) {
@@ -937,19 +936,19 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
             } else if (match_end > position) {
                 position = match_end;
                 zero_width_steps = 0;
-                save_monarch_checkpoint();
+                save_regex_state_checkpoint();
             } else {
                 const UChar* next = advanceOneUtf16CodePoint(text_start + position, text_end);
                 position = static_cast<uint32_t>(next - text_start);
                 if (++zero_width_steps > 64) zero_width_steps = 0;
-                save_monarch_checkpoint();
+                save_regex_state_checkpoint();
             }
         }
-        onig_region_free(monarch_case_region, 1);
-        onig_region_free(monarch_region, 1);
+        onig_region_free(state_case_region, 1);
+        onig_region_free(state_region, 1);
     }
-    for (size_t i = monarch_span_begin; i < micro_spans.size(); ++i) {
-        micro_spans[i].source = static_cast<uint8_t>(HighlightSource::MONARCH);
+    for (size_t i = regex_state_span_begin; i < micro_spans.size(); ++i) {
+        micro_spans[i].source = static_cast<uint8_t>(HighlightSource::REGEX_STATE);
     }
     retain_requested_range(micro_spans);
 

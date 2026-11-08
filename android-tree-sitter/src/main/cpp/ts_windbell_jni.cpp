@@ -45,7 +45,7 @@ struct NativeTshDocument {
     uint64_t version = 0;
     NativeHighlightCache highlight_cache{16u * 1024u * 1024u};
     windbell::largefile::TextPartitionIndex partition_index{256};
-    std::vector<MonarchStateCheckpoint> monarch_checkpoints;
+    std::vector<RegexStateCheckpoint> regex_state_checkpoints;
     std::mutex mutex;
 
     ~NativeTshDocument() {
@@ -1080,16 +1080,16 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeApplyDocumentEdi
     // Keep tokenizer checkpoints before the edit as immediately reusable. Keep
     // checkpoints after the replaced range as *candidates* at their shifted byte
     // offsets: they become reusable only after a fresh scan reaches the same
-    // offset with an identical Monarch state stack (state convergence).
+    // offset with an identical Regex state stack (state convergence).
     const uint64_t new_source_version = document->source->version();
     const uint64_t new_partition_version = document->partition_index.version();
     const int64_t byte_delta = static_cast<int64_t>(inserted_size) -
         static_cast<int64_t>(old_end_byte - start_byte);
-    std::vector<MonarchStateCheckpoint> retained;
+    std::vector<RegexStateCheckpoint> retained;
     bool checkpoints_copied = true;
     try {
-        retained.reserve(document->monarch_checkpoints.size());
-        for (auto checkpoint : document->monarch_checkpoints) {
+        retained.reserve(document->regex_state_checkpoints.size());
+        for (auto checkpoint : document->regex_state_checkpoints) {
             if (checkpoint.source_version != old_source_version) continue;
             if (checkpoint.byte_offset <= static_cast<uint64_t>(start_byte)) {
                 checkpoint.source_version = new_source_version;
@@ -1108,8 +1108,8 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeApplyDocumentEdi
     } catch (...) {
         checkpoints_copied = false;
     }
-    if (checkpoints_copied) document->monarch_checkpoints.swap(retained);
-    else document->monarch_checkpoints.clear();
+    if (checkpoints_copied) document->regex_state_checkpoints.swap(retained);
+    else document->regex_state_checkpoints.clear();
     return JNI_TRUE;
 }
 
@@ -1151,7 +1151,7 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
     std::vector<uint16_t> compatibility_window;
     const auto grammar = WindbellEngine::getInstance().getGrammarByExtension(document->extension);
     const bool source_native_ast_only = grammar &&
-        grammar->regex_rules.empty() && grammar->monarch_states.empty();
+        grammar->regex_rules.empty() && grammar->regex_states.empty();
     if (total_bytes != 0 && !source_native_ast_only) {
         if (!document->source->read(0, UINT32_MAX, &view) ||
             !view.data || view.size == 0) {
@@ -1162,12 +1162,12 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
             // A source that fits in the first bounded window remains zero-copy.
             input = reinterpret_cast<const uint16_t *>(view.data);
         } else {
-            // The legacy Regex/Monarch entry point requires one contiguous UTF-16
+            // The legacy contiguous Regex entry point requires one contiguous UTF-16
             // buffer. Rebuilding it after edits defeats Piece Tree storage and can
             // consume hundreds of MiB, preventing large-file viewport rendering.
             // Retain this bridge only for modest documents. For larger edited Piece
             // Trees, leave input null so TextSource-backed Tree-sitter queries still
-            // produce absolute captures for the renderer. Regex/Monarch need their
+            // produce absolute captures for the renderer. Regex state rules need their
             // own source-windowed scanners before they can run in this mode.
             constexpr uint64_t kMaxLegacyCompatibilityBytes = 32ULL * 1024ULL * 1024ULL;
             if (total_bytes <= kMaxLegacyCompatibilityBytes) {
@@ -1208,7 +1208,7 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
         diagnostics == JNI_TRUE ? counts : nullptr,
         static_cast<uint32_t>(range_start_byte),
         static_cast<uint32_t>(range_end_byte), document->source.get(),
-        &document->monarch_checkpoints, document->source->version(),
+        &document->regex_state_checkpoints, document->source->version(),
         document->partition_index.version());
     if (diagnostics == JNI_TRUE) spans = std::move(candidates);
     NativeHighlightCache::Value cache_value;

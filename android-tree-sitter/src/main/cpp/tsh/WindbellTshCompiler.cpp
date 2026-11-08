@@ -472,10 +472,10 @@ private:
     bool active_ = true;
 };
 
-class MonarchRuleGuard {
+class RegexStateRuleGuard {
 public:
-    explicit MonarchRuleGuard(MonarchRule& rule) : rule_(rule) {}
-    ~MonarchRuleGuard() {
+    explicit RegexStateRuleGuard(RegexStateRule& rule) : rule_(rule) {}
+    ~RegexStateRuleGuard() {
         if (active_) {
             if (rule_.pattern) { onig_free(rule_.pattern); rule_.pattern = nullptr; }
             for (auto& entry : rule_.cases) {
@@ -485,7 +485,7 @@ public:
     }
     void release() { active_ = false; }
 private:
-    MonarchRule& rule_;
+    RegexStateRule& rule_;
     bool active_ = true;
 };
 
@@ -730,7 +730,7 @@ static std::string escapeOnigurumaLiteral(const std::string& value) {
     return escaped;
 }
 
-static bool expandMonarchVariables(
+static bool expandRegexVariables(
     const std::string& input,
     const std::unordered_map<std::string, std::string>& variables,
     std::unordered_map<std::string, bool>& active,
@@ -767,7 +767,7 @@ static bool expandMonarchVariables(
             if (found == variables.end() || active[name]) return false;
             active[name] = true;
             std::string expanded;
-            if (!expandMonarchVariables(found->second, variables, active, expanded)) return false;
+            if (!expandRegexVariables(found->second, variables, active, expanded)) return false;
             active.erase(name);
             output += "(?:" + expanded + ")";
             i = end;
@@ -1776,17 +1776,17 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                 auto open = lexer.nextToken();
                 if (open.type == TshLexer::TokenType::TOK_COLON) open = lexer.nextToken();
                 if (open.type != TshLexer::TokenType::TOK_LBRACE) return nullptr;
-                std::unordered_map<std::string, bool> seen_monarch_fields;
-                bool monarch_tokenizer_seen = false;
-                uint32_t monarch_default_options = grammar->default_regex_options;
+                std::unordered_map<std::string, bool> seen_regex_state_fields;
+                bool regex_state_section_seen = false;
+                uint32_t regex_state_default_options = grammar->default_regex_options;
                 while (true) {
                     auto field = lexer.nextToken();
                     if (field.type == TshLexer::TokenType::TOK_RBRACE) break;
                     if (field.type == TshLexer::TokenType::TOK_COMMA) continue;
                     if (field.type == TshLexer::TokenType::TOK_EOF ||
-                        !seen_monarch_fields.emplace(field.text, true).second) return nullptr;
+                        !seen_regex_state_fields.emplace(field.text, true).second) return nullptr;
                     if (field.text == "variables") {
-                        if (monarch_tokenizer_seen ||
+                        if (regex_state_section_seen ||
                             lexer.nextToken().type != TshLexer::TokenType::TOK_LBRACE) return nullptr;
                         while (true) {
                             auto variable = lexer.nextToken();
@@ -1798,19 +1798,19 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                             if ((value.type != TshLexer::TokenType::TOK_REGEX &&
                                  value.type != TshLexer::TokenType::TOK_STRING) ||
                                 value.text.empty() ||
-                                !grammar->monarch_variables.emplace(variable.text, value.text).second) return nullptr;
+                                !grammar->regex_variables.emplace(variable.text, value.text).second) return nullptr;
                         }
                     } else if (field.text == "tokenPostfix") {
                         if (lexer.nextToken().type != TshLexer::TokenType::TOK_COLON) return nullptr;
                         auto value = lexer.nextToken();
                         if (value.type != TshLexer::TokenType::TOK_STRING) return nullptr;
-                        grammar->monarch_token_postfix = value.text;
+                        grammar->regex_token_postfix = value.text;
                     } else if (field.text == "ignoreCase") {
-                        if (monarch_tokenizer_seen ||
+                        if (regex_state_section_seen ||
                             lexer.nextToken().type != TshLexer::TokenType::TOK_COLON) return nullptr;
                         auto value = lexer.nextToken();
-                        if (value.text == "true") monarch_default_options |= ONIG_OPTION_IGNORECASE;
-                        else if (value.text == "false") monarch_default_options &= ~ONIG_OPTION_IGNORECASE;
+                        if (value.text == "true") regex_state_default_options |= ONIG_OPTION_IGNORECASE;
+                        else if (value.text == "false") regex_state_default_options &= ~ONIG_OPTION_IGNORECASE;
                         else return nullptr;
                     } else if (field.text == "start" || field.text == "defaultToken") {
                         if (lexer.nextToken().type != TshLexer::TokenType::TOK_COLON) return nullptr;
@@ -1819,15 +1819,15 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                              value.type != TshLexer::TokenType::TOK_IDENT) ||
                             value.text.empty()) return nullptr;
                         if (field.text == "start") {
-                            grammar->monarch_start_state = value.text;
-                            if (!grammar->monarch_start_state.empty() && grammar->monarch_start_state.front() == '@')
-                                grammar->monarch_start_state.erase(grammar->monarch_start_state.begin());
+                            grammar->regex_start_state = value.text;
+                            if (!grammar->regex_start_state.empty() && grammar->regex_start_state.front() == '@')
+                                grammar->regex_start_state.erase(grammar->regex_start_state.begin());
                         } else {
-                            grammar->monarch_default_style_name = value.text;
-                            grammar->monarch_has_default_style = true;
+                            grammar->regex_default_style_name = value.text;
+                            grammar->regex_has_default_style = true;
                         }
                     } else if (field.text == "tokenizer") {
-                        monarch_tokenizer_seen = true;
+                        regex_state_section_seen = true;
                         if (lexer.nextToken().type != TshLexer::TokenType::TOK_LBRACE) return nullptr;
                         while (true) {
                             auto state_name = lexer.nextToken();
@@ -1836,19 +1836,19 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                             if ((state_name.type != TshLexer::TokenType::TOK_IDENT &&
                                  state_name.type != TshLexer::TokenType::TOK_STRING) ||
                                 state_name.text.empty()) return nullptr;
-                            if (grammar->monarch_states.find(state_name.text) != grammar->monarch_states.end()) return nullptr;
+                            if (grammar->regex_states.find(state_name.text) != grammar->regex_states.end()) return nullptr;
                             if (lexer.nextToken().type != TshLexer::TokenType::TOK_COLON ||
                                 lexer.nextToken().type != TshLexer::TokenType::TOK_LBRACKET) return nullptr;
-                            auto& state_rules = grammar->monarch_states[state_name.text];
+                            auto& state_rules = grammar->regex_states[state_name.text];
                             while (true) {
                                 auto entry = lexer.nextToken();
                                 if (entry.type == TshLexer::TokenType::TOK_RBRACKET) break;
                                 if (entry.type == TshLexer::TokenType::TOK_COMMA) continue;
                                 if (entry.type != TshLexer::TokenType::TOK_LBRACE) return nullptr;
-                                MonarchRule rule;
-                                MonarchRuleGuard rule_guard(rule);
+                                RegexStateRule rule;
+                                RegexStateRuleGuard rule_guard(rule);
                                 rule.declaration_order = regex_declaration_order++;
-                                uint32_t options = monarch_default_options;
+                                uint32_t options = regex_state_default_options;
                                 std::string pattern;
                                 std::unordered_map<std::string, bool> seen_rule_fields;
                                 while (true) {
@@ -1887,7 +1887,7 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                                             if ((case_token.type != TshLexer::TokenType::TOK_STRING &&
                                                  case_token.type != TshLexer::TokenType::TOK_IDENT) ||
                                                 case_token.text.empty()) return nullptr;
-                                            MonarchCase case_entry;
+                                            RegexStateCase case_entry;
                                             case_entry.token_name = case_token.text;
                                             if (case_key.text == "@default") {
                                                 case_entry.is_default = true;
@@ -1896,8 +1896,8 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                                                 std::string case_pattern;
                                                 if (!case_key.text.empty() && case_key.text.front() == '@') {
                                                     std::unordered_map<std::string, bool> active_variables;
-                                                    if (!expandMonarchVariables(case_key.text,
-                                                            grammar->monarch_variables,
+                                                    if (!expandRegexVariables(case_key.text,
+                                                            grammar->regex_variables,
                                                             active_variables, case_pattern)) return nullptr;
                                                 } else {
                                                     case_pattern = escapeOnigurumaLiteral(case_key.text);
@@ -1950,7 +1950,7 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                                 if (!pattern.empty()) {
                                     std::unordered_map<std::string, bool> active_variables;
                                     std::string expanded_pattern;
-                                    if (!expandMonarchVariables(pattern, grammar->monarch_variables,
+                                    if (!expandRegexVariables(pattern, grammar->regex_variables,
                                             active_variables, expanded_pattern)) return nullptr;
                                     rule.pattern = compileOnigurumaUtf16(expanded_pattern, options);
                                     if (!rule.pattern) return nullptr;
@@ -1964,23 +1964,23 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                         return nullptr;
                     }
                 }
-                if (grammar->monarch_states.empty()) return nullptr;
-                for (auto& state : grammar->monarch_states) {
+                if (grammar->regex_states.empty()) return nullptr;
+                for (auto& state : grammar->regex_states) {
                     for (auto& rule : state.second) {
                         if (rule.has_style) {
-                            rule.style_id = ensureStyleId(rule.token_name + grammar->monarch_token_postfix);
+                            rule.style_id = ensureStyleId(rule.token_name + grammar->regex_token_postfix);
                         }
                         for (auto& case_entry : rule.cases) {
-                            case_entry.style_id = ensureStyleId(case_entry.token_name + grammar->monarch_token_postfix);
+                            case_entry.style_id = ensureStyleId(case_entry.token_name + grammar->regex_token_postfix);
                         }
                     }
                 }
                 // Validate every declared variable, including unused definitions,
                 // so misspellings and cycles never remain latent in a compiled grammar.
-                for (const auto& variable : grammar->monarch_variables) {
+                for (const auto& variable : grammar->regex_variables) {
                     std::unordered_map<std::string, bool> active_variables;
                     std::string expanded_variable;
-                    if (!expandMonarchVariables(variable.second, grammar->monarch_variables,
+                    if (!expandRegexVariables(variable.second, grammar->regex_variables,
                             active_variables, expanded_variable)) return nullptr;
                 }
             }
@@ -2800,20 +2800,20 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
         }
     }
 
-    if (!grammar->monarch_default_style_name.empty()) {
-        grammar->monarch_default_style_id =
-            ensureStyleId(grammar->monarch_default_style_name + grammar->monarch_token_postfix);
+    if (!grammar->regex_default_style_name.empty()) {
+        grammar->regex_default_style_id =
+            ensureStyleId(grammar->regex_default_style_name + grammar->regex_token_postfix);
     }
 
-    if (!grammar->monarch_states.empty()) {
-        if (grammar->monarch_states.find(grammar->monarch_start_state) == grammar->monarch_states.end()) return nullptr;
+    if (!grammar->regex_states.empty()) {
+        if (grammar->regex_states.find(grammar->regex_start_state) == grammar->regex_states.end()) return nullptr;
         auto validate_state_reference = [&](std::string value, bool allow_stack_ops) -> bool {
             if (value.empty()) return true;
             const bool has_prefix = value.front() == '@';
             if (has_prefix) value.erase(value.begin());
             if (has_prefix && allow_stack_ops &&
                 (value == "pop" || value == "popall" || value == "push")) return true;
-            return grammar->monarch_states.find(value) != grammar->monarch_states.end();
+            return grammar->regex_states.find(value) != grammar->regex_states.end();
         };
         std::unordered_map<std::string, uint8_t> include_visit;
         std::function<bool(const std::string&)> validate_includes = [&](const std::string& state_name) -> bool {
@@ -2821,21 +2821,21 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
             if (state == 2) return true;
             if (state == 1) return false;
             state = 1;
-            auto rules_it = grammar->monarch_states.find(state_name);
-            if (rules_it == grammar->monarch_states.end()) return false;
+            auto rules_it = grammar->regex_states.find(state_name);
+            if (rules_it == grammar->regex_states.end()) return false;
             for (const auto& rule : rules_it->second) {
                 if (!rule.include_state.empty() && !validate_includes(rule.include_state)) return false;
             }
             state = 2;
             return true;
         };
-        for (const auto& state : grammar->monarch_states) {
+        for (const auto& state : grammar->regex_states) {
             if (!validate_includes(state.first)) return nullptr;
         }
-        for (const auto& state : grammar->monarch_states) {
+        for (const auto& state : grammar->regex_states) {
             for (const auto& rule : state.second) {
                 if (!rule.include_state.empty() &&
-                    grammar->monarch_states.find(rule.include_state) == grammar->monarch_states.end()) return nullptr;
+                    grammar->regex_states.find(rule.include_state) == grammar->regex_states.end()) return nullptr;
                 if (!validate_state_reference(rule.next_state, true) ||
                     !validate_state_reference(rule.push_state, false) ||
                     !validate_state_reference(rule.switch_state, false)) return nullptr;
