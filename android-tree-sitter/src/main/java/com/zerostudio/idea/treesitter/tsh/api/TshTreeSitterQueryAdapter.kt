@@ -345,7 +345,8 @@ class TshTreeSitterQueryExecutor(
                     captures = captures.toList(),
                     // TSQueryCursor does not expose VM step counts; zero means "not reported".
                     stepsUsed = 0L,
-                    isComplete = complete
+                    isComplete = complete,
+                    inputEncoding = tree.inputEncoding
                 ),
                 diagnostics = buildList {
                     if (!complete) add(diagnostic(
