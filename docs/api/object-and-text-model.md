@@ -1,6 +1,6 @@
 # 对象与文本模型 API
 
-## 1. 对象模型
+## 当前代码落地\n\n首个文本 API 切片已增加 `TshTextDocument`、`TshTextSnapshot`、`TshTextEdit`、`TshTextChange`、`TshTextAccessProvider` 和 `TshCoordinateConverter`。当前转换器支持内存文本的 UTF-8 byte、UTF-16 code unit、Unicode code point 与 grapheme boundary 转换；屏幕像素和行列转换明确要求 Layout-aware Provider。Piece Tree/Rope 的索引化转换仍待专用 Provider 实现。对应测试源码已添加，尚未运行。\n\n## 1. 对象模型
 
 TSH 必须能处理外部编辑器的真实实例，而不是要求宿主继承 TSH 类型。对象通过稳定的运行时 ID 注册，并附带类型标签、能力集合、可选父子关系、所有者和生命周期状态。
 
