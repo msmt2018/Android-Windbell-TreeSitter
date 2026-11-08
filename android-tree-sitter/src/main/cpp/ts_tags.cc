@@ -191,7 +191,6 @@ static jobject TSQuery_extractBounded(
               return nullptr;
             }
             if (styles[capture.index] < 0) continue;
-            size_t emitted = capture_count_for_spans;
             if (emitted >= static_cast<size_t>(max_spans)) {
               throwTagsIllegalState(env,
                   "Tree-sitter query exceeded maxSpans; no partial result was returned");
