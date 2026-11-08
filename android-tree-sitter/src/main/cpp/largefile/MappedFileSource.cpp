@@ -55,6 +55,10 @@ bool MappedFileSource::open(const std::string &path) noexcept {
     }
 
     const auto size = static_cast<uint64_t>(info.st_size);
+    if ((size & 1u) != 0) {
+        ::close(fd);
+        return false;
+    }
     if (size > static_cast<uint64_t>(std::numeric_limits<size_t>::max())) {
         ::close(fd);
         return false;
@@ -97,12 +101,15 @@ bool MappedFileSource::read(
     out->size = 0;
 
     if (!open_) return false;
+    if ((offset & 1u) != 0) return false;
     if (offset == size_bytes_) return true;
-    if (mapping_ == nullptr || offset > size_bytes_ || maxBytes == 0) return false;
+    if (mapping_ == nullptr || offset > size_bytes_ || maxBytes < 2u) return false;
     if (offset > static_cast<uint64_t>(std::numeric_limits<size_t>::max())) return false;
 
-    const uint64_t count = (size_bytes_ - offset) < maxBytes
+    uint64_t count = (size_bytes_ - offset) < maxBytes
         ? (size_bytes_ - offset) : maxBytes;
+    count &= ~uint64_t{1};
+    if (count == 0) return false;
     out->data = static_cast<const char *>(mapping_) + static_cast<size_t>(offset);
     out->size = static_cast<uint32_t>(count);
     return true;
