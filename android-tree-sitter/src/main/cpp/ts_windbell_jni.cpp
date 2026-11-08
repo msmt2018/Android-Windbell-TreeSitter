@@ -533,21 +533,30 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlight(
         return env->NewIntArray(0);
     }
 
-    // 利用 UTF-16LE 零重编码特征：无损获取 Java 内存原始双字节字符流
-    std::vector<uint16_t> buffer(len);
-    env->GetStringRegion(text_jstr, 0, len, reinterpret_cast<jchar*>(buffer.data()));
+    // Keep the Java UTF-16 source pinned/readable for the duration of the
+    // synchronous native pass. Avoid allocating a second full-document vector:
+    // this matters for multi-megabyte and very large editor buffers.
+    const jchar* source_chars = env->GetStringChars(text_jstr, nullptr);
+    if (!source_chars) return nullptr;
 
     std::vector<HighlightSpan> raw_candidates;
     uint32_t pipeline_match_counts[4] = {};
-    std::vector<HighlightSpan> spans = WindbellEngine::getInstance().highlightHybrid(
-        tree ? ts_tree_language(tree) : nullptr,
-        tree,
-        buffer.data(),
-        static_cast<uint32_t>(len),
-        ext_str,
-        diagnostics == JNI_TRUE ? &raw_candidates : nullptr,
-        diagnostics == JNI_TRUE ? pipeline_match_counts : nullptr
-    );
+    std::vector<HighlightSpan> spans;
+    try {
+        spans = WindbellEngine::getInstance().highlightHybrid(
+            tree ? ts_tree_language(tree) : nullptr,
+            tree,
+            reinterpret_cast<const uint16_t*>(source_chars),
+            static_cast<uint32_t>(len),
+            ext_str,
+            diagnostics == JNI_TRUE ? &raw_candidates : nullptr,
+            diagnostics == JNI_TRUE ? pipeline_match_counts : nullptr
+        );
+    } catch (...) {
+        env->ReleaseStringChars(text_jstr, source_chars);
+        throw;
+    }
+    env->ReleaseStringChars(text_jstr, source_chars);
     if (diagnostics == JNI_TRUE) spans = std::move(raw_candidates);
 
     const jsize header_size = diagnostics == JNI_TRUE ? 4 : 0;
