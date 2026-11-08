@@ -15,12 +15,12 @@ GrammarProvider → TshParserSession → TshSyntaxTreeSnapshot → TshAtsCompile
 源码位置：`com.zerostudio.idea.treesitter.tsh.api`
 
 - `TshGrammarDescriptor`：languageId、grammarVersion、ABI、fingerprint、capabilities。
-- `TshByteRange`：UTF-8 byte offset 半开范围。
+- `TshByteRange`：Native Tree-sitter byte offset 半开范围；实际字节编码由 `TshSyntaxTreeSnapshot.inputEncoding` 指明，不得默认把所有 Native byte offset 当作 UTF-8。
 - `TshAtsSource` / `TshQuerySourceLanguage`：区分 ATS 与原生 Tree-sitter Query 输入。
 - `TshQueryCompileOptions`：谓词开关、严格节点验证、模式数量上限。
 - `TshCompiledQuery`：queryId/revision、Grammar 绑定、source hash、compiler version、options、可选 native object id。
-- `TshSyntaxTreeSnapshot`：document/version/tree revision、Grammar、root byte range、对象 ID。
-- `TshCapture` / `TshQueryResult`：捕获元数据、文档/树/查询版本和执行步数。
+- `TshSyntaxTreeSnapshot`：document/version/tree revision、Grammar、root byte range、Native tree object ID 和源文本编码（UTF8/UTF16_LE/UTF16_BE）。
+- `TshCapture` / `TshQueryResult`：捕获元数据、文档/树/查询版本、执行步数及捕获 byte range 所属的源文本编码。
 - `TshQueryExecutionBudget` / `TshQueryCancellation`：执行预算与协作式取消契约。
 - `TshAtsCompiler` / `TshQueryExecutor`：编译和执行接口。
 - `TshCompiledQueryRegistry`：编译查询注册、替换、查找和 Grammar 兼容检查。
@@ -37,24 +37,24 @@ CompiledQuery 必须绑定 grammar identity/version、ABI 和 fingerprint；只�
 
 ## 6. 捕获语义
 
-捕获范围以 UTF-8 byte offset 表示，半开区间 [start,end)。Capture 必须携带 pattern index、capture name、节点类型、节点身份及来源 query。重复 capture 的排序稳定；零长度 capture 策略明确。当前数据模型提供 capture name/type/range/nodeId/patternIndex，稳定排序与来源追踪仍待执行器实现。
+捕获范围以 Native Tree-sitter byte offset 表示，半开区间 [start,end)。字节单位由该 SyntaxTree 的输入编码决定；例如当前 `TSParser.parseString(String)` 使用 UTF-16LE，因此节点和 Capture byte offset 是 UTF-16LE 字节偏移，不能直接当作 UTF-8 offset。跨 API 边界转换必须使用明确的编码映射。Capture 必须携带 pattern index、capture name、节点类型、节点身份及来源 query。重复 capture 的排序稳定；零长度 capture 策略明确。当前数据模型提供 capture name/type/range/nodeId/patternIndex，稳定排序与来源追踪仍待执行器实现。
 
 ## 7. 既有执行入口与适配边界
 
 仓库已有 `TSQuery`、`TSQueryCursor` Java 封装；`TSQuery.create(TSLanguage, String)` 创建原生查询，`TSQueryCursor.exec(TSQuery, TSNode)` 执行查询，Cursor 支持 byte range、match limit 和 PredicateHandler。Executor 会预检查询所需 predicate 名称是否被任一 Handler 声明支持；Native Cursor 本身对 Handler 返回值的语义仍需单独验证。C++ TSH 侧已有 `TshGrammar.dynamic_ts_query`，由 `TshCompiler` 使用 `ts_query_new` 编译动态查询。
 
-当前 `TshTreeSitterQueryCompiler` 已通过 `TSQuery.create(language, source)` 编译原生 S-expression Query，并把 `TSQuery` 注册到 `TshObjectRegistry`；编译失败映射为结构化诊断（包含 Native error type 与 UTF-8 byte offset）。ATS source 会被明确拒绝，不会被当作 Tree-sitter S-expression 误解析。\n\n当前 `TshTreeSitterQueryExecutor` 通过 `TSQueryCursor.create()`、`setByteRange()`、`exec()`、`nextMatch()` 执行，并把 `TSQueryMatch` / `TSQueryCapture` 转为 TSH Capture。它只关闭自己创建的 Cursor；Query 由共享 `TshNativeQueryLeaseStore` 管理。Executor 开始执行时 acquire Lease；`release(queryId)` 或同 ID 替换会先退役旧 Query，阻止新 Lease，已有执行完成后最后一个 Lease 释放才真正 close。对象注册表条目在退役时移除，但活动 Lease 保留 Query 强引用。 Query Registry 的事务锁同时保护 revision 发布/注销与 Executor 的当前 revision 检查及 Lease acquire，避免替换窗口中的跨 Registry 状态撕裂。Tree 与 Grammar Language 已接入共享 `TshNativeResourceLeaseStore`：Tree Executor acquire Tree lease 并在执行完成后释放；Language Resolver 返回带 objectId 的注册 Handle，Compiler 在 `TSQuery.create` 期间持有 Language lease。资源 owner 应通过 `TshNativeResourceRegistry` 统一注册、按类型获取 Lease 并退役；该协调入口先阻止新 Lease，再注销 `TshObjectRegistry` 索引，已有 Lease 释放后 Store 才 close。底层 Store 仍可供内部 Adapter 使用，但宿主不应分别操作两个 Registry。
+当前 `TshTreeSitterQueryCompiler` 已通过 `TSQuery.create(language, source)` 编译原生 S-expression Query，并把 `TSQuery` 注册到 `TshObjectRegistry`；编译失败映射为结构化诊断（包含 Native error type 与 UTF-8 byte offset）。ATS source 会被明确拒绝，不会被当作 Tree-sitter S-expression 误解析。\n\n当前 `TshTreeSitterQueryExecutor` 通过 `TSQueryCursor.create()`、`setByteRange()`、`exec()`、`nextMatch()` 执行，并把 `TSQueryMatch` / `TSQueryCapture` 转为 TSH Capture。它只关闭自己创建的 Cursor；Query 由共享 `TshNativeQueryLeaseStore` 管理。Executor 开始执行时 acquire Lease；`release(queryId)` 或同 ID 替换会先退役旧 Query，阻止新 Lease，已有执行完成后最后一个 Lease 释放才真正 close。对象注册表条目在退役时移除，但活动 Lease 保留 Query 强引用。 Query Registry 的事务锁同时保护 revision 发布/注销与 Executor 的当前 revision 检查及 Lease acquire，避免替换窗口中的跨 Registry 状态撕裂。Tree 与 Grammar Language 已接入共享 `TshNativeResourceLeaseStore`：Tree Executor acquire Tree lease 并在执行完成后释放；Language Resolver 返回带 objectId 的注册 Handle，Compiler 在 `TSQuery.create` 期间持有 Language lease。新增 `TshTreeSitterParserOwner`：Parser 注册时保留 Language Lease，解析出的每棵 Tree 再独立保留 Language Lease，确保 Parser 关闭或 Grammar Provider 退役后，仍在使用的 Tree 不会引用已卸载的 Grammar。Native Resource Lease Store 支持依赖 Lease，并在 Native resource close 后逆序释放依赖。ParserOwner 使用当前 Java TSParser 的 UTF-16LE 输入，因此生成的 SyntaxTreeSnapshot 明确标记 `UTF16_LE`。资源 owner 应通过 `TshNativeResourceRegistry` 统一注册、按类型获取 Lease 并退役；该协调入口先阻止新 Lease，再注销 `TshObjectRegistry` 索引，已有 Lease 释放后 Store 才 close。底层 Store 仍可供内部 Adapter 使用，但宿主不应分别操作两个 Registry。
 
 ## 8. 错误与生命周期
 
-语法节点/字段不存在、谓词参数类型错误、grammar ABI 不兼容、query 编译失败、预算耗尽、取消和 Native 资源关闭必须有稳定错误码。当前 Compiler/Executor 接口返回 `TshResult`；Query lease 已实现源码，但未构建验证；Tree/Language lease 已有首版源码与单测源码，但尚未构建验证；可中断 Native 取消边界待实现。
+语法节点/字段不存在、谓词参数类型错误、grammar ABI 不兼容、query 编译失败、预算耗尽、取消和 Native 资源关闭必须有稳定错误码。当前 Compiler/Executor 接口返回 `TshResult`；Query lease 已实现源码，但未构建验证；Tree/Language/Parser lease 与 ParserOwner 已有首版源码，但尚未构建验证；可中断 Native 取消边界待实现。
 
 ## 9. 验收
 
 - 同一查询在 ATS 源码和等价 Tree-sitter Query 上产生一致 capture。
 - 验证字段、匿名节点、量化、predicate、Unicode byte range、增量 changed range、取消、预算耗尽和版本失效。
 - 验证 Native Query/Tree/Cursor 在异常、并发和关闭情况下无 use-after-free。\n- 验证 query release/替换与 execute 并发时由 Query lease/refcount 保证安全；目前仅有源码与单测源码，尚未运行。
-- 验证 Tree/Language close 与 execute 并发安全；当前仍未满足。
+- 验证 Tree/Language/Parser close 与 execute/parse 并发安全；目前只有 Lease 源码与测试源码，尚未运行验证。
 - 执行 Gradle/JUnit、Native 单测和 Android 集成测试；没有执行的验证不得标记完成。
 
 ### Predicate handler 结果语义
