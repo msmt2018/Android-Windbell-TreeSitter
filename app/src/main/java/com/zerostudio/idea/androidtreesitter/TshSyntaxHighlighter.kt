@@ -29,6 +29,7 @@ import x.github.module.editor.structure.PlainBracketMatcher
 import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * TSH adapter for EditorView.
@@ -58,6 +59,7 @@ class TshSyntaxHighlighter(
         val nativeHandle: Long,
         val lengthChars: AtomicLong,
         val captureIndexes: ByteBudgetLruCache<Int, CaptureIntervalIndex>,
+        val pendingPartitions: MutableSet<Int> = ConcurrentHashMap.newKeySet(),
         val ticket: Long
     )
 
@@ -100,6 +102,7 @@ class TshSyntaxHighlighter(
         largeSession = null
         captureIndex = CaptureIntervalIndex(emptyList())
         parsing = false
+        synchronized(nativeEditLock) { pendingNativeEdits.clear() }
         host = null
     }
 
@@ -484,6 +487,7 @@ class TshSyntaxHighlighter(
             version = active.ticket
         )
         if (active.captureIndexes.get(partition.index) != null) return
+        if (!active.pendingPartitions.add(partition.index)) return
 
         // The native document owns one persistent parse session. A viewport request
         // executes TSH against its absolute byte range; no partition-local parser/tree
@@ -509,6 +513,8 @@ class TshSyntaxHighlighter(
                 if (generation.get() == active.ticket) {
                     Log.e(TAG, "Native viewport TSH failed: extension=.$extension partition=${partition.index}", error)
                 }
+            } finally {
+                active.pendingPartitions.remove(partition.index)
             }
         }
     }
