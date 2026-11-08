@@ -684,7 +684,7 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
     if (!grammar->monarch_states.empty()) {
         std::vector<std::string> state_stack{grammar->monarch_start_state};
         uint32_t position = 0;
-        uint32_t next_checkpoint = 64u * 1024u;
+        uint64_t next_checkpoint = 64u * 1024u;
         // Checkpoints are reusable only for the exact immutable source and
         // partition snapshots from which their tokenizer state was produced.
         if (monarch_checkpoints) {
@@ -700,7 +700,7 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
             if (nearest) {
                 position = static_cast<uint32_t>(nearest->byte_offset);
                 state_stack = nearest->state_stack;
-                next_checkpoint = ((position / (64u * 1024u)) + 1u) * (64u * 1024u);
+                next_checkpoint = ((static_cast<uint64_t>(position) / (64u * 1024u)) + 1u) * (64u * 1024u);
             } else {
                 // A stale checkpoint set cannot be mixed with the current
                 // source version. Drop it before producing replacement entries.
