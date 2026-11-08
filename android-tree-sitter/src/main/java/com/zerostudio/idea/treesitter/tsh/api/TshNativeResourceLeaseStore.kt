@@ -17,7 +17,8 @@ class TshNativeResourceLeaseStore {
 
     internal class Entry<T : TSNativeObject>(
         val objectId: TshObjectId,
-        val resource: T
+        val resource: T,
+        val dependencies: List<AutoCloseable>
     ) {
         var leases = 0
         var retired = false
@@ -46,11 +47,15 @@ class TshNativeResourceLeaseStore {
     private val lock = Any()
     private val entries = LinkedHashMap<TshObjectId, Entry<out TSNativeObject>>()
 
-    fun <T : TSNativeObject> register(objectId: TshObjectId, resource: T): Handle<T> {
+    fun <T : TSNativeObject> register(
+        objectId: TshObjectId,
+        resource: T,
+        dependencies: List<AutoCloseable> = emptyList()
+    ): Handle<T> {
         require(resource.canAccess()) { "Cannot register a closed native resource" }
         synchronized(lock) {
             check(entries[objectId] == null) { "Native object ID is already registered" }
-            entries[objectId] = Entry(objectId, resource)
+            entries[objectId] = Entry(objectId, resource, dependencies.toList())
         }
         return Handle(objectId, resource)
     }
@@ -106,5 +111,6 @@ class TshNativeResourceLeaseStore {
 
     private fun Entry<out TSNativeObject>.closeSafely() {
         runCatching { resource.close() }
+        dependencies.asReversed().forEach { dependency -> runCatching { dependency.close() } }
     }
 }
