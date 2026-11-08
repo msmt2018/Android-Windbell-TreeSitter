@@ -51,5 +51,5 @@
 - 本地 Gradle 编译、自动化测试和真实编辑器渲染验证。
 
 ### Status
-- 本轮新增的 Kotlin API 和测试仅代表源码已提交；没有运行 Gradle、JUnit、C++/JNI 构建或 Android 设备验证。Tree-sitter Adapter 调用了既有 Native API；Query/Tree/Language lease、Predicate 过滤和协调式 Resource Registry 源码及测试源码已提交；Resource Registry 锁边界、Engine.close 退役接线和 Query catalog 锁外 close action、ParserOwner、Engine 统一 Compiler/Executor/Parser 工厂、Query Store 永久 shutdown、退役后 child Lease 和 Query JNI UTF-8 修复也已加入源码/测试源码，但未做 Gradle/JUnit/C++ 或真实 Native 运行验证。
+- 本轮新增的 Kotlin API 和测试仅代表源码已提交；没有运行 Gradle、JUnit、C++/JNI 构建或 Android 设备验证。Tree-sitter Adapter 调用了既有 Native API；Query/Tree/Language lease、Predicate 过滤和协调式 Resource Registry 源码及测试源码已提交；Resource Registry 锁边界、Engine.close 退役接线和 Query catalog 锁外 close action、ParserOwner、Engine 统一 Compiler/Executor/Parser 工厂、Query Store 永久 shutdown、退役后 child Lease 和 Query/TSH DSL/Grammar JNI UTF-8 修复也已加入源码/测试源码，但未做 Gradle/JUnit/C++ 或真实 Native 运行验证。
 - 现有仓库已检查到 `TSQuery`、`TSQueryCursor`、`TshCompiler`、`TshGrammar.dynamic_ts_query`；后续实现应复用这些既有能力并保持旧 JNI 入口兼容。
