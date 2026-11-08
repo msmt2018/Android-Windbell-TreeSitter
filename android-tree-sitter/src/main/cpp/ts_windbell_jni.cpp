@@ -12,6 +12,7 @@
 #include <string>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 
 #include "tsh/WindbellTshCore.h"
 #include "tsh/WindbellTshCompiler.h"
@@ -561,28 +562,60 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlight(
     if (diagnostics == JNI_TRUE) spans = std::move(raw_candidates);
 
     const jsize header_size = diagnostics == JNI_TRUE ? 4 : 0;
-    const jsize out_size = header_size + static_cast<jsize>(spans.size() * 6);
+    constexpr size_t kSpanFields = 6;
+    const size_t max_span_count =
+        (static_cast<size_t>(std::numeric_limits<jsize>::max()) -
+         static_cast<size_t>(header_size)) / kSpanFields;
+    if (spans.size() > max_span_count) {
+        throw_illegal_args(env, "Highlight result exceeds the maximum JNI int-array size");
+        return nullptr;
+    }
+    const jsize out_size = header_size +
+        static_cast<jsize>(spans.size() * kSpanFields);
     jintArray result = env->NewIntArray(out_size);
     if (!result) {
         throw_npe(env, "Out of memory allocating spans int array");
         return nullptr;
     }
 
-    std::vector<jint> flat_spans(out_size);
     if (diagnostics == JNI_TRUE) {
-        for (size_t source = 0; source < 4; ++source) flat_spans[source] = static_cast<jint>(pipeline_match_counts[source]);
-    }
-    for (size_t i = 0; i < spans.size(); ++i) {
-        const size_t offset = static_cast<size_t>(header_size) + i * 6;
-        flat_spans[offset + 0] = static_cast<jint>(spans[i].start_byte);
-        flat_spans[offset + 1] = static_cast<jint>(spans[i].end_byte);
-        flat_spans[offset + 2] = static_cast<jint>(spans[i].style_id | (static_cast<uint32_t>(spans[i].flags) << 16));
-        flat_spans[offset + 3] = static_cast<jint>(spans[i].priority);
-        flat_spans[offset + 4] = static_cast<jint>(spans[i].declaration_order);
-        flat_spans[offset + 5] = static_cast<jint>(spans[i].source);
+        const jint header[4] = {
+            static_cast<jint>(pipeline_match_counts[0]),
+            static_cast<jint>(pipeline_match_counts[1]),
+            static_cast<jint>(pipeline_match_counts[2]),
+            static_cast<jint>(pipeline_match_counts[3])
+        };
+        env->SetIntArrayRegion(result, 0, header_size, header);
+        if (env->ExceptionCheck()) return nullptr;
     }
 
-    env->SetIntArrayRegion(result, 0, out_size, flat_spans.data());
+    // Do not allocate a second int array as large as the entire highlight result.
+    // Convert a bounded number of spans at a time and copy each batch directly
+    // into the Java result array. Peak temporary conversion memory stays bounded.
+    constexpr size_t kSpansPerBatch = 4096;
+    std::vector<jint> batch;
+    batch.reserve(kSpansPerBatch * kSpanFields);
+    size_t span_index = 0;
+    while (span_index < spans.size()) {
+        const size_t count = std::min(kSpansPerBatch, spans.size() - span_index);
+        batch.clear();
+        for (size_t i = 0; i < count; ++i) {
+            const auto& span = spans[span_index + i];
+            batch.push_back(static_cast<jint>(span.start_byte));
+            batch.push_back(static_cast<jint>(span.end_byte));
+            batch.push_back(static_cast<jint>(
+                span.style_id | (static_cast<uint32_t>(span.flags) << 16)));
+            batch.push_back(static_cast<jint>(span.priority));
+            batch.push_back(static_cast<jint>(span.declaration_order));
+            batch.push_back(static_cast<jint>(span.source));
+        }
+        const jsize destination_offset = header_size +
+            static_cast<jsize>(span_index * kSpanFields);
+        env->SetIntArrayRegion(
+            result, destination_offset, static_cast<jsize>(batch.size()), batch.data());
+        if (env->ExceptionCheck()) return nullptr;
+        span_index += count;
+    }
     return result;
 }
 
