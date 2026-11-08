@@ -79,7 +79,7 @@ This correction is source-only at present. It has not been compiled or exercised
 
 ### Native Tree/Language resource lease contract
 
-`TshNativeResourceLeaseStore` 是 Tree 和 Language 共用的 Native resource ownership store。注册时所有权转交给 Store；资源 owner 必须使用 `retire(objectId)` 结束资源，不得直接调用 `close()`。退役后拒绝新 Lease，已有执行持有的 Lease 继续有效，最后一个 Lease 释放时才调用 Native wrapper 的 `close()`。Query Lease Store 还支持依赖 Lease：编译成功后把 Language Lease 绑定到 Query，保证 Tree-sitter Query 可能引用的 Grammar 静态数据在 Query 退役前始终有效；Query 关闭后再释放 Language Lease。Store 以 objectId 和资源实例双重校验 Handle，防止错误实例借用同一 ID。
+`TshNativeResourceLeaseStore` 是 Tree 和 Language 共用的 Native resource ownership store。注册时所有权转交给 Store；资源 owner 必须使用 `retire(objectId)` 结束资源，不得直接调用 `close()`。退役后拒绝新 Lease，已有执行持有的 Lease 继续有效，最后一个 Lease 释放时才调用 Native wrapper 的 `close()`。Query Lease Store 还支持依赖 Lease：编译成功后把 Language Lease 绑定到 Query，保证 Tree-sitter Query 可能引用的 Grammar 静态数据在 Query 退役前始终有效；Query 关闭后再释放 Language Lease。Store 以 objectId 和资源实例双重校验 Handle，防止错误实例借用同一 ID；支持单项 retire 和 retireAll，便于 Engine/Grammar Provider 关闭时统一退役。
 
 Tree Executor 从 `TshObjectRegistry` 解析 TSTree 后，必须成功 acquire 对应 Handle 才能访问 root/capture；finally 释放 Tree Lease。Grammar Language Resolver 不再返回裸 TSLanguage，而返回 `TshNativeResourceLeaseStore.Handle<TSLanguage>`；Compiler acquire Language Lease 并将其作为 Query 的依赖 Lease 转交给 Query Lease Store；它覆盖编译和整个 Query 存活期，直到 Query 退役且最后一个执行 Lease 释放后才关闭。对外部 Grammar，这同时保护 TSLanguage 的 `dlclose` 生命周期。
 
