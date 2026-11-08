@@ -111,7 +111,30 @@ public class TSQueryCursor extends TSNativeObject implements Iterable<TSQueryMat
   /**
    * Start running the given query on the given node.
    */
+  public interface ProgressCallback {
+    /**
+     * @param currentByteOffset Approximate absolute byte offset reached by the query cursor.
+     * @return true to cancel query execution.
+     */
+    boolean onProgress(int currentByteOffset);
+  }
+
   public void exec(TSQuery query, TSNode node) {
+    execute(query, node, null);
+  }
+
+  /**
+   * Execute a query with Tree-sitter 0.28 cooperative progress cancellation.
+   * The callback is retained until the cursor is executed again or closed.
+   *
+   * @throws UnsupportedOperationException when the bundled Tree-sitter lacks the 0.28 API.
+   */
+  public void exec(TSQuery query, TSNode node, ProgressCallback callback) {
+    Objects.requireNonNull(callback, "ProgressCallback cannot be null");
+    execute(query, node, callback);
+  }
+
+  private void execute(TSQuery query, TSNode node, ProgressCallback callback) {
     Objects.requireNonNull(node, "TSNode cannot be null");
     checkAccess();
     if (query == null || !query.canAccess()) {
@@ -122,12 +145,14 @@ public class TSQueryCursor extends TSNativeObject implements Iterable<TSQueryMat
       String msg = "Cannot execute query on invalid node. node=" + node + " node.canAccess=" +
         node.canAccess() + " node.tree.canAccess=" + node.getTree().canAccess() +
         " node.hasChanges=" + node.hasChanges() + " isAllowChangedNodes=" + isAllowChangedNodes();
-
       throw new IllegalArgumentException(msg);
     }
 
-    Native.exec(getNativeObject(), query.getNativeObject(), node);
-
+    if (callback == null) {
+      Native.exec(getNativeObject(), query.getNativeObject(), node);
+    } else {
+      Native.execWithOptions(getNativeObject(), query.getNativeObject(), node, callback);
+    }
     isExecuted = true;
     targetNode = node;
     execQuery = query;
@@ -296,6 +321,10 @@ public class TSQueryCursor extends TSNativeObject implements Iterable<TSQueryMat
     static native void exec(long cursor, long query, TSNode node);
 
     @FastNative
+    static native void execWithOptions(
+      long cursor, long query, TSNode node, ProgressCallback callback);
+
+    @FastNative
     static native boolean exceededMatchLimit(long cursor);
 
     @FastNative
@@ -310,7 +339,8 @@ public class TSQueryCursor extends TSNativeObject implements Iterable<TSQueryMat
     @FastNative
     static native void setPointRange(long cursor, TSPoint start, TSPoint end);
 
-    @FastNative
+    // This method must not use FastNative: Tree-sitter may call the Java
+    // progress callback while nextMatch is executing.
     static native TSQueryMatch nextMatch(long cursor);
 
     @FastNative

@@ -16,11 +16,64 @@
  */
 
 #include <iostream>
+#include <memory>
+#include <mutex>
+#include <unordered_map>
 
 #include "utils/ts_obj_utils.h"
 #include "utils/ts_preconditions.h"
 
 #include "ts_query_cursor.h"
+
+namespace {
+
+#if defined(TSH_TREE_SITTER_HAS_QUERY_CURSOR_OPTIONS)
+struct QueryProgressCallbackState {
+  jobject callback = nullptr;
+  jmethodID method = nullptr;
+  JNIEnv *active_env = nullptr;
+  TSQueryCursorOptions options{};
+};
+
+std::mutex g_query_progress_lock;
+std::unordered_map<TSQueryCursor *, std::unique_ptr<QueryProgressCallbackState>>
+    g_query_progress_callbacks;
+
+bool queryProgressCallback(TSQueryCursorState *state) {
+  if (!state || !state->payload) return true;
+  auto *callback_state = static_cast<QueryProgressCallbackState *>(state->payload);
+  JNIEnv *env = callback_state->active_env;
+  if (!env || !callback_state->callback || !callback_state->method) return true;
+  const jboolean cancel = env->CallBooleanMethod(
+      callback_state->callback, callback_state->method,
+      static_cast<jint>(state->current_byte_offset));
+  // Preserve a Java exception and stop native work. JNI will propagate the
+  // pending exception when nextMatch returns to Java.
+  return env->ExceptionCheck() || cancel == JNI_TRUE;
+}
+
+void releaseQueryProgressCallback(JNIEnv *env, TSQueryCursor *cursor) {
+  std::unique_ptr<QueryProgressCallbackState> state;
+  {
+    std::lock_guard<std::mutex> lock(g_query_progress_lock);
+    auto found = g_query_progress_callbacks.find(cursor);
+    if (found == g_query_progress_callbacks.end()) return;
+    state = std::move(found->second);
+    g_query_progress_callbacks.erase(found);
+  }
+  if (state->callback) env->DeleteGlobalRef(state->callback);
+}
+#endif
+
+void throwUnsupportedOperation(JNIEnv *env, const char *message) {
+  jclass exception_class = env->FindClass("java/lang/UnsupportedOperationException");
+  if (exception_class) {
+    env->ThrowNew(exception_class, message);
+    env->DeleteLocalRef(exception_class);
+  }
+}
+
+} // namespace
 
 static jlong TSQueryCursor_newCursor(JNIEnv *env, jclass self) {
   return (jlong) ts_query_cursor_new();
@@ -28,6 +81,9 @@ static jlong TSQueryCursor_newCursor(JNIEnv *env, jclass self) {
 
 static void TSQueryCursor_delete(JNIEnv *env, jclass self, jlong cursor) {
   req_nnp(env, cursor);
+#if defined(TSH_TREE_SITTER_HAS_QUERY_CURSOR_OPTIONS)
+  releaseQueryProgressCallback(env, (TSQueryCursor *) cursor);
+#endif
   ts_query_cursor_delete((TSQueryCursor *) cursor);
 }
 
@@ -37,9 +93,59 @@ static void TSQueryCursor_exec(JNIEnv *env,
                                jlong query,
                                jobject node) {
   req_nnp(env, cursor);
+#if defined(TSH_TREE_SITTER_HAS_QUERY_CURSOR_OPTIONS)
+  // A regular exec resets Tree-sitter's retained options pointer.
+  releaseQueryProgressCallback(env, (TSQueryCursor *) cursor);
+#endif
   ts_query_cursor_exec((TSQueryCursor *) cursor,
                        (TSQuery *) query,
                        _unmarshalNode(env, node));
+}
+
+static void TSQueryCursor_execWithOptions(JNIEnv *env,
+                                          jclass self,
+                                          jlong cursor,
+                                          jlong query,
+                                          jobject node,
+                                          jobject callback) {
+  req_nnp(env, cursor);
+  req_nnp(env, query);
+  req_nnp(env, callback);
+#if defined(TSH_TREE_SITTER_HAS_QUERY_CURSOR_OPTIONS)
+  TSQueryCursor *native_cursor = (TSQueryCursor *) cursor;
+  releaseQueryProgressCallback(env, native_cursor);
+
+  auto state = std::make_unique<QueryProgressCallbackState>();
+  state->callback = env->NewGlobalRef(callback);
+  if (!state->callback) return;
+  jclass callback_class = env->GetObjectClass(callback);
+  if (!callback_class) {
+    env->DeleteGlobalRef(state->callback);
+    return;
+  }
+  state->method = env->GetMethodID(callback_class, "onProgress", "(I)Z");
+  env->DeleteLocalRef(callback_class);
+  if (!state->method) {
+    env->DeleteGlobalRef(state->callback);
+    return;
+  }
+
+  state->options.payload = state.get();
+  state->options.progress_callback = queryProgressCallback;
+  QueryProgressCallbackState *callback_state = state.get();
+  {
+    std::lock_guard<std::mutex> lock(g_query_progress_lock);
+    g_query_progress_callbacks.emplace(native_cursor, std::move(state));
+  }
+  ts_query_cursor_exec_with_options(
+      native_cursor, (TSQuery *) query, _unmarshalNode(env, node),
+      &callback_state->options);
+#else
+  (void) self;
+  (void) node;
+  throwUnsupportedOperation(
+      env, "Query progress callbacks require Tree-sitter 0.28 or newer");
+#endif
 }
 
 static jboolean
@@ -84,11 +190,23 @@ static void TSQueryCursor_setPointRange(JNIEnv *env,
 
 static jobject TSQueryCursor_nextMatch(JNIEnv *env, jclass self, jlong cursor) {
   req_nnp(env, cursor);
+#if defined(TSH_TREE_SITTER_HAS_QUERY_CURSOR_OPTIONS)
+  QueryProgressCallbackState *callback_state = nullptr;
+  {
+    std::lock_guard<std::mutex> lock(g_query_progress_lock);
+    auto found = g_query_progress_callbacks.find((TSQueryCursor *) cursor);
+    if (found != g_query_progress_callbacks.end()) {
+      callback_state = found->second.get();
+      callback_state->active_env = env;
+    }
+  }
+#endif
   TSQueryMatch m;
   bool b = ts_query_cursor_next_match((TSQueryCursor *) cursor, &m);
-  if (!b) {
-    return nullptr;
-  }
+#if defined(TSH_TREE_SITTER_HAS_QUERY_CURSOR_OPTIONS)
+  if (callback_state) callback_state->active_env = nullptr;
+#endif
+  if (env->ExceptionCheck() || !b) return nullptr;
   return _marshalMatch(env, m);
 }
 
@@ -102,6 +220,8 @@ void TSQueryCursor_Native__SetJniMethods(JNINativeMethod *methods, int count) {
   SET_JNI_METHOD(methods, TSQueryCursor_Native_newCursor, TSQueryCursor_newCursor);
   SET_JNI_METHOD(methods, TSQueryCursor_Native_delete, TSQueryCursor_delete);
   SET_JNI_METHOD(methods, TSQueryCursor_Native_exec, TSQueryCursor_exec);
+  SET_JNI_METHOD(methods, TSQueryCursor_Native_execWithOptions,
+                 TSQueryCursor_execWithOptions);
   SET_JNI_METHOD(methods, TSQueryCursor_Native_exceededMatchLimit,
                  TSQueryCursor_exceededMatchLimit);
   SET_JNI_METHOD(methods, TSQueryCursor_Native_setMatchLimit,
