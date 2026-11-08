@@ -21,6 +21,7 @@
 - 新增 ATS Query API 测试源码，覆盖半开 byte range、Grammar fingerprint、Registry 冲突与 stale result 识别。\n- 新增 `TshTreeSitterQueryCompiler`：复用 `TSQuery.create(TSLanguage, source)` 编译原生 Tree-sitter S-expression Query，绑定 Grammar fingerprint，映射 Native 编译错误和 byte offset，执行 pattern count 限制；ATS 输入明确拒绝，等待专用 ATS Parser/Compiler。\n- 新增 `TshTreeSitterQueryExecutor`：复用 `TSQueryCursor` 执行，支持 byte range、Capture name/type/range/node identity 转换、总 match 数预算、协作式取消检查、过期 Grammar/Query 检查，并在 `finally` 中关闭 Cursor。\n- 新增编译查询显式 `release(queryId)`；后续加入共享 `TshNativeQueryLeaseStore`，release/替换先退役 Query，活动执行持有 Lease，最后一个 Lease 释放后才关闭 Native Query。\n- 新增 Adapter 合约测试源码，覆盖 ATS 不误解析、Grammar 缺失、Grammar 不匹配、Native handle 缺失和 query revision 过期。
 - 修正既有 `TSQueryCursor` Predicate Handler 语义：`OK` 接受 match、`ERR` 拒绝 match、`UNHANDLED` 交给后续 Handler；所有 Handler 均未处理时拒绝该 predicate match。新增 predicate 求值开关，TSH 按 `enablePredicates` 控制。
 - Predicate Handler 改为按注册顺序确定性执行；TSH 预检逐个扫描每个 pattern 中的所有 predicate，而不只检查首个 predicate。
+- Query revision 发布、注销和 Executor 的“当前 revision 检查 + Lease acquire”统一通过 `TshCompiledQueryRegistry` 事务锁协调，避免并发替换期间 Registry 指向新 revision、Lease Store 却已退役该 revision的短暂不一致。
 - 新增 `TshNativeQueryLeaseStore` 与生命周期测试源码，覆盖 release 延迟关闭、同 ID 替换和批量退役；Executor 对 predicate 名称执行 Handler 声明覆盖预检。
 
 ### Planned
