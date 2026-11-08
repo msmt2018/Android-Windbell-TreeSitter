@@ -19,7 +19,7 @@
 | [ATS、Regex 与 Match](ats-regex-and-match-api.md) | 双管道匹配 | 统一 Match、优先级、增量和窗口 |
 | [诊断与可观测性](diagnostics-and-observability.md) | Diagnostics、Trace、Metrics | 错误码、集成报告、渲染状态 |
 
-## 公共 API 设计要求
+| [快速接入](quick-start.md) | 当前 API 使用方式与边界 |\n| [API 审查清单](public-api-review-checklist.md) | 新增 public API 的发布门槛 |\n\n## 公共 API 设计要求
 
 每个公共 API 必须定义目标对象、输入/输出、能力前置条件、线程约束、生命周期、错误语义、诊断信息、扩展点、兼容策略和测试要求。
 
