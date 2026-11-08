@@ -195,6 +195,20 @@ public:
                     }
                 }
                 if (!spansValid) continue;
+                // Query matches can capture an ancestor whose span extends beyond
+                // the requested viewport. Invalidate by both viewport and actual
+                // cached capture spans so an out-of-viewport edit cannot preserve
+                // a stale ancestor capture.
+                for (const auto &span : value.spans) {
+                    for (const auto &range : dirtyRanges) {
+                        if (span.start_byte < range.second && range.first < span.end_byte) {
+                            spansValid = false;
+                            break;
+                        }
+                    }
+                    if (!spansValid) break;
+                }
+                if (!spansValid) continue;
                 key.version = newVersion;
                 key.source_version = newSourceVersion;
                 key.partition_version = newPartitionVersion;
