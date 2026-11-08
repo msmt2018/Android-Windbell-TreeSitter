@@ -99,7 +99,8 @@ class StyledTextPainter {
             }
 
             // background color
-            spans.getSpans(runStart, runEnd, BackgroundColorSpan::class.java).firstOrNull()?.let {
+            spans.getSpans(runStart, runEnd, BackgroundColorSpan::class.java)
+                .maxByOrNull { span -> spans.getSpanFlags(span) and Spanned.SPAN_PRIORITY }?.let {
                 paint.color = it.backgroundColor
                 canvas.drawRect(runX, rowTop, runX + runWidth, rowBottom, paint)
             }
@@ -150,7 +151,10 @@ class StyledTextPainter {
             // 0x08. Draw it explicitly: this painter does not delegate to TextView's
             // Layout, so merely attaching the Android span is not sufficient.
             if (spans.getSpans(runStart, runEnd, StrikethroughSpan::class.java).isNotEmpty()) {
-                val top = baseline + paint.ascent() * 0.38f
+                // Use the active run's font metrics rather than a hard-coded
+                // fraction of ascent; this remains stable across font families.
+                val metrics = paint.fontMetrics
+                val top = baseline + (metrics.ascent + metrics.descent) * 0.5f
                 canvas.drawRect(runX, top, runX + runWidth, top + underlineThickness, paint)
             }
 

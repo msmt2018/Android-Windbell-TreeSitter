@@ -7,7 +7,10 @@ import android.text.SpannableString
 import android.text.Spanned
 import android.text.TextPaint
 import android.text.style.CharacterStyle
+import android.text.style.BackgroundColorSpan
 import android.text.style.ForegroundColorSpan
+import android.text.style.StrikethroughSpan
+import android.text.style.UnderlineSpan
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -75,6 +78,92 @@ class StyledTextPainterRenderingTest {
                 red > 245 && green < 8 && blue < 8
             }
         )
+    }
+
+
+    @Test
+    fun backgroundColorIsPaintedAcrossTheRow() {
+        val text = SpannableString("MMMM")
+        text.setSpan(
+            BackgroundColorSpan(Color.YELLOW),
+            0,
+            text.length,
+            Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+        )
+
+        val bitmap = render(text)
+        val pixel = bitmap.getPixel(10, 4)
+        assertTrue(
+            "Expected background color outside glyph coverage",
+            Color.red(pixel) > 220 && Color.green(pixel) > 180 && Color.blue(pixel) < 80
+        )
+    }
+
+    @Test
+    fun higherPriorityBackgroundWinsWhenSpansOverlap() {
+        val text = SpannableString("MMMM")
+        text.setSpan(
+            BackgroundColorSpan(Color.RED),
+            0,
+            text.length,
+            Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+        )
+        text.setSpan(
+            BackgroundColorSpan(Color.BLUE),
+            0,
+            text.length,
+            Spanned.SPAN_EXCLUSIVE_EXCLUSIVE or (2 shl Spanned.SPAN_PRIORITY_SHIFT)
+        )
+
+        val bitmap = render(text)
+        val pixel = bitmap.getPixel(10, 4)
+        assertTrue(
+            "Expected the higher-priority blue background span",
+            Color.blue(pixel) > 180 && Color.red(pixel) < 80
+        )
+    }
+
+    @Test
+    fun underlineAndStrikethroughProduceCanvasPixels() {
+        val underlined = SpannableString("MMMM")
+        underlined.setSpan(
+            UnderlineSpan(),
+            0,
+            underlined.length,
+            Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+        )
+        val underlineBitmap = render(underlined)
+        assertTrue(
+            "Expected underline pixels below the glyph baseline",
+            hasPixel(underlineBitmap, 8, 130) { red, green, blue ->
+                red < 80 && green < 80 && blue < 80
+            } && hasDarkPixelInRows(underlineBitmap, 58, 78)
+        )
+
+        val struck = SpannableString("MMMM")
+        struck.setSpan(
+            StrikethroughSpan(),
+            0,
+            struck.length,
+            Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+        )
+        val strikeBitmap = render(struck)
+        assertTrue(
+            "Expected strikethrough pixels through the glyph body",
+            hasDarkPixelInRows(strikeBitmap, 30, 50)
+        )
+    }
+
+    private fun hasDarkPixelInRows(bitmap: Bitmap, firstRow: Int, lastRow: Int): Boolean {
+        for (y in firstRow until minOf(lastRow, bitmap.height)) {
+            for (x in 8 until minOf(130, bitmap.width)) {
+                val pixel = bitmap.getPixel(x, y)
+                if (Color.red(pixel) < 80 && Color.green(pixel) < 80 && Color.blue(pixel) < 80) {
+                    return true
+                }
+            }
+        }
+        return false
     }
 
     private fun render(text: SpannableString): Bitmap {
