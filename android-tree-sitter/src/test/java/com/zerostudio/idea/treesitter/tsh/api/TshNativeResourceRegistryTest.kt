@@ -75,4 +75,27 @@ class TshNativeResourceRegistryTest {
         assertEquals(1, second.closeCalls)
     }
 
+    @Test
+    fun duplicatePublicationCannotUnregisterAnotherCoordinatorResource() {
+        val objects = TshObjectRegistry()
+        val leases = TshNativeResourceLeaseStore()
+        val owner = TshNativeResourceRegistry(objects, leases)
+        val other = TshNativeResourceRegistry(objects, leases)
+        val tree = FakeTree()
+        val registration = owner.register(tree, "syntax-tree")
+
+        try {
+            other.register(tree, "syntax-tree")
+            fail("Expected duplicate native resource publication to fail")
+        } catch (_: IllegalStateException) {
+            // Expected: the second coordinator must not adopt or unregister the first owner's ID.
+        }
+
+        assertSame(tree, objects.find(registration.descriptor.id))
+        val lease = owner.acquire(registration.handle)!!
+        assertTrue(owner.retire(registration.descriptor.id))
+        lease.close()
+        assertEquals(1, tree.closeCalls)
+    }
+
 }
