@@ -10,6 +10,8 @@
 - 新增内存文本 UTF-8/UTF-16/Unicode Code Point/Grapheme 坐标转换器及测试源码。
 - 新增 Runtime/Session、Config/Language Service、Editor Adapter、Highlight/Render、Binding/Event/Extension、ATS/Regex/Match 和 Diagnostics/Observability 详细 API 规范。
 
+- 新增 Grammar/Parser/Query、增量 TextBuffer、JNI/Native Bridge、Cache/Performance、安全/Regex 防护、测试/兼容性、平台/线程契约文档。
+
 ### Planned
 - Piece Tree/Rope 索引化坐标映射与 Layout-aware 坐标 Provider。
 - Engine Session、任务调度、资源 Scope 和兼容迁移接线。
