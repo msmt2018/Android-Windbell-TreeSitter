@@ -706,6 +706,15 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                 position = static_cast<uint32_t>(nearest->byte_offset);
                 state_stack = nearest->state_stack;
                 next_checkpoint = ((static_cast<uint64_t>(position) / (64u * 1024u)) + 1u) * (64u * 1024u);
+                // An edit shifts old suffix checkpoints by its byte delta, so
+                // their offsets need not remain aligned to the fixed stride.
+                // Visit the nearest stale candidate exactly to test convergence.
+                for (const auto& checkpoint : *monarch_checkpoints) {
+                    if (checkpoint.source_version != source_version &&
+                        checkpoint.byte_offset > position) {
+                        next_checkpoint = std::min(next_checkpoint, checkpoint.byte_offset);
+                    }
+                }
             } else {
                 // A stale checkpoint set cannot be mixed with the current
                 // source version. Drop it before producing replacement entries.
@@ -719,19 +728,43 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
             checkpoint.source_version = source_version;
             checkpoint.partition_version = partition_version;
             checkpoint.state_stack = state_stack;
-            if (monarch_checkpoints->empty() ||
-                monarch_checkpoints->back().byte_offset < position) {
-                monarch_checkpoints->push_back(std::move(checkpoint));
-                // Bound persistent tokenizer metadata independently from the
-                // source size. 8192 checkpoints cover 512 MiB at 64 KiB spacing;
-                // older viewports safely fall back to the root state.
-                constexpr size_t kMaxMonarchCheckpoints = 8192;
-                if (monarch_checkpoints->size() > kMaxMonarchCheckpoints) {
-                    monarch_checkpoints->erase(
-                        monarch_checkpoints->begin(),
-                        monarch_checkpoints->begin() +
-                            (monarch_checkpoints->size() - kMaxMonarchCheckpoints));
+            bool converged = false;
+            auto stale = std::find_if(
+                monarch_checkpoints->begin(), monarch_checkpoints->end(),
+                [&](const MonarchStateCheckpoint& candidate) {
+                    return candidate.source_version != source_version &&
+                        candidate.byte_offset == position;
+                });
+            if (stale != monarch_checkpoints->end()) {
+                if (stale->state_stack == state_stack) {
+                    const uint64_t stale_version = stale->source_version;
+                    for (auto& candidate : *monarch_checkpoints) {
+                        if (candidate.source_version == stale_version &&
+                            candidate.byte_offset >= position) {
+                            candidate.source_version = source_version;
+                            candidate.partition_version = partition_version;
+                        }
+                    }
+                    converged = true;
+                } else {
+                    // The edit changed lexical state at this checkpoint. Keep
+                    // later candidates: a subsequent checkpoint may still be
+                    // the first point where the tokenizer state converges.
+                    monarch_checkpoints->erase(stale);
                 }
+            }
+            if (!converged && (monarch_checkpoints->empty() ||
+                monarch_checkpoints->back().byte_offset < position)) {
+                monarch_checkpoints->push_back(std::move(checkpoint));
+            }
+            // Bound persistent tokenizer metadata independently from the
+            // source size. 8192 checkpoints cover 512 MiB at 64 KiB spacing.
+            constexpr size_t kMaxMonarchCheckpoints = 8192;
+            if (monarch_checkpoints->size() > kMaxMonarchCheckpoints) {
+                monarch_checkpoints->erase(
+                    monarch_checkpoints->begin(),
+                    monarch_checkpoints->begin() +
+                        (monarch_checkpoints->size() - kMaxMonarchCheckpoints));
             }
             next_checkpoint =
                 ((static_cast<uint64_t>(position) / (64u * 1024u)) + 1u) *
