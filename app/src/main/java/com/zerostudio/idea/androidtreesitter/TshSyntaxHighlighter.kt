@@ -27,18 +27,17 @@ import x.github.module.editor.model.EditorDocument
 import x.github.module.editor.model.EditorTextSnapshot
 import x.github.module.editor.structure.PlainBracketMatcher
 import java.io.File
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
-import java.util.concurrent.ConcurrentHashMap
 
 /**
  * TSH adapter for EditorView.
  *
  * Small documents use the original whole-document pipeline. Large documents use
- * immutable Piece Tree snapshots, sparse partition indexing, viewport-prioritized
- * parsing, and byte-budgeted capture/AST caches. Only the current partition's
- * bounded context window is materialized as a String for the existing TSH regex,
- * Monarch, ATS and Tree-sitter Query pipeline.
+ * a native-owned Piece Tree document, incremental Tree-sitter edits, viewport-range
+ * TSH execution, and a byte-budgeted capture cache. The Kotlin layer transfers only
+ * bounded UTF-16LE windows at document creation and the inserted slice per edit.
  */
 class TshSyntaxHighlighter(
     private val language: TSLanguage,
@@ -54,7 +53,6 @@ class TshSyntaxHighlighter(
     }
 
     private data class LargeSession(
-        val snapshot: EditorTextSnapshot,
         /** Native-owned PieceTreeSource + incremental Tree-sitter tree. */
         val nativeHandle: Long,
         val lengthChars: AtomicLong,
@@ -369,7 +367,7 @@ class TshSyntaxHighlighter(
             )
             captureIndexes = createdCaptureIndexes
             val active = LargeSession(
-                snapshot, nativeHandle, AtomicLong(snapshot.length.toLong()),
+                nativeHandle, AtomicLong(snapshot.length.toLong()),
                 createdCaptureIndexes, ticket
             )
             if (generation.get() == ticket) {
