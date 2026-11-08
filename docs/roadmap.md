@@ -58,6 +58,7 @@
 - [x] Resource Registry 先在协调锁内撤销 ID 的获取资格并移除对象索引，再在锁外执行 Native retire/close；增加永久 close 状态，避免 Native close 回调在协调锁内运行。
 - [x] Query Lease Store 增加 `registerDeferred` / `retireDeferred`：高层 Query Registry 事务锁内只切换 revision/登记退役，旧 Query 与依赖 Language Lease 的 close action 在事务锁外执行；增加 deferred close 测试源码。
 - [x] `TshEngine` 持有自己的 Native Resource Lease Store/Registry；Engine.close 先关闭该 Registry 并退役其拥有的 Native 资源，再清理 Provider/Object 索引。
+- [x] 新增 Engine Native 生命周期测试源码：验证 idle resource 在 Engine.close 时释放、活动 Lease 延迟释放，以及 Engine 关闭后拒绝新资源注册。
 - [x] Tree-sitter Compiler/Executor Adapter 增加可选 `TshNativeResourceRegistry` 注入：启用时 Language/Tree Lease 获取经统一协调入口完成；旧底层 Store 注入保留为兼容迁移路径。
 - [ ] 宿主所有 Tree/Language/Parser owner 迁移到协调 Registry 的 register/acquire/retire，清除绕过 Store 的直接 close；生产构造必须注入 Engine 所有的协调入口；增加并发/真实 Native 测试。
 - [ ] 审计 Engine.close 与并发 register/retire 的线性化和等待语义；Resource Registry 与 Query Registry 已避免常规退役路径在各自协调锁内执行 Native close，但尚未完成全场景并发验证。
