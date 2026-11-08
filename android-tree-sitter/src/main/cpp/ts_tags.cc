@@ -10,6 +10,7 @@
 #include <jni.h>
 
 #include <algorithm>
+#include <array>
 #include <cstdint>
 #include <limits>
 #include <memory>
@@ -108,8 +109,8 @@ static jobject TSQuery_extractBounded(
       throwTagsIllegalArgument(env, "styleIds length must equal the query capture count");
       return nullptr;
     }
-    if (max_spans < 1 || max_spans > 4000000) {
-      throwTagsIllegalArgument(env, "maxSpans must be between 1 and 4000000");
+    if (max_spans < 1 || max_spans > 1000000) {
+      throwTagsIllegalArgument(env, "maxSpans must be between 1 and 1000000");
       return nullptr;
     }
     try {
@@ -222,9 +223,10 @@ static jobject TSQuery_extractBounded(
   }
 
   if (style_ids != nullptr) {
-    std::vector<jlong> packed;
+    using PackedSpan = std::array<jlong, 6>;
+    std::vector<PackedSpan> spans;
     try {
-      packed.reserve(capture_count_for_spans * 6);
+      spans.reserve(capture_count_for_spans);
       for (const auto &owned : matches) {
         for (const TSQueryCapture &capture : owned.captures) {
           const jint style_id = styles[capture.index];
@@ -234,23 +236,42 @@ static jobject TSQuery_extractBounded(
             throwTagsIllegalState(env, "Native query returned an invalid capture range");
             return nullptr;
           }
-          packed.push_back(static_cast<jlong>(capture_start));
-          packed.push_back(static_cast<jlong>(capture_end));
-          packed.push_back(static_cast<jlong>(capture.index));
-          packed.push_back(static_cast<jlong>(owned.pattern_index));
-          packed.push_back(static_cast<jlong>(style_id));
-          packed.push_back(static_cast<jlong>(owned.id));
+          spans.push_back(PackedSpan{
+              static_cast<jlong>(capture_start),
+              static_cast<jlong>(capture_end),
+              static_cast<jlong>(capture.index),
+              static_cast<jlong>(owned.pattern_index),
+              static_cast<jlong>(style_id),
+              static_cast<jlong>(owned.id)});
         }
       }
+      std::sort(spans.begin(), spans.end(),
+          [](const PackedSpan &a, const PackedSpan &b) {
+            if (a[0] != b[0]) return a[0] < b[0];
+            if (a[1] != b[1]) return a[1] < b[1];
+            if (a[3] != b[3]) return a[3] < b[3];
+            if (a[2] != b[2]) return a[2] < b[2];
+            return a[5] < b[5];
+          });
     } catch (const std::bad_alloc &) {
       throwTagsOutOfMemory(env);
       return nullptr;
     }
-    jlongArray result = env->NewLongArray(static_cast<jsize>(packed.size()));
+    const jsize value_count = static_cast<jsize>(spans.size() * 6);
+    jlongArray result = env->NewLongArray(value_count);
     if (!result) return nullptr;
-    if (!packed.empty()) {
-      env->SetLongArrayRegion(result, 0, static_cast<jsize>(packed.size()),
-                              packed.data());
+    if (!spans.empty()) {
+      std::vector<jlong> packed;
+      try {
+        packed.reserve(static_cast<size_t>(value_count));
+        for (const PackedSpan &span : spans) {
+          packed.insert(packed.end(), span.begin(), span.end());
+        }
+      } catch (const std::bad_alloc &) {
+        throwTagsOutOfMemory(env);
+        return nullptr;
+      }
+      env->SetLongArrayRegion(result, 0, value_count, packed.data());
       if (env->ExceptionCheck()) return nullptr;
     }
     return result;
