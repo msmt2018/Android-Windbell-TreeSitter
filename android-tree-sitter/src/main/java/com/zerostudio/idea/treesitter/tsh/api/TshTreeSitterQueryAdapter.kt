@@ -86,6 +86,7 @@ class TshTreeSitterQueryCompiler(
         val hash = sha256(source.text)
         val queryId = source.sourceId?.takeIf { it.isNotBlank() } ?: "tsq:$hash"
         val revision = hash
+        val previous = queries.get(queryId)
         val objectDescriptor = try {
             objects.register(nativeQuery, "tree-sitter-query")
         } catch (error: Throwable) {
@@ -103,7 +104,17 @@ class TshTreeSitterQueryCompiler(
             nativeObjectId = objectDescriptor.id
         )
         return when (val registered = queries.register(compiled, replace = true)) {
-            is TshResult.Success -> registered
+            is TshResult.Success -> {
+                val oldId = previous?.nativeObjectId
+                if (oldId != null && oldId != objectDescriptor.id) {
+                    val oldNative = objects.find(oldId) as? TSQuery
+                    if (oldNative != null) {
+                        objects.unregister(oldId)
+                        runCatching { oldNative.close() }
+                    }
+                }
+                registered
+            }
             is TshResult.Failure -> {
                 objects.unregister(nativeQuery)
                 nativeQuery.close()
@@ -172,16 +183,24 @@ class TshTreeSitterQueryExecutor(
         }
 
         try {
-            cursor.setMatchLimit(budget.maxMatches.coerceAtMost(Int.MAX_VALUE.toLong()).toInt())
+            // Tree-sitter's match limit bounds pending in-progress matches, not total results.
+            // Enforce maxMatches while draining the cursor instead.
             cursor.setByteRange(effectiveRange.startByte, effectiveRange.endByte)
             cursor.exec(nativeQuery, root)
 
             val captures = ArrayList<TshCapture>()
+            var matchesSeen = 0
+            var truncated = false
             while (true) {
                 if (cancellation.isCancelled()) {
                     return failure("TSH-QUERY-EXEC-012", "Query cancelled between native match retrievals")
                 }
                 val match = cursor.nextMatch() ?: break
+                if (matchesSeen >= budget.maxMatches) {
+                    truncated = true
+                    break
+                }
+                matchesSeen++
                 for (captureIndex in match.captures.indices) {
                     val nativeCapture = match.getCapture(captureIndex)
                     val node = nativeCapture.node
@@ -197,13 +216,11 @@ class TshTreeSitterQueryExecutor(
                         nodeId = node.nodeId,
                         patternIndex = match.patternIndex
                     )
-                    if (captures.size >= budget.maxMatches) break
                 }
-                if (captures.size >= budget.maxMatches) break
             }
 
             val exceeded = cursor.didExceedMatchLimit()
-            val complete = !exceeded && captures.size < budget.maxMatches
+            val complete = !exceeded && !truncated
             TshResult.Success(
                 TshQueryResult(
                     queryId = query.queryId,
@@ -219,7 +236,7 @@ class TshTreeSitterQueryExecutor(
                 ),
                 diagnostics = if (!complete) listOf(diagnostic(
                     "TSH-QUERY-EXEC-015",
-                    "Query result is partial because the match limit was reached",
+                    "Query result is partial because the total match budget was reached or Tree-sitter dropped pending matches",
                     TshDiagnosticSeverity.WARNING
                 )) else emptyList()
             )
