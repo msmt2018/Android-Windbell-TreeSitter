@@ -203,6 +203,7 @@ TSNode_isEqualTo(JNIEnv *env, jclass clazz, jobject self, jobject other) {
 
 static jstring TSNode_getNodeString(JNIEnv *env, jclass clazz, jobject self) {
   char *nodeString = ts_node_string(_unmarshalNode(env, self));
+  if (nodeString == nullptr) return nullptr;
   jstring result = FNI_NewStringFromStandardUtf8(
       env, nodeString, static_cast<uint32_t>(std::strlen(nodeString)));
   free(nodeString);
@@ -227,6 +228,7 @@ static jobject TSNode_getEndPoint(JNIEnv *env, jclass clazz, jobject self) {
 
 static jstring TSNode_getType(JNIEnv *env, jclass clazz, jobject self) {
   const char *type = ts_node_type(_unmarshalNode(env, self));
+  if (type == nullptr) return nullptr;
   return FNI_NewStringFromStandardUtf8(
       env, type, static_cast<uint32_t>(std::strlen(type)));
 }
@@ -294,6 +296,7 @@ static jint TSNode_getDescendantCount(JNIEnv *env, jclass clazz, jobject self) {
 static jstring TSNode_getGrammarType(JNIEnv *env, jclass clazz, jobject self) {
   TSNode node = _unmarshalNode(env, self);
   const char *grammar_type = ts_node_grammar_type(node);
+  if (grammar_type == nullptr) return nullptr;
   return FNI_NewStringFromStandardUtf8(
       env, grammar_type, static_cast<uint32_t>(std::strlen(grammar_type)));
 }
