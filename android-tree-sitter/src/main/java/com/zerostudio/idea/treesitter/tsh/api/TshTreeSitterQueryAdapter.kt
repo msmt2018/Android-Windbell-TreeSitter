@@ -135,8 +135,8 @@ class TshTreeSitterQueryCompiler(
      * the final execution lease is released.
      */
     fun release(queryId: String): Boolean = queries.withLock {
-        val compiled = queries.unregister(queryId) ?: return@synchronized false
-        val id = compiled.nativeObjectId ?: return@synchronized true
+        val compiled = queries.unregister(queryId) ?: return@withLock false
+        val id = compiled.nativeObjectId ?: return@withLock true
         objects.unregister(id)
         leases.retire(queryId)
         true
