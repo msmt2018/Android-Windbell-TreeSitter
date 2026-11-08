@@ -11,12 +11,20 @@ SegmentedTextSource::SegmentedTextSource(
     uint64_t totalBytes
 ) noexcept : segments_(std::move(segments)), total_bytes_(totalBytes) {
     uint64_t accumulated = 0;
-    for (const auto &segment : segments_) {
-        if ((segment.size & 1u) != 0 || (segment.size != 0 && segment.data == nullptr) ||
-            segment.size > std::numeric_limits<uint64_t>::max() - accumulated) {
-            return;
+    try {
+        segment_starts_.reserve(segments_.size());
+        for (const auto &segment : segments_) {
+            if ((segment.size & 1u) != 0 || (segment.size != 0 && segment.data == nullptr) ||
+                segment.size > std::numeric_limits<uint64_t>::max() - accumulated) {
+                segment_starts_.clear();
+                return;
+            }
+            segment_starts_.push_back(accumulated);
+            accumulated += segment.size;
         }
-        accumulated += segment.size;
+    } catch (...) {
+        segment_starts_.clear();
+        return;
     }
     valid_ = accumulated == total_bytes_ && (total_bytes_ & 1u) == 0;
 }
@@ -41,23 +49,21 @@ bool SegmentedTextSource::read(
     if (offset == total_bytes_) return true;
     if (offset > total_bytes_) return false;
 
-    uint64_t base = 0;
-    for (const auto &segment : segments_) {
-        const uint64_t end = base + segment.size;
-        if (offset < end) {
-            const uint64_t local = offset - base;
-            const uint64_t available = segment.size - local;
-            uint64_t count = std::min<uint64_t>(available, maxBytes);
-            count &= ~uint64_t{1};
-            if (count == 0 || local > static_cast<uint64_t>(
-                    std::numeric_limits<size_t>::max())) return false;
-            out->data = segment.data + static_cast<size_t>(local);
-            out->size = static_cast<uint32_t>(count);
-            return true;
-        }
-        base = end;
-    }
-    return false;
+    const auto it = std::upper_bound(segment_starts_.begin(), segment_starts_.end(), offset);
+    if (it == segment_starts_.begin()) return false;
+    const size_t index = static_cast<size_t>((it - segment_starts_.begin()) - 1);
+    const auto &segment = segments_[index];
+    const uint64_t local = offset - segment_starts_[index];
+    if (local >= segment.size || local > static_cast<uint64_t>(
+            std::numeric_limits<size_t>::max())) return false;
+
+    const uint64_t available = segment.size - local;
+    uint64_t count = std::min<uint64_t>(available, maxBytes);
+    count &= ~uint64_t{1};
+    if (count == 0) return false;
+    out->data = segment.data + static_cast<size_t>(local);
+    out->size = static_cast<uint32_t>(count);
+    return true;
 }
 
 ContiguousTextSource::ContiguousTextSource(const void *data, uint64_t sizeBytes) noexcept
