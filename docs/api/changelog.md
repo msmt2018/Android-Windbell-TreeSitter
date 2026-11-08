@@ -29,14 +29,15 @@
 - Query revision 发布、注销和 Executor 的“当前 revision 检查 + Lease acquire”统一通过 `TshCompiledQueryRegistry` 事务锁协调，避免并发替换期间 Registry 指向新 revision、Lease Store 却已退役该 revision的短暂不一致。
 - 新增 `TshNativeQueryLeaseStore` 与生命周期测试源码，覆盖 release 延迟关闭、同 ID 替换和批量退役；Executor 对 predicate 名称执行 Handler 声明覆盖预检。
 - 新增通用 `TshNativeResourceLeaseStore`：资源 Handle 实例校验、Lease 计数、retire/retireAll 后延迟 close；Tree Executor 接入 Tree Lease，Grammar Language Resolver 改为返回带 objectId 的 Language Handle，Compiler 将 Language Lease 作为 Query 依赖保持至 Query 完整退役；新增资源 Lease 测试源码。
-- 新增 `TshNativeResourceRegistry` 协调对象索引与 Native 资源所有权：统一注册、按 Native 类型校验的 Lease 获取、先退役后注销对象索引；新增注册/获取/退役生命周期测试源码。宿主尚未全面迁移到该协调入口。
+- 新增 `TshNativeResourceRegistry` 协调对象索引与 Native 资源所有权：统一注册、按 Native 类型及实例身份校验的 Lease 获取、先退役后注销对象索引；新增注册/获取/退役生命周期测试源码。
+- `TshTreeSitterQueryCompiler` / `TshTreeSitterQueryExecutor` 新增可选协调 Registry 注入；启用后 Language/Tree Lease 获取经统一入口完成，旧 Store 直连构造仍保留作为兼容迁移路径。宿主生产装配尚未全面迁移。
 
 ### Planned
 - Piece Tree/Rope 索引化坐标映射与 Layout-aware 坐标 Provider。
 - Engine Session、任务调度、资源 Scope 和兼容迁移接线。
 - .tsh Lexer/Parser/AST/Schema/Language Service 实现及 C++ Compiler 兼容。
 - ATS Lexer/Parser/AST/Compiler 到现有 Tree-sitter Query 执行器的适配。
-- Tree/Language Native lease 的宿主全面迁移到 `TshNativeResourceRegistry`（禁止绕过 Store 直接 close）、增量查询与可中断取消/真实 step budget。
+- Tree/Language Native lease 的宿主全面迁移到 `TshNativeResourceRegistry`（禁止绕过 Store 直接 close）、生产构造强制协调入口、增量查询与可中断取消/真实 step budget。
 - Regex 独立 WindowLease、Oniguruma 连续缓冲区和跨窗口等价策略。
 - Unified Match/Scope/Attribute/Highlight 与 Theme/RenderPlan 运行时实现。
 - Binding/EventBus/Provider 版本协商和诊断收集器。
