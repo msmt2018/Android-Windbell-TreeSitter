@@ -284,7 +284,7 @@ class TshSyntaxHighlighter(
             if (generation.get() != ticket) throw CancellationException("Stale document snapshot")
 
             val createdAstCache = PartitionAstCache(AST_CACHE_BYTES) { length ->
-                maxOf(128L * 1024L, length * 64L)
+                maxOf(128L * 1024L, length * 32L)
             }
             astCache = createdAstCache
             val createdScheduler = TreeSitterPartitionScheduler(
@@ -352,8 +352,13 @@ class TshSyntaxHighlighter(
             val createdParser = TSParser.create().also { it.setLanguage(language) }
             parser = createdParser
             val text = snapshot.toString()
-            tree = createdParser.parseString(text)
-            val nextCaptures = engine.computeHighlights(tree, text, extension)
+            val parsedTree = createdParser.parseString(text)
+            tree = parsedTree
+            val nextCaptures = if (parsedTree != null) {
+                engine.computeHighlights(parsedTree, text, extension)
+            } else {
+                emptyList()
+            }
             if (generation.get() == ticket) {
                 captureIndex = CaptureIntervalIndex(nextCaptures)
                 parsing = false

@@ -115,7 +115,7 @@ class TreeSitterPartitionScheduler(
                             if (closed.get() || source.version != request.documentVersion) {
                                 tree.close()
                             } else {
-                                astCache.put(key, tree, partition.endExclusive - partition.start)
+                                astCache.put(key, tree, request.contextEndUtf16 - request.contextStartUtf16)
                             }
                         } catch (error: Throwable) {
                             onFailure(request, error)
