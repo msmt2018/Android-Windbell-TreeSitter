@@ -6,10 +6,10 @@
 - [x] 文本坐标系、位置和范围基础类型
 - [x] 对象 ID、能力和对象描述符
 - [x] 基于实例身份的对象注册表
-- [x] Provider 注册与对象能力匹配
+- [x] Provider 注册与对象能力匹配\n- [x] TextDocument/TextSnapshot/TextEdit/TextChange 抽象\n- [x] 内存文本 UTF-8/UTF-16/Code Point/Grapheme 边界转换
 - [x] 引擎创建、初始化、关闭状态机
 - [x] 对应单元测试源码
-- [ ] 本地 Gradle 编译验证
+- [ ] Piece Tree/Rope 索引化坐标 Provider\n- [ ] Layout-aware 行列/屏幕坐标转换\n- [ ] 本地 Gradle 编译验证
 - [ ] Robolectric/设备端运行验证
 - [ ] 现有 WindbellTshEngine 迁移接线
 
@@ -62,6 +62,6 @@ Provider 必须声明稳定 ID、API 版本、能力集合，并对给定实例�
 2. 增加 TextDocument、TextBuffer、CoordinateConverter 和版本化编辑事件。
 3. 增加 Provider 能力版本协商、优先级和注册冲突诊断。
 4. 为旧 `WindbellTshEngine` 增加兼容 Facade，逐步将配置/高亮能力迁入服务。
-5. 在可用构建环境运行 `android-tree-sitter` 单元测试并修正编译问题。
+5. 为 Piece Tree/Rope 实现无需全量 flatten 的坐标索引与快照 Provider。\n6. 在可用构建环境运行 `android-tree-sitter` 单元测试并修正编译问题。
 
 注意：API 文件已提交到开发分支，但当前执行环境没有仓库工作区和 Gradle 构建能力，因此不能声称代码已编译或测试通过。
