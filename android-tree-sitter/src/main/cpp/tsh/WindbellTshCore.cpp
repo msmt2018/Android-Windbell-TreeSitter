@@ -1343,6 +1343,7 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
             std::vector<HighlightSpan> query_spans;
             TSQueryMatch match;
             uint32_t match_order = 0;
+            uint32_t accepted_match_count = 0;
             while (ts_query_cursor_next_match(q_cursor, &match)) {
                 const uint32_t current_order = match_order++;
                 auto pattern_metadata = native_query.pattern_metadata.find(match.pattern_index);
@@ -1352,7 +1353,7 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                 }
                 if (!tshEvaluateNativePredicates(native_query, match, text_start, text_source, total_bytes))
                     continue;
-                if (diagnostic_match_counts) ++diagnostic_match_counts[3];
+                ++accepted_match_count;
                 const int32_t pattern_priority =
                     pattern_metadata != native_query.pattern_metadata.end() &&
                     pattern_metadata->second.has_priority
@@ -1382,7 +1383,7 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
             const bool query_incomplete = query_budget.cancelled ||
                 ts_query_cursor_did_exceed_match_limit(q_cursor);
             if (!query_incomplete) {
-                if (diagnostic_match_counts) diagnostic_match_counts[3] += match_order;
+                if (diagnostic_match_counts) diagnostic_match_counts[3] += accepted_match_count;
                 macro_spans.insert(macro_spans.end(), query_spans.begin(), query_spans.end());
             }
 #else
