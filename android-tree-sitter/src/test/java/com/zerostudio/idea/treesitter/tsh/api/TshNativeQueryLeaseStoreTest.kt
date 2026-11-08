@@ -93,4 +93,25 @@ class TshNativeQueryLeaseStoreTest {
         assertEquals(1, query.closeCalls)
         assertEquals(1, languageLeaseCloseCalls)
     }
+    @Test
+    fun deferredRetirementDoesNotCloseUntilCallerRunsAction() {
+        val store = TshNativeQueryLeaseStore()
+        val oldQuery = FakeQuery()
+        val newQuery = FakeQuery()
+        val oldId = TshObjectId(40L)
+        val newId = TshObjectId(41L)
+
+        store.register("deferred", oldId, oldQuery)
+        val closeOld = store.registerDeferred("deferred", newId, newQuery)
+        assertEquals(0, oldQuery.closeCalls)
+        closeOld?.close()
+        assertEquals(1, oldQuery.closeCalls)
+
+        val closeNew = store.retireDeferred("deferred")
+        assertTrue(closeNew.first)
+        assertEquals(0, newQuery.closeCalls)
+        closeNew.second?.close()
+        assertEquals(1, newQuery.closeCalls)
+    }
+
 }
