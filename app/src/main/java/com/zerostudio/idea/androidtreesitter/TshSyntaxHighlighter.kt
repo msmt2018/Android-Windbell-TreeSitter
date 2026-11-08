@@ -5,14 +5,7 @@ import android.text.Spanned
 import android.text.style.CharacterStyle
 import android.util.Log
 import com.zerostudio.idea.treesitter.TSLanguage
-import com.zerostudio.idea.treesitter.TSParser
-import com.zerostudio.idea.treesitter.TSTree
 import com.zerostudio.idea.treesitter.largefile.ByteBudgetLruCache
-import com.zerostudio.idea.treesitter.largefile.CharSequenceUtf16DocumentSource
-import com.zerostudio.idea.treesitter.largefile.DocumentPartitionManager
-import com.zerostudio.idea.treesitter.largefile.PartitionAstCache
-import com.zerostudio.idea.treesitter.largefile.PartitionParseRequest
-import com.zerostudio.idea.treesitter.largefile.TreeSitterPartitionScheduler
 import com.zerostudio.idea.treesitter.tsh.WindbellTshEngine
 import com.zerostudio.idea.treesitter.tsh.NativeTextWindowReader
 import kotlinx.coroutines.CancellationException
@@ -23,7 +16,6 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import x.github.module.editor.highlight.SyntaxHighlighter
 import x.github.module.editor.input.AutoPairFilter
@@ -61,7 +53,6 @@ class TshSyntaxHighlighter(
 
     private data class LargeSession(
         val snapshot: EditorTextSnapshot,
-        val source: CharSequenceUtf16DocumentSource,
         /** Native-owned PieceTreeSource + incremental Tree-sitter tree. */
         val nativeHandle: Long,
         val lengthChars: AtomicLong,
@@ -180,8 +171,8 @@ class TshSyntaxHighlighter(
         }
         val active = largeSession
         val spans = if (active != null) {
-            val boundedStart = queryStart.coerceAtMost(active.source.length)
-            val boundedEnd = queryEnd.coerceAtMost(active.source.length)
+            val boundedStart = queryStart.coerceAtMost(active.lengthChars.get())
+            val boundedEnd = queryEnd.coerceAtMost(active.lengthChars.get())
             if (boundedStart >= boundedEnd) emptyList()
             else queryLargeCaptures(
                 active, boundedStart, boundedEnd, boundedStart.toInt(), boundedEnd.toInt()
@@ -227,12 +218,13 @@ class TshSyntaxHighlighter(
         // horizontal slice, allowing an uncached partition to be treated as ready.
         val queryStart = lineStartOffset.toLong() + start.toLong()
         val queryEnd = lineStartOffset.toLong() + end.toLong()
-        if (queryStart >= active.source.length) return true
+        val length = active.lengthChars.get()
+        if (queryStart >= length) return true
         if (queryStart > Int.MAX_VALUE || queryEnd > Int.MAX_VALUE || queryEnd < queryStart) return false
         val boundedStart = queryStart.coerceAtLeast(0L)
-        val boundedEnd = queryEnd.coerceAtMost(active.source.length)
+        val boundedEnd = queryEnd.coerceAtMost(length)
         if (boundedStart >= boundedEnd) return true
-        val partitions = active.partitions.planViewport(active.source, boundedStart, boundedEnd).partitions
+        val partitions = nativeViewportPartitions(active, boundedStart, boundedEnd)
         var ready = true
         for (partition in partitions) {
             if (active.captureIndexes.get(partition.index) == null) {
@@ -266,11 +258,11 @@ class TshSyntaxHighlighter(
         if (excludedScopes.isEmpty()) return false
         val active = largeSession
         val spans = if (active != null) {
-            if (offset < 0 || offset.toLong() >= active.source.length) {
+            if (offset < 0 || offset.toLong() >= active.lengthChars.get()) {
                 emptyList()
             } else {
-                val partition = active.partitions.partitionAt(active.source, offset.toLong())
-                active.captureIndexes.get(partition.index)?.query(offset, offset + 1).orEmpty()
+                val partitionIndex = (offset.toLong() / PARTITION_CHARS).toInt()
+                active.captureIndexes.get(partitionIndex)?.query(offset, offset + 1).orEmpty()
             }
         } else {
             captureIndex.query(offset, offset + 1)
@@ -333,13 +325,6 @@ class TshSyntaxHighlighter(
         var nativeHandle = 0L
         var captureIndexes: ByteBudgetLruCache<Int, CaptureIntervalIndex>? = null
         try {
-            val initJob = currentCoroutineContext()[Job]
-            val source = CharSequenceUtf16DocumentSource(snapshot, snapshot.version) { start, count ->
-                if (initJob?.isActive == false) {
-                    throw CancellationException("Large-file partition indexing superseded")
-                }
-                snapshot.getNearestChunk(start, count)
-            }
             // Native owns the canonical Piece Tree and sparse partition index. Kotlin
             // does not rebuild a second full-document index for each edit.
             currentCoroutineContext().ensureActive()
@@ -378,7 +363,7 @@ class TshSyntaxHighlighter(
             )
             captureIndexes = createdCaptureIndexes
             val active = LargeSession(
-                snapshot, source, nativeHandle, AtomicLong(snapshot.length.toLong()),
+                snapshot, nativeHandle, AtomicLong(snapshot.length.toLong()),
                 createdCaptureIndexes, ticket
             )
             if (generation.get() == ticket) {
