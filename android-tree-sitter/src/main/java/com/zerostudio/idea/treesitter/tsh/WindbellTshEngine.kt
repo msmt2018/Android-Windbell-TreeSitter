@@ -381,6 +381,22 @@ class WindbellTshEngine private constructor() {
         return paletteCache[extension]?.get(style.styleId)
     }
 
+    /**
+     * Ensures the active scheme palette is available to the renderer.
+     *
+     * Loading a grammar normally warms this cache, but editor instances can be
+     * attached after a native grammar has been restored or registered by another
+     * owner. In that case capture IDs are valid while paletteCache is still empty,
+     * which silently turns every syntax span into uncoloured text.
+     */
+    fun ensurePalette(extension: String): Boolean {
+        if (paletteCache.containsKey(extension)) return true
+        val scheme = selectedSchemes[extension] ?: getDefaultScheme(extension) ?: return false
+        selectedSchemes[extension] = scheme
+        reloadPalette(extension, scheme)
+        return paletteCache.containsKey(extension)
+    }
+
     /** Returns every scheme declared by the loaded .tsh document. */
     fun listSchemes(extension: String): List<String> =
         schemeNamesCache[extension] ?: nativeGetSchemeNames(extension)?.toList().orEmpty()
