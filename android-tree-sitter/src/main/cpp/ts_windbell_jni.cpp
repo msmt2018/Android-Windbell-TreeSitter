@@ -112,30 +112,26 @@ static bool copySourceRange(
     return true;
 }
 
-static TSPoint nativePointAt(
-    const windbell::largefile::TextSource &source, uint32_t byte_offset
-) {
-    TSPoint point{0, 0};
-    uint32_t offset = 0;
-    while (offset < byte_offset) {
-        windbell::largefile::TextChunkView chunk{};
-        const uint32_t request = std::min<uint32_t>(
-            windbell::largefile::kTreeSitterInputChunkBytes, byte_offset - offset);
-        if (!source.read(offset, request, &chunk) || !chunk.data || chunk.size == 0) break;
-        const auto *units = reinterpret_cast<const uint8_t *>(chunk.data);
-        for (uint32_t i = 0; i + 1 < chunk.size; i += 2) {
-            const uint16_t unit = static_cast<uint16_t>(units[i]) |
-                (static_cast<uint16_t>(units[i + 1]) << 8);
-            if (unit == '\n') {
-                ++point.row;
-                point.column = 0;
-            } else {
-                point.column += 2;
-            }
-        }
-        offset += chunk.size;
-    }
-    return point;
+// Translate a UTF-16LE byte offset to Tree-sitter coordinates using the
+// document's sparse native line index. Never rescan the entire document from
+// byte zero for every edit endpoint.
+static bool nativePointAt(
+    const windbell::largefile::TextSource &source,
+    windbell::largefile::TextPartitionIndex &line_index,
+    uint64_t byte_offset,
+    TSPoint *point
+) noexcept {
+    if (!point || (byte_offset & 1u) || byte_offset > source.sizeBytes()) return false;
+    uint64_t row = 0;
+    uint64_t line_start = 0;
+    if (!line_index.lineForByte(source, byte_offset, &row) ||
+        !line_index.byteForLine(source, row, &line_start) ||
+        line_start > byte_offset ||
+        byte_offset - line_start > std::numeric_limits<uint32_t>::max()) return false;
+    point->row = static_cast<uint32_t>(std::min<uint64_t>(
+        row, std::numeric_limits<uint32_t>::max()));
+    point->column = static_cast<uint32_t>(byte_offset - line_start);
+    return true;
 }
 
 
@@ -973,10 +969,15 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeApplyDocumentEdi
         env->GetByteArrayRegion(inserted_bytes, 0, inserted_size, inserted_for_points.data());
         if (env->ExceptionCheck()) return JNI_FALSE;
     }
-    const TSPoint start_point = nativePointAt(*document->source,
-        static_cast<uint32_t>(start_byte));
-    const TSPoint old_end_point = nativePointAt(*document->source,
-        static_cast<uint32_t>(old_end_byte));
+    TSPoint start_point{};
+    TSPoint old_end_point{};
+    if (!nativePointAt(*document->source, document->partition_index,
+                       static_cast<uint64_t>(start_byte), &start_point) ||
+        !nativePointAt(*document->source, document->partition_index,
+                       static_cast<uint64_t>(old_end_byte), &old_end_point)) {
+        throw_illegal_state(env, "Native line index could not resolve Tree-sitter edit coordinates");
+        return JNI_FALSE;
+    }
     TSPoint new_end_point = start_point;
     for (jsize i = 0; i + 1 < inserted_size; i += 2) {
         const uint16_t unit = static_cast<uint16_t>(
