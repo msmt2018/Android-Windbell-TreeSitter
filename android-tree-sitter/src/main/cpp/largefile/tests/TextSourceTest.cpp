@@ -206,14 +206,15 @@ static void testPieceTreeEditsDoNotCopyUnchangedText() {
     assert(source.allocatedBytes() < 256u * 1024u);
     TextChunkView view{};
     assert(source.read(0, 64, &view));
-    assert(view.size >= insert.size());
+    assert(view.size >= sizeof(insert));
     assert(std::memcmp(view.data, insert, sizeof(insert)) == 0);
 
     const uint64_t removeStart = 2u * 10u;
     assert(source.replace(removeStart, removeStart + 2u * 5u, nullptr, 0));
     assert(source.version() == 2);
     assert(source.sizeBytes() == utf16.size() + sizeof(insert) - 10u);
-    assert(source.replace(source.sizeBytes(), source.sizeBytes(), "Z\\0", 2));
+    const char appended[] = {'Z', 0};
+    assert(source.replace(source.sizeBytes(), source.sizeBytes(), appended, sizeof(appended)));
     assert(source.version() == 3);
     assert(source.sizeBytes() == utf16.size() + sizeof(insert) - 8u);
 
