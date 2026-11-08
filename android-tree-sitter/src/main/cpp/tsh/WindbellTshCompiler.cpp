@@ -424,6 +424,28 @@ static bool expandRepositoryIncludes(
     return true;
 }
 
+static uint32_t multiplyColorAlpha(uint32_t color, float multiplier) {
+    const uint32_t original_alpha = (color >> 24) & 0xFFu;
+    const uint32_t scaled_alpha = static_cast<uint32_t>(
+        std::lround(static_cast<float>(original_alpha) * multiplier)
+    );
+    return (color & 0x00FFFFFFu) | (std::min(scaled_alpha, 255u) << 24);
+}
+
+static bool parseAlphaValue(const TshLexer::Token& token, float& out) {
+    if (token.type != TshLexer::TokenType::TOK_NUMBER) return false;
+    try {
+        size_t consumed = 0;
+        const float value = std::stof(token.text, &consumed);
+        if (consumed != token.text.size() || !std::isfinite(value) ||
+            value < 0.0f || value > 1.0f) return false;
+        out = value;
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
 uint32_t TshCompiler::parseColorHex(const std::string& hex_str) {
     std::string clean = hex_str;
     if (!clean.empty() && clean.front() == '#') clean.erase(clean.begin());
@@ -1497,10 +1519,12 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                                 sid = style_it->second;
                             }
 
-                            const uint32_t color_val = parseColorHex(color_tok.text);
+                            uint32_t color_val = parseColorHex(color_tok.text);
                             uint16_t flags = 0;
                             uint32_t background_color = 0;
                             bool has_background_color = false;
+                            float foreground_alpha = 1.0f;
+                            float background_alpha = 1.0f;
                             while (true) {
                                 auto modifier = lexer.nextToken();
                                 if (modifier.type == TshLexer::TokenType::TOK_COMMA) break;
@@ -1517,6 +1541,10 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                                             !isValidColorHex(background_tok.text)) return nullptr;
                                         background_color = parseColorHex(background_tok.text);
                                         has_background_color = true;
+                                    } else if (flag_tok.text == "alpha" || flag_tok.text == "opacity") {
+                                        if (!parseAlphaValue(lexer.nextToken(), foreground_alpha)) return nullptr;
+                                    } else if (flag_tok.text == "bg-alpha" || flag_tok.text == "background-alpha") {
+                                        if (!parseAlphaValue(lexer.nextToken(), background_alpha)) return nullptr;
                                     }
                                     else if (flag_tok.text == "B" || flag_tok.text == "bold") flags |= 0x01;
                                     else if (flag_tok.text == "I" || flag_tok.text == "italic") flags |= 0x02;
@@ -1530,6 +1558,11 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                                 // another style entry and must remain in the stream.
                                 lexer.putBack(std::move(modifier));
                                 break;
+                            }
+
+                            color_val = multiplyColorAlpha(color_val, foreground_alpha);
+                            if (has_background_color) {
+                                background_color = multiplyColorAlpha(background_color, background_alpha);
                             }
 
                             auto& color_entry = scheme.colors[sid];
@@ -1685,6 +1718,7 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                         color.dark_color = parseColorHex(dark_tok.text);
                         color.has_light_color = true;
                         color.has_dark_color = true;
+                        float foreground_alpha = 1.0f;
 
                         auto modifier = lexer.nextToken();
                         if (modifier.type == TshLexer::TokenType::TOK_COMMA) {
@@ -1708,12 +1742,16 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                             } else if (flag.text == "dim") {
                                 color.light_font_flags |= 0x10;
                                 color.dark_font_flags |= 0x10;
+                            } else if (flag.text == "alpha" || flag.text == "opacity") {
+                                if (!parseAlphaValue(lexer.nextToken(), foreground_alpha)) return nullptr;
                             }
                             modifier = lexer.nextToken();
                             if (modifier.type == TshLexer::TokenType::TOK_COMMA) {
                                 modifier = lexer.nextToken();
                             }
                         }
+                        color.light_color = multiplyColorAlpha(color.light_color, foreground_alpha);
+                        color.dark_color = multiplyColorAlpha(color.dark_color, foreground_alpha);
                         if (modifier.type == TshLexer::TokenType::TOK_EOF) return nullptr;
                         // Leave the next tuple or closing bracket for the outer loop.
                         lexer.putBack(std::move(modifier));

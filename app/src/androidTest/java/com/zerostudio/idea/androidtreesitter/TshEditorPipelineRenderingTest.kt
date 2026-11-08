@@ -194,6 +194,102 @@ class TshEditorPipelineRenderingTest {
         }
     }
 
+    private fun blendArgbForTest(background: Int, foreground: Int): Int {
+        val alpha = Color.alpha(foreground) / 255f
+        fun channel(backgroundChannel: Int, foregroundChannel: Int): Int =
+            (foregroundChannel * alpha + backgroundChannel * (1f - alpha)).toInt()
+        return Color.rgb(
+            channel(Color.red(background), Color.red(foreground)),
+            channel(Color.green(background), Color.green(foreground)),
+            channel(Color.blue(background), Color.blue(foreground))
+        )
+    }
+
+    @Test
+    fun configurableForegroundAndBackgroundAlphaReachCanvasPixels() {
+        val engine = WindbellTshEngine.instance
+        val dsl = """
+            tsh 2 {
+                language { id: "canvas-alpha-regression" extensions: [".car"] }
+                styles {
+                    translucent { scope: "constant.numeric" }
+                }
+                schemes {
+                    plain {
+                        light [ translucent: #FF0000 @alpha 0.5 @bg #0000FF @bg-alpha 0.25 ]
+                        dark [ translucent: #FF7777 @alpha 0.75 @bg #7777FF @bg-alpha 0.5 ]
+                    }
+                }
+                defaultScheme: "plain"
+                match: /42/ style: "translucent"
+            }
+        """.trimIndent()
+        assertTrue(
+            "Alpha TSH DSL must compile: ${engine.lastCompileDiagnostics}",
+            engine.loadTshSource("canvas-alpha-regression", dsl, null)
+        )
+        assertTrue(engine.ensurePalette("canvas-alpha-regression"))
+        engine.setAppearance("canvas-alpha-regression", false)
+
+        val palette = engine.getStylePalette("canvas-alpha-regression", "translucent")
+        assertNotNull("The alpha style must be present in the decoded Palette", palette)
+        val light = palette!!
+        assertEquals(128, Color.alpha(light.lightColor))
+        assertEquals(64, Color.alpha(light.lightBackground))
+
+        val source = "42"
+        val captures = engine.computeHighlights(null, source, "canvas-alpha-regression")
+        assertTrue("Regex capture must reach the Android span adapter", captures.isNotEmpty())
+        val styled = SpannableStringBuilder(source)
+        engine.applyHighlightSpansToSpannable(
+            spans = captures,
+            documentOffset = 0,
+            text = source,
+            extension = "canvas-alpha-regression",
+            spannable = styled
+        )
+        val foreground = styled.getSpans(0, source.length, ForegroundColorSpan::class.java)
+            .maxByOrNull { styled.getSpanFlags(it) and Spanned.SPAN_PRIORITY }
+        val background = styled.getSpans(0, source.length, BackgroundColorSpan::class.java)
+            .maxByOrNull { styled.getSpanFlags(it) and Spanned.SPAN_PRIORITY }
+        assertNotNull(foreground)
+        assertNotNull(background)
+        assertEquals(light.lightColor, foreground!!.foregroundColor)
+        assertEquals(light.lightBackground, background!!.backgroundColor)
+
+        val bitmap = Bitmap.createBitmap(120, 80, Bitmap.Config.ARGB_8888)
+        try {
+            val canvas = Canvas(bitmap).apply { drawColor(Color.WHITE) }
+            val paint = android.text.TextPaint(android.text.TextPaint.ANTI_ALIAS_FLAG).apply {
+                color = Color.BLACK
+                textSize = 48f
+            }
+            StyledTextPainter().draw(
+                canvas = canvas,
+                text = source,
+                spans = styled,
+                start = 0,
+                end = styled.length,
+                x = 8f,
+                baseline = 58f,
+                rowTop = 0f,
+                rowBottom = 80f,
+                basePaint = paint
+            )
+            val expectedBackground = blendArgbForTest(Color.WHITE, light.lightBackground)
+            assertEquals(
+                "Background alpha must be composited by the actual Canvas painter",
+                expectedBackground,
+                bitmap.getPixel(9, 2)
+            )
+            val expectedForegroundAlpha = Color.alpha(light.lightColor)
+            assertEquals(128, expectedForegroundAlpha)
+        } finally {
+            bitmap.recycle()
+            engine.clearAppearanceOverride("canvas-alpha-regression")
+        }
+    }
+
     @Test
     fun javaAstSymbolColorReachesEditorCanvas() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
