@@ -10,6 +10,10 @@
 package com.zerostudio.idea.treesitter;
 
 import com.zerostudio.idea.treesitter.annotations.GenerateNativeHeaders;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import java.util.Objects;
 
 /**
  * Bounded native tag extraction built on Tree-sitter query matches.
@@ -63,6 +67,104 @@ public final class TSTags {
     return Native.extract(
         query.getNativeObject(), root, startByte, endByte,
         maxResults, maxPendingMatches);
+  }
+
+  /**
+   * Convert raw query matches into language-neutral tags using the conventional
+   * Tree-sitter tags capture names: {@code definition}, {@code reference},
+   * {@code name}, {@code scope}, and {@code doc}.
+   *
+   * <p>A match becomes one tag only when it contains exactly one of
+   * {@code @definition} or {@code @reference}. Matches without either role are
+   * ignored; matches containing both are rejected as ambiguous. No source text
+   * is copied and no language-specific naming heuristic is applied.
+   */
+  public static List<TSTag> toTags(TSQuery query, TSQueryMatch[] matches) {
+    Objects.requireNonNull(query, "query");
+    Objects.requireNonNull(matches, "matches");
+    if (!query.canAccess()) {
+      throw new IllegalArgumentException("Cannot map tags with an invalid query");
+    }
+
+    final List<TSTag> tags = new ArrayList<>(matches.length);
+    for (TSQueryMatch match : matches) {
+      if (match == null) {
+        throw new IllegalArgumentException("Tag query matches cannot contain null");
+      }
+      final TSNode[] roleNodes = new TSNode[2];
+      TSNode nameNode = null;
+      TSNode scopeNode = null;
+      TSNode documentationNode = null;
+      final TSQueryCapture[] captures = match.getCaptures();
+      if (captures == null) {
+        continue;
+      }
+
+      for (TSQueryCapture capture : captures) {
+        if (capture == null || capture.getNode() == null
+            || !capture.getNode().canAccess()) {
+          throw new IllegalStateException("Tag query contains an invalid capture node");
+        }
+        String captureName = query.getCaptureNameForId(capture.getIndex());
+        if (captureName == null) {
+          continue;
+        }
+        if (captureName.startsWith("@")) {
+          captureName = captureName.substring(1);
+        }
+        switch (captureName) {
+          case "definition":
+            roleNodes[0] = uniqueRole(roleNodes[0], capture.getNode(), "definition");
+            break;
+          case "reference":
+            roleNodes[1] = uniqueRole(roleNodes[1], capture.getNode(), "reference");
+            break;
+          case "name":
+            nameNode = firstNode(nameNode, capture.getNode());
+            break;
+          case "scope":
+            scopeNode = firstNode(scopeNode, capture.getNode());
+            break;
+          case "doc":
+            documentationNode = firstNode(documentationNode, capture.getNode());
+            break;
+          default:
+            // Other query captures remain available on the original match.
+            break;
+        }
+      }
+
+      if (roleNodes[0] != null && roleNodes[1] != null) {
+        throw new IllegalStateException(
+            "A tag query match cannot be both a definition and a reference");
+      }
+      final TSTag.Kind kind;
+      final TSNode subject;
+      if (roleNodes[0] != null) {
+        kind = TSTag.Kind.DEFINITION;
+        subject = roleNodes[0];
+      } else if (roleNodes[1] != null) {
+        kind = TSTag.Kind.REFERENCE;
+        subject = roleNodes[1];
+      } else {
+        continue;
+      }
+      tags.add(new TSTag(
+          kind, subject, nameNode, scopeNode, documentationNode,
+          match.getPatternIndex(), match.getId()));
+    }
+    return Collections.unmodifiableList(tags);
+  }
+
+  private static TSNode firstNode(TSNode current, TSNode candidate) {
+    return current == null ? candidate : current;
+  }
+
+  private static TSNode uniqueRole(TSNode current, TSNode candidate, String role) {
+    if (current != null) {
+      throw new IllegalStateException("A tag match contains multiple @" + role + " captures");
+    }
+    return candidate;
   }
 
   @GenerateNativeHeaders(fileName = "tags")
