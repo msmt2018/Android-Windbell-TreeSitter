@@ -236,8 +236,13 @@ public class TSQueryCursor extends TSNativeObject implements Iterable<TSQueryMat
   }
 
   /**
-   * @return true when the match passes all predicates, false when a predicate rejects it or
-   *         no handler accepts a predicate.
+   * Evaluate every predicate/directive group attached to this match.
+   *
+   * <p>Tree-sitter stores each predicate expression as a sequence terminated by a Done step.
+   * Handlers must receive one expression at a time: combining multiple expressions breaks
+   * handlers such as SetDirectiveHandler, whose argument arity is defined per expression.
+   *
+   * @return true only when every expression is handled and accepted.
    */
   private boolean applyPredicates(TSQueryMatch match) {
     if (match == null || execQuery == null) {
@@ -245,13 +250,14 @@ public class TSQueryCursor extends TSNativeObject implements Iterable<TSQueryMat
     }
 
     final var predicates = execQuery.getPredicatesForPattern(match.getPatternIndex());
-    final var steps = new ArrayList<PredicateStep>(predicates.length);
+    if (predicates == null || predicates.length == 0) {
+      return true;
+    }
 
-    boolean hasPredicate = false;
+    final var group = new ArrayList<PredicateStep>();
+    boolean foundExpression = false;
+
     for (final var predicate : predicates) {
-      if (predicate.getType() != TSQueryPredicateStep.Type.Done) {
-        hasPredicate = true;
-      }
       final PredicateStep step;
       switch (predicate.getType()) {
         case Capture:
@@ -262,18 +268,38 @@ public class TSQueryCursor extends TSNativeObject implements Iterable<TSQueryMat
           step = new PredicateStep(predicate.getType(),
             execQuery.getStringValueForId(predicate.getValueId()));
           break;
+        case Done:
         default:
           step = new PredicateStep(predicate.getType(), "");
           break;
       }
 
-      steps.add(step);
+      if (predicate.getType() != TSQueryPredicateStep.Type.Done) {
+        foundExpression = true;
+        group.add(step);
+        continue;
+      }
+
+      // A Done step closes exactly one predicate/directive expression.
+      group.add(step);
+      if (foundExpression && !dispatchPredicateGroup(match, group)) {
+        return false;
+      }
+      group.clear();
+      foundExpression = false;
     }
 
-    if (!hasPredicate) {
-      return true;
-    }
+    // Be defensive if a malformed/native implementation omits the trailing Done step.
+    return !foundExpression || dispatchPredicateGroup(match, group);
+  }
 
+  /**
+   * Dispatch one complete predicate/directive expression in registration order.
+   */
+  private boolean dispatchPredicateGroup(
+    TSQueryMatch match,
+    List<PredicateStep> steps
+  ) {
     for (final var handler : predicateHandlers) {
       final Result result = handler.handle(execQuery, match, steps);
       if (result == Result.OK) {
