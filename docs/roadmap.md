@@ -19,8 +19,9 @@
 | 子系统 | 当前可确认状态 | 尚未证明 |
 |---|---|---|
 | 公共 API 基础 | TshEngine、TshResult、诊断/坐标/对象/Provider 注册、TextSnapshot 等 Kotlin 源码已存在 | 全模块构建、ABI 稳定性、与 Native 执行入口接通 |
+| DSL | Parser-neutral typed AST、Schema Registry、Config Repository Kotlin 源码已提交 | .tsh Lexer/Parser、C++ Compiler Schema 接入、Gradle 构建与测试 |
+| ATS/Tree-sitter | Query/Grammar/ByteRange/Capture/Result 数据契约、Compiler/Executor 接口、CompiledQuery Registry 源码已提交 | ATS Lexer/Parser/Compiler 实现、TSQuery/TSQueryCursor Adapter、Native lease、增量查询与测试运行 |
 | 旧 TSH 执行入口 | WindbellTshEngine、TshCompiler、WindbellEngine、JNI 入口存在 | 与新 Facade 的完整桥接、错误结构化、所有权治理 |
-| DSL 编译器 | C++ Lexer/Compiler 存在并能解析当前既有子集 | 完整 AST/Schema/类型系统、语义校验、版本迁移 |
 | 双管线 | C++ core 有 Regex 与 Tree-sitter/Query 混合处理 | ATS 完整语法、统一 Match/Scope、Regex 窗口正确性 |
 | 样式/绘制 | 旧 Palette 与 Spannable 前景色/粗体路径存在 | 完整 Font/Color/Decoration、通用 RenderPlan、后端回执及设备覆盖 |
 | 测试 | 部分 Kotlin/C++ 测试源码存在 | 本轮未运行 Gradle/Native 测试，不宣称通过 |
@@ -44,9 +45,13 @@
 - [ ] DSL v1 fixtures、错误恢复、迁移和兼容性测试。
 
 ### C. Grammar 与 Tree-sitter + ATS 查询
+- [x] Grammar Descriptor、UTF-8 ByteRange、Query Source/Options、CompiledQuery、SyntaxTreeSnapshot、Capture、ExecutionBudget、Result 等 Kotlin API 模型。
+- [x] TshAtsCompiler/TshQueryExecutor 公共接口与 Grammar fingerprint 兼容检查。
+- [x] CompiledQuery Registry：重复注册保护、替换、查询、Grammar 兼容查找和注销。
+- [x] 查询 API 首批单元测试源码（范围、Grammar fingerprint、Registry、stale result）。
 - [ ] Grammar/Language Definition Registry、版本和依赖模型。
 - [ ] ATS Lexer/Parser/AST/Compiler，映射为 Tree-sitter Query plan。
-- [ ] Query/Capture/Predicate API、Grammar ABI 绑定和资源租约。
+- [ ] 基于现有 TSQuery/TSQueryCursor 的 Kotlin Adapter 和 Native Query lease。
 - [ ] Tree-sitter incremental edit/changed-range 查询。
 - [ ] 与现有 dynamic_ts_query 及旧 native 方法建立兼容 Adapter。
 - [ ] ATS 与原生 Tree-sitter Query 一致性测试。
@@ -104,11 +109,14 @@
 
 1. [x] 实现 B 的 Kotlin 类型系统、Schema Registry 和配置 Artifact Repository（纯 JVM 层，尚未连接 C++ Parser）。
 2. [x] 为该切片补充单元测试源码。
-3. [ ] 执行 Gradle 构建与测试并修复实际编译问题。
-4. 审计既有 .tsh 语法和 C++ Compiler，制定 DSL v1 兼容表。
-5. 再实现 C/D 的两个执行管线 Adapter，避免先定义一套无法对接旧 Native 的抽象。
-6. 然后贯通 E/F/G/H 的结果与真实绘制闭环。
-7. 最后完成 I 的 Native/JNI 同步与全矩阵验收；期间始终保持旧入口可用。
+3. [x] 实现 C 阶段第一批 Query/Grammar/Capture API 模型、Executor/Compiler 接口和编译查询 Registry。
+4. [x] 为查询 API 首批契约补充单元测试源码。
+5. [ ] 执行 Gradle 构建与测试并修复实际编译问题。
+6. [ ] 审计既有 .tsh 语法和 C++ Compiler，制定 DSL v1 兼容表。
+7. [ ] 实现 ATS Lexer/Parser/Compiler，并接入现有 TSQuery/TSQueryCursor。
+8. [ ] 实现 D 的独立 Regex Window Adapter，不能让 Regex 借用 ATS 执行接口。
+9. [ ] 贯通 E/F/G/H 的结果与真实绘制闭环。
+10. [ ] 完成 I 的 Native/JNI 同步与全矩阵验收；期间始终保持旧入口可用。
 
 ## API 文档映射
 
@@ -123,11 +131,9 @@
 
 **完成标准：** 每个功能独立记录契约/源码/构建/单测/集成/设备状态。源码提交不等于构建通过；构建通过不等于运行正确；API 可调用不等于 .tsh 属性真实生效或已绘制。
 
-
 ## 最近一次源码提交
 
-- 新增 `TshDslModel.kt`：DSL 版本、值类型、单位、颜色空间、声明种类和 Parser-neutral declaration/document 模型。
-- 新增 `TshSchemaRegistry.kt`：声明 Schema 注册、重复注册保护、类型/单位/范围/枚举/默认值/版本/能力校验、严格/宽松未知属性策略。
-- 新增 `TshConfigRepository.kt`：不可变 ConfigArtifact、Catalog 描述、get/list/install/replace/unload 和 expected-revision 乐观并发保护。
-- 新增 `TshDslSchemaRepositoryTest.kt`：默认值、类型/单位、未知属性、能力缺失、宽松模式、配置版本替换测试源码。
-- **状态：源码已提交；Gradle 构建、测试运行、C++ Parser 接入和 Native 运行均未验证。**
+- DSL：新增 `TshDslModel.kt`、`TshSchemaRegistry.kt`、`TshConfigRepository.kt` 与对应测试源码。
+- ATS/Tree-sitter：新增 `TshQueryApi.kt`（Grammar/ByteRange/Source/Options/CompiledQuery/SyntaxTreeSnapshot/Capture/Result/Compiler/Executor）、`TshCompiledQueryRegistry.kt` 与 `TshQueryApiTest.kt`。
+- 已检查现有实现：仓库包含 `TSQuery`、`TSQueryCursor` Java 封装，以及 C++ `TshCompiler` 和 `TshGrammar.dynamic_ts_query`。下一步应在这些既有入口上做 Adapter，不创建第二套 Native Query 引擎。
+- **状态：上述 Kotlin 源码和测试源码已提交；Gradle 构建、JUnit 执行、Native lease、ATS 编译执行和设备运行均未验证。**
