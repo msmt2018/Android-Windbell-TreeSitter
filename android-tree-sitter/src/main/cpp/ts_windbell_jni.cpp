@@ -124,7 +124,7 @@ static TSPoint nativePointAt(
         for (uint32_t i = 0; i + 1 < chunk.size; i += 2) {
             const uint16_t unit = static_cast<uint16_t>(units[i]) |
                 (static_cast<uint16_t>(units[i + 1]) << 8);
-            if (unit == '\\n') {
+            if (unit == '\n') {
                 ++point.row;
                 point.column = 0;
             } else {
@@ -960,7 +960,7 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeApplyDocumentEdi
     if (pattern.back() != '/') pattern.push_back('/');
     pattern += ".windbell-tsh-edit-XXXXXX";
     std::vector<char> path(pattern.begin(), pattern.end());
-    path.push_back('\\0');
+    path.push_back('\0');
     const int fd = ::mkstemp(path.data());
     if (fd < 0) {
         throw_illegal_state(env, "Cannot create native edited-document snapshot");
@@ -1021,7 +1021,7 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeApplyDocumentEdi
     for (jsize i = 0; i + 1 < inserted_size; i += 2) {
         const uint16_t unit = static_cast<uint16_t>(inserted_data[i]) |
             (static_cast<uint16_t>(inserted_data[i + 1]) << 8);
-        if (unit == '\\n') {
+        if (unit == '\n') {
             ++new_end_point.row;
             new_end_point.column = 0;
         } else {
