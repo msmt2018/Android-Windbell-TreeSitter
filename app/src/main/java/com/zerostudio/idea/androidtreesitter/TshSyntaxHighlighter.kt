@@ -118,15 +118,29 @@ class TshSyntaxHighlighter(
         start: Int,
         end: Int
     ): Spanned? {
-        if (start >= end) return null
-        val lineEnd = lineStartOffset + text.length
+        val visibleStart = start.coerceIn(0, text.length)
+        val visibleEnd = end.coerceIn(visibleStart, text.length)
+        if (visibleStart >= visibleEnd || lineStartOffset < 0) return null
+
+        // EditorView passes columns within the line, not document offsets. Query only
+        // the painted slice: this matters for horizontally scrolled/minified lines and
+        // avoids requesting every partition crossed by an off-screen part of the line.
+        val queryStart = lineStartOffset.toLong() + visibleStart.toLong()
+        val queryEnd = lineStartOffset.toLong() + visibleEnd.toLong()
+        if (queryStart > Int.MAX_VALUE || queryEnd > Int.MAX_VALUE) {
+            Log.e(TAG, "Editor offset exceeds the 32-bit capture index: start=$queryStart end=$queryEnd")
+            return null
+        }
         val active = largeSession
         val spans = if (active != null) {
-            val offset = lineStartOffset.toLong().coerceIn(0L, active.source.length)
-            val endOffset = minOf(active.source.length, offset + text.length.toLong())
-            queryLargeCaptures(active, offset, endOffset, lineStartOffset, lineEnd)
+            val boundedStart = queryStart.coerceAtMost(active.source.length)
+            val boundedEnd = queryEnd.coerceAtMost(active.source.length)
+            if (boundedStart >= boundedEnd) emptyList()
+            else queryLargeCaptures(
+                active, boundedStart, boundedEnd, boundedStart.toInt(), boundedEnd.toInt()
+            )
         } else {
-            captureIndex.query(lineStartOffset, lineEnd)
+            captureIndex.query(queryStart.toInt(), queryEnd.toInt())
         }
 
         if (firstStyleCallLogged.compareAndSet(false, true)) {
@@ -141,10 +155,10 @@ class TshSyntaxHighlighter(
             text = text,
             extension = extension,
             spannable = styled,
-            start = start,
-            end = end
+            start = visibleStart,
+            end = visibleEnd
         )
-        val applied = styled.getSpans(start, end, CharacterStyle::class.java)
+        val applied = styled.getSpans(visibleStart, visibleEnd, CharacterStyle::class.java)
         if (applied.isEmpty()) {
             Log.w(TAG, "No Android CharacterStyle applied: extension=.$extension line=$bufferLine captures=${spans.size}")
             return null
@@ -159,13 +173,19 @@ class TshSyntaxHighlighter(
         end: Int
     ): Boolean {
         val active = largeSession ?: return !parsing
-        if (lineStartOffset < 0) return false
-        val offset = lineStartOffset.toLong().coerceIn(0L, active.source.length)
-        val endOffset = minOf(
-            active.source.length,
-            offset + maxOf(1, end - start).toLong()
-        )
-        val partitions = active.partitions.planViewport(active.source, offset, endOffset).partitions
+        if (lineStartOffset < 0 || start < 0 || end <= start) return false
+
+        // start/end are columns in the current buffer line. Omitting start here used
+        // to test the first columns even when the renderer was painting a later
+        // horizontal slice, allowing an uncached partition to be treated as ready.
+        val queryStart = lineStartOffset.toLong() + start.toLong()
+        val queryEnd = lineStartOffset.toLong() + end.toLong()
+        if (queryStart >= active.source.length) return true
+        if (queryStart > Int.MAX_VALUE || queryEnd < queryStart) return false
+        val boundedStart = queryStart.coerceAtLeast(0L)
+        val boundedEnd = queryEnd.coerceAtMost(active.source.length)
+        if (boundedStart >= boundedEnd) return true
+        val partitions = active.partitions.planViewport(active.source, boundedStart, boundedEnd).partitions
         var ready = true
         for (partition in partitions) {
             if (active.captureIndexes.get(partition.index) == null) {
