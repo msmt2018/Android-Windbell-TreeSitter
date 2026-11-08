@@ -27,6 +27,8 @@ class TshTreeSitterQueryCompiler(
     private val compilerVersion: String = "treesitter-adapter-1"
 ) : TshAtsCompiler {
 
+    private val registrationLock = Any()
+
     override fun compile(
         source: TshAtsSource,
         grammar: TshGrammarDescriptor,
@@ -88,42 +90,44 @@ class TshTreeSitterQueryCompiler(
         val hash = sha256(source.text)
         val queryId = source.sourceId?.takeIf { it.isNotBlank() } ?: "tsq:$hash"
         val revision = hash
-        val previous = queries.get(queryId)
-        val objectDescriptor = try {
-            objects.register(nativeQuery, "tree-sitter-query")
-        } catch (error: Throwable) {
-            nativeQuery.close()
-            return failure("TSH-QUERY-REGISTRY-004", "Cannot register native query: ${error.message}", cause = error)
-        }
-        try {
-            leases.register(queryId, objectDescriptor.id, nativeQuery)
-        } catch (error: Throwable) {
-            objects.unregister(nativeQuery)
-            nativeQuery.close()
-            return failure("TSH-QUERY-LEASE-001", "Cannot register native query ownership: ${error.message}", cause = error)
-        }
-        val compiled = TshCompiledQuery(
-            queryId = queryId,
-            revision = revision,
-            grammar = grammar,
-            source = source,
-            sourceHash = hash,
-            compilerVersion = compilerVersion,
-            options = options,
-            nativeObjectId = objectDescriptor.id
-        )
-        return when (val registered = queries.register(compiled, replace = true)) {
-            is TshResult.Success -> {
-                val oldId = previous?.nativeObjectId
-                if (oldId != null && oldId != objectDescriptor.id) {
-                    objects.unregister(oldId)
-                }
-                registered
+        return synchronized(registrationLock) {
+            val previous = queries.get(queryId)
+            val objectDescriptor = try {
+                objects.register(nativeQuery, "tree-sitter-query")
+            } catch (error: Throwable) {
+                nativeQuery.close()
+                return failure("TSH-QUERY-REGISTRY-004", "Cannot register native query: ${error.message}", cause = error)
             }
-            is TshResult.Failure -> {
+            try {
+                leases.register(queryId, objectDescriptor.id, nativeQuery)
+            } catch (error: Throwable) {
                 objects.unregister(nativeQuery)
-                leases.retire(queryId)
-                registered
+                nativeQuery.close()
+                return failure("TSH-QUERY-LEASE-001", "Cannot register native query ownership: ${error.message}", cause = error)
+            }
+            val compiled = TshCompiledQuery(
+                queryId = queryId,
+                revision = revision,
+                grammar = grammar,
+                source = source,
+                sourceHash = hash,
+                compilerVersion = compilerVersion,
+                options = options,
+                nativeObjectId = objectDescriptor.id
+            )
+            return when (val registered = queries.register(compiled, replace = true)) {
+                is TshResult.Success -> {
+                    val oldId = previous?.nativeObjectId
+                    if (oldId != null && oldId != objectDescriptor.id) {
+                        objects.unregister(oldId)
+                    }
+                    registered
+                }
+                is TshResult.Failure -> {
+                    objects.unregister(nativeQuery)
+                    leases.retire(queryId)
+                    registered
+                }
             }
         }
     }
@@ -132,12 +136,12 @@ class TshTreeSitterQueryCompiler(
      * Retires a compiled query. Active executions retain leases; native close is deferred until
      * the final execution lease is released.
      */
-    fun release(queryId: String): Boolean {
-        val compiled = queries.unregister(queryId) ?: return false
-        val id = compiled.nativeObjectId ?: return true
+    fun release(queryId: String): Boolean = synchronized(registrationLock) {
+        val compiled = queries.unregister(queryId) ?: return@synchronized false
+        val id = compiled.nativeObjectId ?: return@synchronized true
         objects.unregister(id)
         leases.retire(queryId)
-        return true
+        true
     }
 
     private fun sha256(value: String): String {
