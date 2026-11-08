@@ -261,17 +261,13 @@ static jobject TSQuery_extractBounded(
     jlongArray result = env->NewLongArray(value_count);
     if (!result) return nullptr;
     if (!spans.empty()) {
-      std::vector<jlong> packed;
-      try {
-        packed.reserve(static_cast<size_t>(value_count));
-        for (const PackedSpan &span : spans) {
-          packed.insert(packed.end(), span.begin(), span.end());
-        }
-      } catch (const std::bad_alloc &) {
-        throwTagsOutOfMemory(env);
-        return nullptr;
+      jlong *output = env->GetLongArrayElements(result, nullptr);
+      if (!output) return nullptr;
+      size_t offset = 0;
+      for (const PackedSpan &span : spans) {
+        for (jlong value : span) output[offset++] = value;
       }
-      env->SetLongArrayRegion(result, 0, value_count, packed.data());
+      env->ReleaseLongArrayElements(result, output, 0);
       if (env->ExceptionCheck()) return nullptr;
     }
     return result;
