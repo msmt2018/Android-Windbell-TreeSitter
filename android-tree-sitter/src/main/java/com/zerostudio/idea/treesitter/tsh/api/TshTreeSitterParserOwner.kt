@@ -111,7 +111,8 @@ class TshTreeSitterParserOwner private constructor(
                 treeRevision = treeRevision,
                 grammar = grammar,
                 rootByteRange = rootRange,
-                nativeObjectId = registration.descriptor.id
+                nativeObjectId = registration.descriptor.id,
+                inputEncoding = TshTreeSitterInputEncoding.UTF16_LE
             )
             return TshResult.Success(TshOwnedSyntaxTree(snapshot, registration))
         } catch (error: Throwable) {
