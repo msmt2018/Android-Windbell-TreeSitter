@@ -215,7 +215,7 @@ class TshSyntaxHighlighter(
                         val style = catalog[id]
                         style == null || engine.getStylePalette(extension, style.name) == null
                     }
-                    Log.i(TAG, "TSH pipeline ready: extension=.$extension snapshotVersion=\${snapshot.version} textLength=\${snapshot.length} spans=\${nextCaptures.size} indexedCaptures=\${nextCaptures.size} styles=\${catalog.size} usedStyleIds=$styleIds missingPalette=$missingPalette")
+                    Log.i(TAG, "TSH pipeline ready: extension=.$extension snapshotVersion=${snapshot.version} textLength=${snapshot.length} spans=\${nextCaptures.size} indexedCaptures=\${nextCaptures.size} styles=\${catalog.size} usedStyleIds=$styleIds missingPalette=$missingPalette")
                     host?.invalidateStyles()
                     host?.invalidateStructure()
                 }
@@ -223,7 +223,7 @@ class TshSyntaxHighlighter(
                 throw cancelled
             } catch (error: Throwable) {
                 if (generation.get() == ticket) {
-                    Log.e(TAG, "TSH parse/highlight failed for .$extension (snapshotLength=\${snapshot.length}, version=\${snapshot.version})", error)
+                    Log.e(TAG, "TSH parse/highlight failed for .$extension (snapshotLength=${snapshot.length}, version=${snapshot.version})", error)
                     captureIndex = CaptureIntervalIndex(emptyList())
                     parsing = false
                     host?.invalidateStyles()
