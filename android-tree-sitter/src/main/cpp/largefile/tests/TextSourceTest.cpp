@@ -306,9 +306,19 @@ static void testPieceTreeSnapshotIsolatedAndSharesBacking() {
     const char firstInsert[] = {'X',0};
     assert(original.replace(2, 2, firstInsert, sizeof(firstInsert)));
     const uint64_t beforeSnapshotBytes = original.allocatedBytes();
-    auto snapshot = original.clone();
-    assert(snapshot && snapshot->isValid());
-    assert(snapshot->allocatedBytes() == beforeSnapshotBytes);
+
+    // Many simultaneous snapshots must share the same persistent treap rather
+    // than allocate one complete copy of every piece node per document version.
+    std::vector<std::unique_ptr<PieceTreeSource>> snapshots;
+    snapshots.reserve(32);
+    for (int i = 0; i < 32; ++i) {
+        auto candidate = original.clone();
+        assert(candidate && candidate->isValid());
+        assert(candidate->allocatedBytes() == beforeSnapshotBytes);
+        snapshots.push_back(std::move(candidate));
+    }
+    auto snapshot = std::move(snapshots.back());
+    snapshots.pop_back();
     const std::string snapshotBytes = readAll(*snapshot);
 
     const char secondInsert[] = {'Y',0};
