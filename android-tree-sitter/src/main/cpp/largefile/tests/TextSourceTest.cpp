@@ -4,6 +4,7 @@
 #include "PieceTreeSource.h"
 #include "TextPartitionIndex.h"
 
+#include <limits>
 #include <cassert>
 #include <cstdio>
 #include <cstdlib>
@@ -499,7 +500,34 @@ static void testSparsePartitionIndexSurvivesEdits() {
     ::unlink(path);
 }
 
+class HugeLogicalTextSource final : public TextSource {
+public:
+    uint64_t sizeBytes() const noexcept override {
+        return std::numeric_limits<uint64_t>::max() - 1u;
+    }
+    bool read(uint64_t, uint32_t, TextChunkView *out) const noexcept override {
+        if (out) { out->data = nullptr; out->size = 0; }
+        return false;
+    }
+};
+
+static void testPieceTreeRejectsDocumentSizeOverflow() {
+    auto backing = std::make_shared<HugeLogicalTextSource>();
+    PieceTreeSource source(
+        std::static_pointer_cast<const TextSource>(backing), 1024u * 1024u);
+    assert(source.isValid());
+    const uint64_t beforeSize = source.sizeBytes();
+    const uint64_t beforeVersion = source.version();
+    const uint64_t beforeAllocation = source.allocatedBytes();
+    const char inserted[] = {'X', 0};
+    assert(!source.replace(beforeSize, beforeSize, inserted, sizeof(inserted)));
+    assert(source.sizeBytes() == beforeSize);
+    assert(source.version() == beforeVersion);
+    assert(source.allocatedBytes() == beforeAllocation);
+}
+
 int main() {
+    testPieceTreeRejectsDocumentSizeOverflow();
     testSegmentedTextSource();
     testChunkedStoreReadsAcrossBoundaries();
     testChunkedStoreReusesAllocatedTail();

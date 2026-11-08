@@ -350,6 +350,15 @@ bool PieceTreeSource::replace(uint64_t startByte, uint64_t oldEndByte,
         (insertedBytes & 1u) || oldEndByte < startByte ||
         oldEndByte > sizeBytes() || (insertedBytes != 0 && !inserted)) return false;
 
+    // Reject document-size overflow before allocating tree paths or append
+    // chunks. Source offsets are 64-bit even though the Tree-sitter JNI ABI
+    // currently has a narrower boundary.
+    const uint64_t currentBytes = sizeBytes();
+    const uint64_t removedBytes = oldEndByte - startByte;
+    const uint64_t retainedBytes = currentBytes - removedBytes;
+    if (insertedBytes > std::numeric_limits<uint64_t>::max() - retainedBytes)
+        return false;
+
     constexpr uint64_t chunkBytes = 64u * 1024u;
     const uint64_t tailCapacity = added_allocated_ - added_size_;
     const uint64_t bytesBeyondTail = insertedBytes > tailCapacity
