@@ -175,6 +175,7 @@ class TreeSitterPartitionScheduler(
                     val request = PartitionParseRequest(
                         partition, contextStart, contextEnd, plan.documentVersion, languageRevision
                     )
+                    var queuedTask: PrioritizedTask? = null
                     val queued = PrioritizedTask(distance) {
                         try {
                             if (closed.get() || source.version != request.documentVersion) return@PrioritizedTask
@@ -189,9 +190,12 @@ class TreeSitterPartitionScheduler(
                         } catch (error: Throwable) {
                             onFailure(request, error)
                         } finally {
-                            synchronized(lock) { pending.remove(key) }
+                            synchronized(lock) {
+                                if (pending[key] === queuedTask) pending.remove(key)
+                            }
                         }
                     }
+                    queuedTask = queued
                     pending[key] = queued
                     queued
                 }

@@ -7,6 +7,7 @@ import org.junit.jupiter.api.Test
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 
 class TreeSitterPartitionSchedulerTest {
     private class Source(val text: String, override val version: Long = 7L) : Utf16DocumentSource {
@@ -193,4 +194,23 @@ class TreeSitterPartitionSchedulerTest {
         scheduler.close()
     }
 
+    @Test fun cancellationFromParseCallbackIsNotReportedAsFailure() {
+        val source = Source(("class A { int value; }\n").repeat(80))
+        val manager = DocumentPartitionManager(256, prefetchPartitions = 0)
+        val cache = PartitionAstCache(1024) { 1L }
+        val failures = AtomicInteger()
+        val parseStarted = CountDownLatch(1)
+        val scheduler = TreeSitterPartitionScheduler(
+            manager, cache, contextChars = 16,
+            onFailure = { _, _ -> failures.incrementAndGet() }
+        )
+        val requests = scheduler.requestViewport(source, 100, 200, 1) {
+            parseStarted.countDown()
+            throw java.util.concurrent.CancellationException("superseded parse")
+        }
+        assertTrue(requests.isNotEmpty())
+        assertTrue(parseStarted.await(2, TimeUnit.SECONDS))
+        scheduler.close()
+        assertEquals(0, failures.get())
+    }
 }
