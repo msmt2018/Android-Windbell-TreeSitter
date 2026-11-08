@@ -432,7 +432,7 @@ static uint32_t multiplyColorAlpha(uint32_t color, float multiplier) {
     return (color & 0x00FFFFFFu) | (std::min(scaled_alpha, 255u) << 24);
 }
 
-static bool applyFontModifier(SchemeColor& color, bool light_mode, const std::string& name) {
+static bool applyFontModifier(TshFontAttributes& font, const std::string& name) {
     uint16_t bit = 0;
     bool enabled = true;
     if (name == "B" || name == "bold") bit = 0x01;
@@ -446,11 +446,10 @@ static bool applyFontModifier(SchemeColor& color, bool light_mode, const std::st
     else if (name == "no-strike" || name == "no-strikethrough") { bit = 0x08; enabled = false; }
     else if (name == "no-dim") { bit = 0x10; enabled = false; }
     else return false;
-    uint16_t& flags = light_mode ? color.light_font_flags : color.dark_font_flags;
-    uint16_t& mask = light_mode ? color.light_font_defined_mask : color.dark_font_defined_mask;
-    mask |= bit;
-    if (enabled) flags |= bit;
-    else flags &= static_cast<uint16_t>(~bit);
+
+    font.defined_mask |= bit;
+    if (enabled) font.flags |= bit;
+    else font.flags &= static_cast<uint16_t>(~bit);
     return true;
 }
 
@@ -1542,8 +1541,7 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                             }
 
                             uint32_t color_val = parseColorHex(color_tok.text);
-                            uint16_t flags = 0;
-                            uint16_t font_defined_mask = 0;
+                            TshFontAttributes font;
                             uint32_t background_color = 0;
                             bool has_background_color = false;
                             float foreground_alpha = 1.0f;
@@ -1570,11 +1568,7 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                                         if (!parseAlphaValue(lexer.nextToken(), background_alpha)) return nullptr;
                                     }
                                     else {
-                                        SchemeColor modifier_color;
-                                        if (!applyFontModifier(modifier_color, true, flag_tok.text)) return nullptr;
-                                        const uint16_t mask = modifier_color.light_font_defined_mask;
-                                        flags = static_cast<uint16_t>((flags & ~mask) | (modifier_color.light_font_flags & mask));
-                                        font_defined_mask |= mask;
+                                        if (!applyFontModifier(font, flag_tok.text)) return nullptr;
                                     }
                                     continue;
                                 }
@@ -1600,11 +1594,15 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                                 color_entry.explicit_dark_color = true;
                             }
                             if (is_light) {
-                                color_entry.light_font_flags = static_cast<uint16_t>((color_entry.light_font_flags & ~font_defined_mask) | (flags & font_defined_mask));
-                                color_entry.light_font_defined_mask |= font_defined_mask;
+                                color_entry.light_font_flags = static_cast<uint16_t>(
+                                    (color_entry.light_font_flags & static_cast<uint16_t>(~font.defined_mask)) |
+                                    (font.flags & font.defined_mask));
+                                color_entry.light_font_defined_mask |= font.defined_mask;
                             } else {
-                                color_entry.dark_font_flags = static_cast<uint16_t>((color_entry.dark_font_flags & ~font_defined_mask) | (flags & font_defined_mask));
-                                color_entry.dark_font_defined_mask |= font_defined_mask;
+                                color_entry.dark_font_flags = static_cast<uint16_t>(
+                                    (color_entry.dark_font_flags & static_cast<uint16_t>(~font.defined_mask)) |
+                                    (font.flags & font.defined_mask));
+                                color_entry.dark_font_defined_mask |= font.defined_mask;
                             }
                             if (has_background_color) {
                                 if (is_light) {
@@ -1748,6 +1746,8 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                         color.has_light_color = true;
                         color.has_dark_color = true;
                         float foreground_alpha = 1.0f;
+                        TshFontAttributes light_font;
+                        TshFontAttributes dark_font;
 
                         auto modifier = lexer.nextToken();
                         if (modifier.type == TshLexer::TokenType::TOK_COMMA) {
@@ -1758,8 +1758,8 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                             if (flag.text == "alpha" || flag.text == "opacity") {
                                 if (!parseAlphaValue(lexer.nextToken(), foreground_alpha)) return nullptr;
                             } else {
-                                if (!applyFontModifier(color, true, flag.text) ||
-                                    !applyFontModifier(color, false, flag.text)) return nullptr;
+                                if (!applyFontModifier(light_font, flag.text) ||
+                                    !applyFontModifier(dark_font, flag.text)) return nullptr;
                             }
                             modifier = lexer.nextToken();
                             if (modifier.type == TshLexer::TokenType::TOK_COMMA) {
@@ -1768,6 +1768,10 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                         }
                         color.light_color = multiplyColorAlpha(color.light_color, foreground_alpha);
                         color.dark_color = multiplyColorAlpha(color.dark_color, foreground_alpha);
+                        color.light_font_flags = light_font.flags;
+                        color.dark_font_flags = dark_font.flags;
+                        color.light_font_defined_mask = light_font.defined_mask;
+                        color.dark_font_defined_mask = dark_font.defined_mask;
                         if (modifier.type == TshLexer::TokenType::TOK_EOF) return nullptr;
                         // Leave the next tuple or closing bracket for the outer loop.
                         lexer.putBack(std::move(modifier));
