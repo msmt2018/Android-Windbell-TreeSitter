@@ -189,29 +189,40 @@ bool PieceTreeSource::appendAdded(const uint8_t *data, uint64_t bytes,
         (bytesBeyondTail + chunkBytes - 1u) / chunkBytes;
     if (requiredChunks > (memory_limit_bytes_ -
         std::min(memory_limit_bytes_, added_allocated_)) / chunkBytes) return false;
-    *startOffset = added_size_;
-    uint64_t consumed = 0;
+
+    // Allocate every required chunk and reserve the destination vector before
+    // changing logical size or writing into the current tail. A failed append
+    // therefore cannot leave a partially advanced append arena behind.
+    std::vector<std::shared_ptr<uint8_t>> pending;
     try {
-        while (consumed < bytes) {
-            const uint64_t index64 = added_size_ / chunkBytes;
-            const size_t index = static_cast<size_t>(index64);
-            const size_t inChunk = static_cast<size_t>(added_size_ % chunkBytes);
-            if (index == added_chunks_.size()) {
-                if (chunkBytes > memory_limit_bytes_ -
-                    std::min(memory_limit_bytes_, added_allocated_)) return false;
-                std::shared_ptr<uint8_t> chunk(
-                    new (std::nothrow) uint8_t[chunkBytes], std::default_delete<uint8_t[]>());
-                if (!chunk) return false;
-                added_chunks_.push_back(std::move(chunk));
-                added_allocated_ += chunkBytes;
-            }
-            const uint64_t count = std::min<uint64_t>(bytes - consumed, chunkBytes - inChunk);
-            std::memcpy(added_chunks_[index].get() + inChunk, data + consumed,
-                        static_cast<size_t>(count));
-            consumed += count;
-            added_size_ += count;
+        pending.reserve(static_cast<size_t>(requiredChunks));
+        added_chunks_.reserve(added_chunks_.size() + static_cast<size_t>(requiredChunks));
+        for (uint64_t i = 0; i < requiredChunks; ++i) {
+            std::shared_ptr<uint8_t> chunk(
+                new (std::nothrow) uint8_t[chunkBytes], std::default_delete<uint8_t[]>());
+            if (!chunk) return false;
+            pending.push_back(std::move(chunk));
         }
-    } catch (...) { return false; }
+    } catch (...) {
+        return false;
+    }
+
+    *startOffset = added_size_;
+    for (auto &chunk : pending) {
+        added_chunks_.push_back(std::move(chunk));
+        added_allocated_ += chunkBytes;
+    }
+
+    uint64_t consumed = 0;
+    while (consumed < bytes) {
+        const size_t index = static_cast<size_t>(added_size_ / chunkBytes);
+        const size_t inChunk = static_cast<size_t>(added_size_ % chunkBytes);
+        const uint64_t count = std::min<uint64_t>(bytes - consumed, chunkBytes - inChunk);
+        std::memcpy(added_chunks_[index].get() + inChunk, data + consumed,
+                    static_cast<size_t>(count));
+        consumed += count;
+        added_size_ += count;
+    }
     return true;
 }
 
@@ -285,11 +296,9 @@ bool PieceTreeSource::replace(uint64_t startByte, uint64_t oldEndByte,
     const uint64_t splitNodes = insertedBytes ? 3u : 2u;
     if (countNodes(root_.get()) + splitNodes > maximumPieces) return false;
 
-    // Allocate/append inserted bytes before mutating the tree. The only data
-    // copied is the insertion itself; old pieces remain references.
-    uint64_t addOffset = 0;
-    if (insertedBytes && !appendAdded(static_cast<const uint8_t *>(inserted),
-                                     insertedBytes, &addOffset)) return false;
+    // Reserve the insertion node and split the tree before appending bytes.
+    // If allocation or range splitting fails, no append-arena bytes are consumed.
+    const uint64_t addOffset = added_size_;
     auto insertedPiece = insertedBytes
         ? makeNode(Buffer::Added, addOffset, insertedBytes) : nullptr;
     if (insertedBytes && !insertedPiece) return false;
@@ -300,6 +309,12 @@ bool PieceTreeSource::replace(uint64_t startByte, uint64_t oldEndByte,
         root_ = merge(std::move(prefix), merge(std::move(removed), std::move(suffix)));
         return false;
     }
+    if (insertedBytes && !appendAdded(static_cast<const uint8_t *>(inserted),
+                                      insertedBytes, &addOffset)) {
+        root_ = merge(std::move(prefix), merge(std::move(removed), std::move(suffix)));
+        return false;
+    }
+    if (insertedPiece) insertedPiece->source_offset = addOffset;
     removed.reset();
     root_ = merge(merge(std::move(prefix), std::move(insertedPiece)), std::move(suffix));
     ++version_;
