@@ -1311,6 +1311,10 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
         span.source = static_cast<uint8_t>(HighlightSource::AST_SELECTOR);
     }
     const size_t native_query_span_begin = macro_spans.size();
+    // Bound aggregate native-query output across all query blocks. This is a
+    // document/render-call budget, not a viewport-size heuristic: the query
+    // still sees the complete document AST and absolute byte coordinates.
+    constexpr size_t kMaxNativeQuerySpansPerRender = 500000;
 
     if (tree && tree_source_valid && !grammar->native_queries.empty()) {
         // Each .tsh query block has its own native TSQuery and capture namespace.
@@ -1353,7 +1357,9 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
             TSQueryMatch match;
             uint32_t match_order = 0;
             uint32_t accepted_match_count = 0;
-            while (ts_query_cursor_next_match(cursor, &match)) {
+            bool query_span_limit_exceeded = false;
+            while (!query_span_limit_exceeded &&
+                   ts_query_cursor_next_match(cursor, &match)) {
                 const uint32_t current_order = match_order++;
                 auto pattern_metadata = native_query.pattern_metadata.find(match.pattern_index);
                 if (pattern_metadata != native_query.pattern_metadata.end() &&
@@ -1385,10 +1391,18 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                     span.flags = 0;
                     span.priority = pattern_priority;
                     span.declaration_order = native_query.declaration_order + pattern_order + current_order + capture_index;
+                    const size_t committed_native_spans =
+                        macro_spans.size() - native_query_span_begin;
+                    if (committed_native_spans + query_spans.size() >=
+                        kMaxNativeQuerySpansPerRender) {
+                        query_span_limit_exceeded = true;
+                        break;
+                    }
                     query_spans.push_back(span);
                 }
             }
-            bool query_incomplete = ts_query_cursor_did_exceed_match_limit(cursor);
+            bool query_incomplete = ts_query_cursor_did_exceed_match_limit(cursor) ||
+                query_span_limit_exceeded;
 #if defined(TSH_TREE_SITTER_HAS_QUERY_CURSOR_OPTIONS)
             query_incomplete = query_incomplete || query_budget.cancelled;
 #endif
