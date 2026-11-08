@@ -145,7 +145,7 @@ class TshTreeSitterParserOwner private constructor(
         @JvmStatic
         fun open(
             resources: TshNativeResourceRegistry,
-            languageLease: TshNativeResourceLeaseStore.Lease<TSLanguage>,
+            languageHandle: TshNativeResourceLeaseStore.Handle<TSLanguage>,
             grammar: TshGrammarDescriptor
         ): TshResult<TshTreeSitterParserOwner> {
             val languageLease = resources.acquire(languageHandle)
