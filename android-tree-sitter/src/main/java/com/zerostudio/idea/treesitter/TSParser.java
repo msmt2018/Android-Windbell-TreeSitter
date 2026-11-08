@@ -257,6 +257,21 @@ public class TSParser extends TSNativeObject {
    * @return parsed tree, or null if parsing failed or was cancelled.
    */
   public TSTree parseBuffers(TSTree oldTree, ByteBuffer[] buffers) {
+    return parseBuffers(oldTree, buffers, null);
+  }
+
+  /**
+   * Parses segmented UTF-16LE input while retaining only the supplied Tree-sitter
+   * included ranges in the resulting syntax tree. Ranges use absolute document
+   * byte offsets and UTF-16LE TSPoint coordinates. Sufficient syntactic context
+   * around partition boundaries remains the caller's responsibility.
+   *
+   * <p>The included ranges are reset to the full-document default after parsing,
+   * including when parsing fails, so a later ordinary parse is not accidentally
+   * restricted to a stale viewport.
+   */
+  public TSTree parseBuffers(
+      TSTree oldTree, ByteBuffer[] buffers, TSRange[] includedRanges) {
     checkAccess();
     if (buffers == null) {
       throw new NullPointerException("buffers");
@@ -284,6 +299,23 @@ public class TSParser extends TSNativeObject {
       slices[i] = slice;
     }
 
+    if (includedRanges != null) {
+      long previousEnd = 0L;
+      for (int i = 0; i < includedRanges.length; i++) {
+        final TSRange range = includedRanges[i];
+        if (range == null) {
+          throw new IllegalArgumentException("includedRanges[" + i + "] must not be null");
+        }
+        final long start = Integer.toUnsignedLong(range.getStartByte());
+        final long end = Integer.toUnsignedLong(range.getEndByte());
+        if ((start & 1L) != 0L || (end & 1L) != 0L ||
+            start > end || end > totalBytes || (i > 0 && start < previousEnd)) {
+          throw new IllegalArgumentException("includedRanges must be ordered, non-overlapping UTF-16LE ranges within the input");
+        }
+        previousEnd = end;
+      }
+    }
+
     if (parseLock.isHeldByCurrentThread()) {
       throw new IllegalStateException("Reentrancy detected");
     }
@@ -291,14 +323,27 @@ public class TSParser extends TSNativeObject {
     parseLock.lock();
     setCancellationRequested(false);
     setParsingFlag();
+    boolean rangesInstalled = false;
     try {
+      if (includedRanges != null) {
+        if (!setIncludedRanges(includedRanges)) {
+          throw new IllegalArgumentException("Tree-sitter rejected the included ranges");
+        }
+        rangesInstalled = true;
+      }
       final long oldTreePointer = oldTree != null ? oldTree.getNativeObject() : 0;
       return createTree(Native.parseBuffers(
           getNativeObject(), oldTreePointer, slices, totalBytes));
     } finally {
-      unsetParsingFlag();
-      parseCondition.signalAll();
-      parseLock.unlock();
+      try {
+        if (rangesInstalled && !setIncludedRanges(new TSRange[0])) {
+          throw new IllegalStateException("Failed to reset Tree-sitter included ranges");
+        }
+      } finally {
+        unsetParsingFlag();
+        parseCondition.signalAll();
+        parseLock.unlock();
+      }
     }
   }
 
