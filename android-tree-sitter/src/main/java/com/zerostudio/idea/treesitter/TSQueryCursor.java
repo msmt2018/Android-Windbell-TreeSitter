@@ -115,6 +115,9 @@ public class TSQueryCursor extends TSNativeObject implements Iterable<TSQueryMat
     /**
      * @param currentByteOffset Approximate absolute byte offset reached by the query cursor.
      * @return true to cancel query execution.
+     *
+     * <p>The callback runs synchronously from {@link #nextMatch()}. It must not re-enter,
+     * close, or otherwise access the same query cursor.
      */
     boolean onProgress(int currentByteOffset);
   }

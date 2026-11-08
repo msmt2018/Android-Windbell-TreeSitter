@@ -77,6 +77,22 @@ void throwUnsupportedOperation(JNIEnv *env, const char *message) {
   }
 }
 
+void throwOutOfMemory(JNIEnv *env, const char *message) {
+  jclass exception_class = env->FindClass("java/lang/OutOfMemoryError");
+  if (exception_class) {
+    env->ThrowNew(exception_class, message);
+    env->DeleteLocalRef(exception_class);
+  }
+}
+
+void throwIllegalState(JNIEnv *env, const char *message) {
+  jclass exception_class = env->FindClass("java/lang/IllegalStateException");
+  if (exception_class) {
+    env->ThrowNew(exception_class, message);
+    env->DeleteLocalRef(exception_class);
+  }
+}
+
 } // namespace
 
 static jlong TSQueryCursor_newCursor(JNIEnv *env, jclass self) {
@@ -122,11 +138,7 @@ static void TSQueryCursor_execWithOptions(JNIEnv *env,
   std::unique_ptr<QueryProgressCallbackState> state(
       new (std::nothrow) QueryProgressCallbackState());
   if (!state) {
-    jclass exception_class = env->FindClass("java/lang/OutOfMemoryError");
-    if (exception_class) {
-      env->ThrowNew(exception_class, "Unable to allocate query progress callback state");
-      env->DeleteLocalRef(exception_class);
-    }
+    throwOutOfMemory(env, "Unable to allocate query progress callback state");
     return;
   }
   state->callback = env->NewGlobalRef(callback);
@@ -151,14 +163,14 @@ static void TSQueryCursor_execWithOptions(JNIEnv *env,
     const auto inserted = g_query_progress_callbacks.emplace(native_cursor, callback_state);
     if (!inserted.second) {
       env->DeleteGlobalRef(callback_state->callback);
-      throwUnsupportedOperation(env, "A query is already active on this cursor");
+      throwIllegalState(env, "A query is already active on this cursor");
       return;
     }
     state.release();
   } catch (const std::bad_alloc &) {
     // Ownership is released only after successful map insertion.
     env->DeleteGlobalRef(callback_state->callback);
-    throwUnsupportedOperation(env, "Unable to allocate query progress callback state");
+    throwOutOfMemory(env, "Unable to allocate query progress callback state");
     return;
   }
   ts_query_cursor_exec_with_options(
