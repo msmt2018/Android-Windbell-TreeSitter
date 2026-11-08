@@ -133,6 +133,12 @@ static void TSQueryCursor_execWithOptions(JNIEnv *env,
   req_nnp(env, callback);
 #if defined(TSH_TREE_SITTER_HAS_QUERY_CURSOR_OPTIONS)
   TSQueryCursor *native_cursor = (TSQueryCursor *) cursor;
+  // Resolve the Java node before installing callback state. If node conversion
+  // raises, the cursor must not retain an options pointer for a query that
+  // was never started.
+  TSNode native_node = _unmarshalNode(env, node);
+  if (env->ExceptionCheck()) return;
+
   releaseQueryProgressCallback(env, native_cursor);
 
   std::unique_ptr<QueryProgressCallbackState> state(
@@ -174,8 +180,7 @@ static void TSQueryCursor_execWithOptions(JNIEnv *env,
     return;
   }
   ts_query_cursor_exec_with_options(
-      native_cursor, (TSQuery *) query, _unmarshalNode(env, node),
-      &callback_state->options);
+      native_cursor, (TSQuery *) query, native_node, &callback_state->options);
 #else
   (void) self;
   (void) node;
