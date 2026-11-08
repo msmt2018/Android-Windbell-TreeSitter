@@ -24,7 +24,7 @@ class TreeSitterPartitionSchedulerTest {
         val latch = CountDownLatch(1)
         val requests = scheduler.requestViewport(source, 300, 500, 1) { request ->
             val bytes = ByteBuffer.allocateDirect(source.text.length * 2).order(ByteOrder.LITTLE_ENDIAN)
-            source.text.forEach(bytes::putChar)
+            source.text.forEach { bytes.putChar(it) }
             bytes.flip()
             val included = manager.treeSitterRange(
                 source, request.contextStartUtf16, request.contextEndUtf16
