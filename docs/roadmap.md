@@ -53,7 +53,7 @@
 - [ ] ATS Lexer/Parser/AST/Compiler，映射为 Tree-sitter Query plan。
 - [x] 基于现有 TSQuery/TSQueryCursor 的 Kotlin Compiler/Executor Adapter：Query 编译、Cursor 执行、Capture 转换、Grammar 检查、结构化错误和 Cursor finally-close。
 - [x] Native Query lease/refcount：编译器与执行器共享 Lease Store；release/替换先退役，活动执行结束后延迟 close。
-- [x] Tree/Language Native lease 首版源码接入：Tree Executor 持有 Tree Lease；Language Compiler 在 TSQuery.create 期间持有 Language Lease；共享 Store 负责 retire 后延迟 close。
+- [x] Tree/Language Native lease 首版源码接入：Tree Executor 持有 Tree Lease；Language Compiler 将 Language Lease 转交为 Query 依赖 Lease，覆盖 Query 整个存活期；Tree Executor 持有 Tree Lease；共享 Store 负责 retire 后延迟 close。
 - [ ] 宿主所有 Tree/Language owner 迁移到 Store 的 register/retire，清除绕过 Store 的直接 close；增加并发/真实 Native 测试。
 - [x] Predicate Handler 结果语义：OK 接受当前表达式、ERR 拒绝当前 match、UNHANDLED 委派下一 Handler；按 Done 分隔表达式并逐个执行，同一 pattern 的多个表达式全部通过才保留 match；按注册顺序确定 Handler 调用顺序。
 - [ ] Tree-sitter incremental edit/changed-range 查询。
