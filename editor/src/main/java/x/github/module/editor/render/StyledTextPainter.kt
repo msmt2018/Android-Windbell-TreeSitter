@@ -25,6 +25,7 @@ import android.text.style.BackgroundColorSpan
 import android.text.style.CharacterStyle
 import android.text.style.ForegroundColorSpan
 import android.text.style.StyleSpan
+import android.text.style.StrikethroughSpan
 import android.text.style.UnderlineSpan
 
 /**
@@ -108,11 +109,13 @@ class StyledTextPainter {
                 .maxByOrNull { span -> spans.getSpanFlags(span) and Spanned.SPAN_PRIORITY }
                 ?.foregroundColor ?: plainColor
 
-            // bold, italic
-            val style = spans.getSpans(runStart, runEnd, StyleSpan::class.java).firstOrNull()?.style
-                ?: Typeface.NORMAL
-            paint.isFakeBoldText = forceBold || style == Typeface.BOLD || style == Typeface.BOLD_ITALIC
-            paint.textSkewX = if (style == Typeface.ITALIC || style == Typeface.BOLD_ITALIC) -0.2f else 0f
+            // TSH can declare bold and italic independently. Combine every
+            // StyleSpan instead of taking only the first one, otherwise a token
+            // configured as bold+italic loses whichever flag was added second.
+            val style = spans.getSpans(runStart, runEnd, StyleSpan::class.java)
+                .fold(Typeface.NORMAL) { combined, span -> combined or span.style }
+            paint.isFakeBoldText = forceBold || (style and Typeface.BOLD) != 0
+            paint.textSkewX = if ((style and Typeface.ITALIC) != 0) -0.2f else 0f
 
             // the text; a tab is only room, up to its stop
             if (hasTabs && TabStops.hasTab(text, runStart, runEnd)) {
@@ -124,6 +127,13 @@ class StyledTextPainter {
             // underline: a little below the baseline, in the color of the text
             if (spans.getSpans(runStart, runEnd, UnderlineSpan::class.java).isNotEmpty()) {
                 val top = baseline + underlineOffset
+                canvas.drawRect(runX, top, runX + runWidth, top + underlineThickness, paint)
+            }
+            // StrikethroughSpan is emitted by the TSH style adapter for DSL flag
+            // 0x08. Draw it explicitly: this painter does not delegate to TextView's
+            // Layout, so merely attaching the Android span is not sufficient.
+            if (spans.getSpans(runStart, runEnd, StrikethroughSpan::class.java).isNotEmpty()) {
+                val top = baseline + paint.ascent() * 0.38f
                 canvas.drawRect(runX, top, runX + runWidth, top + underlineThickness, paint)
             }
 
