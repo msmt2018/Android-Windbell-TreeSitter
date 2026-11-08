@@ -154,6 +154,10 @@ static jlongArray TSLanguage_loadLanguage(JNIEnv *env,
     return nullptr;
   }
   env->SetLongArrayRegion(result, 0, 2, ptrs);
+  if (env->ExceptionCheck()) {
+    dlclose(handle);
+    return nullptr;
+  }
   return result;
 }
 
