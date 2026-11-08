@@ -1015,7 +1015,7 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
     }
     const size_t native_query_span_begin = macro_spans.size();
 
-    if (tree && tree_source_map_valid && !grammar->native_queries.empty()) {
+    if (tree && tree_source_valid && !grammar->native_queries.empty()) {
         // Each .tsh query block has its own native TSQuery and capture namespace.
         // This preserves per-block priority/order and avoids concatenating query
         // sources into a synthetic aggregate program.
