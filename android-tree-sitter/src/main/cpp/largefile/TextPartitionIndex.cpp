@@ -13,7 +13,11 @@ TextPartitionIndex::TextPartitionIndex(uint32_t strideLines) noexcept
 
 void TextPartitionIndex::reset() noexcept {
     checkpoints_.clear();
-    checkpoints_.push_back({0, 0});
+    try {
+        checkpoints_.push_back({0, 0});
+    } catch (...) {
+        // Empty means unavailable; queries fail safely until a later reset.
+    }
     ++version_;
 }
 
@@ -96,7 +100,7 @@ bool TextPartitionIndex::scan(const TextSource &source, uint64_t startByte,
 bool TextPartitionIndex::lineForByte(const TextSource &source,
                                      uint64_t byteOffset,
                                      uint64_t *line) noexcept {
-    if (!line || (byteOffset & 1u) || byteOffset > source.sizeBytes()) return false;
+    if (!line || checkpoints_.empty() || (byteOffset & 1u) || byteOffset > source.sizeBytes()) return false;
     auto it = std::upper_bound(checkpoints_.begin(), checkpoints_.end(), byteOffset,
         [](uint64_t value, const Checkpoint &checkpoint) {
             return value < checkpoint.byte_offset;
@@ -119,7 +123,7 @@ bool TextPartitionIndex::lineForByte(const TextSource &source,
 bool TextPartitionIndex::byteForLine(const TextSource &source,
                                      uint64_t requestedLine,
                                      uint64_t *byteOffset) noexcept {
-    if (!byteOffset) return false;
+    if (!byteOffset || checkpoints_.empty()) return false;
     auto it = std::upper_bound(checkpoints_.begin(), checkpoints_.end(), requestedLine,
         [](uint64_t value, const Checkpoint &checkpoint) {
             return value < checkpoint.line;
@@ -132,7 +136,7 @@ bool TextPartitionIndex::applyEdit(const TextSource &oldSource,
                                    uint64_t startByte, uint64_t oldEndByte,
                                    const void *inserted, uint64_t insertedBytes) noexcept {
     if ((startByte & 1u) || (oldEndByte & 1u) || (insertedBytes & 1u) ||
-        oldEndByte < startByte || oldEndByte > oldSource.sizeBytes() ||
+        oldEndByte < startByte || oldEndByte > oldSource.sizeBytes() ||\n        startByte > static_cast<uint64_t>(INT64_MAX) || oldEndByte > static_cast<uint64_t>(INT64_MAX) ||\n        insertedBytes > static_cast<uint64_t>(INT64_MAX) ||
         (insertedBytes && !inserted)) return false;
 
     uint64_t startLine = 0;
