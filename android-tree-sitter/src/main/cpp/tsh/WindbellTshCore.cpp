@@ -745,7 +745,11 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
             return final_spans;
         }
         uint32_t zero_width_steps = 0;
-        while (position < total_bytes) {
+        // Tokenize only through the requested viewport. The final match may
+        // extend past range_end_byte (needed for correct token boundaries and
+        // state transitions), but the next iteration must not scan the tail of
+        // a multi-hundred-megabyte document merely to answer one viewport.
+        while (position < total_bytes && position < range_end_byte) {
             const MonarchRule* matched_rule = nullptr;
             std::unordered_set<std::string> include_path;
             std::function<const MonarchRule*(const std::string&)> find_rule =
