@@ -1499,6 +1499,8 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
 
                             const uint32_t color_val = parseColorHex(color_tok.text);
                             uint16_t flags = 0;
+                            uint32_t background_color = 0;
+                            bool has_background_color = false;
                             while (true) {
                                 auto modifier = lexer.nextToken();
                                 if (modifier.type == TshLexer::TokenType::TOK_COMMA) break;
@@ -1509,7 +1511,14 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                                 if (modifier.type == TshLexer::TokenType::TOK_EOF) return nullptr;
                                 if (modifier.type == TshLexer::TokenType::TOK_AT) {
                                     auto flag_tok = lexer.nextToken();
-                                    if (flag_tok.text == "B" || flag_tok.text == "bold") flags |= 0x01;
+                                    if (flag_tok.text == "bg" || flag_tok.text == "background") {
+                                        auto background_tok = lexer.nextToken();
+                                        if (background_tok.type != TshLexer::TokenType::TOK_IDENT ||
+                                            !isValidColorHex(background_tok.text)) return nullptr;
+                                        background_color = parseColorHex(background_tok.text);
+                                        has_background_color = true;
+                                    }
+                                    else if (flag_tok.text == "B" || flag_tok.text == "bold") flags |= 0x01;
                                     else if (flag_tok.text == "I" || flag_tok.text == "italic") flags |= 0x02;
                                     else if (flag_tok.text == "U" || flag_tok.text == "underline") flags |= 0x04;
                                     else if (flag_tok.text == "S" || flag_tok.text == "strike" || flag_tok.text == "strikethrough") flags |= 0x08;
@@ -1535,6 +1544,15 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                             }
                             if (is_light) color_entry.light_font_flags |= flags;
                             else color_entry.dark_font_flags |= flags;
+                            if (has_background_color) {
+                                if (is_light) {
+                                    color_entry.light_background = background_color;
+                                    color_entry.has_light_background = true;
+                                } else {
+                                    color_entry.dark_background = background_color;
+                                    color_entry.has_dark_background = true;
+                                }
+                            }
                         }
                     }
                     grammar->schemes[scheme_name] = std::move(scheme);
@@ -3037,6 +3055,14 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                         own.dark_color = parent_color->second.dark_color;
                         own.has_dark_color = true;
                         own.dark_font_flags |= parent_color->second.dark_font_flags;
+                    }
+                    if (!own.has_light_background && parent_color->second.has_light_background) {
+                        own.light_background = parent_color->second.light_background;
+                        own.has_light_background = true;
+                    }
+                    if (!own.has_dark_background && parent_color->second.has_dark_background) {
+                        own.dark_background = parent_color->second.dark_background;
+                        own.has_dark_background = true;
                     }
                 }
                 auto parent_definition = grammar->style_definitions.find(ancestor);

@@ -5,6 +5,7 @@ import android.text.Spanned
 import android.text.SpannableStringBuilder
 import android.text.TextPaint
 import android.text.style.CharacterStyle
+import android.text.style.BackgroundColorSpan
 import android.text.style.ForegroundColorSpan
 import android.text.style.StyleSpan
 import android.text.style.UnderlineSpan
@@ -107,7 +108,11 @@ class WindbellTshEngine private constructor() {
         val lightFontFlags: Int,
         val darkFontFlags: Int,
         val hasLightColor: Boolean,
-        val hasDarkColor: Boolean
+        val hasDarkColor: Boolean,
+        val lightBackground: Int = 0,
+        val darkBackground: Int = 0,
+        val hasLightBackground: Boolean = false,
+        val hasDarkBackground: Boolean = false
     )
 
     private val paletteCache = ConcurrentHashMap<String, Map<Int, StylePalette>>()
@@ -182,18 +187,24 @@ class WindbellTshEngine private constructor() {
     }
 
     private fun decodePalette(flatPalette: IntArray): Map<Int, StylePalette> {
-        val map = LinkedHashMap<Int, StylePalette>(flatPalette.size / 7)
-        val count = flatPalette.size / 7
+        val fields = 11
+        val map = LinkedHashMap<Int, StylePalette>(flatPalette.size / fields)
+        val count = flatPalette.size / fields
         for (i in 0 until count) {
-            val id = flatPalette[i * 7]
+            val base = i * fields
+            val id = flatPalette[base]
             map[id] = StylePalette(
                 styleId = id,
-                lightColor = flatPalette[i * 7 + 1],
-                darkColor = flatPalette[i * 7 + 2],
-                lightFontFlags = flatPalette[i * 7 + 3],
-                darkFontFlags = flatPalette[i * 7 + 4],
-                hasLightColor = flatPalette[i * 7 + 5] != 0,
-                hasDarkColor = flatPalette[i * 7 + 6] != 0
+                lightColor = flatPalette[base + 1],
+                darkColor = flatPalette[base + 2],
+                lightFontFlags = flatPalette[base + 3],
+                darkFontFlags = flatPalette[base + 4],
+                hasLightColor = flatPalette[base + 5] != 0,
+                hasDarkColor = flatPalette[base + 6] != 0,
+                lightBackground = flatPalette[base + 7],
+                darkBackground = flatPalette[base + 8],
+                hasLightBackground = flatPalette[base + 9] != 0,
+                hasDarkBackground = flatPalette[base + 10] != 0
             )
         }
         return map.toMap()
@@ -209,18 +220,24 @@ class WindbellTshEngine private constructor() {
 
     private fun readSchemePalette(extension: String, schemeName: String): Map<Int, StylePalette> {
         val flatPalette = nativeGetPalette(extension, schemeName) ?: return emptyMap()
-        val map = HashMap<Int, StylePalette>(flatPalette.size / 7)
-        val count = flatPalette.size / 7
+        val fields = 11
+        val map = HashMap<Int, StylePalette>(flatPalette.size / fields)
+        val count = flatPalette.size / fields
         for (i in 0 until count) {
-            val id = flatPalette[i * 7]
+            val base = i * fields
+            val id = flatPalette[base]
             map[id] = StylePalette(
                 styleId = id,
-                lightColor = flatPalette[i * 7 + 1],
-                darkColor = flatPalette[i * 7 + 2],
-                lightFontFlags = flatPalette[i * 7 + 3],
-                darkFontFlags = flatPalette[i * 7 + 4],
-                hasLightColor = flatPalette[i * 7 + 5] != 0,
-                hasDarkColor = flatPalette[i * 7 + 6] != 0
+                lightColor = flatPalette[base + 1],
+                darkColor = flatPalette[base + 2],
+                lightFontFlags = flatPalette[base + 3],
+                darkFontFlags = flatPalette[base + 4],
+                hasLightColor = flatPalette[base + 5] != 0,
+                hasDarkColor = flatPalette[base + 6] != 0,
+                lightBackground = flatPalette[base + 7],
+                darkBackground = flatPalette[base + 8],
+                hasLightBackground = flatPalette[base + 9] != 0,
+                hasDarkBackground = flatPalette[base + 10] != 0
             )
         }
         return map
@@ -546,6 +563,22 @@ class WindbellTshEngine private constructor() {
                 val precedence = ruleOrder[span.priority to span.declarationOrder] ?: 1
                 val spanFlags = Spannable.SPAN_EXCLUSIVE_EXCLUSIVE or
                     (precedence shl Spanned.SPAN_PRIORITY_SHIFT)
+
+                // Background and foreground are independent palette channels.
+                // A transparent background is still explicit when its presence bit is set.
+                val hasBackground = if (darkMode) {
+                    colorDef?.hasDarkBackground == true
+                } else {
+                    colorDef?.hasLightBackground == true
+                }
+                val background = if (darkMode) {
+                    colorDef?.darkBackground ?: 0
+                } else {
+                    colorDef?.lightBackground ?: 0
+                }
+                if (hasBackground) {
+                    spannable.setSpan(BackgroundColorSpan(background), charStart, charEnd, spanFlags)
+                }
 
                 // Missing colors leave the editor's base foreground untouched.
                 val hasColor = if (darkMode) colorDef?.hasDarkColor == true else colorDef?.hasLightColor == true
