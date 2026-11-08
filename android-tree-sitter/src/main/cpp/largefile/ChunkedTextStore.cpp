@@ -17,10 +17,6 @@ bool ChunkedTextStore::append(const void *data, size_t length) noexcept {
 
     const uint64_t amount = static_cast<uint64_t>(length);
     if (amount > std::numeric_limits<uint64_t>::max() - size_bytes_) return false;
-    if (amount > memory_limit_bytes_ - std::min(memory_limit_bytes_, allocated_bytes_)) {
-        return false;
-    }
-
     const auto *source = static_cast<const char *>(data);
     size_t consumed = 0;
     try {
@@ -78,6 +74,7 @@ bool ChunkedTextStore::read(
     out->data = nullptr;
     out->size = 0;
 
+    if (!sealed_) return false;
     if (offset == size_bytes_) return true;
     if (offset > size_bytes_ || maxBytes == 0 || chunks_.empty()) return false;
 
