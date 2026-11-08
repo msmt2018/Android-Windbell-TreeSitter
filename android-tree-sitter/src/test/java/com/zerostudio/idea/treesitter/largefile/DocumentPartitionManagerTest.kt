@@ -82,4 +82,15 @@ class DocumentPartitionManagerTest {
         store.invalidateFrom(15)
         assertEquals(10L, store.nearest(30, 4)?.line)
     }
+    @Test fun longSingleLinePointLookupUsesBoundedSparseCheckpoints() {
+        val text = "x".repeat(2 * 1024 * 1024) + "\nend"
+        val source = Source(text)
+        val manager = DocumentPartitionManager(targetPartitionChars = 64 * 1024)
+        val offset = 1_500_000L
+        val range = manager.treeSitterRange(source, offset, offset + 1L)
+        assertEquals(0, range.startPoint.row)
+        assertEquals(offset * 2L, range.startPoint.column.toLong())
+        assertTrue(manager.pointCheckpointCount in 2..40)
+    }
+
 }

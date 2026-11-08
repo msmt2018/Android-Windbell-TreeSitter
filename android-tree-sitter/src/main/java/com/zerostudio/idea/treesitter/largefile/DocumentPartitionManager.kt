@@ -31,6 +31,8 @@ data class DocumentPartition(
     }
 }
 
+private data class PointCheckpoint(val offset: Long, val row: Long, val column: Long)
+
 data class ViewportPlan(
     val requestedStart: Long,
     val requestedEndExclusive: Long,
@@ -56,6 +58,8 @@ class DocumentPartitionManager(
     private var indexedLength = 0L
     private var partitions = emptyList<DocumentPartition>()
     private var lineCheckpoints = LongArray(0)
+    private var pointCheckpoints = emptyList<PointCheckpoint>()
+    val pointCheckpointCount: Int get() = lock.read { pointCheckpoints.size }
 
     init {
         require(targetPartitionChars >= 256L)
@@ -67,18 +71,29 @@ class DocumentPartitionManager(
         val starts = ArrayList<Long>()
         starts.add(0L)
         var line = 0L
-        var nextCheckpoint = lineCheckpointStride
+        var column = 0L
+        var nextLineCheckpoint = lineCheckpointStride
+        var nextPointCheckpoint = POINT_CHECKPOINT_STRIDE
         var offset = 0L
+        val pointIndex = ArrayList<PointCheckpoint>()
+        pointIndex.add(PointCheckpoint(0L, 0L, 0L))
         while (offset < source.length) {
             val ch = source[offset]
             if (ch == '\n') {
                 line++
-                if (line == nextCheckpoint) {
+                column = 0L
+                if (line == nextLineCheckpoint) {
                     starts.add(offset + 1L)
-                    nextCheckpoint += lineCheckpointStride
+                    nextLineCheckpoint += lineCheckpointStride
                 }
+            } else {
+                column++
             }
             offset++
+            if (offset >= nextPointCheckpoint) {
+                pointIndex.add(PointCheckpoint(offset, line, column))
+                nextPointCheckpoint = offset + POINT_CHECKPOINT_STRIDE
+            }
         }
         val checkpoints = starts.toLongArray()
 
@@ -119,6 +134,7 @@ class DocumentPartitionManager(
         }
         partitions = built
         lineCheckpoints = checkpoints
+        pointCheckpoints = pointIndex
         indexedLength = source.length
         indexedVersion = source.version
     }
@@ -164,22 +180,22 @@ class DocumentPartitionManager(
     private fun pointAt(source: Utf16DocumentSource, offset: Long): TSPoint {
         val checkpoint = lock.read {
             var low = 0
-            var high = lineCheckpoints.lastIndex
+            var high = pointCheckpoints.lastIndex
             var best = 0
             while (low <= high) {
                 val middle = (low + high) ushr 1
-                if (lineCheckpoints[middle] <= offset) {
+                if (pointCheckpoints[middle].offset <= offset) {
                     best = middle
                     low = middle + 1
                 } else {
                     high = middle - 1
                 }
             }
-            Pair(lineCheckpoints[best], best.toLong() * lineCheckpointStride)
+            pointCheckpoints[best]
         }
-        var row = checkpoint.second
-        var column = 0L
-        var index = checkpoint.first
+        var row = checkpoint.row
+        var column = checkpoint.column
+        var index = checkpoint.offset
         while (index < offset) {
             if (source[index] == '\n') {
                 row++
@@ -242,6 +258,10 @@ class DocumentPartitionManager(
             else return mid
         }
         return low.coerceIn(0, partitions.lastIndex)
+    }
+
+    private companion object {
+        const val POINT_CHECKPOINT_STRIDE = 64L * 1024L
     }
 
     private fun countNewlines(source: Utf16DocumentSource, start: Long, end: Long): Long {
