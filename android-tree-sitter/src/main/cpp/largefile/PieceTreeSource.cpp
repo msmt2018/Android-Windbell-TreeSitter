@@ -60,9 +60,9 @@ std::unique_ptr<PieceTreeSource> PieceTreeSource::clone() const noexcept {
 bool PieceTreeSource::isValid() const noexcept { return valid_; }
 uint64_t PieceTreeSource::sizeBytes() const noexcept { return subtreeBytes(root_); }
 uint64_t PieceTreeSource::allocatedBytes() const noexcept {
-    return added_allocated_ + countNodes(root_) * sizeof(Node);
+    return added_allocated_ + countNodes(root_.get()) * sizeof(Node);
 }
-uint64_t PieceTreeSource::pieceCount() const noexcept { return countNodes(root_); }
+uint64_t PieceTreeSource::pieceCount() const noexcept { return countNodes(root_.get()); }
 uint64_t PieceTreeSource::version() const noexcept { return version_; }
 
 uint64_t PieceTreeSource::subtreeBytes(const std::unique_ptr<Node> &node) noexcept {
