@@ -12,6 +12,10 @@
 
 - 新增 Grammar/Parser/Query、增量 TextBuffer、JNI/Native Bridge、Cache/Performance、安全/Regex 防护、测试/兼容性、平台/线程契约文档。
 
+- 新增 Symbol/Outline/Folding/Navigation、Selection/Cursor/Multi-Cursor、Language Intelligence、Injection/Language Layer、Decoration/Gutter/Inlay/CodeLens、EditTransaction/Undo/Redo/Command 六组 API 规范。
+- 明确宿主拥有编辑、撤销栈与实际绘制；TSH 通过版本化事务提案、owner-scoped decorations 和 Render Provider 接入，避免覆盖宿主状态。
+- 补充语言智能多 Provider 聚合、过期版本拒绝、嵌入语言范围映射及多光标语义约束。
+
 ### Planned
 - Piece Tree/Rope 索引化坐标映射与 Layout-aware 坐标 Provider。
 - Engine Session、任务调度、资源 Scope 和兼容迁移接线。
