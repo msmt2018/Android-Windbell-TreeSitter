@@ -31,6 +31,26 @@ include(${CMAKE_CURRENT_SOURCE_DIR}/../../../../cmake/common-config.cmake)
 include_directories("${TS_DIR}/lib/src")
 include_directories("${TS_DIR}/lib/include")
 
+# Detect the Tree-sitter 0.28 Query Cursor controls without forcing a
+# submodule update on consumers that still build the previous API. Once the
+# vendored tree-sitter-lib is upgraded, the same TSH source automatically
+# enables bounded query execution and cancellation.
+include(CheckCXXSourceCompiles)
+set(CMAKE_REQUIRED_INCLUDES "${TS_DIR}/lib/include")
+check_cxx_source_compiles("
+    #include <tree_sitter/api.h>
+    using ProgressCallback = decltype(((TSQueryCursorOptions*)0)->progress_callback);
+    using ExecWithOptions = decltype(&ts_query_cursor_exec_with_options);
+    using SetMatchLimit = decltype(&ts_query_cursor_set_match_limit);
+    using DidExceedMatchLimit = decltype(&ts_query_cursor_did_exceed_match_limit);
+    static_assert(sizeof(TSQueryCursorOptions) > 0, \"Query cursor options are available\");
+    int main() { return 0; }
+" TSH_TREE_SITTER_HAS_QUERY_CURSOR_OPTIONS)
+unset(CMAKE_REQUIRED_INCLUDES)
+if(TSH_TREE_SITTER_HAS_QUERY_CURSOR_OPTIONS)
+    add_compile_definitions(TSH_TREE_SITTER_HAS_QUERY_CURSOR_OPTIONS=1)
+endif()
+
 # ==============================================================================
 # Oniguruma (鬼车) 路径配置：位于当前 cpp/oniguruma 目录
 # ==============================================================================

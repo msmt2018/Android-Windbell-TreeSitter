@@ -625,6 +625,26 @@ void WindbellEngine::matchBlockRecursive(
     onig_region_free(end_region, 1);
 }
 
+#if defined(TSH_TREE_SITTER_HAS_QUERY_CURSOR_OPTIONS)
+namespace {
+struct TshQueryProgressBudget {
+    uint32_t callbacks = 0;
+    uint32_t max_callbacks = 1024; // Tree-sitter checks after roughly 1,000 units of work.
+    bool cancelled = false;
+};
+
+static bool tshQueryProgressCallback(TSQueryCursorState* state) {
+    if (!state || !state->payload) return true;
+    auto* budget = static_cast<TshQueryProgressBudget*>(state->payload);
+    if (++budget->callbacks >= budget->max_callbacks) {
+        budget->cancelled = true;
+        return true;
+    }
+    return false;
+}
+} // namespace
+#endif
+
 std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
     const TSLanguage* language,
     TSTree* tree,
@@ -1301,9 +1321,26 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
             if (!q_cursor) continue;
             // Restrict Tree-sitter query execution to the requested UTF-16LE byte
             // window. The AST remains document-wide so node offsets stay absolute.
-            ts_query_cursor_set_byte_range(q_cursor, range_start_byte, range_end_byte);
+            if (!ts_query_cursor_set_byte_range(q_cursor, range_start_byte, range_end_byte)) {
+                ts_query_cursor_delete(q_cursor);
+                continue;
+            }
+#if defined(TSH_TREE_SITTER_HAS_QUERY_CURSOR_OPTIONS)
+            // 0.28 bounds pending-match memory and provides a cooperative work
+            // budget. A cancelled/overflowed query is discarded atomically: never
+            // publish a partial capture set as a complete highlight result.
+            constexpr uint32_t kQueryMatchLimit = 4096;
+            TshQueryProgressBudget query_budget;
+            TSQueryCursorOptions query_options{};
+            query_options.payload = &query_budget;
+            query_options.progress_callback = tshQueryProgressCallback;
+            ts_query_cursor_set_match_limit(q_cursor, kQueryMatchLimit);
+            ts_query_cursor_exec_with_options(
+                q_cursor, native_query.query, ts_tree_root_node(tree), &query_options);
+#else
             ts_query_cursor_exec(q_cursor, native_query.query, ts_tree_root_node(tree));
-
+#endif
+            std::vector<HighlightSpan> query_spans;
             TSQueryMatch match;
             uint32_t match_order = 0;
             while (ts_query_cursor_next_match(q_cursor, &match)) {
@@ -1338,9 +1375,20 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                     span.flags = 0;
                     span.priority = pattern_priority;
                     span.declaration_order = native_query.declaration_order + pattern_order + current_order + capture_index;
-                    macro_spans.push_back(span);
+                    query_spans.push_back(span);
                 }
             }
+#if defined(TSH_TREE_SITTER_HAS_QUERY_CURSOR_OPTIONS)
+            const bool query_incomplete = query_budget.cancelled ||
+                ts_query_cursor_did_exceed_match_limit(q_cursor);
+            if (!query_incomplete) {
+                if (diagnostic_match_counts) diagnostic_match_counts[3] += match_order;
+                macro_spans.insert(macro_spans.end(), query_spans.begin(), query_spans.end());
+            }
+#else
+            if (diagnostic_match_counts) diagnostic_match_counts[3] += match_order;
+            macro_spans.insert(macro_spans.end(), query_spans.begin(), query_spans.end());
+#endif
             ts_query_cursor_delete(q_cursor);
         }
     }
