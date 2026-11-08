@@ -203,6 +203,12 @@ public:
     jint byte_length();
 
     /**
+     * Returns a read-only pointer to the UTF-16LE storage owned by this object.
+     * The pointer remains valid until this string is modified or destroyed.
+     */
+    const jbyte *data() const;
+
+    /**
      * Returns this string as a C-style string.
      *
      * @return This string as C-style string. It is the responsibility of the caller to call
