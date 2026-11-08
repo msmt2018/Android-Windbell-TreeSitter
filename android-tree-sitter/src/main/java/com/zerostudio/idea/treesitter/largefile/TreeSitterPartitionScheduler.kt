@@ -32,10 +32,12 @@ class TreeSitterPartitionScheduler(
     private val astCache: PartitionAstCache,
     private val contextChars: Long = 8L * 1024L,
     parallelism: Int = 1,
-    private val onFailure: (PartitionParseRequest, Throwable) -> Unit = { _, _ -> }
+    private val onFailure: (PartitionParseRequest, Throwable) -> Unit = { _, _ -> },
+    private val onPlanningFailure: (Throwable) -> Unit = {}
 ) : AutoCloseable {
     private val closed = AtomicBoolean(false)
     private val pending = HashMap<PartitionAstKey, PrioritizedTask>()
+    private val pendingViewportPlans = HashMap<ViewportIdentity, PrioritizedTask>()
     private val lock = Any()
     private val executor = ThreadPoolExecutor(
         parallelism,
@@ -48,6 +50,53 @@ class TreeSitterPartitionScheduler(
     init {
         require(contextChars >= 0L)
         require(parallelism > 0)
+    }
+
+    private data class ViewportIdentity(val documentVersion: Long, val languageRevision: Long)
+
+    /**
+     * Non-blocking entry point for editor/UI callers. Index construction, line
+     * alignment, and source reads execute on the scheduler worker. A newer viewport
+     * replaces an older queued planning request for the same document/language.
+     */
+    fun requestViewportAsync(
+        source: Utf16DocumentSource,
+        startUtf16: Long,
+        endUtf16: Long,
+        languageRevision: Long,
+        parse: (PartitionParseRequest) -> TSTree?,
+        onQueued: (List<PartitionAstKey>) -> Unit = {}
+    ) {
+        check(!closed.get()) { "Scheduler is closed" }
+        require(startUtf16 >= 0L && endUtf16 >= startUtf16 && endUtf16 <= source.length)
+        val identity = ViewportIdentity(source.version, languageRevision)
+        val task = synchronized(lock) {
+            pendingViewportPlans.remove(identity)?.let { previous ->
+                executor.remove(previous)
+                previous.cancel()
+            }
+            PrioritizedTask(Long.MIN_VALUE) {
+                try {
+                    if (closed.get() || source.version != identity.documentVersion) return@PrioritizedTask
+                    val keys = requestViewport(source, startUtf16, endUtf16, languageRevision, parse)
+                    if (!closed.get() && source.version == identity.documentVersion) onQueued(keys)
+                } catch (_: CancellationException) {
+                    // A superseded immutable snapshot is expected during rapid editing.
+                } catch (error: Throwable) {
+                    onPlanningFailure(error)
+                } finally {
+                    synchronized(lock) { pendingViewportPlans.remove(identity) }
+                }
+            }.also { pendingViewportPlans[identity] = it }
+        }
+        synchronized(lock) {
+            if (closed.get()) {
+                task.cancel()
+                pendingViewportPlans.remove(identity)
+            } else {
+                executor.execute(task)
+            }
+        }
     }
 
     /**
@@ -154,6 +203,8 @@ class TreeSitterPartitionScheduler(
         synchronized(lock) {
             pending.values.forEach { executor.remove(it); it.cancel() }
             pending.clear()
+            pendingViewportPlans.values.forEach { executor.remove(it); it.cancel() }
+            pendingViewportPlans.clear()
         }
     }
 

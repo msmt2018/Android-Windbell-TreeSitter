@@ -164,4 +164,32 @@ class TreeSitterPartitionSchedulerTest {
         assertEquals(0, failures)
         scheduler.close()
     }
+    @Test fun asyncViewportRequestDoesNotReadOrIndexOnCallerThread() {
+        val enteredRead = CountDownLatch(1)
+        val releaseRead = CountDownLatch(1)
+        val text = ("line\\n").repeat(200)
+        val source = object : Utf16DocumentSource {
+            override val length = text.length.toLong()
+            override val version = 77L
+            override fun get(offset: Long) = text[offset.toInt()]
+            override fun readChunk(offset: Long, maxChars: Int): CharSequence {
+                enteredRead.countDown()
+                check(releaseRead.await(5, TimeUnit.SECONDS))
+                if (offset >= length) return ""
+                return text.substring(offset.toInt(), minOf(text.length, offset.toInt() + maxChars))
+            }
+        }
+        val manager = DocumentPartitionManager(256, prefetchPartitions = 0)
+        val cache = PartitionAstCache(1024) { 1L }
+        val scheduler = TreeSitterPartitionScheduler(manager, cache, contextChars = 16)
+        var callbackCalled = false
+        scheduler.requestViewportAsync(source, 100, 200, 1, {
+            fail("Test source should not need native parsing")
+        }) { callbackCalled = true }
+        assertTrue(enteredRead.await(2, TimeUnit.SECONDS), "indexing should begin on worker")
+        assertFalse(callbackCalled)
+        releaseRead.countDown()
+        scheduler.close()
+    }
+
 }
