@@ -30,10 +30,11 @@ class TshProviderRegistry {
         providers.remove(id) != null
     }
 
-    fun findFor(instance: Any, descriptor: TshObjectDescriptor): List<TshProvider> =
-        synchronized(lock) {
-            providers.values.filter { it.supports(instance, descriptor) }
-        }
+    fun findFor(instance: Any, descriptor: TshObjectDescriptor): List<TshProvider> {
+        // Never invoke third-party provider code while holding the registry monitor.
+        val snapshot = synchronized(lock) { providers.values.toList() }
+        return snapshot.filter { it.supports(instance, descriptor) }
+    }
 
     fun all(): List<TshProvider> = synchronized(lock) { providers.values.toList() }
 
