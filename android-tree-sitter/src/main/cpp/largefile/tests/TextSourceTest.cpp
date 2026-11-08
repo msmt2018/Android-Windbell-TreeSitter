@@ -1,6 +1,7 @@
 #include "ChunkedTextStore.h"
 #include "MappedFileSource.h"
 #include "FileWindowSource.h"
+#include "PieceTreeSource.h"
 
 #include <cassert>
 #include <cstdio>
@@ -159,12 +160,73 @@ static void testSparseFilesFromOneToThreeHundredMegabytesUseBoundedWindow() {
     }
 }
 
+
+static std::string readAll(TextSource &source) {
+    std::string result;
+    uint64_t offset = 0;
+    while (offset < source.sizeBytes()) {
+        TextChunkView view{};
+        assert(source.read(offset, 64u * 1024u, &view));
+        assert(view.data && view.size > 0);
+        result.append(view.data, view.size);
+        offset += view.size;
+    }
+    return result;
+}
+
+static void testPieceTreeEditsDoNotCopyUnchangedText() {
+    char path[] = "/tmp/windbell-piece-tree-XXXXXX";
+    const int fd = ::mkstemp(path);
+    assert(fd >= 0);
+    std::string original;
+    original.reserve(2u * 1024u * 1024u);
+    for (int i = 0; i < 1024; ++i) {
+        original += "line-";
+        original += std::to_string(i);
+        original += "\\n";
+    }
+    std::string utf16;
+    utf16.reserve(original.size() * 2);
+    for (unsigned char c : original) { utf16.push_back(static_cast<char>(c)); utf16.push_back(0); }
+    assert(::write(fd, utf16.data(), utf16.size()) == static_cast<ssize_t>(utf16.size()));
+    ::close(fd);
+
+    auto mapped = std::make_shared<MappedFileSource>(path);
+    assert(mapped->isOpen());
+    PieceTreeSource source(mapped, 2u * 1024u * 1024u);
+    assert(source.isValid());
+    assert(source.sizeBytes() == utf16.size());
+    const uint64_t beforePieces = source.pieceCount();
+    const std::string insert = "X\\0Y\\0";
+    assert(source.replace(0, 0, insert.data(), insert.size()));
+    assert(source.version() == 1);
+    assert(source.sizeBytes() == utf16.size() + insert.size());
+    assert(source.pieceCount() <= beforePieces + 2);
+    assert(source.allocatedBytes() < 256u * 1024u);
+    TextChunkView view{};
+    assert(source.read(0, 64, &view));
+    assert(view.size >= insert.size());
+    assert(std::memcmp(view.data, insert.data(), insert.size()) == 0);
+
+    const uint64_t removeStart = 2u * 10u;
+    assert(source.replace(removeStart, removeStart + 2u * 5u, nullptr, 0));
+    assert(source.version() == 2);
+    assert(source.sizeBytes() == utf16.size() + insert.size() - 10u);
+    assert(source.replace(source.sizeBytes(), source.sizeBytes(), "Z\\0", 2));
+    assert(source.version() == 3);
+    assert(source.sizeBytes() == utf16.size() + insert.size() - 8u);
+
+    ::unlink(path);
+}
+
+
 int main() {
     testSegmentedTextSource();
     testChunkedStoreReadsAcrossBoundaries();
     testChunkedStoreReusesAllocatedTail();
     testChunkedStoreHonorsMemoryBudget();
     testMappedFileSource();
+    testPieceTreeEditsDoNotCopyUnchangedText();
     testSparseFilesFromOneToThreeHundredMegabytesUseBoundedWindow();
     return 0;
 }
