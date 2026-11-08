@@ -112,7 +112,7 @@ class StyledTextPainterRenderingTest {
             BackgroundColorSpan(Color.BLUE),
             0,
             text.length,
-            Spanned.SPAN_EXCLUSIVE_EXCLUSIVE or (2 shl Spanned.SPAN_PRIORITY_SHIFT)
+            Spanned.SPAN_EXCLUSIVE_EXCLUSIVE or (2 shl 16)
         )
 
         val bitmap = render(text)
