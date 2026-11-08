@@ -324,6 +324,8 @@ private:
         const UChar* text_end,
         const UChar* range_start,
         const UChar* range_end,
+        uint32_t output_start_byte,
+        uint32_t output_end_byte,
         std::vector<HighlightSpan>& out_spans,
         uint32_t* regex_match_count = nullptr
     );

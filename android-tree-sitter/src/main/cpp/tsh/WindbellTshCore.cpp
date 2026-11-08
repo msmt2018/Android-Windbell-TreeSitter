@@ -237,6 +237,8 @@ static void appendRegexCaptureSpans(
     int32_t priority,
     uint32_t declaration_order,
     bool allow_overlap,
+    uint32_t output_start_byte,
+    uint32_t output_end_byte,
     std::vector<HighlightSpan>& output
 ) {
     if (!regex || !region) return;
@@ -245,10 +247,11 @@ static void appendRegexCaptureSpans(
             region->beg[group] < 0 || region->end[group] < 0) return;
         const uint32_t start = static_cast<uint32_t>(region->beg[group]);
         const uint32_t end = static_cast<uint32_t>(region->end[group]);
-        if ((start & 1u) || (end & 1u) || start >= end) return;
+        if ((start & 1u) || (end & 1u) || start >= end ||
+            end <= output_start_byte || start >= output_end_byte) return;
         HighlightSpan span;
-        span.start_byte = start;
-        span.end_byte = end;
+        span.start_byte = std::max(start, output_start_byte);
+        span.end_byte = std::min(end, output_end_byte);
         span.style_id = style_id;
         span.flags = 0;
         span.priority = priority;
@@ -359,6 +362,8 @@ void WindbellEngine::matchBlockRecursive(
     const UChar* text_end,
     const UChar* range_start,
     const UChar* range_end,
+    uint32_t output_start_byte,
+    uint32_t output_end_byte,
     std::vector<HighlightSpan>& out_spans,
     uint32_t* regex_match_count
 ) {
@@ -404,14 +409,17 @@ void WindbellEngine::matchBlockRecursive(
         if ((block_start_byte & 1u) == 0 && (block_end_byte & 1u) == 0) {
             if (rule.has_style && block_start_byte < block_end_byte) {
                 HighlightSpan block_span;
-                block_span.start_byte = block_start_byte;
-                block_span.end_byte = block_end_byte;
-                block_span.style_id = rule.style_id;
+                if (block_end_byte > output_start_byte &&
+                    block_start_byte < output_end_byte) {
+                    block_span.start_byte = std::max(block_start_byte, output_start_byte);
+                    block_span.end_byte = std::min(block_end_byte, output_end_byte);
+                    block_span.style_id = rule.style_id;
                 block_span.flags = 0;
                 block_span.priority = rule.priority;
                 block_span.declaration_order = rule.declaration_order;
-                block_span.allow_overlap = rule.allow_overlap ? 1 : 0;
-                out_spans.push_back(block_span);
+                    block_span.allow_overlap = rule.allow_overlap ? 1 : 0;
+                    out_spans.push_back(block_span);
+                }
             }
             if (rule.has_content_style) {
                 const uint32_t content_start = static_cast<uint32_t>(start_region->end[0]);
@@ -419,10 +427,11 @@ void WindbellEngine::matchBlockRecursive(
                     static_cast<uint32_t>(end_region->beg[0]) :
                     static_cast<uint32_t>(range_end - text_start);
                 if (content_start < content_end &&
-                    (content_start & 1u) == 0 && (content_end & 1u) == 0) {
+                    (content_start & 1u) == 0 && (content_end & 1u) == 0 &&
+                    content_end > output_start_byte && content_start < output_end_byte) {
                     HighlightSpan content_span;
-                    content_span.start_byte = content_start;
-                    content_span.end_byte = content_end;
+                    content_span.start_byte = std::max(content_start, output_start_byte);
+                    content_span.end_byte = std::min(content_end, output_end_byte);
                     content_span.style_id = rule.content_style_id;
                     content_span.priority = rule.priority;
                     content_span.declaration_order = rule.declaration_order;
@@ -433,13 +442,13 @@ void WindbellEngine::matchBlockRecursive(
             appendRegexCaptureSpans(
                 rule.onig_start, start_region, rule.start_group_style_map,
                 rule.start_named_group_style_map, rule.priority, rule.declaration_order,
-                rule.allow_overlap, out_spans
+                rule.allow_overlap, output_start_byte, output_end_byte, out_spans
             );
             if (hit_end >= 0) {
                 appendRegexCaptureSpans(
                     rule.onig_end, end_region, rule.end_group_style_map,
                     rule.end_named_group_style_map, rule.priority, rule.declaration_order,
-                    rule.allow_overlap, out_spans
+                    rule.allow_overlap, output_start_byte, output_end_byte, out_spans
                 );
             }
 
@@ -450,7 +459,7 @@ void WindbellEngine::matchBlockRecursive(
                 for (const auto& nested : rule.nested_rules) {
                     if (!nested.enabled) continue;
                     if (nested.type == RegexRuleType::BLOCK && nested.onig_start && nested.onig_end) {
-                        matchBlockRecursive(nested, text_start, text_end, inner_start, inner_end, out_spans, regex_match_count);
+                        matchBlockRecursive(nested, text_start, text_end, inner_start, inner_end, output_start_byte, output_end_byte, out_spans, regex_match_count);
                         continue;
                     }
                     if (nested.type == RegexRuleType::MATCH && nested.onig_start) {
@@ -475,10 +484,11 @@ void WindbellEngine::matchBlockRecursive(
                                     inner_region->beg[group] < 0 || inner_region->end[group] < 0) return;
                                 const uint32_t in_s = static_cast<uint32_t>(inner_region->beg[group]);
                                 const uint32_t in_e = static_cast<uint32_t>(inner_region->end[group]);
-                                if ((in_s & 1u) != 0 || (in_e & 1u) != 0) return;
+                                if ((in_s & 1u) != 0 || (in_e & 1u) != 0 ||
+                                    in_e <= output_start_byte || in_s >= output_end_byte) return;
                                 HighlightSpan in_span;
-                                in_span.start_byte = in_s;
-                                in_span.end_byte = in_e;
+                                in_span.start_byte = std::max(in_s, output_start_byte);
+                                in_span.end_byte = std::min(in_e, output_end_byte);
                                 in_span.style_id = style_id;
                                 in_span.flags = 0;
                                 in_span.priority = nested.priority;
@@ -602,7 +612,7 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
     if (input_chars) for (const auto& rule : grammar->regex_rules) {
         if (!rule.enabled) continue;
         if (rule.type == RegexRuleType::BLOCK && rule.onig_start && rule.onig_end) {
-            matchBlockRecursive(rule, text_start, text_end, text_start, text_end, micro_spans,
+            matchBlockRecursive(rule, text_start, text_end, text_start, text_end, range_start_byte, range_end_byte, micro_spans,
                 diagnostic_match_counts ? &diagnostic_match_counts[0] : nullptr);
             retain_requested_range(micro_spans);
             continue;
@@ -633,9 +643,13 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                     auto append_capture = [&](int group, uint16_t style_id) {
                         if (group < 0 || group >= region->num_regs ||
                             region->beg[group] < 0 || region->end[group] < 0) return;
+                        const uint32_t capture_start = static_cast<uint32_t>(region->beg[group]);
+                        const uint32_t capture_end = static_cast<uint32_t>(region->end[group]);
+                        if (capture_end <= range_start_byte || capture_start >= range_end_byte ||
+                            (capture_start & 1u) || (capture_end & 1u)) return;
                         HighlightSpan capture;
-                        capture.start_byte = static_cast<uint32_t>(region->beg[group]);
-                        capture.end_byte = static_cast<uint32_t>(region->end[group]);
+                        capture.start_byte = std::max(capture_start, range_start_byte);
+                        capture.end_byte = std::min(capture_end, range_end_byte);
                         capture.style_id = style_id;
                         capture.flags = 0;
                         capture.priority = rule.priority;
