@@ -113,6 +113,6 @@ class TshEngineNativeResourceLifecycleTest {
 
         val result = engine.openTreeSitterParser(handle, grammar)
         assertTrue(result is TshResult.Failure)
-        assertFalse(language.canAccess().not())
+        assertTrue(language.canAccess())
     }
 }\n
