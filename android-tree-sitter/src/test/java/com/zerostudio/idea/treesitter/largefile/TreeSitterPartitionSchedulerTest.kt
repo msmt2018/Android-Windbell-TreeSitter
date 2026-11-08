@@ -113,4 +113,16 @@ class TreeSitterPartitionSchedulerTest {
         parser.close()
     }
 
+    @Test fun windowedCallbackJoinsSurrogatePairSplitAcrossPieceTreePieces() {
+        val text = "😀x"
+        val source = text
+        val callback = CharSequenceParseWindowCallback(source) { start, _ ->
+            source.substring(start, start + 1)
+        }
+        val bytes = callback.read(0L, 64)
+        assertEquals("😀", String(bytes, Charsets.UTF_16LE))
+        val rest = callback.read(bytes.size.toLong(), 64)
+        assertEquals("x", String(rest, Charsets.UTF_16LE))
+    }
+
 }

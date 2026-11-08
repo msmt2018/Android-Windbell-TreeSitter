@@ -36,19 +36,26 @@ class CharSequenceParseWindowCallback(
         }
         var safeLength = chunk.length
         val nextOffset = start + safeLength
-        if (nextOffset < source.length &&
+        val pairCrossesPieceBoundary = nextOffset < source.length &&
             Character.isHighSurrogate(chunk[safeLength - 1]) &&
-            Character.isLowSurrogate(source[nextOffset])) {
-            safeLength--
-        }
-        check(safeLength > 0) {
+            Character.isLowSurrogate(source[nextOffset])
+        if (pairCrossesPieceBoundary && safeLength > 1) safeLength--
+
+        // A piece-tree piece boundary may itself sit between a surrogate pair.
+        // In that case the reader can return just the high surrogate; join the
+        // next code unit into this bounded window instead of returning zero bytes.
+        val joinedPair = pairCrossesPieceBoundary && safeLength == 1 &&
+            chunk.length == 1 && maxChars >= 2
+        val outputLength = if (joinedPair) 2 else safeLength
+        check(outputLength > 0) {
             "The requested window is too small to keep a UTF-16 surrogate pair together"
         }
+        val output = if (joinedPair) charArrayOf(chunk[0], source[nextOffset]).concatToString() else chunk
         // Encode UTF-16 code units directly. String.getBytes may replace an
         // isolated surrogate, while editor buffers must preserve exact code units.
-        val bytes = ByteArray(safeLength * 2)
-        for (index in 0 until safeLength) {
-            val codeUnit = chunk[index].code
+        val bytes = ByteArray(outputLength * 2)
+        for (index in 0 until outputLength) {
+            val codeUnit = output[index].code
             bytes[index * 2] = codeUnit.toByte()
             bytes[index * 2 + 1] = (codeUnit ushr 8).toByte()
         }
