@@ -7,6 +7,7 @@ import android.text.Spanned
 import com.zerostudio.idea.treesitter.TSLanguage
 import com.zerostudio.idea.treesitter.TSParser
 import com.zerostudio.idea.treesitter.TSTree
+import com.zerostudio.idea.treesitter.largefile.parseWindowed
 import com.zerostudio.idea.treesitter.tsh.WindbellTshEngine
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -52,7 +53,7 @@ class TshSyntaxHighlighter(
 
     override fun onAttached(host: SyntaxHighlighter.Host) {
         this.host = host
-        Log.i(TAG, "Attached to EditorView: extension=.$extension, textLength=${host.buffer.getText().length}")
+        Log.i(TAG, "Attached to EditorView: extension=.$extension, textLength=${host.buffer.length}")
         scheduleParse(host.buffer)
     }
 
@@ -178,7 +179,10 @@ class TshSyntaxHighlighter(
     }
 
     private fun scheduleParse(buffer: EditorBuffer) {
-        val textSnapshot = buffer.getText()
+        // PieceTreeBuffer returns an immutable, versioned snapshot backed by its
+        // original chunks. Never call getText() here: that eagerly flattens the
+        // complete document before parsing even starts.
+        val snapshot = buffer.createTextSnapshot()
         val ticket = generation.incrementAndGet()
         parseJob?.cancel(CancellationException("Superseded by newer document snapshot"))
         parsing = true
@@ -189,8 +193,19 @@ class TshSyntaxHighlighter(
             var tree: TSTree? = null
             try {
                 parser = TSParser.create().also { it.setLanguage(language) }
-                tree = parser.parseString(textSnapshot)
-                val nextCaptures = engine.computeHighlights(tree, textSnapshot, extension)
+                tree = parser.parseWindowed(
+                    oldTree = null,
+                    source = snapshot,
+                    includedRanges = emptyArray()
+                ) { offset, maxChars ->
+                    snapshot.getNearestChunk(offset, maxChars)
+                }
+
+                // Regex/Monarch currently use the contiguous-source JNI ABI.
+                // Tree-sitter now reads the immutable piece snapshot through bounded
+                // windows and no longer allocates a second full-document native copy.
+                val tshText = snapshot.toString()
+                val nextCaptures = engine.computeHighlights(tree, tshText, extension)
                 if (generation.get() == ticket) {
                     captureIndex = CaptureIntervalIndex(nextCaptures)
                     parsing = false
@@ -200,7 +215,7 @@ class TshSyntaxHighlighter(
                         val style = catalog[id]
                         style == null || engine.getStylePalette(extension, style.name) == null
                     }
-                    Log.i(TAG, "TSH pipeline ready: extension=.$extension textLength=${textSnapshot.length} spans=${nextCaptures.size} indexedCaptures=${nextCaptures.size} styles=${catalog.size} usedStyleIds=$styleIds missingPalette=$missingPalette")
+                    Log.i(TAG, "TSH pipeline ready: extension=.$extension snapshotVersion=\${snapshot.version} textLength=\${snapshot.length} spans=\${nextCaptures.size} indexedCaptures=\${nextCaptures.size} styles=\${catalog.size} usedStyleIds=$styleIds missingPalette=$missingPalette")
                     host?.invalidateStyles()
                     host?.invalidateStructure()
                 }
@@ -208,7 +223,7 @@ class TshSyntaxHighlighter(
                 throw cancelled
             } catch (error: Throwable) {
                 if (generation.get() == ticket) {
-                    Log.e(TAG, "TSH parse/highlight failed for .$extension (length=${textSnapshot.length})", error)
+                    Log.e(TAG, "TSH parse/highlight failed for .$extension (snapshotLength=\${snapshot.length}, version=\${snapshot.version})", error)
                     captureIndex = CaptureIntervalIndex(emptyList())
                     parsing = false
                     host?.invalidateStyles()

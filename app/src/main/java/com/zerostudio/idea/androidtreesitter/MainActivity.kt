@@ -70,7 +70,6 @@ class MainActivity : AppCompatActivity() {
     // 核心编辑器控件与文本缓存
     private var editorView: EditorView? = null
     private var editorTree: TSTree? = null
-    private var currentEditorRawText: String = ""
     @Volatile private var javaTshReady: Boolean = false
     private var activeTshHighlighter: TshSyntaxHighlighter? = null
     private val tshConfigurationStates = java.util.concurrent.ConcurrentHashMap<String, String>()
@@ -453,7 +452,6 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setEditorContent(text: String) {
-        currentEditorRawText = text
         val buffer = PieceTreeBuffer(PieceTreeTextBufferBuilder().build().apply {
             applyEdits(listOf(SingleEditOperation(Range(1, 1, 1, 1), text)), false)
         })
