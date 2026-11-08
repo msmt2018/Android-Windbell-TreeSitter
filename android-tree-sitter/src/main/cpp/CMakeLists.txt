@@ -182,3 +182,16 @@ if (${CMAKE_SYSTEM_NAME} STREQUAL Android)
     find_library(log log)
     target_link_libraries(android-tree-sitter PRIVATE ${log})
 endif()
+# Host-side tests for storage and source adapters. Android builds only compile
+# the production library; these tests run in a normal desktop CMake build.
+include(CTest)
+if(BUILD_TESTING AND NOT ANDROID)
+    add_executable(windbell_largefile_tests
+        largefile/tests/TextSourceTest.cpp
+        largefile/TextSource.cpp
+        largefile/ChunkedTextStore.cpp
+        largefile/MappedFileSource.cpp
+    )
+    target_compile_features(windbell_largefile_tests PRIVATE cxx_std_20)
+    add_test(NAME windbell_largefile_tests COMMAND windbell_largefile_tests)
+endif()
