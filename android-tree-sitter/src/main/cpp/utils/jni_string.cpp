@@ -154,6 +154,10 @@ bool FNI_GetStandardUtf8(JNIEnv *env, jstring source, std::string &out) {
 jstring FNI_NewStringFromStandardUtf8(JNIEnv *env,
                                       const char *bytes,
                                       uint32_t length) {
+    if (bytes == nullptr && length != 0) {
+        throw_npe(env, "UTF-8 byte buffer cannot be null when length is non-zero");
+        return nullptr;
+    }
     std::vector<jchar> utf16;
     utf16.reserve(length);
     uint32_t i = 0;
