@@ -21,7 +21,11 @@ bool ChunkedTextStore::append(const void *data, size_t length) noexcept {
     size_t consumed = 0;
     try {
         while (consumed < length) {
-            const size_t chunk_index = static_cast<size_t>(size_bytes_ / chunk_bytes_);
+            const uint64_t chunk_index_64 = size_bytes_ / chunk_bytes_;
+            if (chunk_index_64 > static_cast<uint64_t>(std::numeric_limits<size_t>::max())) {
+                return false;
+            }
+            const size_t chunk_index = static_cast<size_t>(chunk_index_64);
             const size_t chunk_offset = static_cast<size_t>(size_bytes_ % chunk_bytes_);
 
             if (chunk_index == chunks_.size()) {
