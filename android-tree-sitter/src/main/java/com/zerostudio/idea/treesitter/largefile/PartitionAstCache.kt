@@ -183,7 +183,7 @@ class CapturePageCache<T : Any>(
     maxBytes: Long,
     private val weighCapture: (T) -> Long
 ) : AutoCloseable {
-    private val cache = BoundedLruCache<CapturePageKey, CapturePage<T>>(
+    private val cache = ByteBudgetLruCache<CapturePageKey, CapturePage<T>>(
         maxBytes,
         { page -> 64L + page.captures.sumOf { weighCapture(it).coerceAtLeast(0L) } }
     )
