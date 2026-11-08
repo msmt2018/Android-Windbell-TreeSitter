@@ -192,6 +192,9 @@ if(BUILD_TESTING AND NOT ANDROID)
         largefile/ChunkedTextStore.cpp
         largefile/MappedFileSource.cpp
     )
+    target_include_directories(windbell_largefile_tests PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/largefile"
+    )
     target_compile_features(windbell_largefile_tests PRIVATE cxx_std_20)
     add_test(NAME windbell_largefile_tests COMMAND windbell_largefile_tests)
 endif()
