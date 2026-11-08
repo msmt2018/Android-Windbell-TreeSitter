@@ -14,6 +14,8 @@ class TshNativeResourceRegistry(
     private val objects: TshObjectRegistry,
     private val leases: TshNativeResourceLeaseStore
 ) {
+    private val lock = Any()
+
     data class Registration<T : TSNativeObject>(
         val descriptor: TshObjectDescriptor,
         val handle: TshNativeResourceLeaseStore.Handle<T>
@@ -28,12 +30,12 @@ class TshNativeResourceRegistry(
         type: String,
         capabilities: TshCapabilitySet = TshCapabilitySet.EMPTY,
         metadata: Map<String, String> = emptyMap()
-    ): Registration<T> {
+    ): Registration<T> = synchronized(lock) {
         check(objects.find(resource) == null) {
             "Native resource is already published; retire it before registering again"
         }
         val descriptor = objects.register(resource, type, capabilities, metadata)
-        return try {
+        try {
             Registration(descriptor, leases.register(descriptor.id, resource))
         } catch (error: Throwable) {
             objects.unregister(descriptor.id)
@@ -45,20 +47,20 @@ class TshNativeResourceRegistry(
     fun <T : TSNativeObject> acquire(
         objectId: TshObjectId,
         expectedType: Class<T>
-    ): TshNativeResourceLeaseStore.Lease<T>? {
-        val resource = objects.find(objectId) ?: return null
-        if (!expectedType.isInstance(resource)) return null
+    ): TshNativeResourceLeaseStore.Lease<T>? = synchronized(lock) {
+        val resource = objects.find(objectId) ?: return@synchronized null
+        if (!expectedType.isInstance(resource)) return@synchronized null
         val typed = expectedType.cast(resource)
-        return leases.acquire(TshNativeResourceLeaseStore.Handle(objectId, typed))
+        leases.acquire(TshNativeResourceLeaseStore.Handle(objectId, typed))
     }
 
     /**
      * Stops new acquisitions before removing the public object index. Existing leases defer close.
      */
-    fun retire(objectId: TshObjectId): Boolean {
+    fun retire(objectId: TshObjectId): Boolean = synchronized(lock) {
         val retired = leases.retire(objectId)
         if (retired) objects.unregister(objectId)
-        return retired
+        retired
     }
 
     /** Number of active operations retaining this resource. */
