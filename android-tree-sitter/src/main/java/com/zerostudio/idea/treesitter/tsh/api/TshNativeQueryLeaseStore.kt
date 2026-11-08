@@ -10,7 +10,7 @@ import com.zerostudio.idea.treesitter.TSQuery
  * completes. All native close operations happen after leaving the store monitor.
  */
 class TshNativeQueryLeaseStore {
-    private class Entry(
+    internal class Entry(
         val queryId: String,
         val objectId: TshObjectId,
         val query: TSQuery
