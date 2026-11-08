@@ -31,6 +31,7 @@
 - 新增通用 `TshNativeResourceLeaseStore`：资源 Handle 实例校验、Lease 计数、retire/retireAll 后延迟 close；Tree Executor 接入 Tree Lease，Grammar Language Resolver 改为返回带 objectId 的 Language Handle，Compiler 将 Language Lease 作为 Query 依赖保持至 Query 完整退役；新增资源 Lease 测试源码。
 - 新增 `TshNativeResourceRegistry` 协调对象索引与 Native 资源所有权：统一注册、按 Native 类型及实例身份校验的 Lease 获取、先退役后注销对象索引、仅退役本协调器所有资源的作用域化 retireAll；新增注册/获取/退役/批量退役生命周期测试源码。
 - 修正 Native Resource Registry 锁边界：在协调锁内先撤销资源的公开获取资格并移除对象索引，之后在锁外调用 Lease Store retire，避免 Native close 回调在协调器锁内运行；新增永久 close 状态与对应测试源码。
+- `TshNativeQueryLeaseStore` 新增 `registerDeferred` / `retireDeferred`，允许 Query catalog 在事务锁内原子切换 revision/标记退役，并将旧 Query 与其 Language 依赖 Lease 的实际 close action 延后到锁外执行；新增 deferred close 测试源码。
 - `TshEngine` 新增自有 Native Resource Lease Store/Registry；`TshEngine.close()` 关闭该 Registry 并退役其拥有的 Native 资源，然后清理 Provider/Object 索引。
 - `TshTreeSitterQueryCompiler` / `TshTreeSitterQueryExecutor` 新增可选协调 Registry 注入；启用后 Language/Tree Lease 获取经统一入口完成，旧 Store 直连构造仍保留作为兼容迁移路径，Lease Store 构造参数提供默认值以兼容既有短参数列表。宿主生产装配尚未全面迁移。
 
@@ -46,5 +47,5 @@
 - 本地 Gradle 编译、自动化测试和真实编辑器渲染验证。
 
 ### Status
-- 本轮新增的 Kotlin API 和测试仅代表源码已提交；没有运行 Gradle、JUnit、C++/JNI 构建或 Android 设备验证。Tree-sitter Adapter 调用了既有 Native API；Query/Tree/Language lease、Predicate 过滤和协调式 Resource Registry 源码及测试源码已提交；Resource Registry 锁边界和 Engine.close 退役接线也已加入源码/测试源码，但未做 Gradle/JUnit 或真实 Native 运行验证。
+- 本轮新增的 Kotlin API 和测试仅代表源码已提交；没有运行 Gradle、JUnit、C++/JNI 构建或 Android 设备验证。Tree-sitter Adapter 调用了既有 Native API；Query/Tree/Language lease、Predicate 过滤和协调式 Resource Registry 源码及测试源码已提交；Resource Registry 锁边界、Engine.close 退役接线和 Query catalog 锁外 close action 也已加入源码/测试源码，但未做 Gradle/JUnit 或真实 Native 运行验证。
 - 现有仓库已检查到 `TSQuery`、`TSQueryCursor`、`TshCompiler`、`TshGrammar.dynamic_ts_query`；后续实现应复用这些既有能力并保持旧 JNI 入口兼容。
