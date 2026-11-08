@@ -1,6 +1,6 @@
 # ATS 与 Tree-sitter 统一查询 API 契约
 
-> 状态：API 数据模型、CompiledQuery Registry、基于既有 TSQuery/TSQueryCursor 的 Tree-sitter Compiler/Executor Adapter 已有 Kotlin 源码；ATS Lexer/Parser/Compiler、Native lease/refcount、增量查询和真实 Native 验证仍未完成。仅 Tree-sitter + ATS 查询管线；Regex 保持独立，不引入第三管线。
+> 状态：API 数据模型、CompiledQuery Registry、基于既有 TSQuery/TSQueryCursor 的 Tree-sitter Compiler/Executor Adapter 已有 Kotlin 源码；ATS Lexer/Parser/Compiler、Tree/Language lease、增量查询和真实 Native 验证仍未完成；Native Query lease 已有源码。仅 Tree-sitter + ATS 查询管线；Regex 保持独立，不引入第三管线。
 
 ## 1. 分层
 
@@ -41,17 +41,18 @@ CompiledQuery 必须绑定 grammar identity/version、ABI 和 fingerprint；只�
 
 ## 7. 既有执行入口与适配边界
 
-仓库已有 `TSQuery`、`TSQueryCursor` Java 封装；`TSQuery.create(TSLanguage, String)` 创建原生查询，`TSQueryCursor.exec(TSQuery, TSNode)` 执行查询，Cursor 支持 byte range、match limit 和 PredicateHandler。C++ TSH 侧已有 `TshGrammar.dynamic_ts_query`，由 `TshCompiler` 使用 `ts_query_new` 编译动态查询。
+仓库已有 `TSQuery`、`TSQueryCursor` Java 封装；`TSQuery.create(TSLanguage, String)` 创建原生查询，`TSQueryCursor.exec(TSQuery, TSNode)` 执行查询，Cursor 支持 byte range、match limit 和 PredicateHandler。Executor 会预检查询所需 predicate 名称是否被任一 Handler 声明支持；Native Cursor 本身对 Handler 返回值的语义仍需单独验证。C++ TSH 侧已有 `TshGrammar.dynamic_ts_query`，由 `TshCompiler` 使用 `ts_query_new` 编译动态查询。
 
-当前 `TshTreeSitterQueryCompiler` 已通过 `TSQuery.create(language, source)` 编译原生 S-expression Query，并把 `TSQuery` 注册到 `TshObjectRegistry`；编译失败映射为结构化诊断（包含 Native error type 与 UTF-8 byte offset）。ATS source 会被明确拒绝，不会被当作 Tree-sitter S-expression 误解析。\n\n当前 `TshTreeSitterQueryExecutor` 通过 `TSQueryCursor.create()`、`setByteRange()`、`exec()`、`nextMatch()` 执行，并把 `TSQueryMatch` / `TSQueryCapture` 转为 TSH Capture。它只关闭自己创建的 Cursor；Query 由 Compiler 管理并通过 `release(queryId)` 显式释放，Tree/Language 仍由调用方持有。替换同 queryId 的编译结果时会释放旧 Query。**当前没有 Native refcount/lease，调用方必须保证 Query release、Tree/Language close 不与执行并发。**
+当前 `TshTreeSitterQueryCompiler` 已通过 `TSQuery.create(language, source)` 编译原生 S-expression Query，并把 `TSQuery` 注册到 `TshObjectRegistry`；编译失败映射为结构化诊断（包含 Native error type 与 UTF-8 byte offset）。ATS source 会被明确拒绝，不会被当作 Tree-sitter S-expression 误解析。\n\n当前 `TshTreeSitterQueryExecutor` 通过 `TSQueryCursor.create()`、`setByteRange()`、`exec()`、`nextMatch()` 执行，并把 `TSQueryMatch` / `TSQueryCapture` 转为 TSH Capture。它只关闭自己创建的 Cursor；Query 由共享 `TshNativeQueryLeaseStore` 管理。Executor 开始执行时 acquire Lease；`release(queryId)` 或同 ID 替换会先退役旧 Query，阻止新 Lease，已有执行完成后最后一个 Lease 释放才真正 close。对象注册表条目在退役时移除，但活动 Lease 保留 Query 强引用。Tree/Language 仍由调用方持有，必须保证其 close 不与执行并发。
 
 ## 8. 错误与生命周期
 
-语法节点/字段不存在、谓词参数类型错误、grammar ABI 不兼容、query 编译失败、预算耗尽、取消和 Native 资源关闭必须有稳定错误码。当前 Compiler/Executor 接口返回 `TshResult`；具体错误映射、Native lease/refcount 和取消边界待实现。
+语法节点/字段不存在、谓词参数类型错误、grammar ABI 不兼容、query 编译失败、预算耗尽、取消和 Native 资源关闭必须有稳定错误码。当前 Compiler/Executor 接口返回 `TshResult`；Query lease 已实现源码，但未构建验证；Tree/Language lease 和可中断 Native 取消边界待实现。
 
 ## 9. 验收
 
 - 同一查询在 ATS 源码和等价 Tree-sitter Query 上产生一致 capture。
 - 验证字段、匿名节点、量化、predicate、Unicode byte range、增量 changed range、取消、预算耗尽和版本失效。
-- 验证 Native Query/Tree/Cursor 在异常、并发和关闭情况下无 use-after-free。\n- 验证 query release 与 execute 并发时由 lease/refcount 保证安全；当前尚不满足，属于未完成项。
+- 验证 Native Query/Tree/Cursor 在异常、并发和关闭情况下无 use-after-free。\n- 验证 query release/替换与 execute 并发时由 Query lease/refcount 保证安全；目前仅有源码与单测源码，尚未运行。
+- 验证 Tree/Language close 与 execute 并发安全；当前仍未满足。
 - 执行 Gradle/JUnit、Native 单测和 Android 集成测试；没有执行的验证不得标记完成。
