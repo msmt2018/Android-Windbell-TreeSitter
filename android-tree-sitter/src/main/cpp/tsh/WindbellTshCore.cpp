@@ -550,7 +550,10 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
         (text_start != nullptr || total_bytes == 0);
 
     std::vector<HighlightSpan> micro_spans;
-    micro_spans.reserve(length_chars / 4);
+    // Do not reserve proportional to document length: a 300 MB source can
+    // contain comparatively few syntax captures, and the old estimate eagerly
+    // reserved hundreds of megabytes before the first rule had matched.
+    micro_spans.reserve(std::min<size_t>(length_chars / 4, 4096));
 
     for (const auto& rule : grammar->regex_rules) {
         if (!rule.enabled) continue;
@@ -799,7 +802,9 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
 
     std::vector<HighlightSpan> macro_spans;
     if (tree && tree_source_valid && !grammar->ast_selector_rules.empty()) {
-        macro_spans.reserve(length_chars / 6);
+        // AST/query capture density is grammar-dependent. Start with a small
+        // bounded capacity and grow only when real captures are produced.
+        macro_spans.reserve(std::min<size_t>(length_chars / 6, 4096));
         TSTreeCursor cursor = ts_tree_cursor_new(ts_tree_root_node(tree));
         std::vector<const AstSelectorRule*> candidate_rules;
         candidate_rules.reserve(grammar->ast_wildcard_rules.size() + 16);
