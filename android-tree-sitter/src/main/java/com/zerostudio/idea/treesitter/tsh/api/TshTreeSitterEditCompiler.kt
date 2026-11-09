@@ -30,16 +30,16 @@ object TshTreeSitterEditCompiler {
                 "Tree-sitter UTF-16LE byte offsets exceed the Native Int boundary")
         }
         if (change.edits.isEmpty()) return TshResult.Success(emptyList())
+        if (change.edits.any { it.endUtf16 > before.lengthUtf16 }) {
+            return failure("TSH-EDIT-COMPILE-004",
+                "Edit range exceeds the before-version snapshot")
+        }
 
         return try {
             val endpoints = change.edits.flatMap { listOf(it.startUtf16, it.endUtf16) }
             val points = Utf16EndpointPoints.build(before, endpoints)
             val compiled = ArrayList<TSInputEdit>(change.edits.size)
             for (edit in change.edits) {
-                if (edit.endUtf16 > before.lengthUtf16) {
-                    return failure("TSH-EDIT-COMPILE-004",
-                        "Edit range exceeds the before-version snapshot")
-                }
                 val startPoint = points[edit.startUtf16] ?: return failure(
                     "TSH-EDIT-COMPILE-005", "Edit start splits a UTF-16 surrogate pair or is invalid"
                 )
