@@ -93,7 +93,7 @@ class TshTreeSitterParserOwner private constructor(
                 snapshot.documentId,
                 snapshot.version,
                 treeRevision
-            ) { parser -> parser.parseInput(input).also { /* bounded callback owns no Native buffer */ } }
+            ) { parser -> parser.parseInput(null, input, chunkSizeBytes) }
         } finally {
             retained.close()
         }
