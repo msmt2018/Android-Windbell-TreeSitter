@@ -1,5 +1,7 @@
 package com.zerostudio.idea.treesitter.tsh.api
 
+import com.zerostudio.idea.treesitter.TSTree
+
 import org.junit.Assert.*
 import org.junit.Test
 
@@ -81,6 +83,28 @@ class TshTreeSitterQueryAdapterTest {
         val result = executor.execute(query, tree())
         assertTrue(result is TshResult.Failure)
         assertEquals("TSH-QUERY-EXEC-004", (result as TshResult.Failure).diagnostics.first().code)
+    }
+
+    @Test fun executorRejectsEditedPendingTreeBeforeNativeQueryAcquisition() {
+        val objects = TshObjectRegistry()
+        val descriptor = objects.register(
+            object : TSTree(1L) {},
+            "syntax-tree",
+            metadata = mapOf("treeState" to "EDITED_PENDING_PARSE")
+        )
+        val registry = TshCompiledQueryRegistry()
+        val query = compiledQuery(nativeId = TshObjectId(999))
+        assertTrue(registry.register(query) is TshResult.Success)
+
+        val executor = TshTreeSitterQueryExecutor(
+            objects, registry, TshNativeQueryLeaseStore()
+        )
+        val result = executor.execute(query, tree().copy(nativeObjectId = descriptor.id))
+        assertTrue(result is TshResult.Failure)
+        assertEquals(
+            "TSH-QUERY-EXEC-031",
+            (result as TshResult.Failure).diagnostics.first().code
+        )
     }
 
     @Test fun executorRejectsStaleQueryRevision() {
