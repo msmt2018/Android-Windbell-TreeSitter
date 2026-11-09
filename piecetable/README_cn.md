@@ -73,6 +73,7 @@ val textBuffer: PieceTreeTextBuffer = builder.build(
 textBuffer.getLineCount()      // 行数
 textBuffer.getLineContent(1)   // 第 1 行，行号从 1 开始
 textBuffer.getEOL()            // "\n" 或 "\r\n"，从内容嗅探得到
+textBuffer.isEOLNormalized() // 所有换行都已归一化为 getEOL() 时为 true
 textBuffer.getBOM()            // 文件自带的 UTF-8 BOM
 ```
 
