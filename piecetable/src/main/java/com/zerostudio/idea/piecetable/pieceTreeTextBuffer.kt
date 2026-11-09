@@ -393,6 +393,13 @@ class PieceTreeTextBuffer : CharSequence {
     /** Memory figures, to decide when [compact] is worth it. O(number of pieces). */
     fun getStorageStats(): StorageStats = this._pieceTree.getStorageStats()
     fun getEOL() = this._pieceTree.getEOL()
+
+    /**
+     * Whether every line ending in the current buffer is normalized to [getEOL].
+     * Consumers translating editor row/column metadata to parsers with LF-only row
+     * semantics must fall back to text scanning when this is false.
+     */
+    fun isEOLNormalized() = this._pieceTree.isEOLNormalized()
     
     /**
      * Regex search inside [searchRange] (clamped into the document first).
