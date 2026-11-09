@@ -98,8 +98,20 @@ interface TshTextSubscription : AutoCloseable {
  * Optional host adapter for reading text without flattening the whole document.
  * Methods are safe defaults so existing providers remain source-compatible.
  */
-interface TshTextAccessProvider {
-    val id: String
+interface TshTextAccessProvider : TshProvider {
+    override val id: String
+    override val apiVersion: Int get() = 1
+    val supportsChangeSubscriptions: Boolean get() = false
+    val supportsDisposalNotifications: Boolean get() = false
+    override val capabilities: TshCapabilitySet
+        get() = TshCapabilitySet.from(buildList {
+            add(TshCapability("text.snapshot", 1))
+            add(TshCapability("text.chunk", 1))
+            if (supportsChangeSubscriptions) add(TshCapability("text.change-subscription", 1))
+            if (supportsDisposalNotifications) add(TshCapability("text.disposal-notification", 1))
+        })
+    override fun supports(instance: Any, descriptor: TshObjectDescriptor): Boolean =
+        supports(instance)
     /** UNKNOWN requires the host integration layer to choose a safe dispatcher explicitly. */
     val threading: TshTextAccessThreading get() = TshTextAccessThreading.UNKNOWN
     /** Conservative default: providers must opt in before TSH performs concurrent snapshot reads. */
