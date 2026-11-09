@@ -1,6 +1,6 @@
 # Theme、Style、Font、Color 与 Decoration API 契约
 
-> 状态：目标契约。定义 TSH 核心样式模型及应用查询/管理方式；实际绘制仍由 Render Backend 完成。
+> 状态：目标契约。本文是 Theme/Font/Color/Decoration 属性模型的唯一权威契约；RenderPlan/Provider/Receipt 见 [theme-style-render-contract-api.md](theme-style-render-contract-api.md)，实际后端 Conformance 见 [render-backend-conformance-api.md](render-backend-conformance-api.md)。
 
 ## 1. 核心对象
 
