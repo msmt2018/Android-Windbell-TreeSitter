@@ -13,7 +13,7 @@ class TshTextAccessBinding private constructor(
     val provider: TshTextAccessProvider,
     val document: Any,
     val attachment: TshAttachmentReport,
-    private val ownsProviderRegistration: Boolean
+    private val providerRegistration: AutoCloseable?
 ) : AutoCloseable {
     private val closed = AtomicBoolean(false)
     private val lock = Any()
@@ -123,13 +123,13 @@ class TshTextAccessBinding private constructor(
         } catch (error: LinkageError) {
             diagnostics += closeDiagnostic("TSH-TEXT-BINDING-026", "Text document detach failed with a linkage error", error)
         }
-        if (ownsProviderRegistration) {
+        providerRegistration?.let { registration ->
             try {
-                engine.providers.unregister(provider.id)
+                registration.close()
             } catch (error: Exception) {
-                diagnostics += closeDiagnostic("TSH-TEXT-BINDING-027", "TextAccessProvider unregister failed: ${error.message}", error)
+                diagnostics += closeDiagnostic("TSH-TEXT-BINDING-027", "TextAccessProvider registration lease close failed: ${error.message}", error)
             } catch (error: LinkageError) {
-                diagnostics += closeDiagnostic("TSH-TEXT-BINDING-028", "TextAccessProvider unregister failed with a linkage error", error)
+                diagnostics += closeDiagnostic("TSH-TEXT-BINDING-028", "TextAccessProvider registration lease close failed with a linkage error", error)
             }
         }
         detachSubscription?.let { registration ->
@@ -207,13 +207,13 @@ class TshTextAccessBinding private constructor(
             if (!providerSupportsDocument) return failure(
                 "TSH-TEXT-BINDING-004", "TextAccessProvider does not support the supplied host document"
             )
-            if (registerProvider) {
+            val providerRegistration = if (registerProvider) {
                 try {
-                    engine.providers.registerUnique(provider)
+                    engine.providers.acquireScoped(provider)
                 } catch (error: Exception) {
                     return failure(
                         "TSH-TEXT-BINDING-005",
-                        "Cannot register TextAccessProvider: ${error.message}",
+                        "Cannot acquire TextAccessProvider registration: ${error.message}",
                         error
                     )
                 } catch (error: LinkageError) {
@@ -223,7 +223,7 @@ class TshTextAccessBinding private constructor(
                         error
                     )
                 }
-            }
+            } else null
 
             val attached = try {
                 engine.attach(
@@ -238,22 +238,22 @@ class TshTextAccessBinding private constructor(
                     ownerScope
                 )
             } catch (error: Exception) {
-                if (registerProvider) engine.providers.unregister(provider.id)
+                runCatching { providerRegistration?.close() }
                 return failure(
                     "TSH-TEXT-BINDING-007", "Cannot attach TextAccessProvider to host document: ${error.message}", error
                 )
             } catch (error: LinkageError) {
-                if (registerProvider) engine.providers.unregister(provider.id)
+                runCatching { providerRegistration?.close() }
                 return failure(
                     "TSH-TEXT-BINDING-008", "TextAccessProvider attachment failed with a linkage error", error
                 )
             }
             if (attached is TshResult.Failure) {
-                if (registerProvider) engine.providers.unregister(provider.id)
+                runCatching { providerRegistration?.close() }
                 return attached
             }
             val report = (attached as TshResult.Success<TshAttachmentReport>).value
-            val binding = TshTextAccessBinding(engine, provider, document, report, registerProvider)
+            val binding = TshTextAccessBinding(engine, provider, document, report, providerRegistration)
 
             val detachSubscription = engine.attachments.subscribeDetached(report.handle) {
                 binding.close()
