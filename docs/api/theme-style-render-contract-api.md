@@ -60,7 +60,7 @@ Backend 必须对每个 instruction 返回 applied/degraded/rejected 状态。�
 
 ## 5. 绘制后端适配
 
-Backend 声明文本前景/背景、字体、装饰、颜色空间、混合模式、裁剪和坐标能力。Span backend 只能管理 TSH 自己的 Span；Canvas backend 在宿主绘制回调内执行；Compose backend 只输出不可变渲染状态，不让核心模块依赖 Compose。坐标和可见范围由最小 Layout/Coordinate Provider 提供。
+Backend 声明文本前景/背景、字体、装饰、颜色空间、混合模式、裁剪和坐标能力。Span backend 只能管理 TSH 自己的 Span；旧 WindbellTshEngine Spannable 路径现使用 TSH-owned CharacterStyle/MetricAffectingSpan 标记，只移除自身 Span，并校验 UTF-16LE byte range 对齐和边界。此修复有源码，尚未做真实 Android 控件测试。Canvas backend 在宿主绘制回调内执行；Compose backend 只输出不可变渲染状态，不让核心模块依赖 Compose。坐标和可见范围由最小 Layout/Coordinate Provider 提供。
 
 ## 6. 真实绘制闭环
 
