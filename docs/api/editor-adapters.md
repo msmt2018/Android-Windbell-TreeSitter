@@ -44,7 +44,7 @@ TSH 必须在 attach report 中明确显示当前等级及缺失能力，不得�
 
 ## 编辑器控件兼容策略
 
-- Spannable 编辑器：可使用 TshAndroidSpannableRenderer 与 TshAndroidSpannableBinding.attachTo；宿主提供精确 hostObject、render-thread check、revision、Spannable、UTF-16 viewport、字体尺寸转换和 invalidate。只移除 TSH 自己拥有的 Span，不能清除宿主 CharacterStyle；viewport 必须有界。
+- Spannable 编辑器：可使用 TshAndroidSpannableRenderer 与 TshAndroidSpannableBinding.attachTo；宿主提供精确 hostObject、render-thread check、revision、Spannable、UTF-16 viewport、字体尺寸转换和 invalidate。只移除 TSH 自己拥有的 Span，不能清除宿主 CharacterStyle；viewport 必须有界。Binding detach 会清除该 Renderer 自己拥有的 Span，并在 OwnerScope/Engine 生命周期结束时关闭 RenderCoordinator；后台关闭需要宿主提供 postToRenderThread。
 - Canvas 自绘编辑器：提供 Render Provider，将绘制命令提交到控件既有 draw pipeline。
 - Compose 编辑器：提供 Compose state/decorator adapter，不要求引擎依赖 Compose。
 - WebView/自定义渲染：提供 Decoration/Overlay Provider。
