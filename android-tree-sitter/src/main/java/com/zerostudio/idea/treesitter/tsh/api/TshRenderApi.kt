@@ -1,5 +1,7 @@
 package com.zerostudio.idea.treesitter.tsh.api
 
+import java.util.Collections
+
 @JvmInline
 value class TshRenderPlanId(val value: String) {
     init { require(value.isNotBlank()) }
@@ -254,15 +256,15 @@ class TshRenderCoordinator(
     fun pendingPlanIds(): Set<TshRenderPlanId> = synchronized(lock) { pending.keys.toSet() }
 
     private fun snapshotPlan(plan: TshRenderPlan): TshRenderPlan = plan.copy(
-        instructions = plan.instructions.map { instruction ->
+        instructions = Collections.unmodifiableList(plan.instructions.map { instruction ->
             instruction.copy(
                 style = instruction.style.copy(
-                    fontFamilies = instruction.style.fontFamilies.toList(),
-                    decorations = instruction.style.decorations.toSet()
+                    fontFamilies = Collections.unmodifiableList(instruction.style.fontFamilies.toList()),
+                    decorations = Collections.unmodifiableSet(instruction.style.decorations.toSet())
                 ),
-                sourceMatchIds = instruction.sourceMatchIds.toSet()
+                sourceMatchIds = Collections.unmodifiableSet(instruction.sourceMatchIds.toSet())
             )
-        }.toList()
+        }.toList())
     )
 
     private fun validateReceipt(plan: TshRenderPlan, receipt: TshRenderReceipt): TshDiagnostic? {
