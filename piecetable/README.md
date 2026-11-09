@@ -304,6 +304,7 @@ undoStack.add(redone.reverseEdits)
 | `TextSlice.of(text)` | a slice holding a String; can go into any buffer |
 | `TextSlice.length` / `eolCount` / `firstLineLength` / `lastLineLength` | size and line shape of the content, without reading it |
 | `TextSlice.toText()` | the content as a String (copies it when held as references) |
+| `TextSlice.forEachChunk { }` | visits read-only CharSequence views of each text/reference segment without flattening the slice into one String |
 
 - **Two forms.** Content shorter than `TextSlice.TEXT_THRESHOLD` (16K chars) is kept as a String,
   like `reverseEdits`. Longer content is kept as (buffer, start, length) runs; putting it back
