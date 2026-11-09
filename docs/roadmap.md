@@ -72,7 +72,7 @@
 - [x] TSParser.parseInput(TSInput) / JNI callback / TshSnapshotTreeSitterInput / ParserOwner Snapshot chunk parse 源码与 adapter 测试源码。
 - [x] TshTextAccessProvider 纳入 Engine Provider Registry；ProviderRegistry.acquireScoped 引用计数共享 Provider 生命周期；新增 TshTextAccessBinding 管理 Document Attachment、Snapshot Lease 获取、Change/Disposal subscriptions 与生命周期。text.snapshot/text.chunk 与可选 change/disposal notification 通过 capability negotiation 暴露。
 - [x] OwnedSyntaxTree exclusive edit lease、snapshot/registry metadata revision 同步和 QueryExecutor stale snapshot rejection 源码。
-- [ ] 真实宿主 Piece Tree/Rope Provider、增量多 Edit→TSInputEdit 转换和 Native parse integration test。
+- [ ] 真实宿主 Piece Tree/Rope Provider、稳定 Snapshot Lease retain/fork、增量多 Edit→TSInputEdit 转换和 Native parse integration test。
 - [ ] 旧宿主所有 Tree/Language/Parser owner 尚未全部迁移到统一 Resource Registry。
 
 ### 独立 Regex / Oniguruma
@@ -117,13 +117,13 @@
 - [x] AST/Regex Span overlap 从双重全量扫描改为 prefix-max-end 索引。
 - [x] JNI 大文本 Highlight/Fold/Outline Native 异常转换为 Java 异常，不让 C++ exception 越过 JNI。
 - [ ] GetStringChars 仍由 JVM 决定 pin/copy，不能称为 zero-copy。
-- [ ] Tree-sitter 流式 Input callback 和 Piece Tree/Rope parser binding 尚未实现。
+- [x] Tree-sitter 流式 Input callback / JNI callback / Snapshot chunk parser 源码已存在；输入回调会校验 Provider 返回的文档版本、范围、长度、UTF-16 合法性与 surrogate 边界（SOURCE_PARTIAL）。
 - [ ] 全量 Native operation/handle/generation manifest、ASAN、泄漏和设备压力测试尚未完成。
 
 ## 仍需完成的缺陷与绑定项
 
 1. 完成 TextSnapshot 的真实 Host Lease、事件订阅与 Piece Tree/Rope 索引 Provider。
-2. 给 Tree-sitter Parser 增加 Input callback/增量输入能力，使用 Host TextAccess 分块读取，不构造全文 String。
+2. 完成 Tree-sitter Host TextAccess 绑定：实现真实 Piece Tree/Rope Provider 与可 retain/fork 的 Snapshot Lease；补齐多 Edit→TSInputEdit 坐标转换、Native parse integration test 和取消/关闭竞态验证。
 3. 实现 Regex WindowLease 和跨窗口正确性语义；无界模式必须有明确回退/拒绝策略。
 4. 实现 ATS 前端并 Lower 到唯一 Tree-sitter Query 执行管线。
 5. 将 Tree-sitter/ATS 与 Regex 输出真正适配到统一 TshMatch。
