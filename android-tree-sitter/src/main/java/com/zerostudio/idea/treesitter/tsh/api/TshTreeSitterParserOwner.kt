@@ -202,15 +202,28 @@ class TshTreeSitterParserOwner private constructor(
             )
         }
         if (edits.any { edit ->
+                val startPoint = edit.startPoint
+                val oldEndPoint = edit.oldEndPoint
+                val newEndPoint = edit.newEndPoint
                 edit.startByte < 0 ||
                     edit.oldEndByte < edit.startByte ||
-                    edit.newEndByte < edit.startByte
+                    edit.newEndByte < edit.startByte ||
+                    (edit.startByte and 1) != 0 ||
+                    (edit.oldEndByte and 1) != 0 ||
+                    (edit.newEndByte and 1) != 0 ||
+                    startPoint.row < 0 || startPoint.column < 0 ||
+                    oldEndPoint.row < 0 || oldEndPoint.column < 0 ||
+                    newEndPoint.row < 0 || newEndPoint.column < 0 ||
+                    (startPoint.column and 1) != 0 ||
+                    (oldEndPoint.column and 1) != 0 ||
+                    (newEndPoint.column and 1) != 0
             } || edits.zipWithNext().any { (left, right) ->
-                left.startByte < right.startByte
+                left.startByte < right.startByte ||
+                    right.oldEndByte > left.startByte
             }) {
             return failure(
                 "TSH-PARSER-OWNER-028",
-                "Batch edits must have valid ranges and be ordered by descending start byte",
+                "Batch edits must use valid UTF-16LE byte/point boundaries, be non-overlapping, and be ordered by descending start byte",
                 TshDiagnosticStage.PARSE,
                 ownedTree.registration.descriptor.id
             )
