@@ -217,6 +217,10 @@ class TshSchemaRegistry {
                 "Property '$name' has a value outside its allowed set")
         }
         val numeric = numericValue(value)
+        if ((property.minimum != null || property.maximum != null) && numeric == null) {
+            errors += diagnostic("TSH-SCHEMA-015", TshDiagnosticSeverity.ERROR,
+                "Property '$name' declares numeric bounds but its value is not numeric")
+        }
         if (numeric != null) {
             if (property.minimum != null && numeric < property.minimum) errors += diagnostic(
                 "TSH-SCHEMA-009", TshDiagnosticSeverity.ERROR,
