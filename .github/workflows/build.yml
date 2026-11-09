@@ -139,11 +139,19 @@ jobs:
         id: setup-ndk
         with:
           ndk-version: r25
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
       - name: Install dependencies
         run: $ATS_SUDO $ATS_APT_UPDATE && $ATS_SUDO $ATS_APT_UPGRADE && $ATS_SUDO $ATS_APT_INSTALL $ATS_APT_DEPS
       - name: Install Node packages
         run: |
-          cd grammars/cpp && npm install && cd -
+          find grammars -maxdepth 2 -name "package.json" | while read -r config_path; do
+            dir_path=$(dirname "$config_path")
+            echo "Installing grammar dependencies: $dir_path"
+            (cd "$dir_path" && npm install) || exit 1
+          done
       - name: Restore cache
         uses: actions/cache@v4
         with:
