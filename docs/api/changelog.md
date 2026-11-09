@@ -17,6 +17,7 @@
 - Engine 生命周期操作与 close() 由同一锁线性化；Engine 关闭时永久关闭 Object/Provider/CompiledQuery registries，阻止通过公开 Registry 属性在 shutdown 后重新发布对象、Provider 或 Query；新增并发/关闭测试源码。
 - 坐标转换拒绝将非 String CharSequence 隐式 toString() flatten，避免把 Piece Tree/Rope 等宿主缓冲区意外复制成全文 String；新增测试源码。
 - Native Resource/Query Lease 与 OwnerScope cleanup 在 JNI LinkageError 后仍继续释放依赖，并保留结构化诊断；新增测试源码。
+- AttachmentManager 新增 detach lifecycle subscription；Android Binding 在显式 detach、OwnerScope close 或 Engine close 时关闭 RenderCoordinator、拒绝迟到回执并注销 Provider。
 - AttachmentManager 改为对共享 host instance 做 registration lease/refcount：同一 Editor 可被多个 OwnerScope/角色 attach；只有最后一个 TSH-owned attachment detach 才注销对象；宿主预先注册的对象在 TSH detach 后仍保留。
 - Engine.strictProviderValidation 现在一致作用于 attach/refresh/resolveProviders；严格 attach 缺少必需能力时会回滚 Attachment 和对象注册，lenient 模式仍可返回 INCOMPLETE 报告。
 - Tree-sitter Query Cursor close、PredicateHandler 声明读取和 Provider.supports LinkageError 不再静默吞掉；错误转为结构化诊断，Cursor cleanup failure 不会覆盖为假成功。
