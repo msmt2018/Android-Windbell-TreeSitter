@@ -56,3 +56,13 @@ TextReader 提供 read(range)、readChunk(offset, maxUnits)、iterateChunks(rang
 Snapshot Lease 必须在整个同步 parseInput 调用期间保持打开。调用方不得在解析期间并发 close；若发生关闭，后续回调会失败而不会继续读取。当前 Lease 接口尚未提供跨调用 retain/fork，因此异步调度层必须由宿主负责把 Lease 生命周期覆盖到任务结束。
 
 此实现只代表分块输入源码具备首版契约；Piece Tree/Rope 的真实节点索引 Provider、并发编辑压力测试、Native 构建和设备级大文件验证仍未完成。
+
+## 可独立续租的 Snapshot Lease（SOURCE_PARTIAL）
+
+`TshTextSnapshotLease.retain()` 返回独立关闭的 Lease 句柄，不得返回原句柄本身。默认实现返回明确的 unsupported 诊断，避免旧自定义 Lease 在多个任务之间共享关闭状态。
+
+`TshSharedTextSnapshotLease` 提供引用计数实现：每个句柄只释放自己的引用；最后一个句柄关闭后才执行一次 `onFinalRelease`。该回调只能释放被固定的快照根/宿主快照资源，不得关闭宿主 Document。回调失败保留在 `finalReleaseDiagnostics` 中。
+
+默认 Provider 的 Snapshot 契约要求快照本身不可变，因此默认 `acquireSnapshot` 使用可续租的共享 Lease。可变 Piece Tree/Rope Provider 必须在创建共享 Lease 时 pin 住持久化根或版本资源，并在最终释放回调中 unpin；不得只包装一个仍指向可变当前根的对象。
+
+`TshTreeSitterParserOwner.parseSnapshot` 会先 retain 一份独立 Lease，再执行 `TSParser.parseInput`，并在 Native parse 返回后释放自己的句柄。调用方可以独立关闭原始句柄；但若任务尚未开始，调度层必须先 retain 并把该任务句柄交给任务，不能把已关闭句柄排队。
