@@ -229,4 +229,27 @@ class TshDslSchemaRepositoryTest {
         assertTrue(repository.unload("java", "r2") is TshResult.Success)
         assertNull(repository.get("java"))
     }
-}
+
+    @Test
+    fun integerRangeChecksDoNotLosePrecisionAboveDoubleSafeIntegerRange() {
+        val registry = TshSchemaRegistry()
+        registry.register(TshDeclarationSchema(
+            TshDslDeclarationKind.STYLE,
+            mapOf("limit" to TshPropertySchema(
+                name = "limit",
+                type = TshDslType.IntegerType,
+                maximum = 9_007_199_254_740_992.0
+            ))
+        ))
+        val result = registry.validate(
+            TshDslDeclaration(
+                TshDslDeclarationKind.STYLE,
+                "precision",
+                mapOf("limit" to TshDslValue.IntegerValue(9_007_199_254_740_993L))
+            ),
+            TshDslVersion(1)
+        )
+        assertTrue(result is TshResult.Failure)
+        assertTrue(result.diagnostics().any { it.code == "TSH-SCHEMA-010" })
+    }
+}\n
