@@ -71,11 +71,11 @@ object TshTreeSitterIncrementalUpdate {
         )
         if (parsed is TshResult.Failure) return parsed
 
-        val replacementTree = (parsed as TshResult.Success).value
+        val parsedSuccess = parsed as TshResult.Success<TshOwnedSyntaxTree>
+        val replacementTree = parsedSuccess.value
         // parse() has released its old-tree read lease before returning, so retirement is safe.
         parserOwner.retireTree(oldTree)
         val appliedSuccess = applied as TshResult.Success<Unit>
-        val parsedSuccess = parsed as TshResult.Success<TshOwnedSyntaxTree>
         return TshResult.Success(
             replacementTree,
             compiled.diagnostics + appliedSuccess.diagnostics + parsedSuccess.diagnostics
