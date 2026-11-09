@@ -141,14 +141,15 @@ class TshPieceTreeEditorBinding private constructor(
             "TshPieceTreeEditorBinding.close must run on the EditorView main thread"
         }
         if (!closed.compareAndSet(false, true)) return
-        view.removeEditCallback(callback)
+        runCatching { view.removeEditCallback(callback) }
         releasePendingBefore()
-        document.dispose(lastVersion.coerceAtLeast(0L))
+        runCatching { document.dispose(lastVersion.coerceAtLeast(0L)) }
     }
 
     private fun releasePendingBefore() {
-        beforeLease?.close()
+        val lease = beforeLease
         beforeLease = null
+        runCatching { lease?.close() }
     }
 
     private fun invalidate(code: String, message: String, cause: Throwable? = null) {
