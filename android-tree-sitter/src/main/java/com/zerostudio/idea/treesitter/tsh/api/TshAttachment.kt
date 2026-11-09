@@ -130,40 +130,58 @@ class TshAttachmentManager(
         var scopeRegistration: AutoCloseable?,
         val request: TshAttachmentRequest
     )
+    private data class ObjectRegistrationLease(
+        var references: Int,
+        val registeredByAttachmentManager: Boolean
+    )
+    private data class AcquiredObject(
+        val descriptor: TshObjectDescriptor,
+        val diagnostics: List<TshDiagnostic>
+    )
 
     private val lock = Any()
     private val nextId = AtomicLong(1L)
     private val entries = LinkedHashMap<TshAttachmentId, Entry>()
+    /** Multiple roles/scopes may share one host object without one detach unregistering another. */
+    private val objectLeases = LinkedHashMap<TshObjectId, ObjectRegistrationLease>()
     private var closed = false
 
     fun attach(request: TshAttachmentRequest, ownerScope: TshOwnerScope): TshResult<TshAttachmentReport> {
         if (ownerScope.isClosed) return failure(
             "TSH-ATTACH-001", "Cannot attach through a closed OwnerScope"
         )
-        val descriptor = try {
-            objects.registerUnique(
-                request.instance, request.objectType, request.capabilities, request.metadata
+        val acquired = acquireObjectRegistration(request)
+        if (acquired is TshResult.Failure) return acquired
+        val acquiredValue = (acquired as TshResult.Success<AcquiredObject>).value
+        val descriptor = acquiredValue.descriptor
+
+        val resolution = try {
+            providers.resolveFor(
+                request.instance, descriptor,
+                request.requiredCapabilities, request.optionalCapabilities,
+                request.providerApiRange
             )
         } catch (error: Exception) {
-            return failure("TSH-ATTACH-002", "Host object is already registered or invalid: ${error.message}", error)
+            releaseObjectRegistration(descriptor.id)
+            return failure("TSH-ATTACH-012", "Provider resolution failed during attach: ${error.message}", error)
+        } catch (error: LinkageError) {
+            releaseObjectRegistration(descriptor.id)
+            return failure("TSH-ATTACH-013", "Provider resolution failed with a linkage error during attach", error)
         }
-
-        val resolution = providers.resolveFor(
-            request.instance, descriptor,
-            request.requiredCapabilities, request.optionalCapabilities,
-            request.providerApiRange
-        )
         val id = TshAttachmentId(nextId.getAndIncrement())
         val handle = TshAttachmentHandle(id, descriptor.id, ownerScope.id)
         val now = System.nanoTime()
-        val report = report(handle, descriptor, resolution, now, now)
+        val initialReport = report(handle, descriptor, resolution, now, now)
+        val attachmentReport = initialReport.copy(
+            diagnostics = initialReport.diagnostics + acquiredValue.diagnostics
+        )
 
         synchronized(lock) {
             if (closed) {
-                objects.unregister(descriptor.id)
+                releaseObjectRegistration(descriptor.id)
                 return failure("TSH-ATTACH-003", "Attachment manager is closed")
             }
-            entries[id] = Entry(report, null, request)
+            entries[id] = Entry(attachmentReport, null, request)
         }
 
         val registration = ownerScope.registerCleanup { detach(handle) }
@@ -181,8 +199,70 @@ class TshAttachmentManager(
             }
         }
         if (closeRegistration) runCatching { registration.close() }
-        val current = inspect(handle) ?: report.copy(status = TshAttachmentStatus.DETACHED)
+        val current = inspect(handle) ?: attachmentReport.copy(status = TshAttachmentStatus.DETACHED)
         return TshResult.Success(current, current.diagnostics)
+    }
+
+    /**
+     * Reuses an existing host descriptor when another role or external owner already registered
+     * the same instance. The last attachment releases only registrations created by this manager.
+     */
+    private fun acquireObjectRegistration(request: TshAttachmentRequest): TshResult<AcquiredObject> =
+        synchronized(lock) {
+            if (closed) return@synchronized failure(
+                "TSH-ATTACH-003", "Attachment manager is closed"
+            )
+            val existing = objects.find(request.instance)
+            if (existing != null) {
+                if (existing.type != request.objectType) return@synchronized failure(
+                    "TSH-ATTACH-014",
+                    "Host instance is already registered as '${existing.type}', not '${request.objectType}'"
+                )
+                val lease = objectLeases.getOrPut(existing.id) {
+                    ObjectRegistrationLease(0, registeredByAttachmentManager = false)
+                }
+                lease.references++
+                val requestCapabilitiesMissing = request.capabilities.all().any {
+                    !existing.capabilities.satisfies(it)
+                }
+                val requestMetadataMissing = request.metadata.any { (key, value) ->
+                    existing.metadata[key] != value
+                }
+                val diagnostics = if (requestCapabilitiesMissing || requestMetadataMissing) {
+                    listOf(TshDiagnostic(
+                        "TSH-ATTACH-015", TshDiagnosticSeverity.WARNING,
+                        TshDiagnosticStage.BINDING,
+                        "Host object was already registered; its existing capabilities/metadata remain authoritative",
+                        objectId = existing.id
+                    ))
+                } else emptyList()
+                return@synchronized TshResult.Success(AcquiredObject(existing, diagnostics))
+            }
+            try {
+                val descriptor = objects.registerUnique(
+                    request.instance, request.objectType, request.capabilities, request.metadata
+                )
+                objectLeases[descriptor.id] = ObjectRegistrationLease(
+                    1, registeredByAttachmentManager = true
+                )
+                TshResult.Success(AcquiredObject(descriptor, emptyList()))
+            } catch (error: Exception) {
+                failure("TSH-ATTACH-002", "Host object registration failed: ${error.message}", error)
+            }
+        }
+
+    /** Must be called exactly once for each successful acquireObjectRegistration(). */
+    private fun releaseObjectRegistration(objectId: TshObjectId): Boolean = synchronized(lock) {
+        val lease = objectLeases[objectId] ?: return@synchronized false
+        check(lease.references > 0) { "Attachment object registration reference count underflow" }
+        lease.references--
+        if (lease.references > 0) return@synchronized true
+        objectLeases.remove(objectId)
+        if (lease.registeredByAttachmentManager) {
+            objects.unregister(objectId)
+        } else {
+            objects.descriptor(objectId) != null
+        }
     }
 
     fun inspect(handle: TshAttachmentHandle): TshAttachmentReport? = synchronized(lock) {
@@ -200,13 +280,15 @@ class TshAttachmentManager(
         }
         val instance = objects.find(handle.objectId)
             ?: return failure("TSH-ATTACH-007", "Host object was unregistered outside its attachment")
+        val descriptor = objects.descriptor(handle.objectId)
+            ?: return failure("TSH-ATTACH-007", "Host object descriptor was unregistered outside its attachment")
         val request = entrySnapshot.request
         val resolution = providers.resolveFor(
-            instance, current.descriptor,
+            instance, descriptor,
             request.requiredCapabilities, request.optionalCapabilities, request.providerApiRange
         )
         val updated = report(
-            handle, current.descriptor, resolution,
+            handle, descriptor, resolution,
             current.attachedAtNanos, System.nanoTime()
         )
         synchronized(lock) {
@@ -231,12 +313,12 @@ class TshAttachmentManager(
             found
         }
         val diagnostics = entry.report.diagnostics.toMutableList()
-        if (!objects.unregister(handle.objectId)) {
+        if (!releaseObjectRegistration(handle.objectId)) {
             diagnostics += TshDiagnostic(
                 code = "TSH-ATTACH-008",
                 severity = TshDiagnosticSeverity.WARNING,
                 stage = TshDiagnosticStage.LIFECYCLE,
-                message = "Host object was already unregistered before attachment detach",
+                message = "Host object registration was already released before the final attachment detached",
                 objectId = handle.objectId
             )
         }
