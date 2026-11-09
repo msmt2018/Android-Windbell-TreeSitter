@@ -1,5 +1,7 @@
 # Tree-sitter、ATS 与 Regex 匹配 API 规范
 
+> 本文为双管线总览；Query 执行契约以 [ats-tree-sitter-query-api.md](ats-tree-sitter-query-api.md) 为准，Regex 窗口执行以 [regex-window-execution-api.md](regex-window-execution-api.md) 为准，Match/MatchSet 数据模型以 [unified-match-scope-api.md](unified-match-scope-api.md) 为准。
+
 ## 固定执行架构
 
 TSH 只维护两条匹配管道：
