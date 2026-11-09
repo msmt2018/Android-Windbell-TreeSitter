@@ -70,7 +70,7 @@
 - [ ] ATS Lexer/Parser/AST/Compiler/Lowering 尚未实现，ATS 最终必须编译到现有 Tree-sitter Query 管线。
 - [ ] Grammar Node Schema Provider / strictNodeValidation 尚未实现。
 - [ ] Tree-sitter 真实 step budget、Native 可中断取消、增量 Edit/changed-range 尚未实现。
-- [x] TSParser.parseInput(TSInput) / JNI callback / TshSnapshotTreeSitterInput / ParserOwner.parseSnapshot 分块解析源码；parseSnapshot 会独立 retain 快照 Lease，并在 Native parse 返回后释放（SOURCE_PARTIAL）。
+- [x] TSParser.parseInput(TSInput) / JNI callback / TshSnapshotTreeSitterInput / ParserOwner Snapshot overload 分块解析源码；该入口会独立 retain 快照 Lease，并在 Native parse 返回后释放（SOURCE_PARTIAL）。
 - [x] TshTextAccessProvider 纳入 Engine Provider Registry；ProviderRegistry.acquireScoped 引用计数共享 Provider 生命周期；新增 TshTextAccessBinding 管理 Document Attachment、Snapshot Lease 获取、Change/Disposal subscriptions 与生命周期。text.snapshot/text.chunk 与可选 change/disposal notification 通过 capability negotiation 暴露。
 - [x] OwnedSyntaxTree exclusive edit lease、snapshot/registry metadata revision 同步和 QueryExecutor stale snapshot rejection 源码。
 - [ ] 真实宿主 Piece Tree/Rope Provider（pin persistent root/unpin）、增量多 Edit→TSInputEdit 转换和 Native parse integration test。
