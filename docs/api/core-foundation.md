@@ -47,11 +47,11 @@ val descriptor = engine.objects.register(
     )
 )
 val sameInstance = engine.objects.find(editor)
-val instance = engine.objects.find(descriptor.id)
+val descriptorById = engine.objects.descriptor(descriptor.id)
 engine.objects.unregister(descriptor.id)
 ```
 
-注册按实例身份（`===`）判断，而不是按 `equals()`。注册表在注销前持有强引用，宿主必须在对象生命周期结束时注销，或关闭引擎。重复注册同一实例且类型一致时更新能力和元数据并保留 ID；类型不一致时拒绝。
+注册按实例身份（`===`）判断，而不是按 `equals()`。按 ID 解析 Native 实例的内部入口不对宿主开放，避免绕过 Native Lease 直接 close；宿主通过 descriptor(id) 查询元数据。注册表在注销前持有强引用，宿主必须在对象生命周期结束时注销，或使用 OwnerScope/Attachment detach。重复注册同一实例且类型一致时更新能力和元数据并保留 ID；类型不一致时拒绝。
 
 ## Provider
 
