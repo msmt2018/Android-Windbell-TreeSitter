@@ -198,9 +198,9 @@ class TshAndroidSpannableRenderer(
             return failure("TSH-ANDROID-RENDER-009", "Host invalidation failed: ${error.message}")
         }
         val status = if (fullyApplied == plan.instructions.size) {
-            TshRenderReceiptStatus.DRAWN
+            TshRenderReceiptStatus.APPLIED
         } else {
-            TshRenderReceiptStatus.PARTIAL
+            TshRenderReceiptStatus.PARTIALLY_APPLIED
         }
         val receipt = TshRenderReceipt(
             plan.id, id, plan.revisions, status, appliedInstructionCount, diagnostics.toList()
