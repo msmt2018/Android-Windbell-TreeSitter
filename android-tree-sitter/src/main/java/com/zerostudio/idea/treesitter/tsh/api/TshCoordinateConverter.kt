@@ -154,7 +154,7 @@ object TshCoordinateConverter {
         else -> 4
     }
 
-    private fun <T> TshResult<T>.mapInt(): TshResult<Int> = when (this) {
+    private fun TshResult<Long>.mapInt(): TshResult<Int> = when (this) {
         is TshResult.Success -> {
             val converted = value
             if (converted > Int.MAX_VALUE.toLong()) failure(
