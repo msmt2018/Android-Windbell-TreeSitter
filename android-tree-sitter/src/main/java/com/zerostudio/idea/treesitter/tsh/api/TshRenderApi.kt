@@ -84,7 +84,9 @@ data class TshRenderReceipt(
         get() = status == TshRenderReceiptStatus.DRAWN
 }
 
-fun interface TshRenderAcknowledger {
+interface TshRenderAcknowledger {
+    /** Providers must check this immediately before every actual UI draw/commit. */
+    fun isCurrent(planId: TshRenderPlanId, revisions: TshRenderRevisions): Boolean
     fun acknowledge(receipt: TshRenderReceipt): TshResult<TshRenderReceipt>
 }
 
@@ -108,7 +110,7 @@ interface TshRenderProvider {
 /** Version-safe render submission coordinator. It never draws; it validates revisions and receipts. */
 class TshRenderCoordinator(
     private val provider: TshRenderProvider
-) {
+) : TshRenderAcknowledger {
     init {
         require(provider.id.isNotBlank())
         require(provider.apiVersion > 0)
@@ -148,7 +150,7 @@ class TshRenderCoordinator(
         }
 
         val submitted = try {
-            provider.submit(plan, TshRenderAcknowledger(::acknowledge))
+            provider.submit(plan, this)
         } catch (error: Exception) {
             synchronized(lock) { pending.remove(plan.id) }
             return failure("TSH-RENDER-005", "Renderer provider threw during submission", error)
@@ -172,8 +174,14 @@ class TshRenderCoordinator(
         }
     }
 
+    override fun isCurrent(planId: TshRenderPlanId, revisions: TshRenderRevisions): Boolean =
+        synchronized(lock) {
+            pending.containsKey(planId) && currentRevisions == revisions &&
+                pending[planId]?.revisions == revisions
+        }
+
     /** Called by the renderer after asynchronous drawing completes. */
-    fun acknowledge(receipt: TshRenderReceipt): TshResult<TshRenderReceipt> {
+    override fun acknowledge(receipt: TshRenderReceipt): TshResult<TshRenderReceipt> {
         val plan = synchronized(lock) { pending[receipt.planId] }
             ?: return failure("TSH-RENDER-006", "Receipt refers to an unknown or already completed RenderPlan")
         validateReceipt(plan, receipt)?.let { problem ->
