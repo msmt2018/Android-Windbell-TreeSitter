@@ -36,7 +36,7 @@
 ### Text Access 与坐标
 
 - [x] TextSnapshot Lease、bounded chunk read、TextChange subscription 扩展点、Document disposed subscription 扩展点。
-- [x] TshTextSnapshotLease.retain() 与 TshSharedTextSnapshotLease：独立句柄引用计数、最后引用释放回调、旧自定义 Lease 的显式 unsupported 诊断；默认不可变快照 Lease 可续租（SOURCE_PARTIAL）。
+- [x] TshTextSnapshotLease.retain() 与 TshSharedTextSnapshotLease：独立句柄引用计数、最后引用释放回调、旧自定义 Lease 的显式 unsupported 诊断；默认不可变快照 Lease 可续租；默认 Snapshot acquisition 校验元数据并结构化报告 Provider 异常（SOURCE_PARTIAL）。
 - [x] Text Provider 声明线程策略与 concurrent-read 能力；UNKNOWN 默认不作线程安全假设。
 - [x] TextEdit replacement 拒绝不成对 surrogate；TextChange Edit 列表要求 before-version 坐标、升序且不重叠。
 - [x] Chunk read 不允许切开 UTF-16 surrogate pair，读取关闭的 Snapshot Lease 会失败。
