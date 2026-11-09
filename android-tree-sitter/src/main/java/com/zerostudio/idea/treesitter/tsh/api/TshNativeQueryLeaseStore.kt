@@ -165,12 +165,16 @@ class TshNativeQueryLeaseStore {
             query.close()
         } catch (error: Exception) {
             recordCloseFailure(objectId, "Native query close failed", error)
+        } catch (error: LinkageError) {
+            recordCloseFailure(objectId, "Native query close failed with a linkage error", error)
         }
         dependencies.asReversed().forEach { dependency ->
             try {
                 dependency.close()
             } catch (error: Exception) {
                 recordCloseFailure(objectId, "Native query dependency close failed", error)
+            } catch (error: LinkageError) {
+                recordCloseFailure(objectId, "Native query dependency close failed with a linkage error", error)
             }
         }
     }
