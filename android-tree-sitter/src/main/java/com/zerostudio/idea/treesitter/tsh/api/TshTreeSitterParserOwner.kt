@@ -269,7 +269,8 @@ class TshTreeSitterParserOwner private constructor(
                     "documentVersion" to updatedSnapshot.documentVersion.toString(),
                     "treeRevision" to updatedSnapshot.treeRevision.toString(),
                     "grammarFingerprint" to updatedSnapshot.grammar.fingerprint,
-                    "inputMode" to "chunked-utf16le"
+                    "inputMode" to "chunked-utf16le",
+                    "treeState" to "EDITED_PENDING_PARSE"
                 )
             )
             if (metadata is TshResult.Failure) {
@@ -394,7 +395,8 @@ class TshTreeSitterParserOwner private constructor(
                     "documentVersion" to updatedSnapshot.documentVersion.toString(),
                     "treeRevision" to updatedSnapshot.treeRevision.toString(),
                     "grammarFingerprint" to updatedSnapshot.grammar.fingerprint,
-                    "inputMode" to "chunked-utf16le"
+                    "inputMode" to "chunked-utf16le",
+                    "treeState" to "EDITED_PENDING_PARSE"
                 )
             )
             if (metadata is TshResult.Failure) {
@@ -574,7 +576,8 @@ class TshTreeSitterParserOwner private constructor(
                     "documentVersion" to snapshot.version.toString(),
                     "treeRevision" to treeRevision.toString(),
                     "grammarFingerprint" to grammar.fingerprint,
-                    "inputMode" to "chunked-utf16le"
+                    "inputMode" to "chunked-utf16le",
+                    "treeState" to "READY"
                 ),
                 dependencies = listOf(languageLease)
             )
