@@ -112,8 +112,11 @@ interface TshTextAccessProvider {
     fun snapshot(document: Any): TshResult<TshTextSnapshot>
 
     /** Default non-owning lease is valid only if the provider's snapshot is intrinsically immutable. */
-    fun acquireSnapshot(document: Any): TshResult<TshTextSnapshotLease> =
-        when (val result = snapshot(document)) {
+    fun acquireSnapshot(document: Any): TshResult<TshTextSnapshotLease> {
+        if (!isAccessAllowedOnCurrentThread()) {
+            return failure("TSH-TEXT-010", "TextAccessProvider snapshot access is not allowed on the current thread")
+        }
+        return when (val result = snapshot(document)) {
             is TshResult.Success -> TshResult.Success(object : TshTextSnapshotLease {
                 override val snapshot: TshTextSnapshot = result.value
                 @Volatile private var closed = false
@@ -129,6 +132,9 @@ interface TshTextAccessProvider {
         startUtf16: Long,
         maxUtf16Length: Int
     ): TshResult<TshTextChunk> {
+        if (!isAccessAllowedOnCurrentThread()) {
+            return failure("TSH-TEXT-010", "TextAccessProvider chunk access is not allowed on the current thread")
+        }
         if (lease.isClosed) return failure("TSH-TEXT-009", "Snapshot lease is already closed")
         if (startUtf16 < 0L || maxUtf16Length <= 0) return failure(
             "TSH-TEXT-001", "Chunk start must be non-negative and max length must be positive"
