@@ -2,7 +2,7 @@
 
 ## 当前代码落地
 
-首个文本 API 切片已增加 `TshTextDocument`、`TshTextSnapshot`、`TshTextEdit`、`TshTextChange`、`TshTextAccessProvider` 和 `TshCoordinateConverter`。当前转换器支持内存文本的 UTF-8 byte、UTF-16 code unit、Unicode code point 与 grapheme boundary 转换；屏幕像素和行列转换明确要求 Layout-aware Provider。Piece Tree/Rope 的索引化转换仍待专用 Provider 实现。对应测试源码已添加，尚未运行。
+当前源码包括 `TshTextDocument`、`TshTextSnapshot`、`TshTextSnapshotLease`、`TshTextChunk`、`TshTextAccessProvider` 和 `TshCoordinateConverter`。Provider 有 bounded chunk read、Snapshot Lease 入口和可选变更订阅；默认 Lease 仅对 intrinsically immutable Snapshot 安全，默认 subscribe 明确返回 unsupported 诊断。Edit 采用 before-version 坐标、升序且不重叠。坐标转换拒绝不成对 surrogate，并提供 Long offset 入口；旧 Int API 保留兼容。Piece Tree/Rope 的索引化转换、真正固定底层快照的宿主 Lease、变更订阅实现和设备验证仍未完成。测试源码已添加，尚未运行。
 
 ## 1. 对象模型
 
@@ -44,6 +44,12 @@ TSH 必须能处理外部编辑器的真实实例，而不是要求宿主继承 
 
 增量编辑必须表达旧范围、新范围、替换文本、版本前后关系和坐标系。缓冲区 Provider 负责把抽象读取映射到底层数据结构。
 
-## 6. 生命周期与线程
+## 6. Snapshot Lease、分块和变更
+
+`acquireSnapshot` 返回固定版本的 Snapshot Lease；调用方必须在异步任务结束时关闭 Lease。默认实现只包装 Snapshot，不额外固定宿主底层版本，因此仅适用于不可变 Snapshot；可变 Piece Tree/Rope Provider 必须覆盖该方法并真正 pin 住版本。`readChunk` 限制单次读取长度，不得在实现中偷偷复制全文。`subscribe` 默认返回明确的 unsupported 诊断，宿主 Provider 应实现文档变更与销毁通知。当前源码提供接口与默认适配，不代表所有宿主存储已接通。
+
+TshTextChange 的 Edit 列表使用 beforeVersion 坐标，必须升序且不重叠；实际应用顺序由 Provider 负责，不得把更新后的 offset 混入同一批旧版本 Edit。
+
+## 7. 生命周期与线程
 
 文档、编辑器和布局可能独立销毁。所有异步结果必须携带文档版本和会话标识；过期结果不可提交。对象注销后，引用它的绑定和任务必须取消或失效。
