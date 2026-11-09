@@ -126,4 +126,4 @@ class TshRenderApiTest {
         assertTrue(result.diagnostics().any { it.code == "TSH-RENDER-020" })
         assertTrue(coordinator.pendingPlanIds().isEmpty())
     }
-}\n
+}
