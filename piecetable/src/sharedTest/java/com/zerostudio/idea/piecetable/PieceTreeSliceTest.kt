@@ -218,7 +218,7 @@ class PieceTreeSliceTest {
     @Test
     fun exposesEolNormalizationStateForCoordinateAdapters() {
         val normalized = TestSupport.buildBuffer("one\\ntwo", normalizeEOL = true)
-        val unnormalized = TestSupport.buildBuffer("one\\ntwo", normalizeEOL = false)
+        val unnormalized = TestSupport.buildBuffer("one\\r\\ntwo\\nthree", normalizeEOL = false)
         assertTrue(normalized.isEOLNormalized())
         assertFalse(unnormalized.isEOLNormalized())
     }
