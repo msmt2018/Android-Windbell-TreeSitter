@@ -47,7 +47,7 @@ class TshOwnerScope(val id: String = "tsh-owner-${NEXT_ID.incrementAndGet()}") :
             pending.forEach { action ->
                 try {
                     action()
-                } catch (error: Throwable) {
+                } catch (error: Exception) {
                     failures += TshDiagnostic(
                         code = "TSH-OWNER-001",
                         severity = TshDiagnosticSeverity.ERROR,
@@ -136,7 +136,7 @@ class TshAttachmentManager(
             objects.registerUnique(
                 request.instance, request.objectType, request.capabilities, request.metadata
             )
-        } catch (error: Throwable) {
+        } catch (error: Exception) {
             return failure("TSH-ATTACH-002", "Host object is already registered or invalid: ${error.message}", error)
         }
 
