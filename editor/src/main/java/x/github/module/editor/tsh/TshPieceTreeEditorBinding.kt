@@ -4,7 +4,6 @@ import com.zerostudio.idea.treesitter.tsh.api.TshDiagnostic
 import com.zerostudio.idea.treesitter.tsh.api.TshDiagnosticSeverity
 import com.zerostudio.idea.treesitter.tsh.api.TshDiagnosticStage
 import com.zerostudio.idea.treesitter.tsh.api.TshResult
-import com.zerostudio.idea.treesitter.tsh.api.TshSharedTextSnapshotLease
 import com.zerostudio.idea.treesitter.tsh.api.TshTextChange
 import com.zerostudio.idea.treesitter.tsh.api.TshTextEdit
 import com.zerostudio.idea.treesitter.tsh.api.TshTextSnapshotLease
@@ -26,6 +25,7 @@ class TshPieceTreeEditorBinding private constructor(
     private val view: EditorView,
     val document: TshPieceTreeDocument,
     private val provider: TshPieceTreeTextAccessProvider,
+    private val onTransaction: (TshTextChange, TshTextSnapshotLease, TshTextSnapshotLease) -> Unit,
     private val onInvalidated: (TshResult.Failure) -> Unit
 ) : AutoCloseable {
     private var beforeLease: TshTextSnapshotLease? = null
@@ -145,13 +145,10 @@ class TshPieceTreeEditorBinding private constructor(
 
             try {
                 document.publishChange(change)
-                // Ownership of both leases transfers to the first transaction listener. When
-                // there is no listener, the binding releases them immediately.
-                val listeners = changeListenerCount()
-                if (listeners == 0) {
-                    before.close()
-                    after.close()
-                }
+                // The callback may hand both leases to a worker. It owns them after this call
+                // and must close them in a finally block when parsing/retry work is finished.
+                onTransaction(change, before, after)
+                lastVersion = afterVersion
             } catch (error: Exception) {
                 before.close()
                 after.close()
@@ -181,8 +178,6 @@ class TshPieceTreeEditorBinding private constructor(
         beforeLease = null
     }
 
-    private fun changeListenerCount(): Int = document.changeListenerCount()
-
     private fun invalidate(code: String, message: String, cause: Throwable? = null) {
         onInvalidated(TshResult.Failure(listOf(TshDiagnostic(
             code = code,
@@ -204,6 +199,10 @@ class TshPieceTreeEditorBinding private constructor(
             documentId: String,
             languageId: String?,
             provider: TshPieceTreeTextAccessProvider = TshPieceTreeTextAccessProvider(),
+            onTransaction: (TshTextChange, TshTextSnapshotLease, TshTextSnapshotLease) -> Unit = { _, before, after ->
+                before.close()
+                after.close()
+            },
             onInvalidated: (TshResult.Failure) -> Unit = {}
         ): TshPieceTreeEditorBinding {
             require(documentId.isNotBlank()) { "documentId must not be blank" }
@@ -212,7 +211,7 @@ class TshPieceTreeEditorBinding private constructor(
                 languageId = languageId,
                 snapshotFactory = { view.getTextBuffer().createSnapshot() }
             )
-            return TshPieceTreeEditorBinding(view, document, provider, onInvalidated)
+            return TshPieceTreeEditorBinding(view, document, provider, onTransaction, onInvalidated)
         }
     }
 }
