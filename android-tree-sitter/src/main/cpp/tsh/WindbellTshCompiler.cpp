@@ -21,6 +21,7 @@
 
 #include "WindbellTshCompiler.h"
 #include <cctype>
+#include <cstdint>
 #include <sstream>
 #include <algorithm>
 #include <vector>
