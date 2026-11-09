@@ -18,6 +18,8 @@
 #include <atomic>
 #include <chrono>
 #include <iostream>
+#include <new>
+#include <exception>
 #include <limits>
 
 #include "utf16str/UTF16String.h"
