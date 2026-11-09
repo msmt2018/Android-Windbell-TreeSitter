@@ -308,14 +308,20 @@ class TshRenderCoordinator(
                     is TshResult.Success -> diagnostics += result.diagnostics
                 }
             } catch (error: Exception) {
-                diagnostics += diagnostic(
-                    "TSH-RENDER-027", "Pending render cancellation failed during close: ${error.message}",
-                    TshDiagnosticSeverity.WARNING
+                diagnostics += TshDiagnostic(
+                    code = "TSH-RENDER-027",
+                    severity = TshDiagnosticSeverity.WARNING,
+                    stage = TshDiagnosticStage.RENDER,
+                    message = "Pending render cancellation failed during close: ${error.message}",
+                    cause = error
                 )
             } catch (error: LinkageError) {
-                diagnostics += diagnostic(
-                    "TSH-RENDER-028", "Pending render cancellation failed with a linkage error during close",
-                    TshDiagnosticSeverity.WARNING
+                diagnostics += TshDiagnostic(
+                    code = "TSH-RENDER-028",
+                    severity = TshDiagnosticSeverity.WARNING,
+                    stage = TshDiagnosticStage.RENDER,
+                    message = "Pending render cancellation failed with a linkage error during close",
+                    cause = error
                 )
             }
         }
