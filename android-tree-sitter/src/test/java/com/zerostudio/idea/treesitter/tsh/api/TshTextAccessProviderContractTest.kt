@@ -51,7 +51,7 @@ class TshTextAccessProviderContractTest {
         val splitStart = provider.readChunk(lease, 3L, 2)
         assertTrue(splitStart is TshResult.Failure)
         assertThrows(IllegalArgumentException::class.java) {
-            TshTextEdit(0, 0, "\\uD800")
+            TshTextEdit(0, 0, "\uD800")
         }
         lease.close()
     }
