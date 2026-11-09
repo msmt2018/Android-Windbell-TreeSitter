@@ -96,8 +96,8 @@
 - [x] Render Receipt 的 DRAWN/PARTIAL 实际绘制确认语义一致；QUEUED 不允许声称已有绘制数量，并补充回归测试源码。
 - [x] 旧 Spannable 路径只清理 TSH-owned Span，不再删除宿主 CharacterStyle；非法/奇数/越界 UTF-16LE byte range 被拒绝。
 - [x] ScopeSelector/StyleRule/StyleResolver 到 RenderPlan 的首版 Resolver；[ ] Attribute semantic pipeline、DSL selector parser 和完整 Resolver。
-- [ ] Android View/Canvas/Spannable/Compose 具体 Renderer Provider 尚未实现。
-- [ ] 真实 Draw 回执、像素/颜色可见性、字体/Decoration/主题切换设备验证尚未实现。
+- [x] Android Spannable Renderer Provider 与 host Span ownership instrumented test 源码；[ ] Canvas/Compose/custom View Renderer Provider 尚未实现。
+- [ ] instrumented test 运行、真实 Draw 回执、像素/颜色可见性、字体/Decoration/主题切换设备验证尚未完成。
 - [ ] RenderPlan/Receipt 源码存在不代表应用层已能显示所有 .tsh 高亮颜色。
 
 ### JNI / 大文本 / Native 生命周期
