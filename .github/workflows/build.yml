@@ -11,6 +11,11 @@ on:
       - '**.md'
   workflow_dispatch: { }
 
+# Keep only the newest validation run for a branch/PR; superseded commits are not useful.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.head.ref || github.ref }}
+  cancel-in-progress: true
+
 env:
   # Build configuration
   BUILD_JAVA_VERSION: '17'
@@ -30,10 +35,6 @@ jobs:
     name: Build Release APK
     runs-on: ubuntu-latest
     steps:
-      - name: Cancel previous runs
-        uses: styfle/cancel-workflow-action@0.12.1
-        with:
-          access_token: ${{ github.token }}
       - name: Checkout
         uses: actions/checkout@v4
         with:
@@ -154,7 +155,10 @@ jobs:
           find grammars -maxdepth 2 -name "package.json" | while read -r config_path; do
             dir_path=$(dirname "$config_path")
             echo "Installing grammar dependencies: $dir_path"
-            (cd "$dir_path" && npm install) || exit 1
+            (
+              cd "$dir_path" || exit 1
+              npm install || npm install --legacy-peer-deps
+            ) || exit 1
           done
       - name: Restore cache
         uses: actions/cache@v4
