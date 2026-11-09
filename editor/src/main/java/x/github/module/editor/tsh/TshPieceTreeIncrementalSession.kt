@@ -60,7 +60,16 @@ class TshPieceTreeIncrementalSession private constructor(
             onTransaction = { change, before, after ->
                 enqueueChange(change, before, after)
             },
-            onInvalidated = { failure -> reportFailure(failure) }
+            onInvalidated = { failure ->
+                reportFailure(failure)
+                // Once attached, an unrepresentable/invalid change batch must recover from the
+                // authoritative current snapshot rather than leave the previous tree stale.
+                if (this::binding.isInitialized && !closed.get() &&
+                    Looper.myLooper() == Looper.getMainLooper()
+                ) {
+                    resync()
+                }
+            }
         )
     }
 
