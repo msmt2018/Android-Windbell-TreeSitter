@@ -84,8 +84,10 @@ data class TshRenderReceipt(
         require(drawnInstructionCount >= 0)
     }
 
+    /** True when the receipt confirms at least one instruction reached the host drawing backend. */
     val confirmsActualDraw: Boolean
-        get() = status == TshRenderReceiptStatus.DRAWN
+        get() = (status == TshRenderReceiptStatus.DRAWN || status == TshRenderReceiptStatus.PARTIAL) &&
+            drawnInstructionCount > 0
 }
 
 interface TshRenderAcknowledger {
@@ -242,6 +244,9 @@ class TshRenderCoordinator(
         if (receipt.revisions != plan.revisions) return diagnostic("TSH-RENDER-010", "Receipt revisions do not match submitted plan")
         if (receipt.drawnInstructionCount > plan.instructions.size) {
             return diagnostic("TSH-RENDER-011", "Receipt reports more drawn instructions than the plan contains")
+        }
+        if (receipt.status == TshRenderReceiptStatus.QUEUED && receipt.drawnInstructionCount != 0) {
+            return diagnostic("TSH-RENDER-020", "QUEUED receipt cannot claim instructions were drawn")
         }
         if (receipt.status == TshRenderReceiptStatus.DRAWN &&
             receipt.drawnInstructionCount != plan.instructions.size) {
