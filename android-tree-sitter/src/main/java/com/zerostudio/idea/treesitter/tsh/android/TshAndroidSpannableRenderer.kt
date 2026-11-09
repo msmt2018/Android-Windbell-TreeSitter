@@ -97,8 +97,8 @@ private class TshAndroidDecorationSpan(
     private val strikeThrough: Boolean
 ) : CharacterStyle(), TshAndroidOwnedSpan {
     override fun updateDrawState(textPaint: TextPaint) {
-        if (underline) textPaint.isUnderlineText = true
-        if (strikeThrough) textPaint.isStrikeThruText = true
+        textPaint.isUnderlineText = underline
+        textPaint.isStrikeThruText = strikeThrough
     }
 }
 
