@@ -208,6 +208,12 @@ class TshAttachmentManager(
         }
         if (closeRegistration) runCatching { registration.close() }
         val current = inspect(handle) ?: attachmentReport.copy(status = TshAttachmentStatus.DETACHED)
+        if (current.status == TshAttachmentStatus.DETACHED) {
+            return failure(
+                "TSH-ATTACH-018",
+                "OwnerScope or Engine detached the host while attachment setup was completing"
+            )
+        }
         return TshResult.Success(current, current.diagnostics)
     }
 
