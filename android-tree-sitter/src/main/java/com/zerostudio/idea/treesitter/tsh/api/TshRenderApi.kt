@@ -1,0 +1,212 @@
+package com.zerostudio.idea.treesitter.tsh.api
+
+@JvmInline
+value class TshRenderPlanId(val value: String) {
+    init { require(value.isNotBlank()) }
+}
+
+data class TshResolvedStyle(
+    val foregroundArgb: UInt? = null,
+    val backgroundArgb: UInt? = null,
+    val fontFamilies: List<String> = emptyList(),
+    val fontSize: TshDslValue.MeasureValue? = null,
+    val fontWeight: Int? = null,
+    val italic: Boolean? = null,
+    val underline: Boolean? = null,
+    val strikeThrough: Boolean? = null,
+    val decorations: Set<String> = emptySet()
+) {
+    init {
+        require(fontFamilies.none { it.isBlank() })
+        require(fontWeight == null || fontWeight in 1..1000)
+        require(decorations.none { it.isBlank() })
+    }
+}
+
+data class TshRenderInstruction(
+    val range: TshSourceRange,
+    val style: TshResolvedStyle,
+    val zIndex: Int = 0,
+    val priority: Int = 0,
+    val sourceMatchIds: Set<TshMatchId> = emptySet()
+) {
+    init {
+        require(range.start.coordinateSystem == TshCoordinateSystem.UTF16_CODE_UNIT)
+    }
+}
+
+data class TshRenderRevisions(
+    val documentId: TshDocumentId,
+    val documentVersion: Long,
+    val configRevision: String,
+    val themeRevision: String,
+    val viewportRevision: String,
+    val rendererRevision: String
+) {
+    init {
+        require(documentVersion >= 0L)
+        require(configRevision.isNotBlank())
+        require(themeRevision.isNotBlank())
+        require(viewportRevision.isNotBlank())
+        require(rendererRevision.isNotBlank())
+    }
+}
+
+data class TshRenderPlan(
+    val id: TshRenderPlanId,
+    val revisions: TshRenderRevisions,
+    val instructions: List<TshRenderInstruction>,
+    val requiredCapabilities: TshCapabilitySet = TshCapabilitySet.EMPTY
+) {
+    init {
+        require(instructions.all {
+            it.range.documentVersion == null || it.range.documentVersion == revisions.documentVersion
+        })
+    }
+}
+
+enum class TshRenderReceiptStatus { QUEUED, DRAWN, PARTIAL, REJECTED, FAILED }
+
+data class TshRenderReceipt(
+    val planId: TshRenderPlanId,
+    val providerId: String,
+    val revisions: TshRenderRevisions,
+    val status: TshRenderReceiptStatus,
+    val drawnInstructionCount: Int,
+    val diagnostics: List<TshDiagnostic> = emptyList()
+) {
+    init {
+        require(providerId.isNotBlank())
+        require(drawnInstructionCount >= 0)
+    }
+
+    val confirmsActualDraw: Boolean
+        get() = status == TshRenderReceiptStatus.DRAWN
+}
+
+fun interface TshRenderAcknowledger {
+    fun acknowledge(receipt: TshRenderReceipt): TshResult<TshRenderReceipt>
+}
+
+/** Renderer owns all View/Canvas/Span/Compose objects and must only mutate TSH-owned draw state. */
+interface TshRenderProvider {
+    val id: String
+    val apiVersion: Int
+    val capabilities: TshCapabilitySet
+
+    /** QUEUED may be acknowledged asynchronously; final statuses are returned after drawing. */
+    fun submit(plan: TshRenderPlan, acknowledger: TshRenderAcknowledger): TshResult<TshRenderReceipt>
+}
+
+/** Version-safe render submission coordinator. It never draws; it validates revisions and receipts. */
+class TshRenderCoordinator(
+    private val provider: TshRenderProvider
+) {
+    private val lock = Any()
+    private val pending = LinkedHashMap<TshRenderPlanId, TshRenderPlan>()
+    private var currentRevisions: TshRenderRevisions? = null
+
+    fun updateCurrentRevisions(revisions: TshRenderRevisions) {
+        synchronized(lock) { currentRevisions = revisions }
+    }
+
+    fun submit(plan: TshRenderPlan): TshResult<TshRenderReceipt> {
+        val current = synchronized(lock) { currentRevisions }
+            ?: return failure("TSH-RENDER-001", "Current render revisions have not been installed")
+        if (plan.revisions != current) {
+            return failure("TSH-RENDER-002", "RenderPlan revisions are stale")
+        }
+        val missing = plan.requiredCapabilities.all().filterNot { required ->
+            provider.capabilities.satisfies(required)
+        }
+        if (missing.isNotEmpty()) {
+            return failure(
+                "TSH-RENDER-003",
+                "Renderer '${provider.id}' lacks required capabilities: ${missing.joinToString { it.id }}"
+            )
+        }
+        synchronized(lock) {
+            if (currentRevisions != plan.revisions) {
+                return failure("TSH-RENDER-002", "RenderPlan became stale before submission")
+            }
+            if (pending.containsKey(plan.id)) {
+                return failure("TSH-RENDER-004", "RenderPlan id is already pending")
+            }
+            pending[plan.id] = plan
+        }
+
+        val submitted = try {
+            provider.submit(plan, TshRenderAcknowledger(::acknowledge))
+        } catch (error: Exception) {
+            synchronized(lock) { pending.remove(plan.id) }
+            return failure("TSH-RENDER-005", "Renderer provider threw during submission", error)
+        }
+        return when (submitted) {
+            is TshResult.Failure -> {
+                synchronized(lock) { pending.remove(plan.id) }
+                submitted
+            }
+            is TshResult.Success -> {
+                val receipt = submitted.value
+                if (receipt.status == TshRenderReceiptStatus.QUEUED) {
+                    validateReceipt(plan, receipt)?.let { problem ->
+                        synchronized(lock) { pending.remove(plan.id) }
+                        TshResult.Failure(listOf(problem))
+                    } ?: TshResult.Success(receipt, submitted.diagnostics + receipt.diagnostics)
+                } else {
+                    acknowledge(receipt)
+                }
+            }
+        }
+    }
+
+    /** Called by the renderer after asynchronous drawing completes. */
+    fun acknowledge(receipt: TshRenderReceipt): TshResult<TshRenderReceipt> {
+        val plan = synchronized(lock) { pending[receipt.planId] }
+            ?: return failure("TSH-RENDER-006", "Receipt refers to an unknown or already completed RenderPlan")
+        validateReceipt(plan, receipt)?.let { problem ->
+            synchronized(lock) { pending.remove(receipt.planId) }
+            return TshResult.Failure(listOf(problem))
+        }
+        val current = synchronized(lock) { currentRevisions }
+        if (current != plan.revisions) {
+            synchronized(lock) { pending.remove(receipt.planId) }
+            return failure("TSH-RENDER-007", "Renderer acknowledged a stale RenderPlan")
+        }
+        if (receipt.status != TshRenderReceiptStatus.QUEUED) {
+            synchronized(lock) { pending.remove(receipt.planId) }
+        }
+        return TshResult.Success(receipt, receipt.diagnostics)
+    }
+
+    fun cancelPending(planId: TshRenderPlanId): Boolean =
+        synchronized(lock) { pending.remove(planId) != null }
+
+    fun pendingPlanIds(): Set<TshRenderPlanId> = synchronized(lock) { pending.keys.toSet() }
+
+    private fun validateReceipt(plan: TshRenderPlan, receipt: TshRenderReceipt): TshDiagnostic? {
+        if (receipt.planId != plan.id) return diagnostic("TSH-RENDER-008", "Receipt plan id does not match submitted plan")
+        if (receipt.providerId != provider.id) return diagnostic("TSH-RENDER-009", "Receipt provider id does not match renderer")
+        if (receipt.revisions != plan.revisions) return diagnostic("TSH-RENDER-010", "Receipt revisions do not match submitted plan")
+        if (receipt.drawnInstructionCount > plan.instructions.size) {
+            return diagnostic("TSH-RENDER-011", "Receipt reports more drawn instructions than the plan contains")
+        }
+        if (receipt.status == TshRenderReceiptStatus.DRAWN &&
+            receipt.drawnInstructionCount != plan.instructions.size) {
+            return diagnostic("TSH-RENDER-012", "DRAWN receipt must confirm every instruction")
+        }
+        return null
+    }
+
+    private fun failure(code: String, message: String, cause: Throwable? = null) =
+        TshResult.Failure(listOf(diagnostic(code, message, cause)))
+
+    private fun diagnostic(code: String, message: String, cause: Throwable? = null) =
+        TshDiagnostic(
+            code = code,
+            severity = TshDiagnosticSeverity.ERROR,
+            stage = TshDiagnosticStage.RENDER,
+            message = message,
+            cause = cause
+        )
+}
