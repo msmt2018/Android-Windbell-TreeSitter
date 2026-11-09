@@ -185,7 +185,7 @@ class TshTreeSitterParserOwner private constructor(
                 TshDiagnosticStage.LIFECYCLE,
                 ownedTree.registration.descriptor.id
             )
-        var editApplied = false
+        var editAttempted = false
         return try {
             val currentSnapshot = ownedTree.snapshot
             if (currentSnapshot.documentVersion != initialSnapshot.documentVersion ||
@@ -209,8 +209,8 @@ class TshTreeSitterParserOwner private constructor(
                     ownedTree.registration.descriptor.id
                 )
             }
+            editAttempted = true
             lease.resource.edit(edit)
-            editApplied = true
             val root = lease.resource.rootNode
             if (!root.canAccess()) {
                 resources.retire(ownedTree.registration.descriptor.id)
@@ -245,7 +245,7 @@ class TshTreeSitterParserOwner private constructor(
             ownedTree.lastEditedDocumentVersion = targetDocumentVersion
             TshResult.Success(Unit)
         } catch (error: Exception) {
-            if (editApplied) resources.retire(ownedTree.registration.descriptor.id)
+            if (editAttempted) resources.retire(ownedTree.registration.descriptor.id)
             failure(
                 "TSH-PARSER-OWNER-012",
                 "Tree-sitter input edit failed: ${error.message}",
@@ -299,11 +299,13 @@ class TshTreeSitterParserOwner private constructor(
         if (oldTree != null && (
             oldTree.snapshot.documentId != snapshot.documentId ||
                 oldTree.snapshot.documentVersion != snapshot.version ||
-                oldTree.snapshot.grammar.fingerprint != grammar.fingerprint
+                oldTree.snapshot.grammar.fingerprint != grammar.fingerprint ||
+                oldTree.lastEditedDocumentVersion != snapshot.version ||
+                treeRevision < oldTree.snapshot.treeRevision
             )) {
             return failure(
                 "TSH-PARSER-OWNER-015",
-                "Incremental old tree must be an earlier revision of the same document and Grammar",
+                "Incremental old tree must be edited to this document version and match the Grammar/tree revision",
                 TshDiagnosticStage.PARSE,
                 oldTree.registration.descriptor.id
             )
