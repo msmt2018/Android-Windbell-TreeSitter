@@ -78,7 +78,7 @@
 - [x] TshTextAccessProvider 纳入 Engine Provider Registry；ProviderRegistry.acquireScoped 引用计数共享 Provider 生命周期；新增 TshTextAccessBinding 管理 Document Attachment、Snapshot Lease 获取、Change/Disposal subscriptions 与生命周期。text.snapshot/text.chunk 与可选 change/disposal notification 通过 capability negotiation 暴露。
 - [x] OwnedSyntaxTree exclusive edit lease、snapshot/registry metadata revision 同步和 QueryExecutor stale snapshot rejection 源码。
 - [x] 项目 PieceTreeTextBuffer 的 Snapshot/Chunk Provider 源码与测试源码（SOURCE_PARTIAL）。
-- [x] 新增 `TshPieceTreeEditorBinding`：在 EditorView 批量编辑前后固定 PieceTree Snapshot Lease，将 AppliedChange 转成不物化替换文本的元数据型 TshTextChange；Provider 增加 Change/Disposal subscription capability 与事件；源码及转换测试已提交（SOURCE_PARTIAL）。
+- [x] 新增 `TshPieceTreeEditorBinding`：在 EditorView 批量编辑前后固定 PieceTree Snapshot Lease，将 AppliedChange 转成不物化替换文本的元数据型 TshTextChange；EOL normalized 时复用编辑器行列坐标避免每次全文件扫描，非 normalized 时回退分块扫描；Provider 增加 Change/Disposal subscription capability 与事件；源码及转换测试已提交（SOURCE_PARTIAL）。
 - [x] 新增 `TshPieceTreeIncrementalSession`：每文档单线程串行化初始 Parse、增量 Edit/Parse、pending parse retry、full-parse fallback 与旧树回收；pending 工作 coalesce 到最多一个批次/快照，避免快照队列无界增长；Session 接管并 finally 释放快照 Lease（SOURCE_PARTIAL，未运行测试）。
 - [ ] EditorView buffer replacement/文件身份变化自动重建 Binding、宿主永久关闭自动触发 dispose，以及端到端 Native parse integration test。
 - [ ] 旧宿主所有 Tree/Language/Parser owner 尚未全部迁移到统一 Resource Registry。
