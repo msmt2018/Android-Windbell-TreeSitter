@@ -193,14 +193,6 @@ class TshTreeSitterParserOwner private constructor(
                 ownedTree.registration.descriptor.id
             )
         }
-        if (edits.isEmpty()) {
-            return failure(
-                "TSH-PARSER-OWNER-025",
-                "An empty Native edit batch cannot advance the syntax tree version",
-                TshDiagnosticStage.PARSE,
-                ownedTree.registration.descriptor.id
-            )
-        }
         if (edits.any { edit ->
                 val startPoint = edit.startPoint
                 val oldEndPoint = edit.oldEndPoint
@@ -281,7 +273,7 @@ class TshTreeSitterParserOwner private constructor(
                 )
             )
             if (metadata is TshResult.Failure) {
-                resources.retire(ownedTree.registration.descriptor.id)
+                if (editAttempted) resources.retire(ownedTree.registration.descriptor.id)
                 return metadata
             }
             ownedTree.updateRegistration(ownedTree.registration.copy(descriptor = metadata.value))
@@ -310,6 +302,10 @@ class TshTreeSitterParserOwner private constructor(
             lease.close()
         }
     }
+
+    /** Retires a syntax tree after its replacement tree has been successfully published. */
+    fun retireTree(ownedTree: TshOwnedSyntaxTree): Boolean =
+        resources.retire(ownedTree.registration.descriptor.id)
 
     /**
      * Applies one Tree-sitter input edit without exposing its raw Native handle.
