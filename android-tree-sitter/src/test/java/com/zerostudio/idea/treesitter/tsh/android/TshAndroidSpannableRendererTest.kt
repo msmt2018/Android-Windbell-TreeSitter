@@ -24,9 +24,11 @@ class TshAndroidSpannableRendererTest {
         val revisions: TshRenderRevisions
     ) : TshAndroidSpannableRenderTarget {
         var failInvalidation = false
-        var visibleRange: TshAndroidVisibleRange? = null
+        var visibleRange: TshAndroidVisibleRange? =
+            TshAndroidVisibleRange(0L, text.length.toLong())
+        var provideViewport = true
         override fun visibleRangeUtf16(documentId: String) =
-            visibleRange ?: TshAndroidVisibleRange(0L, text.length.toLong())
+            if (provideViewport) visibleRange else null
         override fun isOnRenderThread() = true
         override fun currentRevisions(documentId: String) = revisions
         override fun resolveSpannable(documentId: String) = text
@@ -53,6 +55,21 @@ class TshAndroidSpannableRendererTest {
             TshResolvedStyle(foregroundArgb = color)
         ))
     )
+
+    @Test
+    fun rendererRejectsMissingViewportInsteadOfAllocatingWholeDocumentSpans() {
+        val revisions = TshRenderRevisions(
+            TshDocumentId("doc"), 1L, "config", "theme", "viewport", "renderer"
+        )
+        val target = Target(SpannableStringBuilder("code"), revisions).apply {
+            provideViewport = false
+        }
+        val renderer = TshAndroidSpannableRenderer(target)
+        val result = renderer.submit(plan("no-viewport", revisions, Color.RED.toUInt()), Acknowledger())
+        assertTrue(result is TshResult.Failure)
+        assertTrue(result.diagnostics().any { it.code == "TSH-ANDROID-RENDER-018" })
+        assertEquals(0, target.text.getSpans(0, target.text.length, CharacterStyle::class.java).size)
+    }
 
     @Test
     fun attachToBindsRendererAndOwnerScopeDetachesWithoutOwningHostObject() {
