@@ -46,7 +46,8 @@ data class TshPropertySchema(
     val mergePolicy: TshAttributeMergePolicy = TshAttributeMergePolicy.REPLACE,
     val introducedIn: TshDslVersion = TshDslVersion(1),
     val deprecatedIn: TshDslVersion? = null,
-    val requiredCapability: String? = null
+    val requiredCapability: String? = null,
+    val requiredCapabilityVersion: Int = 1
 ) {
     init {
         require(name.isNotBlank()) { "Property schema name must not be blank" }
@@ -56,6 +57,7 @@ data class TshPropertySchema(
             "Property minimum must not exceed maximum"
         }
         require(requiredCapability == null || requiredCapability.isNotBlank())
+        require(requiredCapabilityVersion > 0) { "requiredCapabilityVersion must be positive" }
         require((minimum == null && maximum == null) || type !is TshDslType.MeasureType || rangeUnit != null) {
             "Measure range constraints require an explicit rangeUnit"
         }
@@ -157,6 +159,21 @@ class TshSchemaRegistry {
         for ((name, property) in schema.properties) {
             if (name in declaration.properties) continue
             val default = property.defaultValue
+            if (version < property.introducedIn) {
+                if (property.required || default != null) diagnostics += diagnostic(
+                    "TSH-SCHEMA-004", TshDiagnosticSeverity.ERROR,
+                    "Property '$name' requires DSL ${property.introducedIn} or newer"
+                )
+                continue
+            }
+            val numericConstraint = property.minimum != null || property.maximum != null
+            val numericType = property.type === TshDslType.IntegerType ||
+                property.type === TshDslType.DecimalType || property.type === TshDslType.NumberType ||
+                property.type is TshDslType.MeasureType
+            if (numericConstraint && !numericType) diagnostics += diagnostic(
+                "TSH-SCHEMA-015", TshDiagnosticSeverity.ERROR,
+                "Property '$name' declares numeric bounds for a non-numeric type"
+            )
             if (default != null) {
                 val defaultDiagnostics = validateValue(name, default, property, availableCapabilities)
                 if (defaultDiagnostics.isNotEmpty()) {
@@ -214,7 +231,9 @@ class TshSchemaRegistry {
             errors += diagnostic("TSH-SCHEMA-014", TshDiagnosticSeverity.ERROR,
                 "Property '$name' range is expressed in ${property.rangeUnit}, but value uses ${value.unit}; convert explicitly")
         }
-        if (property.requiredCapability != null && !capabilities.contains(property.requiredCapability)) {
+        if (property.requiredCapability != null && !capabilities.satisfies(
+                TshCapability(property.requiredCapability, property.requiredCapabilityVersion)
+            )) {
             errors += diagnostic("TSH-SCHEMA-011", TshDiagnosticSeverity.ERROR,
                 "Property '$name' requires capability '${property.requiredCapability}'")
         }
