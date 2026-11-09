@@ -89,4 +89,41 @@ class TshRenderApiTest {
         assertTrue(stale is TshResult.Failure)
         assertTrue(stale.diagnostics().any { it.code == "TSH-RENDER-007" })
     }
-}
+
+    @Test
+    fun partialReceiptConfirmsDrawOnlyWhenAtLeastOneInstructionWasDrawn() {
+        val provider = object : TshRenderProvider {
+            override val id = "partial-renderer"
+            override val apiVersion = 1
+            override val capabilities = TshCapabilitySet.of(TshCapability("render.color", 1))
+            override fun submit(plan: TshRenderPlan, acknowledger: TshRenderAcknowledger) =
+                TshResult.Success(TshRenderReceipt(
+                    plan.id, id, plan.revisions, TshRenderReceiptStatus.PARTIAL, 1
+                ))
+        }
+        val coordinator = TshRenderCoordinator(provider)
+        coordinator.updateCurrentRevisions(revisions())
+        val result = coordinator.submit(plan()) as TshResult.Success<TshRenderReceipt>
+        assertTrue(result.value.confirmsActualDraw)
+        assertTrue(coordinator.pendingPlanIds().isEmpty())
+    }
+
+    @Test
+    fun queuedReceiptCannotClaimThatDrawingAlreadyHappened() {
+        val provider = object : TshRenderProvider {
+            override val id = "invalid-queued-renderer"
+            override val apiVersion = 1
+            override val capabilities = TshCapabilitySet.of(TshCapability("render.color", 1))
+            override fun submit(plan: TshRenderPlan, acknowledger: TshRenderAcknowledger) =
+                TshResult.Success(TshRenderReceipt(
+                    plan.id, id, plan.revisions, TshRenderReceiptStatus.QUEUED, 1
+                ))
+        }
+        val coordinator = TshRenderCoordinator(provider)
+        coordinator.updateCurrentRevisions(revisions())
+        val result = coordinator.submit(plan())
+        assertTrue(result is TshResult.Failure)
+        assertTrue(result.diagnostics().any { it.code == "TSH-RENDER-020" })
+        assertTrue(coordinator.pendingPlanIds().isEmpty())
+    }
+}\n
