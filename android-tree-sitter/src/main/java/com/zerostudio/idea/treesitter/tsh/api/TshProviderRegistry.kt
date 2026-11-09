@@ -38,11 +38,13 @@ data class TshProviderResolution(
 class TshProviderRegistry {
     private val lock = Any()
     private val providers = LinkedHashMap<String, TshProvider>()
+    private var closed = false
 
     fun register(provider: TshProvider) {
         require(provider.id.isNotBlank()) { "provider id must not be blank" }
         require(provider.apiVersion > 0) { "provider apiVersion must be positive" }
         synchronized(lock) {
+            check(!closed) { "Provider registry is closed" }
             val previous = providers[provider.id]
             require(previous == null || previous === provider) {
                 "A different provider already uses this id"
@@ -204,4 +206,10 @@ class TshProviderRegistry {
 
     fun all(): List<TshProvider> = synchronized(lock) { providers.values.toList() }
     fun clear() = synchronized(lock) { providers.clear() }
+
+    /** Permanently closes the registry and rejects future provider registration. */
+    fun close() = synchronized(lock) {
+        closed = true
+        providers.clear()
+    }
 }
