@@ -2,7 +2,12 @@ package com.zerostudio.idea.treesitter.tsh.api
 
 import com.zerostudio.idea.treesitter.TSInput
 
-/** Streams one immutable TSH Snapshot through Tree-sitter's UTF-16LE TSInput callback. */
+/**
+ * Streams one immutable TSH Snapshot through Tree-sitter's UTF-16LE TSInput callback.
+ *
+ * The callback validates the complete provider response, not just its start offset. This is
+ * important because custom Piece Tree/Rope providers may override readChunk().
+ */
 class TshSnapshotTreeSitterInput(
     private val textProvider: TshTextAccessProvider,
     private val snapshotLease: TshTextSnapshotLease
@@ -31,10 +36,12 @@ class TshSnapshotTreeSitterInput(
 
         val snapshot = snapshotLease.snapshot
         val startUtf16 = byteOffset / 2L
-        if (snapshot.lengthUtf16 < 0L || startUtf16 > snapshot.lengthUtf16) {
+        val lengthUtf16 = snapshot.lengthUtf16
+        if (lengthUtf16 < 0L || startUtf16 > lengthUtf16) {
             throw TshTextInputException("Tree-sitter requested an offset outside the Snapshot")
         }
-        if (startUtf16 == snapshot.lengthUtf16) return 0
+        if (startUtf16 == lengthUtf16) return 0
+
         val maxUtf16Length = destination.size / 2
         val result = textProvider.readChunk(snapshotLease, startUtf16, maxUtf16Length)
         val chunk = when (result) {
@@ -44,24 +51,64 @@ class TshSnapshotTreeSitterInput(
                 result.diagnostics
             )
         }
-        if (chunk.documentId != snapshot.documentId || chunk.documentVersion != snapshot.version ||
-            chunk.startUtf16 != startUtf16) {
-            throw TshTextInputException("TextAccessProvider returned a chunk from a different snapshot or offset")
-        }
+
+        validateChunk(snapshot, chunk, startUtf16, maxUtf16Length)
         val text = chunk.text
-        if (text.isEmpty()) {
-            throw TshTextInputException("TextAccessProvider returned an empty chunk before end of document")
+        val byteCountLong = text.length.toLong() * 2L
+        if (byteCountLong <= 0L || byteCountLong > destination.size.toLong()) {
+            throw TshTextInputException("TextAccessProvider returned a chunk outside the Native input buffer bounds")
         }
-        val byteCount = text.length * 2
-        if (byteCount > destination.size || (byteCount and 1) != 0) {
-            throw TshTextInputException("TextAccessProvider returned a chunk larger than the Native input buffer")
-        }
+        val byteCount = byteCountLong.toInt()
         for (index in text.indices) {
             val codeUnit = text[index].code
             destination[index * 2] = (codeUnit and 0xFF).toByte()
             destination[index * 2 + 1] = ((codeUnit ushr 8) and 0xFF).toByte()
         }
         return byteCount
+    }
+
+    private fun validateChunk(
+        snapshot: TshTextSnapshot,
+        chunk: TshTextChunk,
+        requestedStart: Long,
+        maxUtf16Length: Int
+    ) {
+        if (chunk.documentId != snapshot.documentId ||
+            chunk.documentVersion != snapshot.version ||
+            chunk.startUtf16 != requestedStart
+        ) {
+            throw TshTextInputException("TextAccessProvider returned a chunk from a different snapshot or offset")
+        }
+        if (chunk.endUtf16 <= requestedStart ||
+            chunk.endUtf16 > snapshot.lengthUtf16 ||
+            chunk.endUtf16 - requestedStart > maxUtf16Length.toLong()
+        ) {
+            throw TshTextInputException("TextAccessProvider returned an empty, oversized, or out-of-range chunk")
+        }
+        if (!TshUnicode.isWellFormedUtf16(chunk.text)) {
+            throw TshTextInputException("TextAccessProvider returned malformed UTF-16")
+        }
+
+        // Provider overrides must preserve the same code-point boundary guarantee as the default
+        // readChunk implementation. Validate both edges against the pinned snapshot.
+        if (requestedStart > 0L) {
+            val previous = snapshot.readUtf16(requestedStart - 1L, requestedStart)
+            val first = chunk.text.first()
+            if (previous.isNotEmpty() &&
+                Character.isHighSurrogate(previous[0]) && Character.isLowSurrogate(first)
+            ) {
+                throw TshTextInputException("TextAccessProvider returned a chunk starting inside a surrogate pair")
+            }
+        }
+        if (chunk.endUtf16 < snapshot.lengthUtf16) {
+            val last = chunk.text.last()
+            val next = snapshot.readUtf16(chunk.endUtf16, chunk.endUtf16 + 1L)
+            if (next.isNotEmpty() &&
+                Character.isHighSurrogate(last) && Character.isLowSurrogate(next[0])
+            ) {
+                throw TshTextInputException("TextAccessProvider returned a chunk ending inside a surrogate pair")
+            }
+        }
     }
 }
 
