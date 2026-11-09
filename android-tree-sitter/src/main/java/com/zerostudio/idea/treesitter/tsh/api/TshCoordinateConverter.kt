@@ -33,7 +33,10 @@ object TshCoordinateConverter {
         to: TshCoordinateSystem
     ): TshResult<Long> {
         if (offset < 0L) return failure("TSH-COORD-001", "Offset must be non-negative")
-        val value = text as? String ?: text.toString()
+        val value = text as? String ?: return failure(
+            "TSH-COORD-007",
+            "Non-String CharSequence conversion would require flattening; use a host indexed coordinate provider"
+        )
         if (!hasValidSurrogates(value)) {
             return failure("TSH-COORD-006", "Text contains an unpaired UTF-16 surrogate")
         }
