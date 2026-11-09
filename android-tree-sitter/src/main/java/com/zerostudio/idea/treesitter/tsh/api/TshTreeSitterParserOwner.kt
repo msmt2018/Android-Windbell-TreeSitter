@@ -201,6 +201,20 @@ class TshTreeSitterParserOwner private constructor(
                 ownedTree.registration.descriptor.id
             )
         }
+        if (edits.any { edit ->
+                edit.startByte < 0 ||
+                    edit.oldEndByte < edit.startByte ||
+                    edit.newEndByte < edit.startByte
+            } || edits.zipWithNext().any { (left, right) ->
+                left.startByte < right.startByte
+            }) {
+            return failure(
+                "TSH-PARSER-OWNER-028",
+                "Batch edits must have valid ranges and be ordered by descending start byte",
+                TshDiagnosticStage.PARSE,
+                ownedTree.registration.descriptor.id
+            )
+        }
 
         val lease = resources.acquireExclusive(ownedTree.registration.handle)
             ?: return failure(
