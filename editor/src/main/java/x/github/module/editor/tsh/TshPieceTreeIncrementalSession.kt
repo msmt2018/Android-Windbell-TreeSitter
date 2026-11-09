@@ -130,7 +130,7 @@ class TshPieceTreeIncrementalSession private constructor(
                 }
             }
         }
-        discarded?.close()
+        discarded?.let { runCatching { it.close() } }
         if (schedule) scheduleDrain()
     }
 
@@ -149,7 +149,7 @@ class TshPieceTreeIncrementalSession private constructor(
                 }
             }
         }
-        discarded?.close()
+        discarded?.let { runCatching { it.close() } }
         if (closed.get()) return false
         if (schedule) scheduleDrain()
         return true
@@ -338,7 +338,7 @@ class TshPieceTreeIncrementalSession private constructor(
                 pendingWork = null
             }
         }
-        abandoned?.close()
+        abandoned?.let { runCatching { it.close() } }
         try {
             worker.execute {
                 currentTree?.let(parserOwner::retireTree)
