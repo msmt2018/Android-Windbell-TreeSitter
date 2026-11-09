@@ -149,6 +149,12 @@ static const char *TSParser_readJavaInput(
     input->currentBytes = nullptr;
   }
 
+  if ((byte_index & 1u) != 0) {
+    throw_illegal_args(input->env, "TSInput byte offset is not aligned to a UTF-16 code unit");
+    *bytes_read = 0;
+    return nullptr;
+  }
+
   const jint count = input->env->CallIntMethod(
       input->source,
       input->readMethod,
