@@ -33,6 +33,36 @@ class TshTextAccessProviderContractTest {
     }
 
     @Test
+    fun chunkReadsNeverSplitSurrogatePairsAndRejectMalformedEdits() {
+        val snapshot = object : TshTextSnapshot {
+            override val documentId = "unicode"
+            override val version = 1L
+            private val content = "ab😀cd"
+            override val lengthUtf16 = content.length.toLong()
+            override fun readUtf16(start: Long, end: Long): CharSequence =
+                content.substring(start.toInt(), end.toInt())
+        }
+        val provider = ProviderWithSnapshot(snapshot)
+        val lease = (provider.acquireSnapshot(Any()) as TshResult.Success).value
+        val tooSmall = provider.readChunk(lease, 2L, 1)
+        assertTrue(tooSmall is TshResult.Failure)
+        val emoji = provider.readChunk(lease, 2L, 2) as TshResult.Success
+        assertEquals("😀", emoji.value.text.toString())
+        val splitStart = provider.readChunk(lease, 3L, 2)
+        assertTrue(splitStart is TshResult.Failure)
+        assertThrows(IllegalArgumentException::class.java) {
+            TshTextEdit(0, 0, "\\uD800")
+        }
+        lease.close()
+    }
+
+    private class ProviderWithSnapshot(private val value: TshTextSnapshot) : TshTextAccessProvider {
+        override val id = "unicode"
+        override fun supports(document: Any) = true
+        override fun snapshot(document: Any) = TshResult.Success(value)
+    }
+
+    @Test
     fun rejectsOverlappingOrUnorderedEdits() {
         assertThrows(IllegalArgumentException::class.java) {
             TshTextChange("doc", 1, 2, listOf(
