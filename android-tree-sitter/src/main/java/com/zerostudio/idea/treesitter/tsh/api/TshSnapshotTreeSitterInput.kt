@@ -16,6 +16,9 @@ class TshSnapshotTreeSitterInput(
         if (snapshotLease.isClosed) {
             throw TshTextInputException("Snapshot lease closed during Tree-sitter parse")
         }
+        if (!textProvider.isAccessAllowedOnCurrentThread()) {
+            throw TshTextInputException("TextAccessProvider rejected the current parser thread")
+        }
         if (byteOffset < 0L || (byteOffset and 1L) != 0L) {
             throw TshTextInputException("Tree-sitter requested a byte offset inside a UTF-16 code unit")
         }
