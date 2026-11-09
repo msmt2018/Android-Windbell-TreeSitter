@@ -32,7 +32,7 @@ TSH 必须能处理外部编辑器的真实实例，而不是要求宿主继承 
 - Line/column（列单位必须声明）。
 - 屏幕像素坐标。
 
-任何 Position/Range 都必须携带坐标系或绑定明确的文档坐标约定。禁止通过 `byteOffset / 2` 假设所有文本都是 UTF-16LE 且偏移天然可除 2。
+公共 SourcePosition Offset 与 Tree-sitter ByteRange 使用 Long；兼容 Int 构造仅作为迁移入口。Native TSQueryCursor 当前仍接收 Int，Adapter 必须在边界显式检查并拒绝溢出。任何 Position/Range 都必须携带坐标系或绑定明确的文档坐标约定。禁止通过 `byteOffset / 2` 假设所有文本都是 UTF-16LE 且偏移天然可除 2。
 
 ## 4. 转换要求
 
