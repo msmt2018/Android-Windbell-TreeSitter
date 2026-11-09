@@ -17,8 +17,8 @@ class TshDslRuntimeDispatcherTest {
         val declaration = TshDslDeclaration(
             TshDslDeclarationKind.COLOR, "editor",
             mapOf(
-                "foreground" to TshDslValue.ColorValue("#ffffff"),
-                "background" to TshDslValue.ColorValue("#000000")
+                "foreground" to TshDslValue.ColorValue(0xFFFFFFFFu),
+                "background" to TshDslValue.ColorValue(0xFF000000u)
             )
         )
         val validation = (schemas.validate(declaration, TshDslVersion(2)) as TshResult.Success).value
@@ -38,7 +38,7 @@ class TshDslRuntimeDispatcherTest {
         )) is TshResult.Success)
 
         val report = (TshDslRuntimeDispatcher(consumers).apply(validation) as TshResult.Success).value
-        assertEquals(TshDslValue.ColorValue("#ffffff"), appliedColor)
+        assertEquals(TshDslValue.ColorValue(0xFFFFFFFFu), appliedColor)
         assertEquals(setOf("foreground"), report.appliedProperties)
         assertEquals(setOf("background"), report.unappliedProperties.keys)
         assertFalse(report.isComplete)
@@ -55,7 +55,7 @@ class TshDslRuntimeDispatcherTest {
         val validation = (schemas.validate(
             TshDslDeclaration(
                 TshDslDeclarationKind.COLOR, "editor",
-                mapOf("foreground" to TshDslValue.ColorValue("#ffffff"))
+                mapOf("foreground" to TshDslValue.ColorValue(0xFFFFFFFFu))
             ), TshDslVersion(1)
         ) as TshResult.Success).value
         val consumers = TshRuntimeConsumerRegistry()
@@ -76,5 +76,11 @@ class TshDslRuntimeDispatcherTest {
         assertTrue(report.appliedProperties.isEmpty())
         assertTrue(report.unappliedProperties.containsKey("foreground"))
         assertTrue(report.diagnostics.any { it.code == "TSH-DSL-RUNTIME-004" })
+
+        val consumerFailure = (TshDslRuntimeDispatcher(consumers).apply(
+            validation, TshCapabilitySet.of(TshCapability("render.color", 2))
+        ) as TshResult.Success).value
+        assertTrue(consumerFailure.appliedProperties.isEmpty())
+        assertTrue(consumerFailure.diagnostics.any { it.code == "TEST-CONSUMER-001" })
     }
 }
