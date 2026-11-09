@@ -29,8 +29,8 @@ import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.ReentrantLock;
 
 /**
- * Implementation of tree sitter's <code>TSParser</code> APIs. This implementation always converts
- * the input source code to {@link UTF16String UTF-16 string}.
+ * Implementation of Tree-sitter's TSParser APIs. Legacy String parsing converts to UTF-16String;
+ * TSInput parsing reads bounded UTF-16LE chunks directly from a host provider.
  */
 public class TSParser extends TSNativeObject {
 
