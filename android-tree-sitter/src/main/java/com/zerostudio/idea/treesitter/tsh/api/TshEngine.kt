@@ -99,7 +99,17 @@ class TshEngine private constructor(val options: TshEngineOptions) : AutoCloseab
         if (state != TshEngineState.INITIALIZED) return@synchronized engineFailure(
             "TSH-ENGINE-002", "TSH engine must be initialized before attaching host objects"
         )
-        attachments.attach(request, ownerScope)
+        val attached = attachments.attach(request, ownerScope)
+        if (attached is TshResult.Failure) return@synchronized attached
+        val success = attached as TshResult.Success<TshAttachmentReport>
+        val report = success.value
+        if (options.strictProviderValidation && report.status == TshAttachmentStatus.INCOMPLETE) {
+            attachments.detach(report.handle)
+            return@synchronized providerResolutionFailure(report.resolution, report.descriptor.id)
+        }
+        val diagnostics = if (options.enableDiagnostics) success.diagnostics else
+            success.diagnostics.filter { it.severity == TshDiagnosticSeverity.ERROR }
+        TshResult.Success(report, diagnostics)
     }
 
     fun inspectAttachment(handle: TshAttachmentHandle): TshAttachmentReport? =
@@ -112,7 +122,17 @@ class TshEngine private constructor(val options: TshEngineOptions) : AutoCloseab
             if (state != TshEngineState.INITIALIZED) return@synchronized engineFailure(
                 "TSH-ENGINE-002", "TSH engine must be initialized before refreshing attachments"
             )
-            attachments.refresh(handle)
+            val refreshed = attachments.refresh(handle)
+            if (refreshed is TshResult.Failure) return@synchronized refreshed
+            val success = refreshed as TshResult.Success<TshAttachmentReport>
+            if (options.strictProviderValidation && success.value.status == TshAttachmentStatus.INCOMPLETE) {
+                return@synchronized providerResolutionFailure(
+                    success.value.resolution, success.value.descriptor.id
+                )
+            }
+            val diagnostics = if (options.enableDiagnostics) success.diagnostics else
+                success.diagnostics.filter { it.severity == TshDiagnosticSeverity.ERROR }
+            TshResult.Success(success.value, diagnostics)
         }
 
     fun detach(handle: TshAttachmentHandle): Boolean = synchronized(lifecycleLock) {
@@ -135,13 +155,7 @@ class TshEngine private constructor(val options: TshEngineOptions) : AutoCloseab
         )
         val resolution = providers.resolveFor(instance, descriptor, required, optional, apiRange)
         if (options.strictProviderValidation && !resolution.isSatisfiable) {
-            return@synchronized TshResult.Failure(resolution.diagnostics.filter {
-                it.severity == TshDiagnosticSeverity.ERROR
-            }.ifEmpty { listOf(TshDiagnostic(
-                code = "TSH-PROVIDER-006", severity = TshDiagnosticSeverity.ERROR,
-                stage = TshDiagnosticStage.PROVIDER, message = "Provider resolution is not satisfiable",
-                objectId = descriptor.id
-            )) })
+            return@synchronized providerResolutionFailure(resolution, descriptor.id)
         }
         val visibleDiagnostics = if (options.enableDiagnostics) resolution.diagnostics else
             resolution.diagnostics.filter { it.severity == TshDiagnosticSeverity.ERROR }
@@ -152,6 +166,18 @@ class TshEngine private constructor(val options: TshEngineOptions) : AutoCloseab
         if (state == TshEngineState.INITIALIZED) TshResult.Success(this)
         else engineFailure("TSH-ENGINE-002", "TSH engine must be initialized before this operation")
     }
+
+    private fun providerResolutionFailure(
+        resolution: TshProviderResolution,
+        objectId: TshObjectId
+    ) = TshResult.Failure(
+        resolution.diagnostics.filter { it.severity == TshDiagnosticSeverity.ERROR }.ifEmpty {
+            listOf(TshDiagnostic(
+                "TSH-PROVIDER-006", TshDiagnosticSeverity.ERROR, TshDiagnosticStage.PROVIDER,
+                "Provider resolution is not satisfiable", objectId = objectId
+            ))
+        }
+    )
 
     private fun engineFailure(code: String, message: String) = TshResult.Failure(listOf(
         TshDiagnostic(
@@ -185,6 +211,6 @@ class TshEngine private constructor(val options: TshEngineOptions) : AutoCloseab
 data class TshEngineOptions(
     /** Controls non-fatal diagnostics returned by Engine.resolveProviders; errors are never suppressed. */
     val enableDiagnostics: Boolean = true,
-    /** Makes Engine.resolveProviders return Failure when a required capability is unavailable. */
+    /** Makes Engine.attach/refresh/resolveProviders return Failure when a required capability is unavailable; failed strict attach is detached atomically. */
     val strictProviderValidation: Boolean = true
 )
