@@ -81,7 +81,8 @@ class TshAttachmentManager(
 ) : AutoCloseable {
     private data class Entry(
         var report: TshAttachmentReport,
-        var scopeRegistration: AutoCloseable?
+        var scopeRegistration: AutoCloseable?,
+        val request: TshAttachmentRequest
     )
 
     private val lock = Any()
@@ -116,7 +117,7 @@ class TshAttachmentManager(
                 objects.unregister(descriptor.id)
                 return failure("TSH-ATTACH-003", "Attachment manager is closed")
             }
-            entries[id] = Entry(report, null)
+            entries[id] = Entry(report, null, request)
         }
 
         val registration = ownerScope.registerCleanup { detach(handle) }
@@ -137,13 +138,20 @@ class TshAttachmentManager(
 
     /** Re-runs provider negotiation after providers are installed, removed or upgraded. */
     fun refresh(handle: TshAttachmentHandle): TshResult<TshAttachmentReport> {
-        val current = inspect(handle) ?: return failure("TSH-ATTACH-005", "Unknown attachment handle")
+        val entrySnapshot = synchronized(lock) {
+            entries[handle.id]?.takeIf { it.report.handle == handle }
+        } ?: return failure("TSH-ATTACH-005", "Unknown attachment handle")
+        val current = entrySnapshot.report
         if (current.status == TshAttachmentStatus.DETACHED) {
             return failure("TSH-ATTACH-006", "Cannot refresh a detached attachment")
         }
         val instance = objects.find(handle.objectId)
             ?: return failure("TSH-ATTACH-007", "Host object was unregistered outside its attachment")
-        val resolution = providers.resolveFor(instance, current.descriptor)
+        val request = entrySnapshot.request
+        val resolution = providers.resolveFor(
+            instance, current.descriptor,
+            request.requiredCapabilities, request.optionalCapabilities, request.providerApiRange
+        )
         val updated = report(
             handle, current.descriptor, resolution,
             current.attachedAtNanos, System.nanoTime()
