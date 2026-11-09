@@ -1,7 +1,6 @@
 package x.github.module.editor.tsh
 
 import com.zerostudio.idea.piecetable.PieceTreeTextBufferBuilder
-import com.zerostudio.idea.piecetable.common.EndOfLine
 import com.zerostudio.idea.treesitter.tsh.api.TshResult
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
