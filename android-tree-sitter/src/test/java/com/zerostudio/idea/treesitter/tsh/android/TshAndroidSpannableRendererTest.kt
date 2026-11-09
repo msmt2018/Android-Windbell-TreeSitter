@@ -24,6 +24,7 @@ class TshAndroidSpannableRendererTest {
         val revisions: TshRenderRevisions
     ) : TshAndroidSpannableRenderTarget {
         var failInvalidation = false
+        var onInvalidate: (() -> Unit)? = null
         var visibleRange: TshAndroidVisibleRange? =
             TshAndroidVisibleRange(0L, text.length.toLong())
         var provideViewport = true
