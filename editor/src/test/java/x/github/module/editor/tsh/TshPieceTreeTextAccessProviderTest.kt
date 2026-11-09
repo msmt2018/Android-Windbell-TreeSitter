@@ -144,7 +144,7 @@ class TshPieceTreeTextAccessProviderTest {
                 deletedTextLength = 0,
                 finalLineNumber = 2,
                 finalColumn = 12,
-                content = com.zerostudio.idea.piecetable.TextSlice.of("a\\nbbbbbbbbbbb")
+                content = com.zerostudio.idea.piecetable.TextSlice.of("a\nbbbbbbbbbbb")
             )
         )
         val result = editorChangesToTshChange("piece-tree-doc", 10L, 11L, changes)
