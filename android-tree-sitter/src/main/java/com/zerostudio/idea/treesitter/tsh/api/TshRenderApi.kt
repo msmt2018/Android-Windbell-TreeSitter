@@ -133,11 +133,13 @@ interface TshRenderProvider : TshProvider {
 
 /** Version-safe render submission coordinator. It never draws; it validates revisions and receipts. */
 class TshRenderCoordinator(
-    private val provider: TshRenderProvider
+    private val provider: TshRenderProvider,
+    private val maxPendingPlans: Int = 128
 ) : TshRenderAcknowledger {
     init {
         require(provider.id.isNotBlank())
         require(provider.apiVersion > 0)
+        require(maxPendingPlans > 0)
     }
 
     private val lock = Any()
@@ -171,6 +173,12 @@ class TshRenderCoordinator(
             }
             if (pending.containsKey(stablePlan.id)) {
                 return failure("TSH-RENDER-004", "RenderPlan id is already pending")
+            }
+            if (pending.size >= maxPendingPlans) {
+                return failure(
+                    "TSH-RENDER-022",
+                    "Renderer pending-plan limit ($maxPendingPlans) has been reached; apply backpressure or cancel stale plans"
+                )
             }
             pending[stablePlan.id] = stablePlan
         }
