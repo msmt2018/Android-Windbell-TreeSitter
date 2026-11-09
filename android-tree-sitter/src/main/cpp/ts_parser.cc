@@ -410,6 +410,12 @@ static jlong TSParser_parseInput(
     throw_exception(env, "java/lang/RuntimeException", "Unknown Tree-sitter streaming parse failure");
   }
   ts_parser_internal->endRound();
+  // A Java TSInput callback may have thrown while Tree-sitter was unwinding. Never leak a
+  // partially produced TSTree when a pending JNI exception prevents Java from wrapping it.
+  if (env->ExceptionCheck()) {
+    if (tree != nullptr) ts_tree_delete(tree);
+    tree = nullptr;
+  }
   return reinterpret_cast<jlong>(tree);
 }
 
