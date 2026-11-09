@@ -60,6 +60,10 @@ class TshPieceTreeTextAccessProvider(
             "Document is not a TshPieceTreeDocument"
         )
         return try {
+            if (host.documentId.isBlank()) return failure(
+                "TSH-PIECETREE-006",
+                "PieceTree documentId must not be blank"
+            )
             val pieceTreeSnapshot = host.createSnapshot()
             val version = pieceTreeSnapshot.versionId.toLong()
             if (version < 0L) return failure(
@@ -87,22 +91,6 @@ class TshPieceTreeTextAccessProvider(
             )
         }
     }
-
-    override fun acquireSnapshot(document: Any) =
-        when (val result = snapshot(document)) {
-            is TshResult.Success -> {
-                try {
-                    TshResult.Success(TshSharedTextSnapshotLease.acquire(result.value), result.diagnostics)
-                } catch (error: Exception) {
-                    failure(
-                        "TSH-PIECETREE-005",
-                        "Cannot publish PieceTree snapshot lease: ${error.message}",
-                        error
-                    )
-                }
-            }
-            is TshResult.Failure -> result
-        }
 
     private class SnapshotView(
         override val documentId: String,
