@@ -186,9 +186,17 @@ data class TshTextEdit(
         require(replacementTrailingUtf16Length == null ||
             (replacementTrailingUtf16Length >= 0L &&
                 replacementTrailingUtf16Length <= replacementLengthUtf16))
+        require(replacementLineFeedCount == null || replacement.isEmpty()) {
+            "Non-materialized replacement metrics cannot be combined with replacement text"
+        }
         require(replacementLineFeedCount != null ||
             replacementLengthUtf16 == replacement.length.toLong()) {
             "A non-materialized replacement must supply its LF/tail metrics"
+        }
+        if (replacementLineFeedCount == 0) {
+            require(replacementTrailingUtf16Length == replacementLengthUtf16) {
+                "A replacement without LF must have a trailing length equal to its total length"
+            }
         }
     }
 }
