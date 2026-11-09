@@ -46,8 +46,12 @@ object TshTreeSitterEditCompiler {
                 val oldEndPoint = points[edit.endUtf16] ?: return failure(
                     "TSH-EDIT-COMPILE-005", "Edit end splits a UTF-16 surrogate pair or is invalid"
                 )
-                val newEnd = Math.addExact(edit.startUtf16, edit.replacement.length.toLong())
-                val newEndPoint = advance(startPoint, edit.replacement)
+                val newEnd = Math.addExact(edit.startUtf16, edit.replacementLengthUtf16)
+                val newEndPoint = if (edit.newEndPointRow != null) {
+                    TSPoint.create(edit.newEndPointRow, edit.newEndPointColumnBytes!!)
+                } else {
+                    advance(startPoint, edit.replacement)
+                }
                 compiled += TSInputEdit.create(
                     checkedByteOffset(edit.startUtf16),
                     checkedByteOffset(edit.endUtf16),
