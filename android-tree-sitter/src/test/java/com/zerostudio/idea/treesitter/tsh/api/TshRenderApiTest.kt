@@ -83,6 +83,27 @@ class TshRenderApiTest {
     }
 
     @Test
+    fun appliedReceiptCanAccountForInstructionsDeferredOutsideViewport() {
+        val provider = object : TshRenderProvider {
+            override val id = "viewport-renderer"
+            override val apiVersion = 1
+            override val capabilities = TshCapabilitySet.of(TshCapability("render.color", 1))
+            override fun submit(plan: TshRenderPlan, acknowledger: TshRenderAcknowledger) =
+                TshResult.Success(TshRenderReceipt(
+                    plan.id, id, plan.revisions, TshRenderReceiptStatus.APPLIED,
+                    appliedInstructionCount = 0,
+                    deferredInstructionCount = plan.instructions.size
+                ))
+        }
+        val coordinator = TshRenderCoordinator(provider)
+        coordinator.updateCurrentRevisions(revisions())
+        val result = coordinator.submit(plan()) as TshResult.Success<TshRenderReceipt>
+        assertEquals(1, result.value.deferredInstructionCount)
+        assertTrue(result.value.confirmsHostMutation)
+        assertFalse(result.value.confirmsActualDraw)
+    }
+
+    @Test
     fun coordinatorBoundsAsynchronousPendingPlans() {
         val provider = QueuedProvider()
         val coordinator = TshRenderCoordinator(provider, maxPendingPlans = 1)
