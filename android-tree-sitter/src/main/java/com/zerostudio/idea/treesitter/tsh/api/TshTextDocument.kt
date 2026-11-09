@@ -274,7 +274,7 @@ interface TshTextAccessProvider : TshProvider {
                 is TshResult.Failure -> result
             }
         } catch (error: LinkageError) {
-            failure("TSH-TEXT-013", "TextAccessProvider snapshot acquisition failed with a linkage error")
+            failure("TSH-TEXT-013", "TextAccessProvider snapshot acquisition failed with a linkage error", error)
         } catch (error: Exception) {
             TshResult.Failure(listOf(TshDiagnostic(
                 code = "TSH-TEXT-012",
@@ -364,9 +364,9 @@ interface TshTextAccessProvider : TshProvider {
         message = "This TextAccessProvider does not support document disposal notifications"
     )))
 
-    private fun failure(code: String, message: String) = TshResult.Failure(listOf(TshDiagnostic(
+    private fun failure(code: String, message: String, cause: Throwable? = null) = TshResult.Failure(listOf(TshDiagnostic(
         code = code, severity = TshDiagnosticSeverity.ERROR,
-        stage = TshDiagnosticStage.BINDING, message = message
+        stage = TshDiagnosticStage.BINDING, message = message, cause = cause
     )))
 }
 
