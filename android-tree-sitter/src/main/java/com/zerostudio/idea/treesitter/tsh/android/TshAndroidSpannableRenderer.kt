@@ -347,15 +347,27 @@ class TshAndroidSpannableRenderer(
             previousSpans.forEach { spannable.removeSpan(it.span) }
             target.invalidate(documentId)
         } catch (error: Exception) {
-            removeNewOwnedSpans(spannable, previousSpans)
-            restoreSpans(spannable, previousSpans)
-            runCatching { target.invalidate(documentId) }
-            return failure("TSH-ANDROID-RENDER-009", "Host invalidation failed: ${error.message}")
+            val rollbackFailure = runCatching {
+                removeNewOwnedSpans(spannable, previousSpans)
+                restoreSpans(spannable, previousSpans)
+                target.invalidate(documentId)
+            }.exceptionOrNull()
+            val detail = rollbackFailure?.let { "; rollback also failed: ${it.message}" }.orEmpty()
+            return failure(
+                "TSH-ANDROID-RENDER-009",
+                "Host Span commit/invalidation failed: ${error.message}${detail}"
+            )
         } catch (error: LinkageError) {
-            removeNewOwnedSpans(spannable, previousSpans)
-            restoreSpans(spannable, previousSpans)
-            runCatching { target.invalidate(documentId) }
-            return failure("TSH-ANDROID-RENDER-011", "Host invalidation failed with a linkage error: ${error.message}")
+            val rollbackFailure = runCatching {
+                removeNewOwnedSpans(spannable, previousSpans)
+                restoreSpans(spannable, previousSpans)
+                target.invalidate(documentId)
+            }.exceptionOrNull()
+            val detail = rollbackFailure?.let { "; rollback also failed: ${it.message}" }.orEmpty()
+            return failure(
+                "TSH-ANDROID-RENDER-011",
+                "Host Span commit/invalidation failed with a linkage error${detail}"
+            )
         }
         val status = if (fullyApplied == visibleInstructionCount && droppedInstructionCount == 0) {
             TshRenderReceiptStatus.APPLIED
