@@ -270,10 +270,10 @@ class TshRenderCoordinator(
         if (receipt.providerId != provider.id) return diagnostic("TSH-RENDER-009", "Receipt provider id does not match renderer")
         if (receipt.revisions != plan.revisions) return diagnostic("TSH-RENDER-010", "Receipt revisions do not match submitted plan")
         if (receipt.appliedInstructionCount > plan.instructions.size) {
-            return diagnostic("TSH-RENDER-011", "Receipt reports more drawn instructions than the plan contains")
+            return diagnostic("TSH-RENDER-011", "Receipt reports more applied instructions than the plan contains")
         }
         if (receipt.status == TshRenderReceiptStatus.QUEUED && receipt.appliedInstructionCount != 0) {
-            return diagnostic("TSH-RENDER-020", "QUEUED receipt cannot claim instructions were drawn")
+            return diagnostic("TSH-RENDER-020", "QUEUED receipt cannot claim instructions were applied")
         }
         if ((receipt.status == TshRenderReceiptStatus.DRAWN ||
                 receipt.status == TshRenderReceiptStatus.APPLIED) &&
@@ -287,8 +287,8 @@ class TshRenderCoordinator(
         }
         // PARTIAL may mean only some style attributes were applied even when every range was touched.
         if ((receipt.status == TshRenderReceiptStatus.REJECTED ||
-                receipt.status == TshRenderReceiptStatus.FAILED) && receipt.drawnInstructionCount != 0) {
-            return diagnostic("TSH-RENDER-019", "Rejected/failed receipt cannot report drawn instructions")
+                receipt.status == TshRenderReceiptStatus.FAILED) && receipt.appliedInstructionCount != 0) {
+            return diagnostic("TSH-RENDER-019", "Rejected/failed receipt cannot report applied instructions")
         }
         return null
     }
