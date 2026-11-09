@@ -277,7 +277,6 @@ class TshAttachmentManager(
         entries[handle.id]?.report?.takeIf { it.handle == handle }
     }
 
-    /** Re-runs provider negotiation after providers are installed, removed or upgraded. */
     /** Observes detach caused by OwnerScope close, explicit detach, or Engine shutdown. */
     fun subscribeDetached(
         handle: TshAttachmentHandle,
@@ -303,6 +302,7 @@ class TshAttachmentManager(
         return registration
     }
 
+    /** Re-runs provider negotiation after providers are installed, removed or upgraded. */
     fun refresh(handle: TshAttachmentHandle): TshResult<TshAttachmentReport> {
         val entrySnapshot = synchronized(lock) {
             entries[handle.id]?.takeIf { it.report.handle == handle }
