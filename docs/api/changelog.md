@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Added
+- 新增 Android Spannable Renderer Provider，支持 TSH-owned Span 精确清理、宿主 Span 保留、颜色/背景/字体/装饰和 host font-size conversion；增加 Android instrumented test 源码。
 - 新增 TSParser.parseInput(TSInput) 的 Java/JNI 回调链与 TshSnapshotTreeSitterInput，ParserOwner 可直接从固定版本 TextSnapshot 分块解析，避免全文 String/连续 Native buffer；新增 Native resource StampedLock read/exclusive Lease，TSTree.edit 与 Query read 互斥。
 - 新增首版 ScopeSelector AST/StyleRule/StyleResolver，按 exact/suffix path 选择规则、按 priority/specificity 合并属性，并将 MatchSet 解析为 RenderPlan。
 - 新增首版 TshRenderPlan/ResolvedStyle/Renderer Provider/Receipt/Coordinator，支持多维 revision 检查、Capability 校验、异步回执、stale draw 拒绝、partial/failed 诊断和取消契约。
