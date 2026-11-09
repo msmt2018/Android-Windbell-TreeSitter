@@ -188,6 +188,15 @@ class TshTreeSitterParserOwner private constructor(
         var editApplied = false
         return try {
             val currentSnapshot = ownedTree.snapshot
+            if (currentSnapshot.documentVersion != initialSnapshot.documentVersion ||
+                currentSnapshot.treeRevision != initialSnapshot.treeRevision) {
+                return failure(
+                    "TSH-PARSER-OWNER-021",
+                    "Syntax tree changed after this edit was prepared; recompute the TSInputEdit against the current revision",
+                    TshDiagnosticStage.PARSE,
+                    ownedTree.registration.descriptor.id
+                )
+            }
             if (targetDocumentVersion < currentSnapshot.documentVersion ||
                 targetTreeRevision < currentSnapshot.treeRevision ||
                 (targetDocumentVersion == currentSnapshot.documentVersion &&
