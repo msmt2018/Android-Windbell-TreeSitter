@@ -152,7 +152,11 @@ class TshRenderCoordinator(
 
     fun submit(plan: TshRenderPlan): TshResult<TshRenderReceipt> {
         // Snapshot caller-owned collections before storing or handing the plan to third-party code.
-        val stablePlan = snapshotPlan(plan)
+        val stablePlan = try {
+            snapshotPlan(plan)
+        } catch (error: Exception) {
+            return failure("TSH-RENDER-023", "Cannot snapshot mutable RenderPlan input: ${error.message}", error)
+        }
         val current = synchronized(lock) { currentRevisions }
             ?: return failure("TSH-RENDER-001", "Current render revisions have not been installed")
         if (stablePlan.revisions != current) {
@@ -188,6 +192,9 @@ class TshRenderCoordinator(
         } catch (error: Exception) {
             synchronized(lock) { pending.remove(stablePlan.id) }
             return failure("TSH-RENDER-005", "Renderer provider threw during submission", error)
+        } catch (error: LinkageError) {
+            synchronized(lock) { pending.remove(stablePlan.id) }
+            return failure("TSH-RENDER-024", "Renderer provider failed with a linkage error during submission", error)
         }
         return when (submitted) {
             is TshResult.Failure -> {
@@ -258,6 +265,8 @@ class TshRenderCoordinator(
             provider.cancel(planId)
         } catch (error: Exception) {
             return failure("TSH-RENDER-017", "Renderer cancellation failed", error)
+        } catch (error: LinkageError) {
+            return failure("TSH-RENDER-025", "Renderer cancellation failed with a linkage error", error)
         }
         if (result is TshResult.Success) {
             synchronized(lock) { pending.remove(planId) }
