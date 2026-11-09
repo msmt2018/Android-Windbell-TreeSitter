@@ -1,5 +1,9 @@
 # TSH 公共 API 总目录
 
+## 最高层公共 API 规范
+
+- [TSH Public API 设计总规范与宿主接入契约](public-api-design-principles-and-integration-contract.md)：全领域最高层规范；领域文档不得与之冲突。
+
 ## 已实现基础 API
 
 - [公共 API 基础层](core-foundation.md)：Engine 生命周期、对象注册、Capability、Provider Registry、诊断与坐标基础类型。
