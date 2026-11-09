@@ -166,7 +166,7 @@ class TshRenderCoordinator(
             if (pending.containsKey(stablePlan.id)) {
                 return failure("TSH-RENDER-004", "RenderPlan id is already pending")
             }
-            pending[stablePlan.id] = plan
+            pending[stablePlan.id] = stablePlan
         }
 
         val submitted = try {
