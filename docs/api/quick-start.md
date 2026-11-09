@@ -79,7 +79,8 @@ try {
     snapshotLease.close()
 }
 
-// If the provider is registered once for many documents, use registerProvider = false.
+// Scoped provider registration is reference-counted across document bindings.
+// If the provider is registered manually at Engine scope, pass registerProvider = false.
 ```
 
 provider 必须声明正确的 threading，并对 UI_THREAD_ONLY/UNKNOWN 实现 isAccessAllowedOnCurrentThread；没有 change/disposal 能力时返回结构化 unsupported 诊断，不得伪造订阅成功。
