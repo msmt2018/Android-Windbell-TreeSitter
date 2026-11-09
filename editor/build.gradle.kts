@@ -91,6 +91,7 @@ tasks.withType<Test>().configureEach {
 
 dependencies {
     implementation(project(":piecetable"))
+    implementation(project(":android-tree-sitter"))
     implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.jar"))))
     
     implementation(libs.core)
