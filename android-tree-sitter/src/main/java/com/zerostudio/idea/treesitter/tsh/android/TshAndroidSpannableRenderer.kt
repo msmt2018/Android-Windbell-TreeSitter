@@ -105,7 +105,7 @@ private class TshAndroidDecorationSpan(
 }
 
 /**
- * Android Spannable backend. It only removes spans created by this provider and reports a Drawn
+ * Android Spannable backend. It only removes spans created by this provider and reports an APPLIED
  * receipt after the host Spannable has been mutated and invalidated. Device pixel visibility must
  * still be verified by the host's real renderer tests.
  */
@@ -206,7 +206,7 @@ class TshAndroidSpannableRenderer(
 
         if (!acknowledger.isCurrent(plan.id, plan.revisions) ||
             target.currentRevisions(documentId) != plan.revisions) {
-            removePlanSpans(spannable, plan.id.value)
+            removeNewOwnedSpans(spannable, previousSpans)
             return failure("TSH-ANDROID-RENDER-004", "RenderPlan became stale before host invalidation")
         }
         // Commit atomically from the host object's point of view: only now remove the
