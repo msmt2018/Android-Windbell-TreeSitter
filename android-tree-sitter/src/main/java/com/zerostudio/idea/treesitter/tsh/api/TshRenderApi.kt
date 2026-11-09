@@ -79,11 +79,17 @@ data class TshRenderReceipt(
     val revisions: TshRenderRevisions,
     val status: TshRenderReceiptStatus,
     val appliedInstructionCount: Int,
-    val diagnostics: List<TshDiagnostic> = emptyList()
+    val diagnostics: List<TshDiagnostic> = emptyList(),
+    /** Instructions intentionally deferred because they are outside the current viewport. */
+    val deferredInstructionCount: Int = 0,
+    /** Instructions that could not be applied at all (invalid range, unsupported z-index, etc.). */
+    val droppedInstructionCount: Int = 0
 ) {
     init {
         require(providerId.isNotBlank())
         require(appliedInstructionCount >= 0)
+        require(deferredInstructionCount >= 0)
+        require(droppedInstructionCount >= 0)
     }
 
     /** Compatibility accessor; for APPLIED statuses this is not a pixel-draw count. */
@@ -269,26 +275,40 @@ class TshRenderCoordinator(
         if (receipt.planId != plan.id) return diagnostic("TSH-RENDER-008", "Receipt plan id does not match submitted plan")
         if (receipt.providerId != provider.id) return diagnostic("TSH-RENDER-009", "Receipt provider id does not match renderer")
         if (receipt.revisions != plan.revisions) return diagnostic("TSH-RENDER-010", "Receipt revisions do not match submitted plan")
-        if (receipt.appliedInstructionCount > plan.instructions.size) {
-            return diagnostic("TSH-RENDER-011", "Receipt reports more applied instructions than the plan contains")
+        val accounted = receipt.appliedInstructionCount +
+            receipt.deferredInstructionCount + receipt.droppedInstructionCount
+        if (accounted > plan.instructions.size) {
+            return diagnostic("TSH-RENDER-011", "Receipt accounts for more instructions than the plan contains")
         }
-        if (receipt.status == TshRenderReceiptStatus.QUEUED && receipt.appliedInstructionCount != 0) {
-            return diagnostic("TSH-RENDER-020", "QUEUED receipt cannot claim instructions were applied")
+        if (receipt.status == TshRenderReceiptStatus.QUEUED &&
+            (receipt.appliedInstructionCount != 0 || receipt.deferredInstructionCount != 0 ||
+                receipt.droppedInstructionCount != 0)) {
+            return diagnostic("TSH-RENDER-020", "QUEUED receipt cannot claim applied, deferred or dropped instructions")
         }
-        if ((receipt.status == TshRenderReceiptStatus.DRAWN ||
-                receipt.status == TshRenderReceiptStatus.APPLIED) &&
-            receipt.appliedInstructionCount != plan.instructions.size) {
-            return diagnostic("TSH-RENDER-012", "DRAWN/APPLIED receipt must confirm every instruction")
+        if (receipt.status == TshRenderReceiptStatus.DRAWN &&
+            (receipt.appliedInstructionCount != plan.instructions.size ||
+                receipt.deferredInstructionCount != 0 || receipt.droppedInstructionCount != 0)) {
+            return diagnostic("TSH-RENDER-012", "DRAWN receipt must confirm every instruction was drawn")
+        }
+        if (receipt.status == TshRenderReceiptStatus.APPLIED &&
+            (accounted != plan.instructions.size || receipt.droppedInstructionCount != 0)) {
+            return diagnostic("TSH-RENDER-012", "APPLIED receipt must account for all instructions as applied or viewport-deferred")
         }
         if (receipt.status == TshRenderReceiptStatus.PARTIAL &&
             (receipt.appliedInstructionCount == 0 ||
-                receipt.appliedInstructionCount >= plan.instructions.size)) {
-            return diagnostic("TSH-RENDER-018", "PARTIAL draw receipt must report at least one but fewer than all instructions")
+                receipt.appliedInstructionCount >= plan.instructions.size ||
+                accounted != plan.instructions.size)) {
+            return diagnostic("TSH-RENDER-018", "PARTIAL draw receipt must account for every instruction and report at least one but fewer than all drawn")
         }
-        // PARTIAL may mean only some style attributes were applied even when every range was touched.
+        if (receipt.status == TshRenderReceiptStatus.PARTIALLY_APPLIED &&
+            accounted != plan.instructions.size) {
+            return diagnostic("TSH-RENDER-021", "PARTIALLY_APPLIED receipt must account for applied, deferred and dropped instructions")
+        }
         if ((receipt.status == TshRenderReceiptStatus.REJECTED ||
-                receipt.status == TshRenderReceiptStatus.FAILED) && receipt.appliedInstructionCount != 0) {
-            return diagnostic("TSH-RENDER-019", "Rejected/failed receipt cannot report applied instructions")
+                receipt.status == TshRenderReceiptStatus.FAILED) &&
+            (receipt.appliedInstructionCount != 0 || receipt.deferredInstructionCount != 0 ||
+                receipt.droppedInstructionCount != 0)) {
+            return diagnostic("TSH-RENDER-019", "Rejected/failed receipt cannot report applied, deferred or dropped instructions")
         }
         return null
     }
