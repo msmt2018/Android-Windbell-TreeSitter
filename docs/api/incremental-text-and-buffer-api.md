@@ -55,7 +55,7 @@ TextReader 提供 read(range)、readChunk(offset, maxUnits)、iterateChunks(rang
 
 Snapshot Lease 必须覆盖同步 parseInput 调用。ParserOwner 的 Snapshot parse overload 会在 Native 调用前 retain 独立任务 Lease，并在 parse 完成后释放；调用方可独立关闭原句柄。异步调度层若在任务尚未开始时就需要独立持有快照，仍必须在提交任务前 retain，并将该任务句柄的所有权交给任务。
 
-Tree-sitter 分块输入已经具备首版源码契约。项目现有 PieceTreeTextBuffer 的宿主适配器已加入 editor 模块：通过宿主提供的 snapshotFactory 创建 PieceTreeSnapshot，并按范围读取，不调用 PieceTreeTextBuffer.toString()。PieceTreeSnapshot 保留原始文本块引用、复制仍在变化的输入缓冲区内容，且可在后续编辑期间独立读取。当前仍缺少真实 EditorDocument 锁/调度接线、变更与销毁事件订阅、坐标索引 Provider、Native 构建和设备级大文件验证。
+Tree-sitter 分块输入已经具备首版源码契约。项目现有 PieceTreeTextBuffer 的宿主适配器已加入 editor 模块：通过宿主提供的 snapshotFactory 创建 PieceTreeSnapshot，并按范围读取，不调用 PieceTreeTextBuffer.toString()。PieceTreeSnapshot 保留原始文本块引用、复制仍在变化的输入缓冲区内容，且可在后续编辑期间独立读取。此前缺少真实 EditorDocument 接线；本轮新增 `TshPieceTreeEditorBinding`，通过 `EditorView.addEditCallback` 在批量编辑前后分别固定快照，并将 `AppliedChange` 转成一次版本化 Change。该回调运行在 EditorView 编辑线程，快照在编辑前/后边界创建，不依赖 TSH 自行 synchronized 猜测宿主写锁。坐标索引 Provider、文档替换/宿主永久关闭的自动生命周期接线、Native 构建和设备级大文件验证仍未完成。
 
 ## 可独立续租的 Snapshot Lease（SOURCE_PARTIAL）
 
@@ -95,3 +95,18 @@ PieceTreeSnapshot 的创建成本为 O(piece count) 并复制当前仍在 change
 编辑成功但增量 parse 失败时，旧树保留在 afterVersion 的 EDITED_PENDING_PARSE 状态，可供重试 parse，但不可执行 Query。ParserOwner 对单 Edit 与批量 Edit 都写入该状态；QueryExecutor 在获取 Native Query/Tree Lease 前预检该状态，并在获取 Tree Lease 后再次检查以封闭并发竞态。新 Snapshot parse 注册的替代树标记为 READY。空文本 Edit 允许只推进版本元数据，不触发 Native edit；这覆盖内容未变化但宿主版本推进的情况。
 
 该编排层已接通 Snapshot → Compiler → Batch Edit → Incremental Parse 的源码路径；真实 EditorDocument 事件如何在编辑前固定 before Snapshot、编辑后固定 after Snapshot，仍由宿主绑定层负责，尚未端到端验证。
+
+
+## EditorView / EditorDocument transaction binding (SOURCE_PARTIAL)
+
+editor 模块新增 `TshPieceTreeEditorBinding.attach(view, documentId, languageId, ...)`：
+
+- 在 `beforeTextChanged` 回调中获取 before Snapshot Lease；在 `afterTextChanged` 中、整个批次已应用后获取 after Snapshot Lease。
+- `EditorDocument.AppliedChange` 本身已携带旧范围 UTF-16 offset/删除长度、插入长度、插入后的行列元数据。绑定层据此生成 TSH Change，不调用 `TextSlice.toText()`，大型 undo/redo 不会为了构造事件而复制大块插入文本。
+- `TshTextEdit` 新增 `replacementLengthUtf16` 与可选 `newEndPointRow/newEndPointColumnBytes`，允许宿主提供精确 Native endpoint 元数据；普通调用方仍可使用 String replacement。
+- 多编辑从 EditorDocument 的 bottom-up applied 顺序恢复为 TSH before-version 升序；Tree-sitter compiler 再反向生成 Native 降序 Edit。相同 offset 的多个纯插入保留稳定顺序；重叠替换仍拒绝。
+- `TshPieceTreeDocument` / Provider 增加 change subscription 与 disposal notification；Provider capability 显式声明 `text.change-subscription` 和 `text.disposal-notification`。
+- `onTransaction(change, beforeLease, afterLease)` 是后台调度边界。消费者接管两个 Lease 后必须在 parse/retry 结束时关闭；不得在 EditorView 回调中同步执行大文件 Native parse。
+- `TshPieceTreeEditorBinding.close()` 必须由宿主在文档永久关闭时调用。EditorView 的 buffer replacement 与文件身份变更尚未自动驱动 binding 重建；发生替换时宿主应结束旧 binding 并以新 documentId 重新 attach。
+
+本轮增加的转换测试覆盖大型 TextSlice 的长度/端点元数据路径和 Provider change/disposal subscription。仍需运行 editor/android-tree-sitter 的 Gradle/JUnit 测试，并补齐 EditorView 真实批量编辑、撤销/重做、buffer replacement 和关闭竞态集成测试。
