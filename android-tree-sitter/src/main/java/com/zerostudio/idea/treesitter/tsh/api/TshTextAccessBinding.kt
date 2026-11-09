@@ -55,6 +55,17 @@ class TshTextAccessBinding private constructor(
         if (!supportsChanges) return failure(
             "TSH-TEXT-BINDING-002", "TextAccessProvider does not advertise change subscriptions"
         )
+        val changeCapability = try {
+            provider.capabilities.contains("text.change-subscription")
+        } catch (error: Exception) {
+            return failure("TSH-TEXT-BINDING-045", "Cannot validate change-subscription capability: ${error.message}", error)
+        } catch (error: LinkageError) {
+            return failure("TSH-TEXT-BINDING-046", "Change-subscription capability validation failed with a linkage error", error)
+        }
+        if (!changeCapability) return failure(
+            "TSH-TEXT-BINDING-047",
+            "Provider declares change subscriptions but does not publish text.change-subscription capability"
+        )
         val result = try {
             provider.subscribe(document, listener)
         } catch (error: Exception) {
@@ -201,6 +212,27 @@ class TshTextAccessBinding private constructor(
                 return failure("TSH-TEXT-BINDING-041", "Cannot inspect TextAccessProvider capabilities: ${error.message}", error)
             } catch (error: LinkageError) {
                 return failure("TSH-TEXT-BINDING-042", "TextAccessProvider capability lookup failed with a linkage error", error)
+            }
+            val supportsChanges = try {
+                provider.supportsChangeSubscriptions
+            } catch (error: Exception) {
+                return failure("TSH-TEXT-BINDING-048", "Cannot inspect change-subscription support: ${error.message}", error)
+            } catch (error: LinkageError) {
+                return failure("TSH-TEXT-BINDING-049", "Change-subscription support lookup failed with a linkage error", error)
+            }
+            val supportsDisposal = try {
+                provider.supportsDisposalNotifications
+            } catch (error: Exception) {
+                return failure("TSH-TEXT-BINDING-050", "Cannot inspect disposal-notification support: ${error.message}", error)
+            } catch (error: LinkageError) {
+                return failure("TSH-TEXT-BINDING-051", "Disposal-notification support lookup failed with a linkage error", error)
+            }
+            if (supportsChanges != providerCapabilities.contains("text.change-subscription") ||
+                supportsDisposal != providerCapabilities.contains("text.disposal-notification")) {
+                return failure(
+                    "TSH-TEXT-BINDING-052",
+                    "TextAccessProvider capability flags and published capability set are inconsistent"
+                )
             }
             val optional = optionalCapabilities ?: TshCapabilitySet.from(
                 providerCapabilities.all().filterNot { requiredCapabilities.contains(it.id) }
