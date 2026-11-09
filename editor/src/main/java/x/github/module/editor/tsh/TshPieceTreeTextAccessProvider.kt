@@ -31,7 +31,8 @@ import java.util.concurrent.atomic.AtomicBoolean
 class TshPieceTreeDocument(
     val documentId: String,
     val languageId: String?,
-    private val snapshotFactory: () -> PieceTreeSnapshot
+    private val snapshotFactory: () -> PieceTreeSnapshot,
+    private val snapshotThread: Thread? = null
 ) {
     private val changeListeners = CopyOnWriteArrayList<TshTextChangeListener>()
     private val disposedListeners = CopyOnWriteArrayList<TshTextDocumentDisposedListener>()
@@ -39,6 +40,9 @@ class TshPieceTreeDocument(
 
     fun createSnapshot(): PieceTreeSnapshot {
         check(!disposed.get()) { "PieceTree document $documentId is disposed" }
+        check(snapshotThread == null || Thread.currentThread() === snapshotThread) {
+            "PieceTree snapshot creation for $documentId must run on its editor thread"
+        }
         return snapshotFactory()
     }
 
