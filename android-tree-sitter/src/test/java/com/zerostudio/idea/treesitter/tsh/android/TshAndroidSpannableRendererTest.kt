@@ -100,6 +100,27 @@ class TshAndroidSpannableRendererTest {
     }
 
     @Test
+    fun explicitAttachmentDetachClosesRendererBindingAndUnregistersProvider() {
+        val engine = TshEngine.create()
+        engine.initialize()
+        val revisions = TshRenderRevisions(
+            TshDocumentId("doc"), 1L, "config", "theme", "viewport", "renderer"
+        )
+        val target = Target(SpannableStringBuilder("code"), revisions)
+        val renderer = TshAndroidSpannableRenderer(target)
+        val scope = TshOwnerScope("explicit-detach")
+        val binding = (renderer.attachTo(engine, scope) as TshResult.Success<TshAndroidSpannableBinding>).value
+
+        assertTrue(engine.detach(binding.attachment.handle))
+
+        assertTrue(binding.isClosed)
+        assertTrue(engine.providers.all().none { it.id == renderer.id })
+        assertTrue(binding.closeDiagnostics().isEmpty())
+        scope.close()
+        engine.close()
+    }
+
+    @Test
     fun multipleEditorsCanOwnIndependentAndroidRendererBindings() {
         val engine = TshEngine.create()
         engine.initialize()
