@@ -238,7 +238,7 @@ class TshTreeSitterQueryExecutor(
         }
         val queryLease = acquisition.second
             ?: return failure("TSH-QUERY-EXEC-004", "Native query is missing, retired, or currently unavailable")
-        try {
+        return try {
         val nativeQuery = queryLease.query
         val treeLease = if (resourceRegistry != null) {
             resourceRegistry.acquire(tree.nativeObjectId, TSTree::class.java)
@@ -277,8 +277,8 @@ class TshTreeSitterQueryExecutor(
         if (!nativeQuery.canAccess()) return failure("TSH-QUERY-EXEC-006", "Native query has been closed")
 
         val hasPredicates = try {
-            (0 until nativeQuery.patternCount).any {
-                nativeQuery.getPredicatesForPattern(it).isNotEmpty()
+            (0U until nativeQuery.patternCount).any { pattern ->
+                nativeQuery.predicatesFor(pattern).isNotEmpty()
             }
         } catch (error: Throwable) {
             return failure("TSH-QUERY-EXEC-018", "Cannot inspect query predicates: ${error.message}", cause = error)
@@ -303,19 +303,9 @@ class TshTreeSitterQueryExecutor(
                 }
             }
             val required = buildSet {
-                for (pattern in 0 until nativeQuery.patternCount) {
-                    val steps = nativeQuery.predicatesForPattern(pattern)
-                    var index = 0
-                    while (index < steps.size) {
-                        val nameStep = steps[index]
-                        if (nameStep.type == com.zerostudio.idea.treesitter.TSQueryPredicateStep.Type.String) {
-                            add(nativeQuery.getStringValueForId(nameStep.valueId).removePrefix("#"))
-                        }
-                        while (index < steps.size &&
-                            steps[index].type != com.zerostudio.idea.treesitter.TSQueryPredicateStep.Type.Done) {
-                            index++
-                        }
-                        index++
+                for (pattern in 0U until nativeQuery.patternCount) {
+                    nativeQuery.predicatesFor(pattern).forEach { predicate ->
+                        add(predicate.name.removePrefix("#"))
                     }
                 }
             }
