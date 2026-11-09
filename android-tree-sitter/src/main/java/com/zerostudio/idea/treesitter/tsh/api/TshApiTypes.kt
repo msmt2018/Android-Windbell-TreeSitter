@@ -105,12 +105,20 @@ data class TshCapabilitySet private constructor(
         @JvmField val EMPTY = TshCapabilitySet(emptyMap())
 
         @JvmStatic
-        fun of(vararg capabilities: TshCapability): TshCapabilitySet =
-            TshCapabilitySet(capabilities.associateBy { it.id })
+        fun of(vararg capabilities: TshCapability): TshCapabilitySet {
+            require(capabilities.map { it.id }.distinct().size == capabilities.size) {
+                "Duplicate capability ids are not allowed"
+            }
+            return TshCapabilitySet(capabilities.associateBy { it.id })
+        }
 
         @JvmStatic
-        fun from(capabilities: Collection<TshCapability>): TshCapabilitySet =
-            TshCapabilitySet(capabilities.associateBy { it.id })
+        fun from(capabilities: Collection<TshCapability>): TshCapabilitySet {
+            require(capabilities.map { it.id }.distinct().size == capabilities.size) {
+                "Duplicate capability ids are not allowed"
+            }
+            return TshCapabilitySet(capabilities.associateBy { it.id })
+        }
     }
 }
 
