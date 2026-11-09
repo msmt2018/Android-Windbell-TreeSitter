@@ -167,10 +167,10 @@ class TshEngine private constructor(val options: TshEngineOptions) : AutoCloseab
             // Then retire Trees, Parsers and Languages owned by the resource coordinator.
             attachments.close()
             nativeQueryLeases.close()
-            compiledQueries.clear()
+            compiledQueries.close()
             nativeResources.close()
-            providers.clear()
-            objects.clear()
+            providers.close()
+            objects.close()
         }
     }
 
