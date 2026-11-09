@@ -158,7 +158,7 @@ class TshAndroidSpannableRenderer(
     )
 
     override fun supports(instance: Any, descriptor: com.zerostudio.idea.treesitter.tsh.api.TshObjectDescriptor): Boolean =
-        instance === target.hostObject
+        !closed.get() && instance === target.hostObject
 
     internal fun hostObjectForBinding(): Any = target.hostObject
 
