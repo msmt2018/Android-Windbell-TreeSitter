@@ -35,11 +35,13 @@ class TshAndroidSpannableRendererTest {
         override fun resolveTextSizePx(value: TshDslValue.MeasureValue): Float? = 16f
         override fun invalidate(documentId: String) {
             if (failInvalidation) error("host invalidation failure")
+            onInvalidate?.invoke()
         }
     }
 
     private class Acknowledger : TshRenderAcknowledger {
-        override fun isCurrent(planId: TshRenderPlanId, revisions: TshRenderRevisions) = true
+        var current = true
+        override fun isCurrent(planId: TshRenderPlanId, revisions: TshRenderRevisions) = current
         override fun acknowledge(receipt: TshRenderReceipt) = TshResult.Success(receipt)
     }
 
@@ -330,6 +332,28 @@ class TshAndroidSpannableRendererTest {
         typeface.updateDrawState(paint)
         assertFalse(paint.typeface.isBold)
         assertFalse(paint.typeface.isItalic)
+    }
+
+    @Test
+    fun planCancelledDuringHostInvalidationRollsBackNewGeneration() {
+        val revisions = TshRenderRevisions(
+            TshDocumentId("doc"), 1L, "config", "theme", "viewport", "renderer"
+        )
+        val text = SpannableStringBuilder("code")
+        val target = Target(text, revisions)
+        val renderer = TshAndroidSpannableRenderer(target)
+        val acknowledger = Acknowledger()
+        assertTrue(renderer.submit(plan("old-generation", revisions, 0xFFFF0000u), acknowledger)
+            is TshResult.Success)
+
+        target.onInvalidate = { acknowledger.current = false }
+        val cancelled = renderer.submit(
+            plan("cancelled-generation", revisions, 0xFF00FF00u), acknowledger
+        )
+        assertTrue(cancelled is TshResult.Failure)
+        val remaining = text.getSpans(0, 4, CharacterStyle::class.java)
+        assertEquals(1, remaining.size)
+        assertTrue(text.getSpanStart(remaining.single()) == 0)
     }
 
     @Test
