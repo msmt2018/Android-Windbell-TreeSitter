@@ -24,6 +24,8 @@ class TshAndroidSpannableRendererTest {
         val revisions: TshRenderRevisions
     ) : TshAndroidSpannableRenderTarget {
         var failInvalidation = false
+        var visibleRange: TshAndroidVisibleRange? = null
+        override fun visibleRangeUtf16(documentId: String) = visibleRange
         override fun isOnRenderThread() = true
         override fun currentRevisions(documentId: String) = revisions
         override fun resolveSpannable(documentId: String) = text
@@ -95,6 +97,25 @@ class TshAndroidSpannableRendererTest {
         )
         assertTrue(resolution.isSatisfiable)
         assertTrue(resolution.selectedProviders.any { it === renderer })
+    }
+
+    @Test
+    fun rendererClipsSpansToTheHostViewport() {
+        val revisions = TshRenderRevisions(
+            TshDocumentId("doc"), 1L, "config", "theme", "viewport", "renderer"
+        )
+        val text = SpannableStringBuilder("code")
+        val target = Target(text, revisions).apply {
+            visibleRange = TshAndroidVisibleRange(1L, 3L)
+        }
+        val renderer = TshAndroidSpannableRenderer(target)
+        val result = renderer.submit(
+            plan("viewport-plan", revisions, 0xFFFF0000u), Acknowledger()
+        ) as TshResult.Success<TshRenderReceipt>
+        assertEquals(TshRenderReceiptStatus.PARTIALLY_APPLIED, result.value.status)
+        val span = text.getSpans(0, 4, CharacterStyle::class.java).single()
+        assertEquals(1, text.getSpanStart(span))
+        assertEquals(3, text.getSpanEnd(span))
     }
 
     @Test
