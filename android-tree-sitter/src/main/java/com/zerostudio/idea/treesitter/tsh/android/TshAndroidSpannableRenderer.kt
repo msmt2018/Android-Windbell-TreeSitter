@@ -8,6 +8,7 @@ import android.text.TextPaint
 import android.text.style.CharacterStyle
 import android.text.style.MetricAffectingSpan
 import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicBoolean
 import com.zerostudio.idea.treesitter.tsh.api.TshDiagnostic
 import com.zerostudio.idea.treesitter.tsh.api.TshDiagnosticSeverity
 import com.zerostudio.idea.treesitter.tsh.api.TshDiagnosticStage
@@ -40,6 +41,8 @@ interface TshAndroidSpannableRenderTarget {
     fun visibleRangeUtf16(documentId: String): TshAndroidVisibleRange?
     fun resolveTextSizePx(value: TshDslValue.MeasureValue): Float?
     fun invalidate(documentId: String)
+    /** Optional asynchronous dispatch used to remove TSH-owned Spans during off-thread detach. */
+    fun postToRenderThread(action: () -> Unit): Boolean = false
 }
 
 private val NEXT_ANDROID_RENDERER_ID = AtomicLong(0L)
@@ -140,6 +143,11 @@ class TshAndroidSpannableRenderer(
     override val apiVersion: Int = 1
     init { require(id.isNotBlank()) }
 
+    private val closed = AtomicBoolean(false)
+    private val renderedDocumentIds = LinkedHashSet<String>()
+    @Volatile var cleanupDiagnostics: List<TshDiagnostic> = emptyList()
+        private set
+
     override val capabilities: TshCapabilitySet = TshCapabilitySet.of(
         TshCapability("render.foreground", 1),
         TshCapability("render.background", 1),
@@ -173,6 +181,7 @@ class TshAndroidSpannableRenderer(
         plan: TshRenderPlan,
         acknowledger: TshRenderAcknowledger
     ): TshResult<TshRenderReceipt> {
+        if (closed.get()) return failure("TSH-ANDROID-RENDER-039", "Android Spannable renderer is closed")
         val onRenderThread = try {
             target.isOnRenderThread()
         } catch (error: Exception) {
@@ -185,7 +194,7 @@ class TshAndroidSpannableRenderer(
         }
         val documentId = plan.revisions.documentId.value
         val initiallyCurrent = try {
-            acknowledger.isCurrent(plan.id, plan.revisions) &&
+            !closed.get() && acknowledger.isCurrent(plan.id, plan.revisions) &&
                 target.currentRevisions(documentId) == plan.revisions
         } catch (error: Exception) {
             return failure("TSH-ANDROID-RENDER-026", "Cannot verify initial render revisions: ${error.message}")
@@ -235,7 +244,7 @@ class TshAndroidSpannableRenderer(
         var fullyApplied = 0
         for (instruction in plan.instructions) {
             val currentDuringMutation = try {
-                acknowledger.isCurrent(plan.id, plan.revisions) &&
+                !closed.get() && acknowledger.isCurrent(plan.id, plan.revisions) &&
                     target.currentRevisions(documentId) == plan.revisions
             } catch (error: Exception) {
                 removeNewOwnedSpans(spannable, previousSpans)
@@ -342,6 +351,7 @@ class TshAndroidSpannableRenderer(
         }
         if (!currentBeforeCommit) {
             removeNewOwnedSpans(spannable, previousSpans)
+            if (closed.get()) removeOwnedSpans(spannable)
             return failure("TSH-ANDROID-RENDER-004", "RenderPlan became stale before host invalidation")
         }
         // Commit atomically from the host object's point of view: only now remove the
@@ -383,7 +393,8 @@ class TshAndroidSpannableRenderer(
         if (!currentAfterCommit) {
             val rollbackFailure = runCatching {
                 removeNewOwnedSpans(spannable, previousSpans)
-                restoreSpans(spannable, previousSpans)
+                if (closed.get()) removeOwnedSpans(spannable)
+                else restoreSpans(spannable, previousSpans)
                 target.invalidate(documentId)
             }.exceptionOrNull()
             val detail = rollbackFailure?.let { "; rollback also failed: ${it.message}" }.orEmpty()
@@ -392,6 +403,7 @@ class TshAndroidSpannableRenderer(
                 "RenderPlan became stale or was cancelled during host invalidation${detail}"
             )
         }
+        synchronized(renderedDocumentIds) { renderedDocumentIds += documentId }
         val status = if (fullyApplied == visibleInstructionCount && droppedInstructionCount == 0) {
             TshRenderReceiptStatus.APPLIED
         } else {
