@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Added
+- TextAccessProvider 默认 Snapshot acquisition 增加 documentId/version/length 校验；Provider snapshot 获取异常与 LinkageError 转为结构化诊断，避免异常穿透绑定层；新增非法 Snapshot 与 final release failure 测试源码。
 - 新增可独立关闭的 TshTextSnapshotLease.retain() 与 TshSharedTextSnapshotLease 引用计数实现；默认不可变 Snapshot Lease 可续租，旧自定义 Lease 未实现续租时返回明确诊断；最后一个 Lease 释放时只执行一次 host snapshot release callback，并保留释放诊断。
 - TshTreeSitterParserOwner 的 Snapshot parse overload 现在独立 retain 输入快照并通过 TSParser.parseInput(TSInput) 分块解析；支持传入已编辑的旧语法树做增量解析，Native parse 结束后释放任务 Lease；新增 Lease 引用计数/独立关闭测试源码。
 - 强化 Tree-sitter Snapshot Input 回调边界：即使宿主覆盖 readChunk，也重新校验文档/版本/范围/最大长度/非空进展/UTF-16 合法性和 surrogate 边界，避免错误 Provider 将越界或损坏输入交给 Native；新增对应测试源码。
