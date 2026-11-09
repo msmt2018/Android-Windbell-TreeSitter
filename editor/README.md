@@ -760,3 +760,33 @@ Known issues that are not dealt with yet, with what they cause, for prioritizing
 ## License
 
 Apache License 2.0
+
+
+## TSH / Tree-sitter integration
+
+For a PieceTree-backed `EditorView`, attach one incremental session per document:
+
+```kotlin
+val session = TshPieceTreeIncrementalSession.attach(
+    view = editorView,
+    documentId = stableDocumentId,
+    languageId = "kotlin",
+    parserOwner = parserOwner,
+    onTreeUpdated = { tree ->
+        // Runs on the session worker; publish UI state through the host main-thread dispatcher.
+    },
+    onFailure = { failure ->
+        // Collect structured diagnostics; callback may run on the editor or session worker thread.
+    }
+)
+
+// Call on the EditorView main thread after replacing this document's PieceTree buffer.
+session.resync()
+
+// Call on the EditorView main thread when the document is permanently closed.
+session.close()
+```
+
+The session captures one immutable PieceTree snapshot before and after each complete EditorDocument edit batch, then serializes initial parse, incremental edits and parse retries on a dedicated worker. It does not flatten undo/redo TextSlices into Strings. A session owns its worker and syntax tree, but not the supplied ParserOwner. A ParserOwner may be shared because its Native TSParser calls are serialized internally.
+
+The binding currently requires `PieceTreeBuffer` and must be attached on the EditorView main thread. Buffer replacement for the same document requires an explicit `resync()`; changing document identity requires closing the old session and attaching a new one. `close()` and `resync()` must run on the EditorView main thread. Native parsing is synchronous and cannot be forcibly cancelled by interrupt; close prevents queued work from starting and retires resources after an active parse returns. This integration is SOURCE_PARTIAL until Gradle/JUnit, Native and device tests pass.
