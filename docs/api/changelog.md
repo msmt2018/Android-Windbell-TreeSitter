@@ -3,6 +3,9 @@
 ## Unreleased
 
 ### Added
+- 新增 OwnerScope 自动 detach 和 AttachmentManager 的并发竞态保护；Provider refresh 保留原始 required/optional/API range 条件。
+- Query Execution Budget 显式标记 unsupported：strictNodeValidation 默认关闭，显式开启时报 unsupported；maxSteps 默认 null，显式请求时报 unsupported；stepsUsed 改为可空，Cursor 同时设置 pending match limit 和总 Match 数限制。
+- Text chunk 读取拒绝切开 UTF-16 surrogate pair，TextEdit replacement 拒绝不成对 surrogate。
 - 新增 TSH Public API 最高层设计规范：明确 Host Ownership First、No Framework Lock-in、Capability negotiation、零拷贝文本访问、Long 坐标、版本安全、双管线、Renderer-owned drawing 和证据等级。
 - 新增 TshOwnerScope/TshAttachmentManager/TshAttachmentReport 与 Engine attach/inspect/refresh/detach，支持宿主对象身份注册、Provider 能力协商、OwnerScope 自动 detach；detach 不销毁宿主对象。
 - Provider Registry 增加 API 版本范围、Capability 最低版本、优先级、稳定选择、冲突/缺失诊断与 supports 异常隔离；TshEngineOptions 的严格模式和诊断开关接入 Provider resolution。
