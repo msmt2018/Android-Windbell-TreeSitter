@@ -1,5 +1,7 @@
 # Binding、事件总线与扩展 API 规范
 
+> 本文是 Provider/OwnerScope/Attachment/Binding 生命周期的权威契约；平台专用 Renderer 绑定方式见 [editor-adapters.md](editor-adapters.md)。
+
 ## Binding 的定位
 
 Registry 解决“这个实例是谁”；Provider 解决“这个实例能做什么”；Binding 解决“这个实例在当前 Session 中承担什么角色，并与哪些对象关联”。三者不能混为一个全局对象表。
