@@ -2,6 +2,13 @@
 
 任何准备进入 public API 的类型或方法，都必须完成本清单。未完成项必须记录为明确限制，不得默认通过。
 
+## 最高层规范
+
+- [ ] 符合 public-api-design-principles-and-integration-contract.md 的全部不可违反原则。
+- [ ] 明确区分宿主对象所有权与 TSH 自有资源所有权。
+- [ ] 有 Attach/Detach、能力协商和可检查的集成报告。
+- [ ] 所有领域指定唯一 normative source，其他文档只概览并链接。
+
 ## 契约完整性
 
 - [ ] API 解决的问题和目标宿主对象清晰。
@@ -25,11 +32,11 @@
 
 ## 文本正确性
 
-- [ ] 坐标类型显式标记，不混淆 UTF-8 byte 与 UTF-16 code unit。
-- [ ] 覆盖补充平面字符、组合字符、Emoji ZWJ 和 CRLF。
+- [ ] 坐标类型显式标记，绝对 Offset 使用 Long，Native 边界显式检查转换，不混淆 UTF-8 byte 与 UTF-16 code unit。
+- [ ] 覆盖补充平面字符、组合字符、Emoji ZWJ、CRLF/LF 和不成对 surrogate 的拒绝策略。
 - [ ] 增量编辑携带 beforeVersion/afterVersion。
 - [ ] 过期快照和异步结果会被拒绝。
-- [ ] Piece Tree/Rope 不要求无条件 flatten 全文。
+- [ ] Piece Tree/Rope 不要求无条件 flatten 全文；Snapshot Lease/分块/范围读取契约完整。
 - [ ] 窗口式 Regex 说明跨边界匹配语义和上下文策略。
 
 ## 渲染正确性
