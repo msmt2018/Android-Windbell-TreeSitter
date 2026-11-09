@@ -147,6 +147,10 @@ class TshAndroidSpannableBinding private constructor(
             requiredCapabilities: TshCapabilitySet,
             optionalCapabilities: TshCapabilitySet
         ): TshResult<TshAndroidSpannableBinding> {
+            if (renderer.isClosed) return failure(
+                "TSH-ANDROID-BINDING-024",
+                "Cannot attach a closed Android Spannable renderer"
+            )
             val overlap = requiredCapabilities.all().map { it.id }
                 .intersect(optionalCapabilities.all().map { it.id }.toSet())
             if (overlap.isNotEmpty()) return failure(
