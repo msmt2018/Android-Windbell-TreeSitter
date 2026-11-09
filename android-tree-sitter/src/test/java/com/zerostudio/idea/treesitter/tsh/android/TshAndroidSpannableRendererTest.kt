@@ -4,6 +4,7 @@ import android.graphics.Color
 import android.text.Spannable
 import android.text.SpannableStringBuilder
 import android.text.TextPaint
+import android.text.style.MetricAffectingSpan
 import android.text.style.CharacterStyle
 import android.text.style.ForegroundColorSpan
 import com.zerostudio.idea.treesitter.tsh.api.*
@@ -122,6 +123,48 @@ class TshAndroidSpannableRendererTest {
         decoration.updateDrawState(paint)
         assertTrue(paint.isUnderlineText)
         assertFalse(paint.isStrikeThruText)
+    }
+
+    @Test
+    fun explicitFalseOverridesLowerPriorityDecorationAndTypefaceFlags() {
+        val revisions = TshRenderRevisions(
+            TshDocumentId("doc"), 1L, "config", "theme", "viewport", "renderer"
+        )
+        val text = SpannableStringBuilder("code")
+        val renderer = TshAndroidSpannableRenderer(Target(text, revisions))
+        val plan = TshRenderPlan(
+            TshRenderPlanId("explicit-false"),
+            revisions,
+            listOf(TshRenderInstruction(
+                TshSourceRange(
+                    TshSourcePosition(0L, coordinateSystem = TshCoordinateSystem.UTF16_CODE_UNIT),
+                    TshSourcePosition(4L, coordinateSystem = TshCoordinateSystem.UTF16_CODE_UNIT),
+                    documentVersion = 1L
+                ),
+                TshResolvedStyle(
+                    fontWeight = 400,
+                    italic = false,
+                    underline = false,
+                    strikeThrough = false,
+                    decorations = setOf("bold", "italic", "underline", "strike")
+                )
+            ))
+        )
+        assertTrue(renderer.submit(plan, Acknowledger()) is TshResult.Success)
+        val spans = text.getSpans(0, 4, CharacterStyle::class.java)
+        val decoration = spans.single { it !is MetricAffectingSpan }
+        val paint = TextPaint().apply {
+            isUnderlineText = true
+            isStrikeThruText = true
+        }
+        decoration.updateDrawState(paint)
+        assertFalse(paint.isUnderlineText)
+        assertFalse(paint.isStrikeThruText)
+
+        val typeface = spans.filterIsInstance<MetricAffectingSpan>().single()
+        typeface.updateDrawState(paint)
+        assertFalse(paint.typeface.isBold)
+        assertFalse(paint.typeface.isItalic)
     }
 
     @Test
