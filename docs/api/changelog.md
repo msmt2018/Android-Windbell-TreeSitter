@@ -4,9 +4,9 @@
 
 ### Added
 - 新增 Native ResourceRegistry.acquireExclusive/updateMetadata，OwnedSyntaxTree edit 会独占树、同步更新 snapshot/registry metadata；QueryExecutor 对照 registry 拒绝旧 document/tree revision。
-- 新增 Android Spannable Renderer Provider，支持 TSH-owned Span 精确清理、宿主 Span 保留、颜色/背景/字体/装饰和 host font-size conversion；使用 generation staging/rollback 避免失败替换导致旧高亮丢失；增加 Robolectric rollback test 源码。
+- 新增 Android Spannable Renderer Provider + TshAndroidSpannableBinding：可通过 Engine Provider Registry 发现并在 OwnerScope 内 attach/detach 现有宿主对象；支持 TSH-owned Span 精确清理、宿主 Span 保留、颜色/背景/字体/装饰和 host font-size conversion；使用 generation staging/rollback 避免失败替换导致旧高亮丢失；增加 Robolectric rollback/decoration/binding test 源码。
 - 修正 RenderReceipt 语义：新增 APPLIED/PARTIALLY_APPLIED 区分宿主 Span/显示对象更新与真实 DRAWN/PARTIAL 像素绘制；新增 confirmsHostMutation，避免将 invalidate 误报为实际绘制。
-- 新增 TSParser.parseInput(TSInput) 的 Java/JNI 回调链与 TshSnapshotTreeSitterInput，ParserOwner 可直接从固定版本 TextSnapshot 分块解析，避免全文 String/连续 Native buffer；新增 Native resource StampedLock read/exclusive Lease，TSTree.edit 与 Query read 互斥。
+- 新增 TSParser.parseInput(TSInput) 的 Java/JNI 回调链与 TshSnapshotTreeSitterInput，ParserOwner 可直接从固定版本 TextSnapshot 分块解析，避免全文 String/连续 Native buffer；新增 Native resource reader/exclusive mutation Lease（API 21 兼容的 monitor/counter 实现），TSTree.edit 与 Query read 互斥。
 - 新增首版 ScopeSelector AST/StyleRule/StyleResolver，按 exact/suffix path 选择规则、按 priority/specificity 合并属性，并将 MatchSet 解析为 RenderPlan。
 - 新增首版 TshRenderPlan/ResolvedStyle/Renderer Provider/Receipt/Coordinator，支持多维 revision 检查、Capability 校验、异步回执、stale draw 拒绝、partial/failed 诊断和取消契约。
 - 新增首版统一 TshMatch/TshMatchSet/TshScopePath/TshMatchMerger，汇合 Tree-sitter/ATS 与 Regex 两种来源，保留 provenance、pipeline revision、canonical UTF-16 range，支持去重、稳定排序和 stale 过滤。
@@ -14,6 +14,9 @@
 - 新增 OwnerScope 自动 detach 和 AttachmentManager 的并发竞态保护；Provider refresh 保留原始 required/optional/API range 条件。
 - Query Execution Budget 显式标记 unsupported：strictNodeValidation 默认关闭，显式开启时报 unsupported；maxSteps 默认 null，显式请求时报 unsupported；stepsUsed 改为可空，Cursor 同时设置 pending match limit 和总 Match 数限制。
 - Text chunk 读取拒绝切开 UTF-16 surrogate pair，TextEdit replacement 拒绝不成对 surrogate。
+- Engine 生命周期操作与 close() 由同一锁线性化；Engine 关闭时永久关闭 Object/Provider/CompiledQuery registries，阻止通过公开 Registry 属性在 shutdown 后重新发布对象、Provider 或 Query；新增并发/关闭测试源码。
+- 坐标转换拒绝将非 String CharSequence 隐式 toString() flatten，避免把 Piece Tree/Rope 等宿主缓冲区意外复制成全文 String；新增测试源码。
+- Native Resource/Query Lease 与 OwnerScope cleanup 在 JNI LinkageError 后仍继续释放依赖，并保留结构化诊断；新增测试源码。
 - 新增 TSH Public API 最高层设计规范：明确 Host Ownership First、No Framework Lock-in、Capability negotiation、零拷贝文本访问、Long 坐标、版本安全、双管线、Renderer-owned drawing 和证据等级。
 - 新增 TshOwnerScope/TshAttachmentManager/TshAttachmentReport 与 Engine attach/inspect/refresh/detach，支持宿主对象身份注册、Provider 能力协商、OwnerScope 自动 detach；detach 不销毁宿主对象。
 - Provider Registry 增加 API 版本范围、Capability 最低版本、优先级、稳定选择、冲突/缺失诊断与 supports 异常隔离；TshEngineOptions 的严格模式和诊断开关接入 Provider resolution。
