@@ -253,8 +253,8 @@ class TshRenderCoordinator(
             return diagnostic("TSH-RENDER-012", "DRAWN receipt must confirm every instruction")
         }
         if (receipt.status == TshRenderReceiptStatus.PARTIAL &&
-            receipt.drawnInstructionCount >= plan.instructions.size) {
-            return diagnostic("TSH-RENDER-018", "PARTIAL receipt must report fewer than all instructions")
+            (receipt.drawnInstructionCount == 0 || receipt.drawnInstructionCount >= plan.instructions.size)) {
+            return diagnostic("TSH-RENDER-018", "PARTIAL receipt must report at least one but fewer than all instructions")
         }
         if ((receipt.status == TshRenderReceiptStatus.REJECTED ||
                 receipt.status == TshRenderReceiptStatus.FAILED) && receipt.drawnInstructionCount != 0) {
