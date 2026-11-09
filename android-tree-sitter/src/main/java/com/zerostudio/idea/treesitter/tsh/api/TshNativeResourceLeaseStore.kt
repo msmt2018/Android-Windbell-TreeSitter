@@ -10,7 +10,7 @@ import com.zerostudio.idea.treesitter.TSNativeObject
  * after its last active lease is released.
  */
 class TshNativeResourceLeaseStore {
-    data class Handle<T : TSNativeObject>(
+    data class Handle<T : TSNativeObject> internal constructor(
         val objectId: TshObjectId,
         val resource: T
     )
