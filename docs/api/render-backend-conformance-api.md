@@ -1,6 +1,6 @@
 # Render Backend Conformance 与 Invalidation API
 
-> 状态：目标契约（规范文档）；不代表对应运行时 API 已实现。
+> 状态：目标契约（规范文档）；不代表对应运行时 API 已实现。本文是后端能力、回执、失效与 Conformance 的唯一权威契约；RenderPlan/Provider/Receipt 数据结构以 [theme-style-render-contract-api.md](theme-style-render-contract-api.md) 为准。
 
 ## 1. 目标
 
