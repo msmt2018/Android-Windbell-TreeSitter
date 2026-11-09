@@ -47,6 +47,54 @@ class TshSnapshotTreeSitterInputTest {
     }
 
     @Test
+    fun rejectsProviderChunksOutsideSnapshotAndRequestedBounds() {
+        val snapshot = Snapshot()
+        val provider = object : TshTextAccessProvider {
+            override val id = "malformed-provider"
+            override val threading = TshTextAccessThreading.ANY_THREAD
+            override fun supports(document: Any) = true
+            override fun snapshot(document: Any): TshResult<TshTextSnapshot> = TshResult.Success(snapshot)
+            override fun readChunk(
+                lease: TshTextSnapshotLease,
+                startUtf16: Long,
+                maxUtf16Length: Int
+            ): TshResult<TshTextChunk> = TshResult.Success(
+                TshTextChunk(snapshot.documentId, snapshot.version, startUtf16, snapshot.lengthUtf16 + 1L, "A😀é!")
+            )
+        }
+        val lease = (provider.acquireSnapshot(Any()) as TshResult.Success).value
+        val input = TshSnapshotTreeSitterInput(provider, lease)
+        assertThrows(TshTextInputException::class.java) {
+            input.read(0L, 0, 0, ByteArray(4))
+        }
+        lease.close()
+    }
+
+    @Test
+    fun rejectsMalformedUtf16FromOverriddenChunkReader() {
+        val snapshot = Snapshot()
+        val provider = object : TshTextAccessProvider {
+            override val id = "malformed-unicode-provider"
+            override val threading = TshTextAccessThreading.ANY_THREAD
+            override fun supports(document: Any) = true
+            override fun snapshot(document: Any): TshResult<TshTextSnapshot> = TshResult.Success(snapshot)
+            override fun readChunk(
+                lease: TshTextSnapshotLease,
+                startUtf16: Long,
+                maxUtf16Length: Int
+            ): TshResult<TshTextChunk> = TshResult.Success(
+                TshTextChunk(snapshot.documentId, snapshot.version, startUtf16, startUtf16 + 1L, "\uD800")
+            )
+        }
+        val lease = (provider.acquireSnapshot(Any()) as TshResult.Success).value
+        val input = TshSnapshotTreeSitterInput(provider, lease)
+        assertThrows(TshTextInputException::class.java) {
+            input.read(0L, 0, 0, ByteArray(8))
+        }
+        lease.close()
+    }
+
+    @Test
     fun rejectsOddNativeByteOffsets() {
         val provider = Provider()
         val lease = (provider.acquireSnapshot(Any()) as TshResult.Success).value
