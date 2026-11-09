@@ -84,7 +84,9 @@ enum class TshValidationMode { STRICT, LENIENT }
 data class TshSchemaValidationResult(
     val declaration: TshDslDeclaration,
     val normalizedProperties: Map<String, TshDslValue>,
-    val diagnostics: List<TshDiagnostic>
+    val diagnostics: List<TshDiagnostic>,
+    /** Unknown/unsupported values are retained here for diagnostics, migration or extension handling. */
+    val unappliedProperties: Map<String, TshDslValue> = emptyMap()
 ) {
     val isValid: Boolean
         get() = diagnostics.none { it.severity == TshDiagnosticSeverity.ERROR }
@@ -121,6 +123,7 @@ class TshSchemaRegistry {
             ?: return failure("TSH-SCHEMA-002", "No schema registered for ${declaration.kind}")
         val diagnostics = ArrayList<TshDiagnostic>()
         val normalized = LinkedHashMap<String, TshDslValue>()
+        val unapplied = LinkedHashMap<String, TshDslValue>()
 
         for ((name, value) in declaration.properties) {
             val property = schema.properties[name]
@@ -135,8 +138,9 @@ class TshSchemaRegistry {
                 }
                 diagnostics += diagnostic(
                     "TSH-SCHEMA-003", severity,
-                    "Unknown property '$name' in ${declaration.kind}; value was not applied"
+                    "Unknown property '$name' in ${declaration.kind}; value was retained as unapplied"
                 )
+                unapplied[name] = value
                 continue
             }
             if (version < property.introducedIn) {
@@ -189,7 +193,7 @@ class TshSchemaRegistry {
             }
         }
 
-        val result = TshSchemaValidationResult(declaration, normalized.toMap(), diagnostics.toList())
+        val result = TshSchemaValidationResult(declaration, normalized.toMap(), diagnostics.toList(), unapplied.toMap())
         return if (result.isValid) TshResult.Success(result, diagnostics.toList())
         else TshResult.Failure(diagnostics.toList())
     }
@@ -239,7 +243,7 @@ class TshSchemaRegistry {
                 TshCapability(property.requiredCapability, property.requiredCapabilityVersion)
             )) {
             errors += diagnostic("TSH-SCHEMA-011", TshDiagnosticSeverity.ERROR,
-                "Property '$name' requires capability '${property.requiredCapability}'")
+                "Property '$name' requires capability '${property.requiredCapability}' version ${property.requiredCapabilityVersion}")
         }
         return errors
     }
