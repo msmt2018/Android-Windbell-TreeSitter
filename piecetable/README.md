@@ -79,6 +79,7 @@ val textBuffer: PieceTreeTextBuffer = builder.build(
 textBuffer.getLineCount()      // number of lines
 textBuffer.getLineContent(1)   // first line, line numbers are 1 based
 textBuffer.getEOL()            // "\n" or "\r\n", sniffed from the content
+textBuffer.isEOLNormalized() // true only if every line ending matches getEOL()
 textBuffer.getBOM()            // UTF-8 BOM if the file had one
 ```
 
