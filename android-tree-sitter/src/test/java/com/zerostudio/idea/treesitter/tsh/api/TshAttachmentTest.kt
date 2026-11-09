@@ -16,6 +16,21 @@ class TshAttachmentTest {
     }
 
     @Test
+    fun ownerScopeCleanupMayReentrantlyCloseItsOwnScope() {
+        val scope = TshOwnerScope("reentrant-close")
+        var cleanupCount = 0
+        scope.registerCleanup {
+            cleanupCount++
+            scope.close()
+        }
+        val diagnostics = scope.closeWithReport()
+        assertTrue(scope.isClosed)
+        assertEquals(1, cleanupCount)
+        assertTrue(diagnostics.isEmpty())
+        assertEquals(diagnostics, scope.closeWithReport())
+    }
+
+    @Test
     fun attachNegotiatesCapabilitiesAndDetachDoesNotDestroyHostObject() {
         val engine = TshEngine.create()
         engine.initialize()
