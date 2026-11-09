@@ -75,7 +75,7 @@ class TshObjectRegistry {
     fun find(instance: Any): TshObjectDescriptor? =
         synchronized(lock) { byInstance[instance] }
 
-    fun find(id: TshObjectId): Any? =
+    internal fun find(id: TshObjectId): Any? =
         synchronized(lock) { byId[id] }
 
     fun descriptor(id: TshObjectId): TshObjectDescriptor? =
