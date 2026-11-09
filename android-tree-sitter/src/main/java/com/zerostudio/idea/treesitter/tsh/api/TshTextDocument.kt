@@ -108,6 +108,9 @@ interface TshTextAccessProvider {
     fun isAccessAllowedOnCurrentThread(): Boolean =
         threading == TshTextAccessThreading.ANY_THREAD ||
             threading == TshTextAccessThreading.SERIALIZED
+    /** Serializes provider calls when concurrent reads are not explicitly supported. */
+    fun <T> withReadAccess(block: () -> T): T =
+        if (supportsConcurrentReads) block() else synchronized(this, block)
     fun supports(document: Any): Boolean
     fun snapshot(document: Any): TshResult<TshTextSnapshot>
 
@@ -116,7 +119,7 @@ interface TshTextAccessProvider {
         if (!isAccessAllowedOnCurrentThread()) {
             return failure("TSH-TEXT-010", "TextAccessProvider snapshot access is not allowed on the current thread")
         }
-        return when (val result = snapshot(document)) {
+        return when (val result = withReadAccess { snapshot(document) }) {
             is TshResult.Success -> TshResult.Success(object : TshTextSnapshotLease {
                 override val snapshot: TshTextSnapshot = result.value
                 @Volatile private var closed = false
