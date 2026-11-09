@@ -36,9 +36,7 @@ class TshOwnerScope(val id: String = "tsh-owner-${NEXT_ID.incrementAndGet()}") :
         val (completion, pending) = synchronized(lock) {
             val existing = closeCompletion
             if (existing != null) {
-                if (closingThread === Thread.currentThread()) {
-                    return@synchronized existing to emptyList()
-                }
+                if (closingThread === Thread.currentThread()) return closeFailures
                 existing to null
             } else {
                 closed = true
