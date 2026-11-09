@@ -13,6 +13,8 @@
 #include <algorithm>
 #include <utility>
 #include <limits>
+#include <new>
+#include <exception>
 
 #include "tsh/WindbellTshCore.h"
 #include "tsh/WindbellTshCompiler.h"
@@ -161,13 +163,24 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlight(
     {
         ScopedStringChars chars(env, text_jstr);
         if (!chars) return nullptr;
-        spans = WindbellEngine::getInstance().highlightHybrid(
-            tree ? ts_tree_language(tree) : nullptr,
-            tree,
-            reinterpret_cast<const uint16_t*>(chars.get()),
-            static_cast<uint32_t>(len),
-            ext_str
-        );
+        try {
+            spans = WindbellEngine::getInstance().highlightHybrid(
+                tree ? ts_tree_language(tree) : nullptr,
+                tree,
+                reinterpret_cast<const uint16_t*>(chars.get()),
+                static_cast<uint32_t>(len),
+                ext_str
+            );
+        } catch (const std::bad_alloc&) {
+            throw_exception(env, "java/lang/OutOfMemoryError", "Native highlight allocation failed");
+            return nullptr;
+        } catch (const std::exception& error) {
+            throw_exception(env, "java/lang/RuntimeException", error.what());
+            return nullptr;
+        } catch (...) {
+            throw_exception(env, "java/lang/RuntimeException", "Unknown native highlight failure");
+            return nullptr;
+        }
     }
 
     if (spans.size() > static_cast<size_t>(std::numeric_limits<jsize>::max() / 3)) {
@@ -228,10 +241,21 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeComputeFolds(
     {
         ScopedStringChars chars(env, text_jstr);
         if (!chars) return nullptr;
-        folds = WindbellEngine::getInstance().computeFoldRanges(
-            tree, reinterpret_cast<const uint16_t*>(chars.get()),
-            static_cast<uint32_t>(len), ext_str
-        );
+        try {
+            folds = WindbellEngine::getInstance().computeFoldRanges(
+                tree, reinterpret_cast<const uint16_t*>(chars.get()),
+                static_cast<uint32_t>(len), ext_str
+            );
+        } catch (const std::bad_alloc&) {
+            throw_exception(env, "java/lang/OutOfMemoryError", "Native fold allocation failed");
+            return nullptr;
+        } catch (const std::exception& error) {
+            throw_exception(env, "java/lang/RuntimeException", error.what());
+            return nullptr;
+        } catch (...) {
+            throw_exception(env, "java/lang/RuntimeException", "Unknown native fold failure");
+            return nullptr;
+        }
     }
 
     if (folds.size() > static_cast<size_t>(std::numeric_limits<jsize>::max() / 3)) {
@@ -290,10 +314,21 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeGetOutline(
     {
         ScopedStringChars chars(env, text_jstr);
         if (!chars) return nullptr;
-        tags = WindbellEngine::getInstance().computeOutline(
-            tree, reinterpret_cast<const uint16_t*>(chars.get()),
-            static_cast<uint32_t>(len), ext_str
-        );
+        try {
+            tags = WindbellEngine::getInstance().computeOutline(
+                tree, reinterpret_cast<const uint16_t*>(chars.get()),
+                static_cast<uint32_t>(len), ext_str
+            );
+        } catch (const std::bad_alloc&) {
+            throw_exception(env, "java/lang/OutOfMemoryError", "Native outline allocation failed");
+            return nullptr;
+        } catch (const std::exception& error) {
+            throw_exception(env, "java/lang/RuntimeException", error.what());
+            return nullptr;
+        } catch (...) {
+            throw_exception(env, "java/lang/RuntimeException", "Unknown native outline failure");
+            return nullptr;
+        }
     }
 
     jclass strClass = env->FindClass("java/lang/String");
