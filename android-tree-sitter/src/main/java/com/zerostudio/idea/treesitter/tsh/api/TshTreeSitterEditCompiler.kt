@@ -6,11 +6,12 @@ import com.zerostudio.idea.treesitter.TSPoint
 /**
  * Compiles a versioned, ascending TSH edit batch into Tree-sitter UTF-16LE edits.
  *
- * Tree-sitter edits are returned in descending document order. Applying the later edit first
- * leaves the coordinates of all earlier edits unchanged, so every point/byte offset can be
- * computed against the same before-version snapshot.
+ * Edits are returned in descending document order. Applying the later edit first leaves the
+ * coordinates of all earlier edits unchanged, so every point/byte offset is based on one
+ * before-version snapshot.
  *
- * The line index is built with bounded reads; this never flattens the document into one String.
+ * Position lookup uses one bounded streaming pass and stores only requested edit endpoints.
+ * It does not flatten the document or allocate a line-start table proportional to line count.
  */
 object TshTreeSitterEditCompiler {
     private const val INDEX_CHUNK_UTF16 = 32 * 1024
@@ -28,34 +29,32 @@ object TshTreeSitterEditCompiler {
             return failure("TSH-EDIT-COMPILE-002",
                 "Tree-sitter UTF-16LE byte offsets exceed the Native Int boundary")
         }
-        if (change.afterVersion <= before.version) {
-            return failure("TSH-EDIT-COMPILE-003", "TextChange version must advance")
-        }
+        if (change.edits.isEmpty()) return TshResult.Success(emptyList())
 
         return try {
-            val index = Utf16LineIndex.build(before)
+            val endpoints = change.edits.flatMap { listOf(it.startUtf16, it.endUtf16) }
+            val points = Utf16EndpointPoints.build(before, endpoints)
             val compiled = ArrayList<TSInputEdit>(change.edits.size)
             for (edit in change.edits) {
                 if (edit.endUtf16 > before.lengthUtf16) {
                     return failure("TSH-EDIT-COMPILE-004",
                         "Edit range exceeds the before-version snapshot")
                 }
-                if (!index.isBoundary(edit.startUtf16) || !index.isBoundary(edit.endUtf16)) {
-                    return failure("TSH-EDIT-COMPILE-005",
-                        "Edit range splits a UTF-16 surrogate pair")
-                }
-                val start = edit.startUtf16
-                val oldEnd = edit.endUtf16
-                val newEnd = Math.addExact(start, edit.replacement.length.toLong())
-                val startPoint = index.pointAt(start)
-                val oldEndPoint = index.pointAt(oldEnd)
+                val startPoint = points[edit.startUtf16] ?: return failure(
+                    "TSH-EDIT-COMPILE-005", "Edit start splits a UTF-16 surrogate pair or is invalid"
+                )
+                val oldEndPoint = points[edit.endUtf16] ?: return failure(
+                    "TSH-EDIT-COMPILE-005", "Edit end splits a UTF-16 surrogate pair or is invalid"
+                )
+                val newEnd = Math.addExact(edit.startUtf16, edit.replacement.length.toLong())
                 val newEndPoint = advance(startPoint, edit.replacement)
-                val startByte = checkedByteOffset(start)
-                val oldEndByte = checkedByteOffset(oldEnd)
-                val newEndByte = checkedByteOffset(newEnd)
                 compiled += TSInputEdit.create(
-                    startByte, oldEndByte, newEndByte,
-                    startPoint, oldEndPoint, newEndPoint
+                    checkedByteOffset(edit.startUtf16),
+                    checkedByteOffset(edit.endUtf16),
+                    checkedByteOffset(newEnd),
+                    startPoint,
+                    oldEndPoint,
+                    newEndPoint
                 )
             }
             TshResult.Success(compiled.asReversed())
@@ -92,66 +91,70 @@ object TshTreeSitterEditCompiler {
         return TSPoint.create(row, column)
     }
 
-    private class Utf16LineIndex private constructor(
-        private val snapshot: TshTextSnapshot,
-        private val lineStarts: LongArray
-    ) {
-        fun pointAt(offset: Long): TSPoint {
-            require(offset in 0L..snapshot.lengthUtf16)
-            var low = 0
-            var high = lineStarts.size - 1
-            while (low <= high) {
-                val mid = (low + high) ushr 1
-                if (lineStarts[mid] <= offset) low = mid + 1 else high = mid - 1
+    private object Utf16EndpointPoints {
+        fun build(snapshot: TshTextSnapshot, requested: List<Long>): Map<Long, TSPoint> {
+            val targets = requested.distinct().sorted()
+            require(targets.all { it in 0L..snapshot.lengthUtf16 }) {
+                "Edit endpoint is outside the before-version snapshot"
             }
-            val row = high.coerceAtLeast(0)
-            val column = Math.multiplyExact(offset - lineStarts[row], 2L)
-            require(row <= Int.MAX_VALUE && column <= Int.MAX_VALUE.toLong())
-            return TSPoint.create(row, column.toInt())
-        }
+            val result = HashMap<Long, TSPoint>(targets.size)
+            var targetIndex = 0
+            var absolute = 0L
+            var row = 0
+            var column = 0
 
-        fun isBoundary(offset: Long): Boolean {
-            if (offset <= 0L || offset >= snapshot.lengthUtf16) return true
-            val around = snapshot.readUtf16(offset - 1L, offset + 1L)
-            return !(Character.isHighSurrogate(around[0]) &&
-                Character.isLowSurrogate(around[1]))
-        }
-
-        companion object {
-            fun build(snapshot: TshTextSnapshot): Utf16LineIndex {
-                val starts = ArrayList<Long>()
-                starts += 0L
-                var offset = 0L
-                while (offset < snapshot.lengthUtf16) {
-                    var end = minOf(snapshot.lengthUtf16, offset + INDEX_CHUNK_UTF16)
-                    var chunk = snapshot.readUtf16(offset, end)
-                    if (chunk.isNotEmpty() && Character.isHighSurrogate(chunk[chunk.length - 1]) &&
-                        end < snapshot.lengthUtf16) {
-                        end++
-                        chunk = snapshot.readUtf16(offset, end)
-                    }
-                    var i = 0
-                    while (i < chunk.length) {
-                        val ch = chunk[i]
-                        when {
-                            Character.isHighSurrogate(ch) -> {
-                                require(i + 1 < chunk.length &&
-                                    Character.isLowSurrogate(chunk[i + 1])) {
-                                    "Snapshot contains an unpaired high surrogate at ${offset + i}"
-                                }
-                                i += 2
-                                continue
-                            }
-                            Character.isLowSurrogate(ch) ->
-                                error("Snapshot contains an unpaired low surrogate at ${offset + i}")
-                            ch == '\n' -> starts += offset + i + 1L
-                        }
-                        i++
-                    }
-                    offset = end
+            while (absolute < snapshot.lengthUtf16) {
+                var end = minOf(snapshot.lengthUtf16, absolute + INDEX_CHUNK_UTF16)
+                var chunk = snapshot.readUtf16(absolute, end)
+                if (chunk.isNotEmpty() && Character.isHighSurrogate(chunk[chunk.length - 1]) &&
+                    end < snapshot.lengthUtf16) {
+                    end++
+                    chunk = snapshot.readUtf16(absolute, end)
                 }
-                return Utf16LineIndex(snapshot, starts.toLongArray())
+
+                var i = 0
+                while (i < chunk.length) {
+                    while (targetIndex < targets.size && targets[targetIndex] == absolute) {
+                        result[absolute] = TSPoint.create(row, column)
+                        targetIndex++
+                    }
+                    val ch = chunk[i]
+                    when {
+                        Character.isHighSurrogate(ch) -> {
+                            require(i + 1 < chunk.length &&
+                                Character.isLowSurrogate(chunk[i + 1])) {
+                                "Snapshot contains an unpaired high surrogate at $absolute"
+                            }
+                            i += 2
+                            absolute += 2L
+                            column = Math.addExact(column, 4)
+                        }
+                        Character.isLowSurrogate(ch) ->
+                            error("Snapshot contains an unpaired low surrogate at $absolute")
+                        ch == '\n' -> {
+                            i++
+                            absolute++
+                            row = Math.addExact(row, 1)
+                            column = 0
+                        }
+                        else -> {
+                            i++
+                            absolute++
+                            column = Math.addExact(column, 2)
+                        }
+                    }
+                }
+                check(absolute == end) { "Snapshot chunk length changed during indexed read" }
             }
+
+            while (targetIndex < targets.size && targets[targetIndex] == absolute) {
+                result[absolute] = TSPoint.create(row, column)
+                targetIndex++
+            }
+            require(targetIndex == targets.size) {
+                "An edit endpoint falls inside a UTF-16 surrogate pair"
+            }
+            return result
         }
     }
 
