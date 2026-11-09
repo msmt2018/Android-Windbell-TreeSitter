@@ -53,6 +53,17 @@ class TshProviderRegistry {
         }
     }
 
+    /** Registers only when the provider id is unused; binding owners use this to avoid unregistering another owner's provider. */
+    fun registerUnique(provider: TshProvider) {
+        require(provider.id.isNotBlank()) { "provider id must not be blank" }
+        require(provider.apiVersion > 0) { "provider apiVersion must be positive" }
+        synchronized(lock) {
+            check(!closed) { "Provider registry is closed" }
+            check(providers[provider.id] == null) { "A provider already uses this id" }
+            providers[provider.id] = provider
+        }
+    }
+
     fun unregister(id: String): Boolean = synchronized(lock) {
         providers.remove(id) != null
     }
