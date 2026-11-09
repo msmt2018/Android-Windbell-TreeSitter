@@ -24,6 +24,23 @@ class TshNativeLeaseCloseDiagnosticsTest {
     }
 
     @Test
+    fun linkageErrorDoesNotPreventDependencyRelease() {
+        val native = object : TSNativeObject(2L) {
+            override fun closeNativeObj() {
+                throw UnsatisfiedLinkError("simulated missing JNI library")
+            }
+        }
+        val store = TshNativeResourceLeaseStore()
+        val id = TshObjectId(78)
+        var dependencyClosed = false
+        store.register(id, native, listOf(AutoCloseable { dependencyClosed = true }))
+        assertTrue(store.retire(id))
+        assertTrue(dependencyClosed)
+        assertEquals("TSH-NATIVE-LEASE-001", store.closeDiagnostics().single().code)
+        assertTrue(store.closeDiagnostics().single().cause is UnsatisfiedLinkError)
+    }
+
+    @Test
     fun exclusiveLeasePreventsConcurrentNativeReadersAndMutations() {
         val store = TshNativeResourceLeaseStore()
         val id = TshObjectId(88)
