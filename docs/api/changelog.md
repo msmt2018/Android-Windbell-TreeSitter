@@ -4,7 +4,7 @@
 
 ### Added
 - 新增可独立关闭的 TshTextSnapshotLease.retain() 与 TshSharedTextSnapshotLease 引用计数实现；默认不可变 Snapshot Lease 可续租，旧自定义 Lease 未实现续租时返回明确诊断；最后一个 Lease 释放时只执行一次 host snapshot release callback，并保留释放诊断。
-- TshTreeSitterParserOwner 新增 parseSnapshot(provider, lease, treeRevision, chunkSizeBytes)，独立 retain 输入快照并通过 TSParser.parseInput(TSInput) 分块解析，Native parse 结束后释放任务 Lease；新增 Lease 引用计数/独立关闭测试源码。
+- TshTreeSitterParserOwner 的 Snapshot parse overload 现在独立 retain 输入快照并通过 TSParser.parseInput(TSInput) 分块解析；支持传入已编辑的旧语法树做增量解析，Native parse 结束后释放任务 Lease；新增 Lease 引用计数/独立关闭测试源码。
 - 强化 Tree-sitter Snapshot Input 回调边界：即使宿主覆盖 readChunk，也重新校验文档/版本/范围/最大长度/非空进展/UTF-16 合法性和 surrogate 边界，避免错误 Provider 将越界或损坏输入交给 Native；新增对应测试源码。
 - 新增 Native ResourceRegistry.acquireExclusive/updateMetadata，OwnedSyntaxTree edit 会独占树、同步更新 snapshot/registry metadata；QueryExecutor 对照 registry 拒绝旧 document/tree revision。
 - 新增 Android Spannable Renderer Provider + TshAndroidSpannableBinding：可通过 Engine Provider Registry 发现并在 OwnerScope 内 attach/detach 现有宿主对象；支持 TSH-owned Span 精确清理、宿主 Span 保留、颜色/背景/字体/装饰和 host font-size conversion；使用 generation staging/rollback 避免失败替换导致旧高亮丢失；增加 Robolectric rollback/decoration/binding test 源码。
