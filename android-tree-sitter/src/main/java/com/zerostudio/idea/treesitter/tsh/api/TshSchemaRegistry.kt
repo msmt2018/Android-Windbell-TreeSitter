@@ -225,7 +225,9 @@ class TshSchemaRegistry {
             errors += diagnostic("TSH-SCHEMA-015", TshDiagnosticSeverity.ERROR,
                 "Property '$name' declares numeric bounds but its value is not numeric")
         }
-        if (numeric != null) {
+        val rangeComparable = value !is TshDslValue.MeasureValue ||
+            property.rangeUnit == null || value.unit == property.rangeUnit
+        if (numeric != null && rangeComparable) {
             if (property.minimum != null && numeric < property.minimum) errors += diagnostic(
                 "TSH-SCHEMA-009", TshDiagnosticSeverity.ERROR,
                 "Property '$name' is below minimum ${property.minimum}${property.rangeUnit ?: ""}"
