@@ -15,13 +15,20 @@ enum class TshCoordinateSystem {
 }
 
 data class TshSourcePosition(
-    val offset: Int,
+    val offset: Long,
     val line: Int? = null,
     val column: Int? = null,
     val coordinateSystem: TshCoordinateSystem
 ) {
+    constructor(
+        offset: Int,
+        line: Int? = null,
+        column: Int? = null,
+        coordinateSystem: TshCoordinateSystem
+    ) : this(offset.toLong(), line, column, coordinateSystem)
+
     init {
-        require(offset >= 0) { "offset must be >= 0" }
+        require(offset >= 0L) { "offset must be >= 0" }
         require(line == null || line >= 0) { "line must be >= 0" }
         require(column == null || column >= 0) { "column must be >= 0" }
     }
