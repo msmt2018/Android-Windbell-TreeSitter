@@ -70,7 +70,7 @@ class TshPieceTreeIncrementalSession private constructor(
                 return
             }
         }
-        enqueue {
+        if (!enqueue {
             try {
                 if (closed.get()) return@enqueue
                 when (val parsed = parserOwner.parse(
@@ -85,6 +85,8 @@ class TshPieceTreeIncrementalSession private constructor(
             } finally {
                 lease.close()
             }
+        }) {
+            lease.close()
         }
     }
 
@@ -93,7 +95,7 @@ class TshPieceTreeIncrementalSession private constructor(
         before: TshTextSnapshotLease,
         after: TshTextSnapshotLease
     ) {
-        enqueue {
+        if (!enqueue {
             try {
                 if (closed.get()) return@enqueue
                 val nextRevision = Math.addExact(treeRevision, 1L)
@@ -143,6 +145,9 @@ class TshPieceTreeIncrementalSession private constructor(
                 before.close()
                 after.close()
             }
+        }) {
+            before.close()
+            after.close()
         }
     }
 
@@ -208,7 +213,7 @@ class TshPieceTreeIncrementalSession private constructor(
                 return false
             }
         }
-        enqueue {
+        if (!enqueue {
             try {
                 if (closed.get()) return@enqueue
                 val nextRevision = Math.addExact(treeRevision, 1L)
@@ -216,6 +221,9 @@ class TshPieceTreeIncrementalSession private constructor(
             } finally {
                 lease.close()
             }
+        }) {
+            lease.close()
+            return false
         }
         return true
     }
@@ -229,16 +237,18 @@ class TshPieceTreeIncrementalSession private constructor(
         runCatching { onFailure(result) }
     }
 
-    private fun enqueue(task: () -> Unit) {
-        if (closed.get()) return
-        try {
+    private fun enqueue(task: () -> Unit): Boolean {
+        if (closed.get()) return false
+        return try {
             worker.execute(task)
+            true
         } catch (error: RejectedExecutionException) {
             reportFailure(failure(
                 "TSH-PIECETREE-SESSION-002",
                 "Incremental session worker rejected a task",
                 error
             ))
+            false
         }
     }
 
