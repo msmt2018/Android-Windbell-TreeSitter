@@ -2,7 +2,7 @@ name: Build and test
 
 on:
   push:
-    branches: [ "dev", "main" ]
+    branches: [ "dev", "main", "feat/tsh-unified-api-foundation" ]
     paths-ignore:
       - '**.md'
   pull_request:
