@@ -93,7 +93,9 @@ class TshPieceTreeTextAccessProvider(
     override val capabilities: TshCapabilitySet
         get() = TshCapabilitySet.of(
             TshCapability("text.snapshot", 1),
-            TshCapability("text.chunk", 1)
+            TshCapability("text.chunk", 1),
+            TshCapability("text.change-subscription", 1),
+            TshCapability("text.disposal-notification", 1)
         )
 
     override fun supports(instance: Any): Boolean = instance is TshPieceTreeDocument
