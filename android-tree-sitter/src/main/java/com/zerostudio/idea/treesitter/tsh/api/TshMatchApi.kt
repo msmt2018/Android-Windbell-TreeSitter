@@ -124,8 +124,16 @@ data class TshMatchSet(
         require(matches.none { it.source == TshMatchSource.TREE_SITTER_ATS } || treeSitterRevision != null) {
             "Tree-sitter matches require a Tree-sitter pipeline revision"
         }
+        require(matches.filter { it.source == TshMatchSource.TREE_SITTER_ATS }
+            .all { it.pipelineRevision == treeSitterRevision }) {
+            "Tree-sitter Match pipeline revision does not match the MatchSet"
+        }
         require(matches.none { it.source == TshMatchSource.REGEX } || regexRevision != null) {
             "Regex matches require a Regex pipeline revision"
+        }
+        require(matches.filter { it.source == TshMatchSource.REGEX }
+            .all { it.pipelineRevision == regexRevision }) {
+            "Regex Match pipeline revision does not match the MatchSet"
         }
         require(treeSitterRevision == null || treeSitterRevision.isNotBlank())
         require(regexRevision == null || regexRevision.isNotBlank())
