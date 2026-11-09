@@ -222,9 +222,37 @@ class TshAttachmentManager(
             )
             found
         }
-        objects.unregister(handle.objectId)
-        entry.scopeRegistration?.let { runCatching { it.close() } }
+        val diagnostics = entry.report.diagnostics.toMutableList()
+        if (!objects.unregister(handle.objectId)) {
+            diagnostics += TshDiagnostic(
+                code = "TSH-ATTACH-008",
+                severity = TshDiagnosticSeverity.WARNING,
+                stage = TshDiagnosticStage.LIFECYCLE,
+                message = "Host object was already unregistered before attachment detach",
+                objectId = handle.objectId
+            )
+        }
+        val registration = entry.scopeRegistration
         entry.scopeRegistration = null
+        if (registration != null) {
+            try {
+                registration.close()
+            } catch (error: Exception) {
+                diagnostics += TshDiagnostic(
+                    code = "TSH-ATTACH-009",
+                    severity = TshDiagnosticSeverity.WARNING,
+                    stage = TshDiagnosticStage.LIFECYCLE,
+                    message = "OwnerScope cleanup registration could not be removed",
+                    objectId = handle.objectId,
+                    cause = error
+                )
+            }
+        }
+        synchronized(lock) {
+            entries[handle.id]?.let { current ->
+                current.report = current.report.copy(diagnostics = diagnostics.toList())
+            }
+        }
         return true
     }
 
