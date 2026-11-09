@@ -17,7 +17,7 @@ class TshNativeResourceLeaseStore {
 
     internal class Entry<T : TSNativeObject>(
         val objectId: TshObjectId,
-        val resource: T,
+        internal val resource: T,
         val dependencies: List<AutoCloseable>
     ) {
         var leases = 0
@@ -28,7 +28,7 @@ class TshNativeResourceLeaseStore {
     inner class Lease<T : TSNativeObject> internal constructor(
         private val entry: Entry<T>
     ) : AutoCloseable {
-        val resource: T get() = entry.resource
+        internal val resource: T get() = entry.resource
         val objectId: TshObjectId get() = entry.objectId
         private var released = false
 
