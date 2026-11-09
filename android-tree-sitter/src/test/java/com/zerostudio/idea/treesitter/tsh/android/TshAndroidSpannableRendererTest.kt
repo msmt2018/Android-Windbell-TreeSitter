@@ -2,10 +2,12 @@ package com.zerostudio.idea.treesitter.tsh.android
 
 import android.graphics.Color
 import android.text.SpannableStringBuilder
+import android.text.TextPaint
 import android.text.style.CharacterStyle
 import android.text.style.ForegroundColorSpan
 import com.zerostudio.idea.treesitter.tsh.api.*
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -46,6 +48,34 @@ class TshAndroidSpannableRendererTest {
             TshResolvedStyle(foregroundArgb = color)
         ))
     )
+
+    @Test
+    fun decorationSpanResetsUnspecifiedDecorationFlags() {
+        val revisions = TshRenderRevisions(
+            TshDocumentId("doc"), 1L, "config", "theme", "viewport", "renderer"
+        )
+        val text = SpannableStringBuilder("code")
+        val renderer = TshAndroidSpannableRenderer(Target(text, revisions))
+        val plan = TshRenderPlan(
+            TshRenderPlanId("decoration"),
+            revisions,
+            listOf(TshRenderInstruction(
+                TshSourceRange(
+                    TshSourcePosition(0L, coordinateSystem = TshCoordinateSystem.UTF16_CODE_UNIT),
+                    TshSourcePosition(4L, coordinateSystem = TshCoordinateSystem.UTF16_CODE_UNIT),
+                    documentVersion = 1L
+                ),
+                TshResolvedStyle(underline = true, strikeThrough = false)
+            ))
+        )
+        assertTrue(renderer.submit(plan, Acknowledger()) is TshResult.Success)
+        val decoration = text.getSpans(0, 4, CharacterStyle::class.java)
+            .single { it !is ForegroundColorSpan }
+        val paint = TextPaint().apply { isStrikeThruText = true }
+        decoration.updateDrawState(paint)
+        assertTrue(paint.isUnderlineText)
+        assertFalse(paint.isStrikeThruText)
+    }
 
     @Test
     fun failedReplacementRestoresPreviousTshGenerationAndPreservesHostSpans() {
