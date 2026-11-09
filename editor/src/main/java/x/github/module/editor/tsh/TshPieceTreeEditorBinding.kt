@@ -202,8 +202,10 @@ internal fun editorChangesToTshChange(
     val edits = changes.asReversed().map { applied ->
         var lineFeeds = 0
         var trailingLength = 0L
+        var scannedLength = 0L
         applied.content?.forEachChunk { chunk ->
             for (character in chunk) {
+                scannedLength = Math.addExact(scannedLength, 1L)
                 if (character == '\\n') {
                     lineFeeds = Math.addExact(lineFeeds, 1)
                     trailingLength = 0L
@@ -211,6 +213,9 @@ internal fun editorChangesToTshChange(
                     trailingLength = Math.addExact(trailingLength, 1L)
                 }
             }
+        }
+        require(scannedLength == applied.insertedTextLength.toLong()) {
+            "TextSlice length does not match AppliedChange.insertedTextLength"
         }
         TshTextEdit(
             startUtf16 = applied.rangeOffset.toLong(),
