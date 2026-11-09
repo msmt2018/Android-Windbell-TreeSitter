@@ -21,6 +21,13 @@ import com.zerostudio.idea.treesitter.tsh.api.TshCapabilitySet
 import com.zerostudio.idea.treesitter.tsh.api.TshDslValue
 import com.zerostudio.idea.treesitter.tsh.api.TshResult
 
+/** UTF-16 half-open visible range supplied by the host editor's viewport. */
+data class TshAndroidVisibleRange(val startUtf16: Long, val endUtf16: Long) {
+    init {
+        require(startUtf16 >= 0L && endUtf16 >= startUtf16)
+    }
+}
+
 /** Host adapter for an existing editor text object; no Editor/View inheritance is required. */
 interface TshAndroidSpannableRenderTarget {
     /** Exact host object this adapter serves; override when the adapter is a separate wrapper. */
@@ -28,6 +35,8 @@ interface TshAndroidSpannableRenderTarget {
     fun isOnRenderThread(): Boolean
     fun currentRevisions(documentId: String): TshRenderRevisions?
     fun resolveSpannable(documentId: String): Spannable?
+    /** Return the host viewport in absolute UTF-16 code units; null means the whole Spannable. */
+    fun visibleRangeUtf16(documentId: String): TshAndroidVisibleRange? = null
     fun resolveTextSizePx(value: TshDslValue.MeasureValue): Float?
     fun invalidate(documentId: String)
 }
@@ -171,6 +180,14 @@ class TshAndroidSpannableRenderer(
         }
         val spannable = target.resolveSpannable(documentId)
             ?: return failure("TSH-ANDROID-RENDER-003", "Host did not provide a Spannable for the document")
+        val viewport = target.visibleRangeUtf16(documentId)
+            ?: TshAndroidVisibleRange(0L, spannable.length.toLong())
+        if (viewport.endUtf16 > spannable.length.toLong()) {
+            return failure(
+                "TSH-ANDROID-RENDER-015",
+                "Host viewport range exceeds the current Spannable length"
+            )
+        }
         val diagnostics = ArrayList<TshDiagnostic>()
         // Keep the last committed TSH spans until the replacement plan is fully applied.
         val previousSpans = captureOwnedSpans(spannable)
@@ -200,6 +217,17 @@ class TshAndroidSpannableRenderer(
                 )
                 continue
             }
+            val start = maxOf(rawStart, viewport.startUtf16)
+            val end = minOf(rawEnd, viewport.endUtf16)
+            if (end <= start) {
+                diagnostics += TshDiagnostic(
+                    "TSH-ANDROID-RENDER-016", TshDiagnosticSeverity.INFO,
+                    TshDiagnosticStage.RENDER,
+                    "Instruction is outside the current host viewport and was deferred"
+                )
+                continue
+            }
+            val clippedToViewport = start != rawStart || end != rawEnd
             val style = instruction.style
             val diagnosticsBefore = diagnostics.size
             val before = spannable.getSpans(start.toInt(), end.toInt(), CharacterStyle::class.java)
@@ -217,7 +245,12 @@ class TshAndroidSpannableRenderer(
             val hadWarning = diagnostics.size > diagnosticsBefore
             if (after > before) {
                 appliedInstructionCount++
-                if (!hadWarning) fullyApplied++
+                if (!hadWarning && !clippedToViewport) fullyApplied++
+                if (clippedToViewport) diagnostics += TshDiagnostic(
+                    "TSH-ANDROID-RENDER-017", TshDiagnosticSeverity.INFO,
+                    TshDiagnosticStage.RENDER,
+                    "Instruction was clipped to the current host viewport"
+                )
             } else if (!hadWarning) {
                 diagnostics += warning("TSH-ANDROID-RENDER-006", "Instruction contains no drawable style attributes")
             }
