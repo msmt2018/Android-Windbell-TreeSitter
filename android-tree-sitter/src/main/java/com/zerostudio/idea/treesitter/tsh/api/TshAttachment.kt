@@ -11,6 +11,8 @@ class TshOwnerScope(val id: String = "tsh-owner-${NEXT_ID.incrementAndGet()}") :
     @Volatile private var closed = false
     @Volatile private var closeFailures: List<TshDiagnostic> = emptyList()
     private var closeCompletion: CompletableFuture<List<TshDiagnostic>>? = null
+    /** Prevents a cleanup callback recursively closing its own scope from joining itself. */
+    private var closingThread: Thread? = null
 
     init { require(id.isNotBlank()) { "OwnerScope id must not be blank" } }
 
@@ -34,9 +36,13 @@ class TshOwnerScope(val id: String = "tsh-owner-${NEXT_ID.incrementAndGet()}") :
         val (completion, pending) = synchronized(lock) {
             val existing = closeCompletion
             if (existing != null) {
+                if (closingThread === Thread.currentThread()) {
+                    return@synchronized existing to emptyList()
+                }
                 existing to null
             } else {
                 closed = true
+                closingThread = Thread.currentThread()
                 val created = CompletableFuture<List<TshDiagnostic>>()
                 closeCompletion = created
                 created to actions.values.toList().also { actions.clear() }
@@ -65,8 +71,11 @@ class TshOwnerScope(val id: String = "tsh-owner-${NEXT_ID.incrementAndGet()}") :
                     )
                 }
             }
-            closeFailures = failures.toList()
-            completion.complete(closeFailures)
+            synchronized(lock) {
+                closeFailures = failures.toList()
+                closingThread = null
+                completion.complete(closeFailures)
+            }
         }
         return completion.join()
     }
