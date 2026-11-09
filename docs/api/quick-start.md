@@ -64,16 +64,22 @@ Provider discovery 只负责能力匹配，不会自动 attach 或绘制。生�
 Piece Tree/Rope/Gap Buffer 宿主实现 TshTextAccessProvider，并注册为 Engine Provider；它不需要把全文转换为 String。
 
 ```kotlin
-engine.providers.registerUnique(textAccessProvider)
-val textAttachment = engine.attach(
-    TshAttachmentRequest(
-        instance = editorDocument,
-        objectType = "text-document",
-        requiredCapabilities = TshCapabilitySet.of(TshCapability("text.snapshot")),
-        optionalCapabilities = TshCapabilitySet.of(TshCapability("text.chunk"))
-    ),
+val textBinding = (TshTextAccessBinding.attach(
+    engine,
+    textAccessProvider,
+    editorDocument,
     documentOwnerScope
-)
+) as TshResult.Success<TshTextAccessBinding>).value
+
+// Each parse/query operation acquires a fixed-version snapshot lease and closes it when done.
+val snapshotLease = (textBinding.acquireSnapshot() as TshResult.Success<TshTextSnapshotLease>).value
+try {
+    // parserOwner.parse(snapshotLease, ...)
+} finally {
+    snapshotLease.close()
+}
+
+// If the provider is registered once for many documents, use registerProvider = false.
 ```
 
 provider 必须声明正确的 threading，并对 UI_THREAD_ONLY/UNKNOWN 实现 isAccessAllowedOnCurrentThread；没有 change/disposal 能力时返回结构化 unsupported 诊断，不得伪造订阅成功。
