@@ -132,6 +132,189 @@ class TshTreeSitterParserOwner private constructor(
         }
     }
 
+    /**
+     * Applies one Tree-sitter input edit to an owned old tree without exposing its raw Native handle.
+     * The caller must compute byte offsets/points in the tree's configured UTF-16LE coordinate space.
+     */
+    fun editTree(
+        ownedTree: TshOwnedSyntaxTree,
+        edit: com.zerostudio.idea.treesitter.TSInputEdit
+    ): TshResult<Unit> {
+        if (ownedTree.snapshot.grammar.fingerprint != grammar.fingerprint) {
+            return failure(
+                "TSH-PARSER-OWNER-010",
+                "Cannot edit a tree produced by a different Grammar",
+                TshDiagnosticStage.PARSE,
+                ownedTree.registration.descriptor.id
+            )
+        }
+        val lease = resources.acquire(ownedTree.registration.handle)
+            ?: return failure(
+                "TSH-PARSER-OWNER-011",
+                "Cannot edit a retired or inaccessible syntax tree",
+                TshDiagnosticStage.LIFECYCLE,
+                ownedTree.registration.descriptor.id
+            )
+        return try {
+            lease.resource.edit(edit)
+            TshResult.Success(Unit)
+        } catch (error: Exception) {
+            failure(
+                "TSH-PARSER-OWNER-012",
+                "Tree-sitter input edit failed: ${error.message}",
+                TshDiagnosticStage.PARSE,
+                ownedTree.registration.descriptor.id,
+                error
+            )
+        } finally {
+            lease.close()
+        }
+    }
+
+    /**
+     * Parses a fixed-version host Snapshot through bounded UTF-16LE TSInput chunks.
+     * No full-document String or contiguous Native input buffer is created by this path.
+     * The caller retains ownership of snapshotLease and must close it after parsing.
+     *
+     * When oldTree is supplied, it must belong to the same document/Grammar and have been edited
+     * through editTree() before this call.
+     */
+    fun parse(
+        snapshotLease: TshTextSnapshotLease,
+        textProvider: TshTextAccessProvider,
+        treeRevision: Long,
+        oldTree: TshOwnedSyntaxTree? = null,
+        chunkSizeBytes: Int = 64 * 1024
+    ): TshResult<TshOwnedSyntaxTree> {
+        if (snapshotLease.isClosed) {
+            return failure(
+                "TSH-PARSER-OWNER-013",
+                "Cannot parse from a closed TextSnapshot lease",
+                TshDiagnosticStage.PARSE
+            )
+        }
+        val snapshot = snapshotLease.snapshot
+        if (snapshot.documentId.isBlank() || snapshot.version < 0L || treeRevision < 0L ||
+            chunkSizeBytes < 4 || chunkSizeBytes > 1024 * 1024 || (chunkSizeBytes and 1) != 0) {
+            return failure(
+                "TSH-PARSER-OWNER-014",
+                "Snapshot identity/version, tree revision, or chunk size is invalid",
+                TshDiagnosticStage.PARSE
+            )
+        }
+        if (oldTree != null && (
+            oldTree.snapshot.documentId != snapshot.documentId ||
+                oldTree.snapshot.documentVersion >= snapshot.version ||
+                oldTree.snapshot.grammar.fingerprint != grammar.fingerprint
+            )) {
+            return failure(
+                "TSH-PARSER-OWNER-015",
+                "Incremental old tree must be an earlier revision of the same document and Grammar",
+                TshDiagnosticStage.PARSE,
+                oldTree.registration.descriptor.id
+            )
+        }
+
+        val parserLease = resources.acquire(parser.handle)
+            ?: return failure(
+                "TSH-PARSER-OWNER-002",
+                "Parser is retired, closed, or unavailable",
+                TshDiagnosticStage.LIFECYCLE,
+                parser.descriptor.id
+            )
+        val languageLease = parserLanguageLease.retain()
+            ?: run {
+                parserLease.close()
+                return failure(
+                    "TSH-PARSER-OWNER-003",
+                    "Parser's retained Grammar language lease is no longer available",
+                    TshDiagnosticStage.LIFECYCLE,
+                    parser.descriptor.id
+                )
+            }
+        val oldTreeLease = if (oldTree != null) {
+            resources.acquire(oldTree.registration.handle) ?: run {
+                languageLease.close()
+                parserLease.close()
+                return failure(
+                    "TSH-PARSER-OWNER-016",
+                    "Incremental old tree has already been retired",
+                    TshDiagnosticStage.LIFECYCLE,
+                    oldTree.registration.descriptor.id
+                )
+            }
+        } else null
+
+        var tree: TSTree? = null
+        var languageLeaseTransferred = false
+        try {
+            val input = TshSnapshotTreeSitterInput(textProvider, snapshotLease)
+            val parsedTree = parserLease.resource.parseInput(
+                oldTreeLease?.resource, input, chunkSizeBytes
+            ) ?: return failure(
+                "TSH-PARSER-OWNER-004",
+                "Tree-sitter streaming parser returned no syntax tree",
+                TshDiagnosticStage.PARSE,
+                parser.descriptor.id
+            )
+            tree = parsedTree
+            if (!parsedTree.canAccess()) {
+                return failure(
+                    "TSH-PARSER-OWNER-005",
+                    "Tree-sitter returned an inaccessible syntax tree",
+                    TshDiagnosticStage.PARSE,
+                    parser.descriptor.id
+                )
+            }
+            val root = parsedTree.rootNode
+            if (!root.canAccess()) {
+                return failure(
+                    "TSH-PARSER-OWNER-006",
+                    "Parsed syntax tree root node is inaccessible",
+                    TshDiagnosticStage.PARSE,
+                    parser.descriptor.id
+                )
+            }
+            val registration = resources.register(
+                resource = parsedTree,
+                type = "syntax-tree",
+                metadata = mapOf(
+                    "documentId" to snapshot.documentId,
+                    "documentVersion" to snapshot.version.toString(),
+                    "treeRevision" to treeRevision.toString(),
+                    "grammarFingerprint" to grammar.fingerprint,
+                    "inputMode" to "chunked-utf16le"
+                ),
+                dependencies = listOf(languageLease)
+            )
+            languageLeaseTransferred = true
+            tree = null
+            val syntaxSnapshot = TshSyntaxTreeSnapshot(
+                documentId = snapshot.documentId,
+                documentVersion = snapshot.version,
+                treeRevision = treeRevision,
+                grammar = grammar,
+                rootByteRange = TshByteRange(root.startByte, root.endByte),
+                nativeObjectId = registration.descriptor.id,
+                inputEncoding = TshTreeSitterInputEncoding.UTF16_LE
+            )
+            return TshResult.Success(TshOwnedSyntaxTree(syntaxSnapshot, registration))
+        } catch (error: Exception) {
+            return failure(
+                "TSH-PARSER-OWNER-017",
+                "Tree-sitter streaming parse or publication failed: ${error.message}",
+                TshDiagnosticStage.PARSE,
+                parser.descriptor.id,
+                error
+            )
+        } finally {
+            tree?.let { runCatching { it.close() } }
+            oldTreeLease?.close()
+            if (!languageLeaseTransferred) languageLease.close()
+            parserLease.close()
+        }
+    }
+
     /** Retires the parser; an active parse retains it until that operation finishes. */
     override fun close() {
         resources.retire(parser.descriptor.id)
