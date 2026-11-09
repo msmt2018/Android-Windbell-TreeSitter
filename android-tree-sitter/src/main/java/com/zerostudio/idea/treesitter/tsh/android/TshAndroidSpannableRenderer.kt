@@ -2,6 +2,7 @@ package com.zerostudio.idea.treesitter.tsh.android
 
 import android.graphics.Typeface
 import android.text.Spannable
+import android.text.Spanned
 import android.text.TextPaint
 import android.text.style.CharacterStyle
 import android.text.style.MetricAffectingSpan
@@ -153,7 +154,9 @@ class TshAndroidSpannableRenderer(
             val diagnosticsBefore = diagnostics.size
             val before = spannable.getSpans(start.toInt(), end.toInt(), CharacterStyle::class.java)
                 .count { it is TshAndroidOwnedSpan && it.ownerId == id && it.planId == plan.id.value }
-            applyStyle(spannable, start.toInt(), end.toInt(), plan.id.value, style, diagnostics)
+            val spanPriority = instruction.zIndex.coerceIn(0, 255) shl Spanned.SPAN_PRIORITY_SHIFT
+            val spanFlags = Spannable.SPAN_EXCLUSIVE_EXCLUSIVE or spanPriority
+            applyStyle(spannable, start.toInt(), end.toInt(), plan.id.value, style, spanFlags, diagnostics)
             val after = spannable.getSpans(start.toInt(), end.toInt(), CharacterStyle::class.java)
                 .count { it is TshAndroidOwnedSpan && it.ownerId == id && it.planId == plan.id.value }
             val hadWarning = diagnostics.size > diagnosticsBefore
@@ -193,9 +196,9 @@ class TshAndroidSpannableRenderer(
         end: Int,
         planId: String,
         style: com.zerostudio.idea.treesitter.tsh.api.TshResolvedStyle,
+        flags: Int,
         diagnostics: MutableList<TshDiagnostic>
     ) {
-        val flags = Spannable.SPAN_EXCLUSIVE_EXCLUSIVE
         if (style.foregroundArgb != null) {
             spannable.setSpan(TshAndroidForegroundSpan(id, planId, style.foregroundArgb.toInt()), start, end, flags)
         }
