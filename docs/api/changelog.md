@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Added
+- 强化 Tree-sitter Snapshot Input 回调边界：即使宿主覆盖 readChunk，也重新校验文档/版本/范围/最大长度/非空进展/UTF-16 合法性和 surrogate 边界，避免错误 Provider 将越界或损坏输入交给 Native；新增对应测试源码。
 - 新增 Native ResourceRegistry.acquireExclusive/updateMetadata，OwnedSyntaxTree edit 会独占树、同步更新 snapshot/registry metadata；QueryExecutor 对照 registry 拒绝旧 document/tree revision。
 - 新增 Android Spannable Renderer Provider + TshAndroidSpannableBinding：可通过 Engine Provider Registry 发现并在 OwnerScope 内 attach/detach 现有宿主对象；支持 TSH-owned Span 精确清理、宿主 Span 保留、颜色/背景/字体/装饰和 host font-size conversion；使用 generation staging/rollback 避免失败替换导致旧高亮丢失；增加 Robolectric rollback/decoration/binding test 源码。
 - 修正 RenderReceipt 语义：新增 APPLIED/PARTIALLY_APPLIED 区分宿主 Span/显示对象更新与真实 DRAWN/PARTIAL 像素绘制；新增 confirmsHostMutation 和 applied/deferred/dropped 完整计数，Android Spannable Renderer 强制宿主提供有界 viewport 后才分配 Span，不为离屏指令分配 Span，未提供 viewport 时拒绝全量渲染。
