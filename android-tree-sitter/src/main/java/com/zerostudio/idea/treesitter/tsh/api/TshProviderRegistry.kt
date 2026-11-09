@@ -285,5 +285,6 @@ class TshProviderRegistry {
     fun close() = synchronized(lock) {
         closed = true
         providers.clear()
+        scopedRegistrations.clear()
     }
 }
