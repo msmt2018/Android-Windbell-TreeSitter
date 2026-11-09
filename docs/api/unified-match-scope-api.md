@@ -1,6 +1,6 @@
 # 统一 Match 与 Scope API 契约
 
-> 状态：目标契约。Tree-sitter/ATS 与 Regex 是两个来源，必须归一成同一结果模型，但保留来源身份和各自语义。
+> 状态：SOURCE_PARTIAL。新增 TshMatch/TshMatchSet/TshScopePath/TshMatchMerger 首版纯 Kotlin 模型，支持双来源 provenance、Long/UTF-16 canonical range、revision 校验、去重、稳定排序和 stale Match 排除；Scope/Selector 解析、冲突策略、Tree-sitter/Regex 真实执行结果适配和端到端验证尚未完成。
 
 ## 1. TshMatch
 
