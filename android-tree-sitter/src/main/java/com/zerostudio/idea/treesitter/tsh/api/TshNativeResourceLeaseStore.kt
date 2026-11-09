@@ -167,12 +167,16 @@ class TshNativeResourceLeaseStore {
             resource.close()
         } catch (error: Exception) {
             recordCloseFailure(objectId, "Native resource close failed", error)
+        } catch (error: LinkageError) {
+            recordCloseFailure(objectId, "Native resource close failed with a linkage error", error)
         }
         dependencies.asReversed().forEach { dependency ->
             try {
                 dependency.close()
             } catch (error: Exception) {
                 recordCloseFailure(objectId, "Native resource dependency close failed", error)
+            } catch (error: LinkageError) {
+                recordCloseFailure(objectId, "Native resource dependency close failed with a linkage error", error)
             }
         }
     }
