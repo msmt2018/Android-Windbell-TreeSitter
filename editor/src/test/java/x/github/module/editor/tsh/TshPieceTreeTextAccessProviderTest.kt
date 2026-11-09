@@ -87,4 +87,38 @@ class TshPieceTreeTextAccessProviderTest {
         assertEquals("doc-42", snapshot.documentId)
         assertEquals("hello", snapshot.readUtf16(0L, snapshot.lengthUtf16).toString())
     }
+    @Test
+    fun providerDeliversChangeAndDisposalSubscriptionsExactlyUntilClosed() {
+        val (_, document) = document("before")
+        val provider = TshPieceTreeTextAccessProvider()
+        var changes = 0
+        var disposed = 0
+        val changeListener = com.zerostudio.idea.treesitter.tsh.api.TshTextChangeListener { changes++ }
+        val disposedListener = com.zerostudio.idea.treesitter.tsh.api.TshTextDocumentDisposedListener { id, version ->
+            assertEquals("piece-tree-doc", id)
+            assertEquals(9L, version)
+            disposed++
+        }
+        val changeSubscription = (provider.subscribe(document, changeListener) as TshResult.Success).value
+        val disposedSubscription = (provider.subscribeDisposed(document, disposedListener) as TshResult.Success).value
+
+        document.publishChange(
+            com.zerostudio.idea.treesitter.tsh.api.TshTextChange(
+                "piece-tree-doc", 1L, 2L, emptyList()
+            )
+        )
+        changeSubscription.close()
+        document.publishChange(
+            com.zerostudio.idea.treesitter.tsh.api.TshTextChange(
+                "piece-tree-doc", 2L, 3L, emptyList()
+            )
+        )
+        document.dispose(9L)
+        disposedSubscription.close()
+
+        assertEquals(1, changes)
+        assertEquals(1, disposed)
+        assertTrue(document.isDisposed())
+    }
+
 }
