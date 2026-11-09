@@ -302,11 +302,17 @@ class TshTreeSitterQueryExecutor(
                     )
                 }
             }
+            val builtInPredicates = setOf(
+                "eq?", "not-eq?", "any-eq?", "any-not-eq?",
+                "match?", "not-match?", "any-match?", "any-not-match?",
+                "any-of?", "not-any-of?", "is?", "is-not?", "set!"
+            )
             val required = buildSet {
                 for (pattern in 0U until nativeQuery.patternCount) {
-                    nativeQuery.predicatesFor(pattern)
-                        .filterIsInstance<com.zerostudio.idea.treesitter.TSQueryPredicate.Generic>()
-                        .forEach { predicate -> add(predicate.name.removePrefix("#")) }
+                    nativeQuery.predicatesFor(pattern).forEach { predicate ->
+                        val name = predicate.name.removePrefix("#")
+                        if (name !in builtInPredicates) add(name)
+                    }
                 }
             }
             val missing = required - declared
