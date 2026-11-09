@@ -243,6 +243,12 @@ class TshTreeSitterQueryExecutor(
         val treeDescriptor = objects.descriptor(tree.nativeObjectId)
             ?: return failure("TSH-QUERY-EXEC-022", "Syntax tree descriptor is no longer registered")
         val metadata = treeDescriptor.metadata
+        if (metadata["treeState"] == "EDITED_PENDING_PARSE") {
+            return failure(
+                "TSH-QUERY-EXEC-031",
+                "Syntax tree has been edited for a newer document version and cannot be queried until incremental parsing publishes a replacement tree"
+            )
+        }
         if (metadata["documentId"] != null && metadata["documentId"] != tree.documentId) {
             return failure("TSH-QUERY-EXEC-023", "Syntax tree document identity is stale")
         }
