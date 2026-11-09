@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Added
+- 新增首版统一 TshMatch/TshMatchSet/TshScopePath/TshMatchMerger，汇合 Tree-sitter/ATS 与 Regex 两种来源，保留 provenance、pipeline revision、canonical UTF-16 range，支持去重、稳定排序和 stale 过滤。
 - 新增 DSL Runtime Consumer Registry/Dispatcher，确保 Schema 校验通过不再被误认为运行时已生效；报告每个属性的 applied/unapplied 状态。
 - 新增 OwnerScope 自动 detach 和 AttachmentManager 的并发竞态保护；Provider refresh 保留原始 required/optional/API range 条件。
 - Query Execution Budget 显式标记 unsupported：strictNodeValidation 默认关闭，显式开启时报 unsupported；maxSteps 默认 null，显式请求时报 unsupported；stepsUsed 改为可空，Cursor 同时设置 pending match limit 和总 Match 数限制。
