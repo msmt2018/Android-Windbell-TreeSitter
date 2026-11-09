@@ -1,6 +1,9 @@
 package x.github.module.editor.tsh
 
 import android.os.Looper
+import com.zerostudio.idea.treesitter.tsh.api.TshDiagnostic
+import com.zerostudio.idea.treesitter.tsh.api.TshDiagnosticSeverity
+import com.zerostudio.idea.treesitter.tsh.api.TshDiagnosticStage
 import com.zerostudio.idea.treesitter.tsh.api.TshOwnedSyntaxTree
 import com.zerostudio.idea.treesitter.tsh.api.TshResult
 import com.zerostudio.idea.treesitter.tsh.api.TshTextChange
@@ -18,16 +21,14 @@ import java.util.concurrent.atomic.AtomicBoolean
  *
  * All Native parser/tree state is touched on one worker. The EditorView callback only pins
  * immutable before/after snapshots and enqueues their leases; it never performs Native parsing.
+ * Pending work is coalesced to at most one transaction. If the worker falls behind, intermediate
+ * pending snapshots are released and the latest snapshot is reparsed in full instead of retaining
+ * an unbounded queue of large PieceTree snapshots.
+ *
  * The session owns the worker and the currently published syntax tree, but not ParserOwner.
- *
- * A failed incremental edit is handled according to the tree state:
- * - if the tree was not advanced, the session falls back to a full parse of the after snapshot;
- * - if the tree reached EDITED_PENDING_PARSE, the session retries parsing that edited tree;
- * - a failed parse never publishes a pending/stale tree as READY.
- *
- * Native parse is synchronous and is not force-cancelled by Thread.interrupt. close() must be
- * called on the EditorView edit/main thread; it prevents queued work from starting and retires
- * the tree after any currently running Native call returns.
+ * Native parse is synchronous and is not force-cancelled by Thread.interrupt. close() prevents
+ * queued work from starting and retires the tree after any currently running Native call returns.
+ * attach(), resync() and close() must run on the EditorView main thread.
  */
 class TshPieceTreeIncrementalSession private constructor(
     private val parserOwner: TshTreeSitterParserOwner,
@@ -46,6 +47,27 @@ class TshPieceTreeIncrementalSession private constructor(
     private var treeRevision: Long = 0L
 
     private val closed = AtomicBoolean(false)
+    private val workLock = Any()
+    private var pendingWork: PendingWork? = null
+    private var drainScheduled = false
+
+    private sealed class PendingWork : AutoCloseable {
+        class Change(
+            val change: TshTextChange,
+            val before: TshTextSnapshotLease,
+            val after: TshTextSnapshotLease,
+            val forceFullParse: Boolean
+        ) : PendingWork() {
+            override fun close() {
+                before.close()
+                after.close()
+            }
+        }
+
+        class Snapshot(val lease: TshTextSnapshotLease) : PendingWork() {
+            override fun close() = lease.close()
+        }
+    }
 
     private fun attach(
         view: EditorView,
@@ -81,24 +103,7 @@ class TshPieceTreeIncrementalSession private constructor(
                 return
             }
         }
-        if (!enqueue {
-            try {
-                if (closed.get()) return@enqueue
-                when (val parsed = parserOwner.parse(
-                    lease,
-                    provider,
-                    treeRevision,
-                    oldTree = null
-                )) {
-                    is TshResult.Success -> publish(parsed.value)
-                    is TshResult.Failure -> reportFailure(parsed)
-                }
-            } finally {
-                lease.close()
-            }
-        }) {
-            lease.close()
-        }
+        enqueueSnapshot(lease)
     }
 
     private fun enqueueChange(
@@ -106,26 +111,115 @@ class TshPieceTreeIncrementalSession private constructor(
         before: TshTextSnapshotLease,
         after: TshTextSnapshotLease
     ) {
-        if (!enqueue {
+        var discarded: PendingWork? = null
+        var schedule = false
+        synchronized(workLock) {
+            if (closed.get()) {
+                discarded = PendingWork.Change(change, before, after, forceFullParse = true)
+            } else {
+                discarded = pendingWork
+                // Any replaced pending item represents an intermediate version we will skip.
+                // The latest after Snapshot is authoritative, so force a full parse for it.
+                val forceFull = discarded != null
+                pendingWork = PendingWork.Change(change, before, after, forceFull)
+                if (!drainScheduled) {
+                    drainScheduled = true
+                    schedule = true
+                }
+            }
+        }
+        discarded?.close()
+        if (schedule) scheduleDrain()
+    }
+
+    private fun enqueueSnapshot(lease: TshTextSnapshotLease): Boolean {
+        var discarded: PendingWork? = null
+        var schedule = false
+        synchronized(workLock) {
+            if (closed.get()) {
+                discarded = PendingWork.Snapshot(lease)
+            } else {
+                discarded = pendingWork
+                pendingWork = PendingWork.Snapshot(lease)
+                if (!drainScheduled) {
+                    drainScheduled = true
+                    schedule = true
+                }
+            }
+        }
+        discarded?.close()
+        if (closed.get()) return false
+        if (schedule) scheduleDrain()
+        return true
+    }
+
+    private fun scheduleDrain() {
+        try {
+            worker.execute(::drainPendingWork)
+        } catch (error: RejectedExecutionException) {
+            val abandoned = synchronized(workLock) {
+                drainScheduled = false
+                pendingWork.also { pendingWork = null }
+            }
+            abandoned?.close()
+            reportFailure(failure(
+                "TSH-PIECETREE-SESSION-002",
+                "Incremental session worker rejected pending work",
+                error
+            ))
+        }
+    }
+
+    private fun drainPendingWork() {
+        while (true) {
+            val work = synchronized(workLock) {
+                if (closed.get()) {
+                    drainScheduled = false
+                    null
+                } else {
+                    val next = pendingWork
+                    pendingWork = null
+                    if (next == null) drainScheduled = false
+                    next
+                }
+            } ?: return
+
             try {
-                if (closed.get()) return@enqueue
-                val nextRevision = Math.addExact(treeRevision, 1L)
+                process(work)
+            } catch (error: Exception) {
+                reportFailure(failure(
+                    "TSH-PIECETREE-SESSION-001",
+                    "Incremental session worker failed: ${error.message}",
+                    error
+                ))
+            } finally {
+                work.close()
+            }
+        }
+    }
+
+    private fun process(work: PendingWork) {
+        if (closed.get()) return
+        val nextRevision = Math.addExact(treeRevision, 1L)
+        when (work) {
+            is PendingWork.Snapshot -> parseFull(work.lease, currentTree, nextRevision)
+            is PendingWork.Change -> {
                 val oldTree = currentTree
-                if (oldTree == null ||
-                    oldTree.snapshot.documentVersion != change.beforeVersion ||
-                    oldTree.snapshot.documentId != change.documentId
+                if (work.forceFullParse || oldTree == null ||
+                    oldTree.snapshot.documentVersion != work.change.beforeVersion ||
+                    oldTree.snapshot.documentId != work.change.documentId
                 ) {
-                    parseFull(after, oldTree, nextRevision)
-                    return@enqueue
+                    parseFull(work.after, oldTree, nextRevision)
+                    return
                 }
 
                 when (val updated = TshTreeSitterIncrementalUpdate.apply(
                     parserOwner = parserOwner,
                     textProvider = provider,
                     oldTree = oldTree,
-                    beforeSnapshotLease = before,
-                    change = change,
-                    afterSnapshotLease = after,
+                    beforeSnapshotLease = work.before,
+                    change = work.change,
+                    afterSnapshotLease = work.after,
                     targetTreeRevision = nextRevision
                 )) {
                     is TshResult.Success -> {
@@ -135,30 +229,19 @@ class TshPieceTreeIncrementalSession private constructor(
                     is TshResult.Failure -> {
                         reportFailure(updated)
                         val treeNow = oldTree.snapshot
-                        if (treeNow.documentVersion == change.afterVersion &&
+                        if (treeNow.documentVersion == work.change.afterVersion &&
                             oldTree.registration.descriptor.metadata["treeState"] == "EDITED_PENDING_PARSE"
                         ) {
-                            // Native edits completed; retry only the parse stage against the
-                            // already-edited tree. Do not apply the same edits a second time.
-                            parseEditedPending(after, oldTree, nextRevision)
+                            // Native edits completed; retry only the parse stage. Do not apply the
+                            // same edits twice. If more changes are pending, the next pass may
+                            // coalesce them into a full parse of the latest snapshot.
+                            parseEditedPending(work.after, oldTree, nextRevision)
                         } else {
-                            parseFull(after, oldTree, nextRevision)
+                            parseFull(work.after, oldTree, nextRevision)
                         }
                     }
                 }
-            } catch (error: Exception) {
-                reportFailure(failure(
-                    "TSH-PIECETREE-SESSION-001",
-                    "Incremental session worker failed: ${error.message}",
-                    error
-                ))
-            } finally {
-                before.close()
-                after.close()
             }
-        }) {
-            before.close()
-            after.close()
         }
     }
 
@@ -181,8 +264,8 @@ class TshPieceTreeIncrementalSession private constructor(
             is TshResult.Failure -> {
                 treeRevision = nextRevision
                 reportFailure(parsed)
-                // Keep EDITED_PENDING_PARSE registered. A later document change can continue
-                // editing it and parse the latest version, or the host can call resync().
+                // Keep EDITED_PENDING_PARSE registered. A later change can continue editing it,
+                // or a later resync can replace it with a full parse.
             }
         }
     }
@@ -211,9 +294,8 @@ class TshPieceTreeIncrementalSession private constructor(
     }
 
     /**
-     * Rebuilds from the current document snapshot after an external buffer replacement or a
-     * binding invalidation. Call on the EditorView edit thread so PieceTree snapshot creation
-     * cannot race an in-progress edit.
+     * Rebuilds from the current document snapshot after an external buffer replacement.
+     * Call on the EditorView main thread so PieceTree snapshot creation cannot race an edit.
      */
     fun resync(): Boolean {
         check(Looper.myLooper() == Looper.getMainLooper()) {
@@ -227,19 +309,7 @@ class TshPieceTreeIncrementalSession private constructor(
                 return false
             }
         }
-        if (!enqueue {
-            try {
-                if (closed.get()) return@enqueue
-                val nextRevision = Math.addExact(treeRevision, 1L)
-                parseFull(lease, currentTree, nextRevision)
-            } finally {
-                lease.close()
-            }
-        }) {
-            lease.close()
-            return false
-        }
-        return true
+        return enqueueSnapshot(lease)
     }
 
     private fun publish(tree: TshOwnedSyntaxTree) {
@@ -255,27 +325,18 @@ class TshPieceTreeIncrementalSession private constructor(
         if (!closed.get()) runCatching { onFailure(result) }
     }
 
-    private fun enqueue(task: () -> Unit): Boolean {
-        if (closed.get()) return false
-        return try {
-            worker.execute(task)
-            true
-        } catch (error: RejectedExecutionException) {
-            reportFailure(failure(
-                "TSH-PIECETREE-SESSION-002",
-                "Incremental session worker rejected a task",
-                error
-            ))
-            false
-        }
-    }
-
     override fun close() {
         check(Looper.myLooper() == Looper.getMainLooper()) {
             "TshPieceTreeIncrementalSession.close must run on the EditorView main thread"
         }
         if (!closed.compareAndSet(false, true)) return
         binding.close()
+        val abandoned = synchronized(workLock) {
+            pendingWork.also {
+                pendingWork = null
+            }
+        }
+        abandoned?.close()
         try {
             worker.execute {
                 currentTree?.let(parserOwner::retireTree)
@@ -300,6 +361,9 @@ class TshPieceTreeIncrementalSession private constructor(
             onTreeUpdated: (TshOwnedSyntaxTree) -> Unit = {},
             onFailure: (TshResult.Failure) -> Unit = {}
         ): TshPieceTreeIncrementalSession {
+            check(Looper.myLooper() == Looper.getMainLooper()) {
+                "TshPieceTreeIncrementalSession.attach must run on the EditorView main thread"
+            }
             require(documentId.isNotBlank()) { "documentId must not be blank" }
             val worker = Executors.newSingleThreadExecutor { task ->
                 Thread(task, "tsh-piecetree-${documentId.take(48)}").apply { isDaemon = true }
@@ -320,10 +384,10 @@ class TshPieceTreeIncrementalSession private constructor(
             code: String,
             message: String,
             cause: Throwable? = null
-        ) = TshResult.Failure(listOf(com.zerostudio.idea.treesitter.tsh.api.TshDiagnostic(
+        ) = TshResult.Failure(listOf(TshDiagnostic(
             code = code,
-            severity = com.zerostudio.idea.treesitter.tsh.api.TshDiagnosticSeverity.ERROR,
-            stage = com.zerostudio.idea.treesitter.tsh.api.TshDiagnosticStage.PARSE,
+            severity = TshDiagnosticSeverity.ERROR,
+            stage = TshDiagnosticStage.PARSE,
             message = message,
             cause = cause
         )))
