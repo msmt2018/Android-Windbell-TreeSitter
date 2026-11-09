@@ -102,7 +102,10 @@ interface TshRenderProvider {
     val apiVersion: Int
     val capabilities: TshCapabilitySet
 
-    /** QUEUED may be acknowledged asynchronously; final statuses are returned after drawing. */
+    /**
+     * QUEUED may be acknowledged asynchronously after this method returns. Synchronous providers
+     * return a final receipt directly and must not invoke acknowledger before returning.
+     */
     fun submit(plan: TshRenderPlan, acknowledger: TshRenderAcknowledger): TshResult<TshRenderReceipt>
 
     fun cancel(planId: TshRenderPlanId): TshResult<Unit> = TshResult.Failure(listOf(TshDiagnostic(
@@ -168,11 +171,12 @@ class TshRenderCoordinator(
             }
             is TshResult.Success -> {
                 val receipt = submitted.value
+                validateReceipt(plan, receipt)?.let { problem ->
+                    synchronized(lock) { pending.remove(plan.id) }
+                    return TshResult.Failure(listOf(problem))
+                }
                 if (receipt.status == TshRenderReceiptStatus.QUEUED) {
-                    validateReceipt(plan, receipt)?.let { problem ->
-                        synchronized(lock) { pending.remove(plan.id) }
-                        TshResult.Failure(listOf(problem))
-                    } ?: TshResult.Success(receipt, submitted.diagnostics + receipt.diagnostics)
+                    TshResult.Success(receipt, submitted.diagnostics + receipt.diagnostics)
                 } else {
                     acknowledge(receipt)
                 }
