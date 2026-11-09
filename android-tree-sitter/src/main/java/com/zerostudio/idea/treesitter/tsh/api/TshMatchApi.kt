@@ -34,9 +34,14 @@ data class TshMatchProvenance(
             TshMatchSource.TREE_SITTER_ATS -> {
                 require(!grammarFingerprint.isNullOrBlank())
                 require(!queryId.isNullOrBlank())
-                require(!regexId.isNullOrBlank().not()) { "Tree-sitter provenance must not masquerade as Regex" }
+                require(regexId.isNullOrBlank()) { "Tree-sitter provenance must not contain a Regex id" }
             }
-            TshMatchSource.REGEX -> require(!regexId.isNullOrBlank())
+            TshMatchSource.REGEX -> {
+                require(!regexId.isNullOrBlank())
+                require(grammarFingerprint.isNullOrBlank() && queryId.isNullOrBlank()) {
+                    "Regex provenance must not masquerade as Tree-sitter"
+                }
+            }
         }
     }
 }
@@ -92,6 +97,7 @@ data class TshMatch(
         require(documentVersion >= 0L)
         require(pipelineRevision.isNotBlank())
         require(patternIndex == null || patternIndex >= 0)
+        require(captureName == null || captureName.isNotBlank())
         require(range.start.coordinateSystem == TshCoordinateSystem.UTF16_CODE_UNIT) {
             "Canonical Match range must use UTF16_CODE_UNIT"
         }
@@ -115,6 +121,9 @@ data class TshMatchSet(
         require(documentVersion >= 0L)
         require(matches.all { it.documentId == documentId && it.documentVersion == documentVersion })
         require(matches.map { it.id }.distinct().size == matches.size)
+        require(treeSitterRevision == null || treeSitterRevision.isNotBlank())
+        require(regexRevision == null || regexRevision.isNotBlank())
+        require(configRevision == null || configRevision.isNotBlank())
     }
 
     fun isCurrentFor(
@@ -133,6 +142,15 @@ data class TshMatchSet(
 
 /** Deterministic merge point for the two execution pipelines; it does not perform styling or drawing. */
 object TshMatchMerger {
+    private data class DedupKey(
+        val source: TshMatchSource,
+        val ruleId: String,
+        val captureName: String?,
+        val start: Long,
+        val end: Long,
+        val pipelineRevision: String
+    )
+
     fun merge(
         documentId: TshDocumentId,
         documentVersion: Long,
@@ -146,7 +164,13 @@ object TshMatchMerger {
         if (documentVersion < 0L) return failure("TSH-MATCH-001", "Document version must be non-negative")
         val outputDiagnostics = diagnostics.toMutableList()
         val accepted = input.filter { match ->
-            val valid = match.documentId == documentId && match.documentVersion == documentVersion
+            val expectedPipelineRevision = when (match.source) {
+                TshMatchSource.TREE_SITTER_ATS -> treeSitterRevision
+                TshMatchSource.REGEX -> regexRevision
+            }
+            val valid = match.documentId == documentId &&
+                match.documentVersion == documentVersion &&
+                (expectedPipelineRevision == null || match.pipelineRevision == expectedPipelineRevision)
             if (!valid) outputDiagnostics += TshDiagnostic(
                 code = "TSH-MATCH-002",
                 severity = TshDiagnosticSeverity.WARNING,
@@ -155,13 +179,12 @@ object TshMatchMerger {
             )
             valid
         }
-        val deduplicated = LinkedHashMap<String, TshMatch>()
+        val deduplicated = LinkedHashMap<DedupKey, TshMatch>()
         accepted.forEach { match ->
-            val key = listOf(
-                match.source.name, match.ruleId.value, match.captureName.orEmpty(),
-                match.range.start.offset.toString(), match.range.end.offset.toString(),
-                match.pipelineRevision
-            ).joinToString("|")
+            val key = DedupKey(
+                match.source, match.ruleId.value, match.captureName,
+                match.range.start.offset, match.range.end.offset, match.pipelineRevision
+            )
             deduplicated.putIfAbsent(key, match)
         }
         val sorted = deduplicated.values.sortedWith(
