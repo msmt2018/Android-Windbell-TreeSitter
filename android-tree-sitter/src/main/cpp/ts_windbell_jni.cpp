@@ -10,6 +10,7 @@
 #include <string>
 #include <cstdint>
 #include <cstring>
+#include <utility>
 
 #include "tsh/WindbellTshCore.h"
 #include "tsh/WindbellTshCompiler.h"
@@ -19,6 +20,26 @@
 #include "ts__log.h"
 
 using namespace windbell::tsh;
+
+namespace {
+/** Pins/accesses JVM UTF-16 storage without allocating a second native vector copy. */
+class ScopedStringChars {
+public:
+    ScopedStringChars(JNIEnv* env, jstring value)
+        : env_(env), value_(value), chars_(env && value ? env->GetStringChars(value, nullptr) : nullptr) {}
+    ~ScopedStringChars() {
+        if (chars_) env_->ReleaseStringChars(value_, chars_);
+    }
+    ScopedStringChars(const ScopedStringChars&) = delete;
+    ScopedStringChars& operator=(const ScopedStringChars&) = delete;
+    const jchar* get() const { return chars_; }
+    explicit operator bool() const { return chars_ != nullptr; }
+private:
+    JNIEnv* env_;
+    jstring value_;
+    const jchar* chars_;
+};
+}
 
 extern "C" {
 
@@ -131,21 +152,21 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlight(
     }
 
     const jsize len = env->GetStringLength(text_jstr);
-    if (len == 0) {
-        return env->NewIntArray(0);
+    if (len == 0) return env->NewIntArray(0);
+
+    // Avoid an additional full-document std::vector<uint16_t> allocation.
+    std::vector<HighlightSpan> spans;
+    {
+        ScopedStringChars chars(env, text_jstr);
+        if (!chars) return nullptr;
+        spans = WindbellEngine::getInstance().highlightHybrid(
+            tree ? ts_tree_language(tree) : nullptr,
+            tree,
+            reinterpret_cast<const uint16_t*>(chars.get()),
+            static_cast<uint32_t>(len),
+            ext_str
+        );
     }
-
-    // 利用 UTF-16LE 零重编码特征：无损获取 Java 内存原始双字节字符流
-    std::vector<uint16_t> buffer(len);
-    env->GetStringRegion(text_jstr, 0, len, reinterpret_cast<jchar*>(buffer.data()));
-
-    std::vector<HighlightSpan> spans = WindbellEngine::getInstance().highlightHybrid(
-        tree ? ts_tree_language(tree) : nullptr,
-        tree,
-        buffer.data(),
-        static_cast<uint32_t>(len),
-        ext_str
-    );
 
     const jsize out_size = static_cast<jsize>(spans.size() * 3);
     jintArray result = env->NewIntArray(out_size);
@@ -192,12 +213,15 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeComputeFolds(
     }
 
     const jsize len = env->GetStringLength(text_jstr);
-    std::vector<uint16_t> buffer(len);
-    env->GetStringRegion(text_jstr, 0, len, reinterpret_cast<jchar*>(buffer.data()));
-
-    std::vector<FoldRange> folds = WindbellEngine::getInstance().computeFoldRanges(
-        tree, buffer.data(), static_cast<uint32_t>(len), ext_str
-    );
+    std::vector<FoldRange> folds;
+    {
+        ScopedStringChars chars(env, text_jstr);
+        if (!chars) return nullptr;
+        folds = WindbellEngine::getInstance().computeFoldRanges(
+            tree, reinterpret_cast<const uint16_t*>(chars.get()),
+            static_cast<uint32_t>(len), ext_str
+        );
+    }
 
     const jsize out_size = static_cast<jsize>(folds.size() * 3);
     jintArray result = env->NewIntArray(out_size);
@@ -244,10 +268,15 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeGetOutline(
     }
 
     const jsize len = env->GetStringLength(text_jstr);
-    std::vector<uint16_t> buffer(len);
-    env->GetStringRegion(text_jstr, 0, len, reinterpret_cast<jchar*>(buffer.data()));
-
-    std::vector<OutlineTag> tags = WindbellEngine::getInstance().computeOutline(tree, buffer.data(), len, ext_str);
+    std::vector<OutlineTag> tags;
+    {
+        ScopedStringChars chars(env, text_jstr);
+        if (!chars) return nullptr;
+        tags = WindbellEngine::getInstance().computeOutline(
+            tree, reinterpret_cast<const uint16_t*>(chars.get()),
+            static_cast<uint32_t>(len), ext_str
+        );
+    }
 
     jclass strClass = env->FindClass("java/lang/String");
     if (!strClass) {
