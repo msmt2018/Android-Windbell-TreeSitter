@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <cstring>
 #include <utility>
+#include <limits>
 
 #include "tsh/WindbellTshCore.h"
 #include "tsh/WindbellTshCompiler.h"
@@ -168,6 +169,10 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlight(
         );
     }
 
+    if (spans.size() > static_cast<size_t>(std::numeric_limits<jsize>::max() / 3)) {
+        throw_npe(env, "Highlight result exceeds Java array capacity");
+        return nullptr;
+    }
     const jsize out_size = static_cast<jsize>(spans.size() * 3);
     jintArray result = env->NewIntArray(out_size);
     if (!result) {
@@ -175,14 +180,22 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlight(
         return nullptr;
     }
 
-    std::vector<jint> flat_spans(out_size);
-    for (size_t i = 0; i < spans.size(); ++i) {
-        flat_spans[i * 3 + 0] = static_cast<jint>(spans[i].start_byte);
-        flat_spans[i * 3 + 1] = static_cast<jint>(spans[i].end_byte);
-        flat_spans[i * 3 + 2] = static_cast<jint>(spans[i].style_id | (static_cast<uint32_t>(spans[i].flags) << 16));
+    // Flatten in bounded batches: do not allocate another N*3 native array beside spans and
+    // the destination Java array for large documents.
+    constexpr size_t kBatchSpans = 1024;
+    jint batch[kBatchSpans * 3];
+    for (size_t base = 0; base < spans.size(); base += kBatchSpans) {
+        const size_t count = std::min(kBatchSpans, spans.size() - base);
+        for (size_t i = 0; i < count; ++i) {
+            const auto& span = spans[base + i];
+            batch[i * 3 + 0] = static_cast<jint>(span.start_byte);
+            batch[i * 3 + 1] = static_cast<jint>(span.end_byte);
+            batch[i * 3 + 2] = static_cast<jint>(span.style_id | (static_cast<uint32_t>(span.flags) << 16));
+        }
+        env->SetIntArrayRegion(result, static_cast<jsize>(base * 3),
+            static_cast<jsize>(count * 3), batch);
+        if (env->ExceptionCheck()) return nullptr;
     }
-
-    env->SetIntArrayRegion(result, 0, out_size, flat_spans.data());
     return result;
 }
 
@@ -223,6 +236,10 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeComputeFolds(
         );
     }
 
+    if (folds.size() > static_cast<size_t>(std::numeric_limits<jsize>::max() / 3)) {
+        throw_npe(env, "Fold result exceeds Java array capacity");
+        return nullptr;
+    }
     const jsize out_size = static_cast<jsize>(folds.size() * 3);
     jintArray result = env->NewIntArray(out_size);
     if (!result) {
@@ -230,14 +247,20 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeComputeFolds(
         return nullptr;
     }
 
-    std::vector<jint> flat_folds(out_size);
-    for (size_t i = 0; i < folds.size(); ++i) {
-        flat_folds[i * 3 + 0] = static_cast<jint>(folds[i].start_byte);
-        flat_folds[i * 3 + 1] = static_cast<jint>(folds[i].end_byte);
-        flat_folds[i * 3 + 2] = static_cast<jint>(folds[i].kind);
+    constexpr size_t kBatchFolds = 1024;
+    jint batch[kBatchFolds * 3];
+    for (size_t base = 0; base < folds.size(); base += kBatchFolds) {
+        const size_t count = std::min(kBatchFolds, folds.size() - base);
+        for (size_t i = 0; i < count; ++i) {
+            const auto& fold = folds[base + i];
+            batch[i * 3 + 0] = static_cast<jint>(fold.start_byte);
+            batch[i * 3 + 1] = static_cast<jint>(fold.end_byte);
+            batch[i * 3 + 2] = static_cast<jint>(fold.kind);
+        }
+        env->SetIntArrayRegion(result, static_cast<jsize>(base * 3),
+            static_cast<jsize>(count * 3), batch);
+        if (env->ExceptionCheck()) return nullptr;
     }
-
-    env->SetIntArrayRegion(result, 0, out_size, flat_folds.data());
     return result;
 }
 
