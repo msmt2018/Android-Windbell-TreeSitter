@@ -23,6 +23,24 @@ class TshTextAccessProviderContractTest {
     }
 
     @Test
+    fun textAccessProviderParticipatesInEngineCapabilityNegotiation() {
+        val hostDocument = Any()
+        val objects = TshObjectRegistry()
+        val providers = TshProviderRegistry()
+        val provider = Provider()
+        providers.register(provider)
+        val descriptor = objects.register(hostDocument, "document")
+        val resolution = providers.resolveFor(
+            hostDocument,
+            descriptor,
+            required = TshCapabilitySet.of(TshCapability("text.snapshot", 1))
+        )
+        assertTrue(resolution.isSatisfiable)
+        assertTrue(resolution.selectedProviders.any { it === provider })
+        assertTrue(provider.capabilities.contains("text.chunk"))
+    }
+
+    @Test
     fun readsBoundedChunksWithoutFlatteningContract() {
         val provider = Provider()
         val lease = (provider.acquireSnapshot(Any()) as TshResult.Success).value
