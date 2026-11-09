@@ -170,21 +170,45 @@ class TshAndroidSpannableRenderer(
         plan: TshRenderPlan,
         acknowledger: TshRenderAcknowledger
     ): TshResult<TshRenderReceipt> {
-        if (!target.isOnRenderThread()) {
+        val onRenderThread = try {
+            target.isOnRenderThread()
+        } catch (error: Exception) {
+            return failure("TSH-ANDROID-RENDER-024", "Cannot verify host render thread: ${error.message}")
+        } catch (error: LinkageError) {
+            return failure("TSH-ANDROID-RENDER-025", "Host render-thread check failed with a linkage error")
+        }
+        if (!onRenderThread) {
             return failure("TSH-ANDROID-RENDER-001", "Spannable rendering must run on the host render thread")
         }
         val documentId = plan.revisions.documentId.value
-        if (!acknowledger.isCurrent(plan.id, plan.revisions) ||
-            target.currentRevisions(documentId) != plan.revisions) {
+        val initiallyCurrent = try {
+            acknowledger.isCurrent(plan.id, plan.revisions) &&
+                target.currentRevisions(documentId) == plan.revisions
+        } catch (error: Exception) {
+            return failure("TSH-ANDROID-RENDER-026", "Cannot verify initial render revisions: ${error.message}")
+        } catch (error: LinkageError) {
+            return failure("TSH-ANDROID-RENDER-027", "Initial revision check failed with a linkage error")
+        }
+        if (!initiallyCurrent) {
             return failure("TSH-ANDROID-RENDER-002", "RenderPlan is stale before Spannable mutation")
         }
-        val spannable = target.resolveSpannable(documentId)
-            ?: return failure("TSH-ANDROID-RENDER-003", "Host did not provide a Spannable for the document")
-        val viewport = target.visibleRangeUtf16(documentId)
-            ?: return failure(
-                "TSH-ANDROID-RENDER-018",
-                "Host must provide a bounded UTF-16 viewport; whole-document Span rendering is disabled by default"
-            )
+        val spannable = try {
+            target.resolveSpannable(documentId)
+        } catch (error: Exception) {
+            return failure("TSH-ANDROID-RENDER-028", "Host Spannable resolution failed: ${error.message}")
+        } catch (error: LinkageError) {
+            return failure("TSH-ANDROID-RENDER-029", "Host Spannable resolution failed with a linkage error")
+        } ?: return failure("TSH-ANDROID-RENDER-003", "Host did not provide a Spannable for the document")
+        val viewport = try {
+            target.visibleRangeUtf16(documentId)
+        } catch (error: Exception) {
+            return failure("TSH-ANDROID-RENDER-030", "Host viewport lookup failed: ${error.message}")
+        } catch (error: LinkageError) {
+            return failure("TSH-ANDROID-RENDER-031", "Host viewport lookup failed with a linkage error")
+        } ?: return failure(
+            "TSH-ANDROID-RENDER-018",
+            "Host must provide a bounded UTF-16 viewport; whole-document Span rendering is disabled by default"
+        )
         if (viewport.endUtf16 > spannable.length.toLong()) {
             return failure(
                 "TSH-ANDROID-RENDER-015",
@@ -193,7 +217,13 @@ class TshAndroidSpannableRenderer(
         }
         val diagnostics = ArrayList<TshDiagnostic>()
         // Keep the last committed TSH spans until the replacement plan is fully applied.
-        val previousSpans = captureOwnedSpans(spannable)
+        val previousSpans = try {
+            captureOwnedSpans(spannable)
+        } catch (error: Exception) {
+            return failure("TSH-ANDROID-RENDER-032", "Cannot snapshot existing host Spans: ${error.message}")
+        } catch (error: LinkageError) {
+            return failure("TSH-ANDROID-RENDER-033", "Host Span snapshot failed with a linkage error")
+        }
 
         var appliedInstructionCount = 0
         var deferredInstructionCount = 0
@@ -249,8 +279,16 @@ class TshAndroidSpannableRenderer(
             val clippedToViewport = start != rawStart || end != rawEnd
             val style = instruction.style
             val diagnosticsBefore = diagnostics.size
-            val before = spannable.getSpans(start.toInt(), end.toInt(), CharacterStyle::class.java)
-                .count { it is TshAndroidOwnedSpan && it.ownerId == id && it.planId == plan.id.value }
+            val before = try {
+                spannable.getSpans(start.toInt(), end.toInt(), CharacterStyle::class.java)
+                    .count { it is TshAndroidOwnedSpan && it.ownerId == id && it.planId == plan.id.value }
+            } catch (error: Exception) {
+                removeNewOwnedSpans(spannable, previousSpans)
+                return failure("TSH-ANDROID-RENDER-034", "Cannot inspect existing spans in the target range: ${error.message}")
+            } catch (error: LinkageError) {
+                removeNewOwnedSpans(spannable, previousSpans)
+                return failure("TSH-ANDROID-RENDER-035", "Host Span inspection failed with a linkage error")
+            }
             val spanPriority = instruction.zIndex shl Spanned.SPAN_PRIORITY_SHIFT
             val spanFlags = Spannable.SPAN_EXCLUSIVE_EXCLUSIVE or spanPriority
             try {
@@ -262,8 +300,16 @@ class TshAndroidSpannableRenderer(
                 removeNewOwnedSpans(spannable, previousSpans)
                 return failure("TSH-ANDROID-RENDER-021", "Applying a Spannable style failed with a linkage error")
             }
-            val after = spannable.getSpans(start.toInt(), end.toInt(), CharacterStyle::class.java)
-                .count { it is TshAndroidOwnedSpan && it.ownerId == id && it.planId == plan.id.value }
+            val after = try {
+                spannable.getSpans(start.toInt(), end.toInt(), CharacterStyle::class.java)
+                    .count { it is TshAndroidOwnedSpan && it.ownerId == id && it.planId == plan.id.value }
+            } catch (error: Exception) {
+                removeNewOwnedSpans(spannable, previousSpans)
+                return failure("TSH-ANDROID-RENDER-036", "Cannot verify applied host spans: ${error.message}")
+            } catch (error: LinkageError) {
+                removeNewOwnedSpans(spannable, previousSpans)
+                return failure("TSH-ANDROID-RENDER-037", "Host Span verification failed with a linkage error")
+            }
             val hadWarning = diagnostics.size > diagnosticsBefore
             if (after > before) {
                 appliedInstructionCount++
