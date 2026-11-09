@@ -130,4 +130,23 @@ class TshRenderApiTest {
         assertTrue(result.diagnostics().any { it.code == "TSH-RENDER-020" })
         assertTrue(coordinator.pendingPlanIds().isEmpty())
     }
+
+    @Test
+    fun partialReceiptMustReportAtLeastOneAndFewerThanAllDrawnInstructions() {
+        val provider = object : TshRenderProvider {
+            override val id = "empty-partial-renderer"
+            override val apiVersion = 1
+            override val capabilities = TshCapabilitySet.of(TshCapability("render.color", 1))
+            override fun submit(plan: TshRenderPlan, acknowledger: TshRenderAcknowledger) =
+                TshResult.Success(TshRenderReceipt(
+                    plan.id, id, plan.revisions, TshRenderReceiptStatus.PARTIAL, 0
+                ))
+        }
+        val coordinator = TshRenderCoordinator(provider)
+        coordinator.updateCurrentRevisions(revisions())
+        val result = coordinator.submit(plan())
+        assertTrue(result is TshResult.Failure)
+        assertTrue(result.diagnostics().any { it.code == "TSH-RENDER-018" })
+        assertTrue(coordinator.pendingPlanIds().isEmpty())
+    }
 }
