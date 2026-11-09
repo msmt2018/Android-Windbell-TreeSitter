@@ -8,6 +8,7 @@ class TshOwnerScope(val id: String = "tsh-owner-${NEXT_ID.incrementAndGet()}") :
     private val nextActionId = AtomicLong(1L)
     private val actions = LinkedHashMap<Long, () -> Unit>()
     @Volatile private var closed = false
+    @Volatile private var closeFailures: List<TshDiagnostic> = emptyList()
 
     init { require(id.isNotBlank()) { "OwnerScope id must not be blank" } }
 
@@ -25,13 +26,34 @@ class TshOwnerScope(val id: String = "tsh-owner-${NEXT_ID.incrementAndGet()}") :
         return null
     }
 
-    override fun close() {
+    fun closeDiagnostics(): List<TshDiagnostic> = closeFailures
+
+    fun closeWithReport(): List<TshDiagnostic> {
         val pending = synchronized(lock) {
-            if (closed) return
+            if (closed) return closeFailures
             closed = true
             actions.values.toList().also { actions.clear() }
         }
-        pending.forEach { runCatching { it() } }
+        val failures = ArrayList<TshDiagnostic>()
+        pending.forEach { action ->
+            try {
+                action()
+            } catch (error: Throwable) {
+                failures += TshDiagnostic(
+                    code = "TSH-OWNER-001",
+                    severity = TshDiagnosticSeverity.ERROR,
+                    stage = TshDiagnosticStage.LIFECYCLE,
+                    message = "OwnerScope cleanup action failed",
+                    cause = error
+                )
+            }
+        }
+        closeFailures = failures.toList()
+        return closeFailures
+    }
+
+    override fun close() {
+        closeWithReport()
     }
 
     companion object {
