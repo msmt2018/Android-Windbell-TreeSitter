@@ -17,6 +17,9 @@
 - Engine 生命周期操作与 close() 由同一锁线性化；Engine 关闭时永久关闭 Object/Provider/CompiledQuery registries，阻止通过公开 Registry 属性在 shutdown 后重新发布对象、Provider 或 Query；新增并发/关闭测试源码。
 - 坐标转换拒绝将非 String CharSequence 隐式 toString() flatten，避免把 Piece Tree/Rope 等宿主缓冲区意外复制成全文 String；新增测试源码。
 - Native Resource/Query Lease 与 OwnerScope cleanup 在 JNI LinkageError 后仍继续释放依赖，并保留结构化诊断；新增测试源码。
+- Engine.strictProviderValidation 现在一致作用于 attach/refresh/resolveProviders；严格 attach 缺少必需能力时会回滚 Attachment 和对象注册，lenient 模式仍可返回 INCOMPLETE 报告。
+- Tree-sitter Query Cursor close、PredicateHandler 声明读取和 Provider.supports LinkageError 不再静默吞掉；错误转为结构化诊断，Cursor cleanup failure 不会覆盖为假成功。
+- RenderCoordinator 新增最大 pending plan 数量与 backpressure，Provider submission/cancel 的 LinkageError 会清理 pending 状态并返回诊断。
 - 新增 TSH Public API 最高层设计规范：明确 Host Ownership First、No Framework Lock-in、Capability negotiation、零拷贝文本访问、Long 坐标、版本安全、双管线、Renderer-owned drawing 和证据等级。
 - 新增 TshOwnerScope/TshAttachmentManager/TshAttachmentReport 与 Engine attach/inspect/refresh/detach，支持宿主对象身份注册、Provider 能力协商、OwnerScope 自动 detach；detach 不销毁宿主对象。
 - Provider Registry 增加 API 版本范围、Capability 最低版本、优先级、稳定选择、冲突/缺失诊断与 supports 异常隔离；TshEngineOptions 的严格模式和诊断开关接入 Provider resolution。
