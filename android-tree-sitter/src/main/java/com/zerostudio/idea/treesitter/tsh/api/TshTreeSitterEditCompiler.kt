@@ -36,14 +36,28 @@ object TshTreeSitterEditCompiler {
         }
 
         return try {
-            val endpoints = change.edits.flatMap { listOf(it.startUtf16, it.endUtf16) }
-            val points = Utf16EndpointPoints.build(before, endpoints)
+            val scanEndpoints = change.edits
+                .filter { it.startLine == null }
+                .flatMap { listOf(it.startUtf16, it.endUtf16) }
+            val points = if (scanEndpoints.isEmpty()) {
+                emptyMap()
+            } else {
+                Utf16EndpointPoints.build(before, scanEndpoints)
+            }
             val compiled = ArrayList<TSInputEdit>(change.edits.size)
             for (edit in change.edits) {
-                val startPoint = points[edit.startUtf16] ?: return failure(
+                val startPoint = if (edit.startLine != null) {
+                    pointFromUtf16Coordinates(edit.startLine, edit.startColumnUtf16!!)
+                } else {
+                    points[edit.startUtf16]
+                } ?: return failure(
                     "TSH-EDIT-COMPILE-005", "Edit start splits a UTF-16 surrogate pair or is invalid"
                 )
-                val oldEndPoint = points[edit.endUtf16] ?: return failure(
+                val oldEndPoint = if (edit.oldEndLine != null) {
+                    pointFromUtf16Coordinates(edit.oldEndLine, edit.oldEndColumnUtf16!!)
+                } else {
+                    points[edit.endUtf16]
+                } ?: return failure(
                     "TSH-EDIT-COMPILE-005", "Edit end splits a UTF-16 surrogate pair or is invalid"
                 )
                 val newEnd = Math.addExact(edit.startUtf16, edit.replacementLengthUtf16)
@@ -81,6 +95,12 @@ object TshTreeSitterEditCompiler {
                 "Tree-sitter Native object factory is unavailable", error)
         }
     }
+
+    private fun pointFromUtf16Coordinates(row: Int, columnUtf16: Long): TSPoint =
+        TSPoint.create(
+            row,
+            checkedColumn(Math.multiplyExact(columnUtf16, 2L))
+        )
 
     private fun checkedColumn(bytes: Long): Int {
         require(bytes >= 0L && bytes <= Int.MAX_VALUE.toLong()) {
