@@ -93,7 +93,7 @@ class TshAndroidSpannableRendererTest {
         assertEquals(TshAttachmentStatus.DETACHED, engine.inspectAttachment(binding.attachment.handle)?.status)
         assertTrue(engine.objects.find(target.hostObject) == null)
         assertTrue(engine.providers.all().none { it.id == renderer.id })
-        assertTrue(binding.closeDiagnostics().isEmpty())
+        assertTrue(binding.closeDiagnostics.isEmpty())
         binding.close()
         assertTrue(binding.closeDiagnostics().isEmpty())
         engine.close()
