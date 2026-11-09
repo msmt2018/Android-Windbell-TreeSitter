@@ -231,8 +231,8 @@ class TshSchemaRegistry {
         val rangeComparable = value !is TshDslValue.MeasureValue ||
             property.rangeUnit == null || value.unit == property.rangeUnit
         if (numeric != null && rangeComparable) {
-            val minimum = property.minimum?.let(BigDecimal::valueOf)
-            val maximum = property.maximum?.let(BigDecimal::valueOf)
+            val minimum = property.minimum?.let { BigDecimal.valueOf(it) }
+            val maximum = property.maximum?.let { BigDecimal.valueOf(it) }
             if (minimum != null && numeric < minimum) errors += diagnostic(
                 "TSH-SCHEMA-009", TshDiagnosticSeverity.ERROR,
                 "Property '$name' is below minimum ${property.minimum}${property.rangeUnit ?: ""}"
