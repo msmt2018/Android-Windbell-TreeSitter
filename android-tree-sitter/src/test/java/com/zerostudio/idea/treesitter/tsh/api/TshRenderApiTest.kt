@@ -136,7 +136,7 @@ class TshRenderApiTest {
             override val capabilities = TshCapabilitySet.of(TshCapability("render.color", 1))
             override fun submit(plan: TshRenderPlan, acknowledger: TshRenderAcknowledger) =
                 TshResult.Success(TshRenderReceipt(
-                    plan.id, id, plan.revisions, TshRenderReceiptStatus.PARTIAL, 1
+                    plan.id, id, plan.revisions, TshRenderReceiptStatus.PARTIAL, 1, droppedInstructionCount = 1
                 ))
         }
         val coordinator = TshRenderCoordinator(provider)
