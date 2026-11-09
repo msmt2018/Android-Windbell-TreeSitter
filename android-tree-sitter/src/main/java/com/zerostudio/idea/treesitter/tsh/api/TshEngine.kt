@@ -26,6 +26,10 @@ class TshEngine private constructor(val options: TshEngineOptions) : AutoCloseab
     val state: TshEngineState
         get() = stateRef.get()
 
+    /** Native close failures captured during Engine shutdown; available after close(). */
+    val shutdownDiagnostics: List<TshDiagnostic>
+        get() = nativeQueryLeases.closeDiagnostics() + nativeResources.closeDiagnostics()
+
     fun initialize(): TshResult<TshEngine> {
         while (true) {
             when (val current = stateRef.get()) {
