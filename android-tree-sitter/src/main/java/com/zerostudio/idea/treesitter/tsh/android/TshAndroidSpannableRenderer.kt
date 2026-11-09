@@ -7,6 +7,7 @@ import android.text.Spanned
 import android.text.TextPaint
 import android.text.style.CharacterStyle
 import android.text.style.MetricAffectingSpan
+import java.util.concurrent.atomic.AtomicLong
 import com.zerostudio.idea.treesitter.tsh.api.TshDiagnostic
 import com.zerostudio.idea.treesitter.tsh.api.TshDiagnosticSeverity
 import com.zerostudio.idea.treesitter.tsh.api.TshDiagnosticStage
@@ -40,6 +41,8 @@ interface TshAndroidSpannableRenderTarget {
     fun resolveTextSizePx(value: TshDslValue.MeasureValue): Float?
     fun invalidate(documentId: String)
 }
+
+private val NEXT_ANDROID_RENDERER_ID = AtomicLong(0L)
 
 private interface TshAndroidOwnedSpan {
     val ownerId: String
@@ -132,7 +135,7 @@ private class TshAndroidDecorationSpan(
  */
 class TshAndroidSpannableRenderer(
     private val target: TshAndroidSpannableRenderTarget,
-    override val id: String = "tsh-android-spannable"
+    override val id: String = "tsh-android-spannable-${NEXT_ANDROID_RENDERER_ID.incrementAndGet()}"
 ) : TshRenderProvider {
     override val apiVersion: Int = 1
     init { require(id.isNotBlank()) }
