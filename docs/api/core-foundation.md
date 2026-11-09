@@ -33,7 +33,7 @@ val initialized = engine.initialize()
 
 引擎当前提供 `objects`、`providers` 和 `attachments` 管理器。`attach/inspectAttachment/refreshAttachment/detach` 提供首版宿主接入闭环；`TshOwnerScope.close()` 会自动 detach，TSH 只注销自己的对象索引，不关闭宿主对象。该首个切片尚未接管原有 Native 解析和高亮服务；既有 `WindbellTshEngine` 仍是当前执行入口。不得把新门面初始化误认为 Native 子系统已经初始化。
 
-状态：CREATED -> INITIALIZED -> CLOSED。关闭后不能重新初始化；关闭会清理注册表。
+状态：CREATED -> INITIALIZED -> CLOSED。Engine 生命周期锁线性化 attach/refresh/provider resolution/Parser 与 Query adapter 创建和 close。关闭后不能重新初始化；ObjectRegistry、ProviderRegistry、CompiledQueryRegistry、Native Query/Resource registries 永久关闭并拒绝新发布。严格模式下 attach/refresh/resolveProviders 缺少必需能力返回 Failure；严格 attach 会回滚本次 Attachment/Object 发布，refresh 保留原绑定并报告当前 INCOMPLETE。宿主对象始终由宿主持有，detach 不会 close 宿主对象。
 
 ## TshObjectRegistry
 
