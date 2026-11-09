@@ -139,4 +139,41 @@ class TshTreeSitterEditCompilerTest {
         assertEquals(listOf(4, 4), edits.map { it.newEndPoint.column })
     }
 
+    @Test
+    fun replacementLfMetricsMatchTreeSitterCrLfAndCarriageReturnColumns() {
+        val crlfChange = TshTextChange(
+            "doc", 4L, 5L,
+            listOf(TshTextEdit(
+                startUtf16 = 1L,
+                endUtf16 = 1L,
+                replacement = "",
+                replacementLengthUtf16 = 4L,
+                replacementLineFeedCount = 1,
+                replacementTrailingUtf16Length = 1L
+            ))
+        )
+        val crlfResult = TshTreeSitterEditCompiler.compile(snapshot("abc"), crlfChange)
+        assertTrue(crlfResult is TshResult.Success)
+        val crlfEdit = (crlfResult as TshResult.Success<List<TSInputEdit>>).value.single()
+        assertEquals(1, crlfEdit.newEndPoint.row)
+        assertEquals(2, crlfEdit.newEndPoint.column)
+
+        val loneCrChange = TshTextChange(
+            "doc", 4L, 5L,
+            listOf(TshTextEdit(
+                startUtf16 = 1L,
+                endUtf16 = 1L,
+                replacement = "",
+                replacementLengthUtf16 = 3L,
+                replacementLineFeedCount = 0,
+                replacementTrailingUtf16Length = 3L
+            ))
+        )
+        val loneCrResult = TshTreeSitterEditCompiler.compile(snapshot("abc"), loneCrChange)
+        assertTrue(loneCrResult is TshResult.Success)
+        val loneCrEdit = (loneCrResult as TshResult.Success<List<TSInputEdit>>).value.single()
+        assertEquals(0, loneCrEdit.newEndPoint.row)
+        assertEquals(8, loneCrEdit.newEndPoint.column)
+    }
+
 }
