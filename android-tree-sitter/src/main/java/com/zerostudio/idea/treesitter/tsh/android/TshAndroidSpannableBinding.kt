@@ -14,8 +14,11 @@ class TshAndroidSpannableBinding private constructor(
 ) : AutoCloseable {
     private val closed = AtomicBoolean(false)
     val renderCoordinator = TshRenderCoordinator(renderer)
-    @Volatile var closeDiagnostics: List<TshDiagnostic> = emptyList()
+
+    @Volatile
+    var closeDiagnostics: List<TshDiagnostic> = emptyList()
         private set
+
     @Volatile private var cleanupRegistration: AutoCloseable? = null
     @Volatile private var detachSubscription: AutoCloseable? = null
 
@@ -25,92 +28,111 @@ class TshAndroidSpannableBinding private constructor(
         detachSubscription = registration
         if (closed.get()) {
             detachSubscription = null
-            runCatching { registration.close() }
+            closeRegistration(registration, "TSH-ANDROID-BINDING-009")
         }
     }
-    @Volatile private var closeFailureDiagnostics: List<TshDiagnostic> = emptyList()
-
-    /** Cleanup failures are observable even though AutoCloseable.close() has no result value. */
-    fun closeDiagnostics(): List<TshDiagnostic> = closeFailureDiagnostics
 
     internal fun installCleanup(registration: AutoCloseable) {
         cleanupRegistration = registration
         if (closed.get()) {
             cleanupRegistration = null
-            closeRegistration(registration, "TSH-ANDROID-BINDING-009")
+            closeRegistration(registration, "TSH-ANDROID-BINDING-010")
         }
     }
 
     override fun close() {
         if (!closed.compareAndSet(false, true)) return
         val failures = ArrayList<TshDiagnostic>()
+        failures += renderCoordinator.close().diagnostics()
+
         try {
             engine.detach(attachment.handle)
         } catch (error: Exception) {
             failures += closeDiagnostic(
-                "TSH-ANDROID-BINDING-010",
+                "TSH-ANDROID-BINDING-011",
                 "Cannot detach Android renderer attachment: ${error.message}",
                 error
             )
         } catch (error: LinkageError) {
             failures += closeDiagnostic(
-                "TSH-ANDROID-BINDING-011",
+                "TSH-ANDROID-BINDING-012",
                 "Android renderer detach failed with a linkage error",
                 error
             )
         }
+
         try {
             engine.providers.unregister(renderer.id)
         } catch (error: Exception) {
             failures += closeDiagnostic(
-                "TSH-ANDROID-BINDING-012",
+                "TSH-ANDROID-BINDING-013",
                 "Cannot unregister Android renderer Provider: ${error.message}",
                 error
             )
         } catch (error: LinkageError) {
             failures += closeDiagnostic(
-                "TSH-ANDROID-BINDING-013",
+                "TSH-ANDROID-BINDING-014",
                 "Android renderer Provider unregister failed with a linkage error",
                 error
             )
         }
+
         cleanupRegistration?.let { registration ->
             try {
                 registration.close()
             } catch (error: Exception) {
                 failures += closeDiagnostic(
-                    "TSH-ANDROID-BINDING-014",
+                    "TSH-ANDROID-BINDING-015",
                     "Cannot remove Android Binding OwnerScope cleanup registration: ${error.message}",
                     error
                 )
             } catch (error: LinkageError) {
                 failures += closeDiagnostic(
-                    "TSH-ANDROID-BINDING-015",
+                    "TSH-ANDROID-BINDING-016",
                     "Android Binding cleanup unregister failed with a linkage error",
                     error
                 )
             }
         }
         cleanupRegistration = null
-        closeFailureDiagnostics = failures.toList()
+
+        detachSubscription?.let { registration ->
+            try {
+                registration.close()
+            } catch (error: Exception) {
+                failures += closeDiagnostic(
+                    "TSH-ANDROID-BINDING-017",
+                    "Cannot remove attachment detach subscription: ${error.message}",
+                    error
+                )
+            } catch (error: LinkageError) {
+                failures += closeDiagnostic(
+                    "TSH-ANDROID-BINDING-018",
+                    "Attachment detach subscription failed with a linkage error",
+                    error
+                )
+            }
+        }
+        detachSubscription = null
+        closeDiagnostics = failures.toList()
     }
 
     private fun closeRegistration(registration: AutoCloseable, code: String) {
         try {
             registration.close()
         } catch (error: Exception) {
-            closeFailureDiagnostics = closeFailureDiagnostics + closeDiagnostic(
-                code, "Cannot remove Android Binding cleanup registration: ${error.message}", error
+            closeDiagnostics = closeDiagnostics + closeDiagnostic(
+                code, "Cannot remove Android Binding lifecycle registration: ${error.message}", error
             )
         } catch (error: LinkageError) {
-            closeFailureDiagnostics = closeFailureDiagnostics + closeDiagnostic(
-                code, "Android Binding cleanup registration failed with a linkage error", error
+            closeDiagnostics = closeDiagnostics + closeDiagnostic(
+                code, "Android Binding lifecycle registration failed with a linkage error", error
             )
         }
     }
 
     private fun closeDiagnostic(code: String, message: String, cause: Throwable) = TshDiagnostic(
-        code, TshDiagnosticSeverity.ERROR, TshDiagnosticStage.LIFECYCLE, message, cause = cause
+        code, TshDiagnosticSeverity.WARNING, TshDiagnosticStage.LIFECYCLE, message, cause = cause
     )
 
     companion object {
@@ -145,6 +167,7 @@ class TshAndroidSpannableBinding private constructor(
                     error
                 )
             }
+
             val attached = try {
                 engine.attach(
                     TshAttachmentRequest(
@@ -172,58 +195,60 @@ class TshAndroidSpannableBinding private constructor(
                     error
                 )
             }
+
             if (attached is TshResult.Failure) {
                 engine.providers.unregister(renderer.id)
                 return attached
             }
             val success = attached as TshResult.Success<TshAttachmentReport>
-            val report = success.value
-            val binding = TshAndroidSpannableBinding(engine, renderer, report)
-            val detachedSubscription = engine.attachments.subscribeDetached(report.handle) {
+            val binding = TshAndroidSpannableBinding(engine, renderer, success.value)
+
+            val detachedSubscription = engine.attachments.subscribeDetached(success.value.handle) {
                 binding.close()
             }
             if (detachedSubscription == null) {
                 binding.close()
                 return failure(
-                    "TSH-ANDROID-BINDING-009",
+                    "TSH-ANDROID-BINDING-007",
                     "Attachment was detached before its lifecycle observer could be installed"
                 )
             }
             binding.installDetachSubscription(detachedSubscription)
             if (binding.isClosed) {
                 return failure(
-                    "TSH-ANDROID-BINDING-010",
+                    "TSH-ANDROID-BINDING-008",
                     "Attachment was detached while the Android binding was being installed"
                 )
             }
+
             val cleanup = try {
                 ownerScope.registerCleanup { binding.close() }
             } catch (error: Exception) {
                 binding.close()
                 return failure(
-                    "TSH-ANDROID-BINDING-007",
+                    "TSH-ANDROID-BINDING-019",
                     "Cannot register Android binding cleanup: ${error.message}",
                     error
                 )
             } catch (error: LinkageError) {
                 binding.close()
                 return failure(
-                    "TSH-ANDROID-BINDING-008",
-                    "Android binding cleanup registration failed with a linkage error: ${error.message}",
+                    "TSH-ANDROID-BINDING-020",
+                    "Android binding cleanup registration failed with a linkage error",
                     error
                 )
             }
             if (cleanup == null) {
                 binding.close()
                 return failure(
-                    "TSH-ANDROID-BINDING-002",
+                    "TSH-ANDROID-BINDING-021",
                     "OwnerScope closed while Android renderer binding was being installed"
                 )
             }
             binding.installCleanup(cleanup)
             if (binding.isClosed) {
                 return failure(
-                    "TSH-ANDROID-BINDING-011",
+                    "TSH-ANDROID-BINDING-022",
                     "OwnerScope or Engine detached the Android binding during setup"
                 )
             }
