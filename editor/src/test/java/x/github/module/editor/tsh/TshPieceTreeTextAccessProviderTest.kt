@@ -173,4 +173,26 @@ class TshPieceTreeTextAccessProviderTest {
         assertTrue(provider.snapshot(document) is TshResult.Failure)
     }
 
+    @Test
+    fun editorBoundSnapshotFactoryRejectsCallsFromOtherThreads() {
+        val buffer = PieceTreeTextBufferBuilder("thread-bound").build()
+        val document = TshPieceTreeDocument(
+            "thread-bound-doc",
+            "text",
+            snapshotFactory = { buffer.createSnapshot() },
+            snapshotThread = Thread.currentThread()
+        )
+        val provider = TshPieceTreeTextAccessProvider()
+        var result: TshResult<com.zerostudio.idea.treesitter.tsh.api.TshTextSnapshot>? = null
+        val worker = Thread { result = provider.snapshot(document) }
+        worker.start()
+        worker.join()
+
+        assertTrue(result is TshResult.Failure)
+        assertEquals(
+            "TSH-PIECETREE-004",
+            (result as TshResult.Failure).diagnostics.single().code
+        )
+    }
+
 }
