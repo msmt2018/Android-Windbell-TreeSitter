@@ -36,7 +36,7 @@ interface TshAndroidSpannableRenderTarget {
     fun currentRevisions(documentId: String): TshRenderRevisions?
     fun resolveSpannable(documentId: String): Spannable?
     /** Return the host viewport in absolute UTF-16 code units; null means the whole Spannable. */
-    fun visibleRangeUtf16(documentId: String): TshAndroidVisibleRange? = null
+    fun visibleRangeUtf16(documentId: String): TshAndroidVisibleRange?
     fun resolveTextSizePx(value: TshDslValue.MeasureValue): Float?
     fun invalidate(documentId: String)
 }
@@ -181,7 +181,10 @@ class TshAndroidSpannableRenderer(
         val spannable = target.resolveSpannable(documentId)
             ?: return failure("TSH-ANDROID-RENDER-003", "Host did not provide a Spannable for the document")
         val viewport = target.visibleRangeUtf16(documentId)
-            ?: TshAndroidVisibleRange(0L, spannable.length.toLong())
+            ?: return failure(
+                "TSH-ANDROID-RENDER-018",
+                "Host must provide a bounded UTF-16 viewport; whole-document Span rendering is disabled by default"
+            )
         if (viewport.endUtf16 > spannable.length.toLong()) {
             return failure(
                 "TSH-ANDROID-RENDER-015",
