@@ -1,11 +1,12 @@
 package com.zerostudio.idea.treesitter.tsh
 
 import android.graphics.Color
+import android.graphics.Typeface
 import android.text.Spannable
 import android.text.SpannableStringBuilder
 import android.text.style.CharacterStyle
-import android.text.style.ForegroundColorSpan
-import android.text.style.StyleSpan
+import android.text.style.MetricAffectingSpan
+import android.text.TextPaint
 import com.zerostudio.idea.treesitter.TSLanguage
 import com.zerostudio.idea.treesitter.TSTree
 import dalvik.annotation.optimization.FastNative
@@ -51,6 +52,25 @@ class WindbellTshEngine private constructor() {
     )
 
     private val paletteCache = ConcurrentHashMap<String, Map<Int, StylePalette>>()
+
+    /** Marker used to remove only spans created by this engine. */
+    private interface TshOwnedSpan
+
+    private class TshForegroundColorSpan(private val color: Int) : CharacterStyle(), TshOwnedSpan {
+        override fun updateDrawState(textPaint: TextPaint) {
+            textPaint.color = color
+        }
+    }
+
+    private class TshBoldSpan : MetricAffectingSpan(), TshOwnedSpan {
+        override fun updateDrawState(textPaint: TextPaint) {
+            textPaint.typeface = Typeface.create(textPaint.typeface, Typeface.BOLD)
+        }
+
+        override fun updateMeasureState(textPaint: TextPaint) {
+            textPaint.typeface = Typeface.create(textPaint.typeface, Typeface.BOLD)
+        }
+    }
     
     // 主题切换开关：切换时无需重新走分词运算，仅刷新颜色绘制
     var isDarkTheme: Boolean = false
@@ -101,20 +121,30 @@ class WindbellTshEngine private constructor() {
         val spans = computeHighlights(tree, text, extension)
         val palette = paletteCache[extension] ?: emptyMap()
 
+        // Never remove host/editor spans. Only TSH-owned span instances are replaceable.
         val oldSpans = spannable.getSpans(0, spannable.length, CharacterStyle::class.java)
         for (old in oldSpans) {
-            spannable.removeSpan(old)
+            if (old is TshOwnedSpan) spannable.removeSpan(old)
         }
 
         for (span in spans) {
-            val charStart = span.startByte shr 1
-            val charEnd = (span.endByte shr 1).coerceAtMost(spannable.length)
+            // Native Tree-sitter offsets are UTF-16LE byte offsets for this legacy path.
+            // Reject malformed/odd/out-of-range ranges instead of silently rounding them.
+            if (span.startByte < 0 || span.endByte < span.startByte ||
+                (span.startByte and 1) != 0 || (span.endByte and 1) != 0) {
+                continue
+            }
+            val charStartLong = span.startByte.toLong() / 2L
+            val charEndLong = span.endByte.toLong() / 2L
+            if (charStartLong >= spannable.length.toLong() || charEndLong <= charStartLong) continue
+            val charStart = charStartLong.toInt()
+            val charEnd = minOf(charEndLong, spannable.length.toLong()).toInt()
             if (charStart < charEnd) {
                 val colorDef = palette[span.styleId]
                 val color = if (isDarkTheme) colorDef?.darkColor ?: Color.WHITE else colorDef?.lightColor ?: Color.BLACK
-                spannable.setSpan(ForegroundColorSpan(color), charStart, charEnd, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+                spannable.setSpan(TshForegroundColorSpan(color), charStart, charEnd, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
                 if ((span.fontFlags and 0x01) != 0) {
-                    spannable.setSpan(StyleSpan(android.graphics.Typeface.BOLD), charStart, charEnd, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+                    spannable.setSpan(TshBoldSpan(), charStart, charEnd, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
                 }
             }
         }
