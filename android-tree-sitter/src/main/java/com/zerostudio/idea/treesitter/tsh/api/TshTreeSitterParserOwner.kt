@@ -148,7 +148,7 @@ class TshTreeSitterParserOwner private constructor(
                 ownedTree.registration.descriptor.id
             )
         }
-        val lease = resources.acquire(ownedTree.registration.handle)
+        val lease = resources.acquireExclusive(ownedTree.registration.handle)
             ?: return failure(
                 "TSH-PARSER-OWNER-011",
                 "Cannot edit a retired or inaccessible syntax tree",
