@@ -1,6 +1,7 @@
 package com.zerostudio.idea.treesitter.tsh.api
 
 import com.zerostudio.idea.treesitter.TSNativeObject
+import java.util.concurrent.locks.StampedLock
 
 /**
  * Ownership-transfer registry for native resources shared by TSH operations.
@@ -12,7 +13,7 @@ import com.zerostudio.idea.treesitter.TSNativeObject
 class TshNativeResourceLeaseStore {
     class Handle<T : TSNativeObject> internal constructor(
         val objectId: TshObjectId,
-        val resource: T
+        internal val resource: T
     )
 
     internal class Entry<T : TSNativeObject>(
@@ -23,10 +24,12 @@ class TshNativeResourceLeaseStore {
         var leases = 0
         var retired = false
         var closed = false
+        val accessLock = StampedLock()
     }
 
     inner class Lease<T : TSNativeObject> internal constructor(
-        private val entry: Entry<T>
+        private val entry: Entry<T>,
+        private val readStamp: Long
     ) : AutoCloseable {
         internal val resource: T get() = entry.resource
         val objectId: TshObjectId get() = entry.objectId
@@ -38,14 +41,17 @@ class TshNativeResourceLeaseStore {
          */
         fun retain(): Lease<T>? = synchronized(lock) {
             if (released || entry.closed || !entry.resource.canAccess()) return@synchronized null
+            val childStamp = entry.accessLock.tryReadLock()
+            if (childStamp == 0L) return@synchronized null
             entry.leases++
-            Lease(entry)
+            Lease(entry, childStamp)
         }
 
         override fun close() {
             val closeNow = synchronized(lock) {
                 if (released) return
                 released = true
+                entry.accessLock.unlockRead(readStamp)
                 check(entry.leases > 0) { "Native resource lease count underflow" }
                 entry.leases--
                 takeForCloseIfReady(entry)
@@ -55,6 +61,28 @@ class TshNativeResourceLeaseStore {
     }
 
     private val lock = Any()
+    inner class ExclusiveLease<T : TSNativeObject> internal constructor(
+        private val entry: Entry<T>,
+        private val writeStamp: Long
+    ) : AutoCloseable {
+        internal val resource: T get() = entry.resource
+        val objectId: TshObjectId get() = entry.objectId
+        private var released = false
+
+        override fun close() {
+            val closeNow = synchronized(lock) {
+                if (released) return
+                released = true
+                entry.accessLock.unlockWrite(writeStamp)
+                check(entry.leases > 0) { "Native resource lease count underflow" }
+                entry.leases--
+                takeForCloseIfReady(entry)
+            }
+            closeNow?.closeSafely()
+        }
+    }
+
+
     private val entries = LinkedHashMap<TshObjectId, Entry<out TSNativeObject>>()
     private val closeFailures = ArrayList<TshDiagnostic>()
 
@@ -76,8 +104,21 @@ class TshNativeResourceLeaseStore {
         val entry = entries[handle.objectId] as? Entry<T> ?: return@synchronized null
         if (entry.resource !== handle.resource || entry.retired || entry.closed ||
             !entry.resource.canAccess()) return@synchronized null
+        val stamp = entry.accessLock.tryReadLock()
+        if (stamp == 0L) return@synchronized null
         entry.leases++
-        Lease(entry)
+        Lease(entry, stamp)
+    }
+
+    @Suppress("UNCHECKED_CAST")
+    fun <T : TSNativeObject> acquireExclusive(handle: Handle<T>): ExclusiveLease<T>? = synchronized(lock) {
+        val entry = entries[handle.objectId] as? Entry<T> ?: return@synchronized null
+        if (entry.resource !== handle.resource || entry.retired || entry.closed ||
+            !entry.resource.canAccess()) return@synchronized null
+        val stamp = entry.accessLock.tryWriteLock()
+        if (stamp == 0L) return@synchronized null
+        entry.leases++
+        ExclusiveLease(entry, stamp)
     }
 
     fun retire(objectId: TshObjectId): Boolean {
