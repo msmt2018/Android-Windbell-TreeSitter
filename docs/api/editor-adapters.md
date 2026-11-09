@@ -1,5 +1,7 @@
 # Editor、View 与组件适配 API 规范
 
+> 本文提供适配模式与示例；Provider/Binding 生命周期的规范权威来源为 [binding-events-and-extension.md](binding-events-and-extension.md)，RenderPlan/Receipt 权威契约为 [theme-style-render-contract-api.md](theme-style-render-contract-api.md)。
+
 ## 核心原则
 
 TSH 不要求宿主编辑器继承某个 TSH 基类，也不要求编辑器开放内部实现。宿主只需注册真实对象实例；TSH 通过能力协商选择 Provider。一个对象可以同时具有多个角色，例如同一个控件既是 Editor，又是 TextInputTarget、ViewportOwner 和 RenderHost。
@@ -42,7 +44,7 @@ TSH 必须在 attach report 中明确显示当前等级及缺失能力，不得�
 
 ## 编辑器控件兼容策略
 
-- Spannable 编辑器：可使用 Span Provider，但只移除 TSH 自己拥有的 Span，不能清除宿主 CharacterStyle。
+- Spannable 编辑器：可使用 TshAndroidSpannableRenderer 与 TshAndroidSpannableBinding.attachTo；宿主提供精确 hostObject、render-thread check、revision、Spannable、UTF-16 viewport、字体尺寸转换和 invalidate。只移除 TSH 自己拥有的 Span，不能清除宿主 CharacterStyle；viewport 必须有界。
 - Canvas 自绘编辑器：提供 Render Provider，将绘制命令提交到控件既有 draw pipeline。
 - Compose 编辑器：提供 Compose state/decorator adapter，不要求引擎依赖 Compose。
 - WebView/自定义渲染：提供 Decoration/Overlay Provider。
