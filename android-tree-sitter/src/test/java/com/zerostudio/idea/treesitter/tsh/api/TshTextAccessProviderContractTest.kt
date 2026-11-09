@@ -137,6 +137,30 @@ class TshTextAccessProviderContractTest {
         assertEquals("TSH-TEXT-LEASE-001", (result as TshResult.Failure).diagnostics.single().code)
     }
 
+
+    @Test
+    fun invalidSnapshotMetadataIsReturnedAsStructuredFailure() {
+        val invalid = object : TshTextSnapshot {
+            override val documentId = ""
+            override val version = -1L
+            override val lengthUtf16 = -1L
+            override fun readUtf16(start: Long, end: Long): CharSequence = ""
+        }
+        val provider = ProviderWithSnapshot(invalid)
+        val result = provider.acquireSnapshot(Any())
+        assertTrue(result is TshResult.Failure)
+        assertEquals("TSH-TEXT-011", (result as TshResult.Failure).diagnostics.single().code)
+    }
+
+    @Test
+    fun finalSnapshotReleaseFailureRemainsInspectable() {
+        val lease = TshSharedTextSnapshotLease.acquire(Snapshot()) {
+            throw IllegalStateException("unpin failed")
+        }
+        lease.close()
+        assertEquals("TSH-TEXT-LEASE-005", lease.finalReleaseDiagnostics.single().code)
+    }
+
     @Test
     fun rejectsOverlappingOrUnorderedEdits() {
         assertThrows(IllegalArgumentException::class.java) {
