@@ -156,14 +156,17 @@ data class TshQueryResult(
             grammarFingerprint == tree.grammar.fingerprint
 }
 
-/** ATS compiles to the Tree-sitter query execution representation; it is not a parser engine. */
-interface TshAtsCompiler {
+/** Generic compiler entry point for the single Tree-sitter query execution pipeline. */
+interface TshQueryCompiler {
     fun compile(
         source: TshAtsSource,
         grammar: TshGrammarDescriptor,
         options: TshQueryCompileOptions = TshQueryCompileOptions()
     ): TshResult<TshCompiledQuery>
 }
+
+/** ATS front-ends implement this contract and lower ATS into the same Tree-sitter query pipeline. */
+interface TshAtsCompiler : TshQueryCompiler
 
 /** Implementations must retain tree/query native resources for the duration of execute(). */
 interface TshQueryExecutor {
