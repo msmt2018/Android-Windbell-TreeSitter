@@ -4,7 +4,8 @@
 
 ### Added
 - 新增 Native ResourceRegistry.acquireExclusive/updateMetadata，OwnedSyntaxTree edit 会独占树、同步更新 snapshot/registry metadata；QueryExecutor 对照 registry 拒绝旧 document/tree revision。
-- 新增 Android Spannable Renderer Provider，支持 TSH-owned Span 精确清理、宿主 Span 保留、颜色/背景/字体/装饰和 host font-size conversion；增加 Android instrumented test 源码。
+- 新增 Android Spannable Renderer Provider，支持 TSH-owned Span 精确清理、宿主 Span 保留、颜色/背景/字体/装饰和 host font-size conversion；使用 generation staging/rollback 避免失败替换导致旧高亮丢失；增加 Robolectric rollback test 源码。
+- 修正 RenderReceipt 语义：新增 APPLIED/PARTIALLY_APPLIED 区分宿主 Span/显示对象更新与真实 DRAWN/PARTIAL 像素绘制；新增 confirmsHostMutation，避免将 invalidate 误报为实际绘制。
 - 新增 TSParser.parseInput(TSInput) 的 Java/JNI 回调链与 TshSnapshotTreeSitterInput，ParserOwner 可直接从固定版本 TextSnapshot 分块解析，避免全文 String/连续 Native buffer；新增 Native resource StampedLock read/exclusive Lease，TSTree.edit 与 Query read 互斥。
 - 新增首版 ScopeSelector AST/StyleRule/StyleResolver，按 exact/suffix path 选择规则、按 priority/specificity 合并属性，并将 MatchSet 解析为 RenderPlan。
 - 新增首版 TshRenderPlan/ResolvedStyle/Renderer Provider/Receipt/Coordinator，支持多维 revision 检查、Capability 校验、异步回执、stale draw 拒绝、partial/failed 诊断和取消契约。
