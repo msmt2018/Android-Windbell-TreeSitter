@@ -12,6 +12,7 @@ class TshObjectRegistry {
     private val nextId = AtomicLong(1L)
     private val byInstance = IdentityHashMap<Any, TshObjectDescriptor>()
     private val byId = LinkedHashMap<TshObjectId, Any>()
+    private var closed = false
 
     fun register(
         instance: Any,
@@ -21,6 +22,7 @@ class TshObjectRegistry {
     ): TshObjectDescriptor {
         require(type.isNotBlank()) { "type must not be blank" }
         synchronized(lock) {
+            check(!closed) { "Object registry is closed" }
             val existing = byInstance[instance]
             if (existing != null) {
                 require(existing.type == type) {
@@ -58,6 +60,7 @@ class TshObjectRegistry {
     ): TshObjectDescriptor {
         require(type.isNotBlank()) { "type must not be blank" }
         synchronized(lock) {
+            check(!closed) { "Object registry is closed" }
             check(byInstance[instance] == null) { "The object instance is already registered" }
             val descriptor = TshObjectDescriptor(
                 id = TshObjectId(nextId.getAndIncrement()),
@@ -102,6 +105,13 @@ class TshObjectRegistry {
     fun size(): Int = synchronized(lock) { byInstance.size }
 
     fun clear() = synchronized(lock) {
+        byInstance.clear()
+        byId.clear()
+    }
+
+    /** Permanently closes the registry; unregister remains safe for in-flight cleanup. */
+    fun close() = synchronized(lock) {
+        closed = true
         byInstance.clear()
         byId.clear()
     }
