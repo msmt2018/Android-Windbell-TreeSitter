@@ -252,4 +252,4 @@ class TshDslSchemaRepositoryTest {
         assertTrue(result is TshResult.Failure)
         assertTrue(result.diagnostics().any { it.code == "TSH-SCHEMA-010" })
     }
-}\n
+}
