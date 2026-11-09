@@ -77,6 +77,24 @@ class TshAndroidSpannableBinding private constructor(
             )
         }
 
+        detachSubscription?.let { registration ->
+            try {
+                registration.close()
+            } catch (error: Exception) {
+                failures += closeDiagnostic(
+                    "TSH-ANDROID-BINDING-016",
+                    "Cannot remove Android attachment lifecycle subscription: ${error.message}",
+                    error
+                )
+            } catch (error: LinkageError) {
+                failures += closeDiagnostic(
+                    "TSH-ANDROID-BINDING-017",
+                    "Android attachment lifecycle subscription close failed with a linkage error",
+                    error
+                )
+            }
+        }
+        detachSubscription = null
         cleanupRegistration?.let { registration ->
             try {
                 registration.close()
