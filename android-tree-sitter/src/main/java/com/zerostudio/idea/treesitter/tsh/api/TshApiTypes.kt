@@ -97,6 +97,8 @@ data class TshCapabilitySet private constructor(
     private val entries: Map<String, TshCapability>
 ) {
     fun contains(id: String): Boolean = entries.containsKey(id)
+    fun satisfies(required: TshCapability): Boolean =
+        entries[required.id]?.version?.let { it >= required.version } == true
     fun get(id: String): TshCapability? = entries[id]
     fun all(): Set<TshCapability> = entries.values.toSet()
     fun isEmpty(): Boolean = entries.isEmpty()
