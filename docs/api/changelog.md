@@ -120,3 +120,7 @@
 - Added a ParserOwner-level Native parse lock so a shared `TSParser` is never used concurrently by multiple document sessions.
 - Added `resync()` for same-document PieceTree buffer replacement after the host replacement callback. Switching document identity still requires closing and reattaching.
 - Host must call `close()` on permanent document close. Automatic host lifecycle hook, Gradle/JUnit execution, Native/JNI validation and device tests remain outstanding.
+- Fixed the replacement-slice LF counter to recognize the actual Kotlin newline character; added regression coverage through the existing LF/tail metric assertions.
+- Restrict the editor-coordinate fast path to normalized LF/CRLF buffers; Tree-sitter row semantics are LF-based, so other EOL forms use bounded snapshot scanning.
+- Deliver tree/failure callbacks on the Android main thread and drop stale tree notifications; shut down the worker if session attachment fails.
+- Updated CI triggers for PRs targeting `main` and pushes to this feature branch. GitHub Actions run #552 is now executing both release assembly and debug tests; its result is pending.
