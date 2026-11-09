@@ -43,15 +43,17 @@ ColorValue 包含 colorSpace、components、alpha。解析器支持十六进制�
 
 Receipt 状态为：
 
-| 状态 | 含义 | drawnInstructionCount |
+| 状态 | 含义 | appliedInstructionCount |
 |---|---|---|
-| QUEUED | 已排队，尚未确认绘制完成 | 必须为 0 |
-| DRAWN | 全部指令已实际绘制 | 必须等于 Plan 指令数 |
-| PARTIAL | 部分指令已实际绘制 | 必须大于 0 且小于 Plan 指令数 |
-| REJECTED | 后端拒绝，未绘制 | 必须为 0 |
-| FAILED | 后端执行失败，未绘制 | 必须为 0 |
+| QUEUED | 已排队，尚未确认宿主更新或绘制 | 必须为 0 |
+| APPLIED | 所有指令已写入宿主显示对象；不代表已执行 View/Canvas draw | 必须等于 Plan 指令数 |
+| PARTIALLY_APPLIED | 部分属性/范围写入宿主显示对象；不代表已执行 View/Canvas draw | 0 到 Plan 指令数 |
+| DRAWN | 所有指令已由后端实际绘制 | 必须等于 Plan 指令数 |
+| PARTIAL | 部分指令已由后端实际绘制 | 必须大于 0 且小于 Plan 指令数 |
+| REJECTED | 后端拒绝，未更新/绘制 | 必须为 0 |
+| FAILED | 后端执行失败且未提交有效更新/绘制 | 必须为 0 |
 
-`confirmsActualDraw` 仅在 DRAWN 或 PARTIAL 且绘制数量大于 0 时为 true。QUEUED 不是绘制成功。异步 Provider 可先返回 QUEUED，再通过 Acknowledger 提交最终回执。过期回执必须拒绝；PARTIAL 必须产生可观察的降级诊断。
+`confirmsHostMutation` 仅在 APPLIED/PARTIALLY_APPLIED 且数量大于 0 时为 true；`confirmsActualDraw` 仅在 DRAWN/PARTIAL 且数量大于 0 时为 true。Span mutation + invalidate 只能返回 APPLIED/PARTIALLY_APPLIED，不能谎报像素已绘制。QUEUED 不是成功绘制。异步 Provider 可先返回 QUEUED，再通过 Acknowledger 提交最终回执。过期回执必须拒绝；PARTIAL/PARTIALLY_APPLIED 必须产生可观察的降级诊断。
 
 源码与回归测试目前为 SOURCE_PARTIAL；未运行构建、JUnit 或 Android 真实控件验证。RenderPlan 被接受/排队不代表屏幕已显示颜色。
 
