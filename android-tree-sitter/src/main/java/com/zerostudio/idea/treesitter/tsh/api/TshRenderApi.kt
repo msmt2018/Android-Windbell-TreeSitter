@@ -248,7 +248,7 @@ class TshRenderCoordinator(
         if (receipt.status != TshRenderReceiptStatus.QUEUED) {
             synchronized(lock) { pending.remove(receipt.planId) }
         }
-        when (receipt.status) {
+        return when (receipt.status) {
             TshRenderReceiptStatus.REJECTED, TshRenderReceiptStatus.FAILED -> {
                 val errors = receipt.diagnostics.filter { it.severity == TshDiagnosticSeverity.ERROR }
                 TshResult.Failure(errors.ifEmpty { listOf(diagnostic(
