@@ -31,8 +31,8 @@ import java.util.concurrent.atomic.AtomicBoolean
 class TshPieceTreeDocument(
     val documentId: String,
     val languageId: String?,
-    private val snapshotFactory: () -> PieceTreeSnapshot,
-    private val snapshotThread: Thread? = null
+    private val snapshotThread: Thread? = null,
+    private val snapshotFactory: () -> PieceTreeSnapshot
 ) {
     private val changeListeners = CopyOnWriteArrayList<TshTextChangeListener>()
     private val disposedListeners = CopyOnWriteArrayList<TshTextDocumentDisposedListener>()
