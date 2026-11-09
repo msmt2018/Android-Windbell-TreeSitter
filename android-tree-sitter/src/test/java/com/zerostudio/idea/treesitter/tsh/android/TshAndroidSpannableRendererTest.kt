@@ -81,6 +81,22 @@ class TshAndroidSpannableRendererTest {
     }
 
     @Test
+    fun failedBindingSetupRollsBackProviderRegistration() {
+        val engine = TshEngine.create()
+        engine.initialize()
+        val revisions = TshRenderRevisions(
+            TshDocumentId("doc"), 1L, "config", "theme", "viewport", "renderer"
+        )
+        val target = Target(SpannableStringBuilder("code"), revisions)
+        val renderer = TshAndroidSpannableRenderer(target)
+        val result = renderer.attachTo(engine, TshOwnerScope("invalid"), objectType = "")
+        assertTrue(result is TshResult.Failure)
+        assertTrue(engine.providers.all().none { it.id == renderer.id })
+        assertEquals(0, engine.objects.size())
+        engine.close()
+    }
+
+    @Test
     fun rendererCanBeDiscoveredAsAnEngineHostProvider() {
         val revisions = TshRenderRevisions(
             TshDocumentId("doc"), 1L, "config", "theme", "viewport", "renderer"
