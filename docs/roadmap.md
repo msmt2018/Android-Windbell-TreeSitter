@@ -36,6 +36,7 @@
 ### Text Access 与坐标
 
 - [x] TextSnapshot Lease、bounded chunk read、TextChange subscription 扩展点、Document disposed subscription 扩展点。
+- [x] TshTextSnapshotLease.retain() 与 TshSharedTextSnapshotLease：独立句柄引用计数、最后引用释放回调、旧自定义 Lease 的显式 unsupported 诊断；默认不可变快照 Lease 可续租（SOURCE_PARTIAL）。
 - [x] Text Provider 声明线程策略与 concurrent-read 能力；UNKNOWN 默认不作线程安全假设。
 - [x] TextEdit replacement 拒绝不成对 surrogate；TextChange Edit 列表要求 before-version 坐标、升序且不重叠。
 - [x] Chunk read 不允许切开 UTF-16 surrogate pair，读取关闭的 Snapshot Lease 会失败。
@@ -69,10 +70,10 @@
 - [ ] ATS Lexer/Parser/AST/Compiler/Lowering 尚未实现，ATS 最终必须编译到现有 Tree-sitter Query 管线。
 - [ ] Grammar Node Schema Provider / strictNodeValidation 尚未实现。
 - [ ] Tree-sitter 真实 step budget、Native 可中断取消、增量 Edit/changed-range 尚未实现。
-- [x] TSParser.parseInput(TSInput) / JNI callback / TshSnapshotTreeSitterInput / ParserOwner Snapshot chunk parse 源码与 adapter 测试源码。
+- [x] TSParser.parseInput(TSInput) / JNI callback / TshSnapshotTreeSitterInput / ParserOwner.parseSnapshot 分块解析源码；parseSnapshot 会独立 retain 快照 Lease，并在 Native parse 返回后释放（SOURCE_PARTIAL）。
 - [x] TshTextAccessProvider 纳入 Engine Provider Registry；ProviderRegistry.acquireScoped 引用计数共享 Provider 生命周期；新增 TshTextAccessBinding 管理 Document Attachment、Snapshot Lease 获取、Change/Disposal subscriptions 与生命周期。text.snapshot/text.chunk 与可选 change/disposal notification 通过 capability negotiation 暴露。
 - [x] OwnedSyntaxTree exclusive edit lease、snapshot/registry metadata revision 同步和 QueryExecutor stale snapshot rejection 源码。
-- [ ] 真实宿主 Piece Tree/Rope Provider、稳定 Snapshot Lease retain/fork、增量多 Edit→TSInputEdit 转换和 Native parse integration test。
+- [ ] 真实宿主 Piece Tree/Rope Provider（pin persistent root/unpin）、增量多 Edit→TSInputEdit 转换和 Native parse integration test。
 - [ ] 旧宿主所有 Tree/Language/Parser owner 尚未全部迁移到统一 Resource Registry。
 
 ### 独立 Regex / Oniguruma
@@ -122,8 +123,8 @@
 
 ## 仍需完成的缺陷与绑定项
 
-1. 完成 TextSnapshot 的真实 Host Lease、事件订阅与 Piece Tree/Rope 索引 Provider。
-2. 完成 Tree-sitter Host TextAccess 绑定：实现真实 Piece Tree/Rope Provider 与可 retain/fork 的 Snapshot Lease；补齐多 Edit→TSInputEdit 坐标转换、Native parse integration test 和取消/关闭竞态验证。
+1. 完成真实宿主 Piece Tree/Rope Provider：pin 持久化 root、节点索引化 UTF-16/UTF-8 读取、最终 Lease release 时 unpin，并接入真实变更/销毁事件。
+2. 完成 Tree-sitter Host TextAccess 绑定：补齐多 Edit→TSInputEdit 坐标转换、Native parse integration test 和取消/关闭竞态验证。
 3. 实现 Regex WindowLease 和跨窗口正确性语义；无界模式必须有明确回退/拒绝策略。
 4. 实现 ATS 前端并 Lower 到唯一 Tree-sitter Query 执行管线。
 5. 将 Tree-sitter/ATS 与 Regex 输出真正适配到统一 TshMatch。
