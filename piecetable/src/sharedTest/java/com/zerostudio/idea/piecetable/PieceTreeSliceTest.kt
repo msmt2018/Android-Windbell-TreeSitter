@@ -214,6 +214,15 @@ class PieceTreeSliceTest {
     }
 
 
+
+    @Test
+    fun exposesEolNormalizationStateForCoordinateAdapters() {
+        val normalized = TestSupport.buildBuffer("one\\ntwo", normalizeEOL = true)
+        val unnormalized = TestSupport.buildBuffer("one\\ntwo", normalizeEOL = false)
+        assertTrue(normalized.isEOLNormalized())
+        assertFalse(unnormalized.isEOLNormalized())
+    }
+
     @Test
     fun referenceSliceCanBeScannedInChunksWithoutFlattening() {
         val text = ("abcdefghij\n".repeat(20_000))
