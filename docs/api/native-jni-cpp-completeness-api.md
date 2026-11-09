@@ -34,6 +34,9 @@ Handle table 保存 kind、generation、owner runtime、refcount/lease 和 close
 - 每个 JNI 方法检查 null、长度、范围溢出、编码合法性和句柄 kind。
 - UTF-8/UTF-16 转换显式执行；Tree-sitter byte offset 与 Kotlin UTF-16 offset 不可混用。
 - 不长期保存 GetStringChars/GetByteArrayElements 指针；需要持有时复制到 Native-owned buffer。
+- 对长时间同步读取可使用作用域化 GetStringChars，但必须在后续 JNI 分配/回调前释放；大结果必须分批 SetArrayRegion，避免再创建同尺寸临时 vector。
+
+当前旧 TSH 高亮 JNI 已改为在纯 Native 计算作用域内持有 GetStringChars，不再创建额外完整 UTF-16 vector；Highlight/Fold 输出以固定批次写入 Java 数组。此路径仍接收完整 Java String，并不等于 Piece Tree/Rope 流式解析或零拷贝宿主接入。
 - 大结果采用可分块读取或直接 buffer 协议，必须带 schema version、element width、count 和 offset unit。
 - JNI local/global reference 生命周期明确；禁止无界 global ref 泄漏。
 
