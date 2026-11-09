@@ -56,14 +56,16 @@ private class TshAndroidBackgroundSpan(
 private class TshAndroidTypefaceSpan(
     override val ownerId: String,
     override val planId: String,
-    private val family: String,
+    private val family: String?,
     private val style: Int
 ) : MetricAffectingSpan(), TshAndroidOwnedSpan {
     override fun updateDrawState(textPaint: TextPaint) {
-        textPaint.typeface = Typeface.create(family, style)
+        textPaint.typeface = family?.let { Typeface.create(it, style) }
+            ?: Typeface.create(textPaint.typeface, style)
     }
     override fun updateMeasureState(textPaint: TextPaint) {
-        textPaint.typeface = Typeface.create(family, style)
+        textPaint.typeface = family?.let { Typeface.create(it, style) }
+            ?: Typeface.create(textPaint.typeface, style)
     }
 }
 
@@ -102,6 +104,8 @@ class TshAndroidSpannableRenderer(
     override val id: String = "tsh-android-spannable"
 ) : TshRenderProvider {
     override val apiVersion: Int = 1
+    init { require(id.isNotBlank()) }
+
     override val capabilities: TshCapabilitySet = TshCapabilitySet.of(
         TshCapability("render.foreground", 1),
         TshCapability("render.background", 1),
@@ -145,17 +149,16 @@ class TshAndroidSpannableRenderer(
                 continue
             }
             val style = instruction.style
+            val diagnosticsBefore = diagnostics.size
             val before = spannable.getSpans(start.toInt(), end.toInt(), CharacterStyle::class.java)
                 .count { it is TshAndroidOwnedSpan && it.ownerId == id && it.planId == plan.id.value }
             applyStyle(spannable, start.toInt(), end.toInt(), plan.id.value, style, diagnostics)
             val after = spannable.getSpans(start.toInt(), end.toInt(), CharacterStyle::class.java)
                 .count { it is TshAndroidOwnedSpan && it.ownerId == id && it.planId == plan.id.value }
-            if (after > before && diagnostics.none { it.severity == TshDiagnosticSeverity.ERROR }) {
+            val hadWarning = diagnostics.size > diagnosticsBefore
+            if (after > before && !hadWarning) {
                 fullyApplied++
-            } else if (style.foregroundArgb == null && style.backgroundArgb == null &&
-                style.fontFamilies.isEmpty() && style.fontSize == null && style.fontWeight == null &&
-                style.italic != true && style.underline != true && style.strikeThrough != true &&
-                style.decorations.isEmpty()) {
+            } else if (after == before && !hadWarning) {
                 diagnostics += warning("TSH-ANDROID-RENDER-006", "Instruction contains no drawable style attributes")
             }
         }
@@ -165,7 +168,12 @@ class TshAndroidSpannableRenderer(
             removePlanSpans(spannable, plan.id.value)
             return failure("TSH-ANDROID-RENDER-004", "RenderPlan became stale before host invalidation")
         }
-        target.invalidate(documentId)
+        try {
+            target.invalidate(documentId)
+        } catch (error: Exception) {
+            removePlanSpans(spannable, plan.id.value)
+            return failure("TSH-ANDROID-RENDER-009", "Host invalidation failed: ${error.message}")
+        }
         val status = if (fullyApplied == plan.instructions.size) {
             TshRenderReceiptStatus.DRAWN
         } else {
@@ -204,12 +212,12 @@ class TshAndroidSpannableRenderer(
         }
         val bold = (style.fontWeight ?: 0) >= 600 || "bold" in decorations
         val italic = style.italic == true || "italic" in decorations
-        if (family != null || bold || italic) {
+        if (family != null || style.fontWeight != null || style.italic != null || bold || italic) {
             var typefaceStyle = Typeface.NORMAL
             if (bold) typefaceStyle = typefaceStyle or Typeface.BOLD
             if (italic) typefaceStyle = typefaceStyle or Typeface.ITALIC
             spannable.setSpan(
-                TshAndroidTypefaceSpan(id, planId, family ?: "sans-serif", typefaceStyle),
+                TshAndroidTypefaceSpan(id, planId, family, typefaceStyle),
                 start, end, flags
             )
         }
