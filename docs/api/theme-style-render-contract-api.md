@@ -53,7 +53,7 @@ Receipt 状态为：
 | REJECTED | 后端拒绝，未更新/绘制 | 必须为 0 |
 | FAILED | 后端执行失败且未提交有效更新/绘制 | 必须为 0 |
 
-`confirmsHostMutation` 仅在 APPLIED/PARTIALLY_APPLIED 且数量大于 0 时为 true；`confirmsActualDraw` 仅在 DRAWN/PARTIAL 且数量大于 0 时为 true。Span mutation + invalidate 只能返回 APPLIED/PARTIALLY_APPLIED，不能谎报像素已绘制。QUEUED 不是成功绘制。异步 Provider 可先返回 QUEUED，再通过 Acknowledger 提交最终回执。过期回执必须拒绝；PARTIAL/PARTIALLY_APPLIED 必须产生可观察的降级诊断。
+`confirmsHostMutation` 仅在 APPLIED/PARTIALLY_APPLIED 且数量大于 0 时为 true；`confirmsActualDraw` 仅在 DRAWN/PARTIAL 且数量大于 0 时为 true。Android Spannable Target 必须提供有界 UTF-16 viewport；未提供 viewport 时 Renderer 拒绝提交，禁止默认对整份大文档创建 Span。Span mutation + invalidate 只能返回 APPLIED/PARTIALLY_APPLIED，不能谎报像素已绘制。QUEUED 不是成功绘制。异步 Provider 可先返回 QUEUED，再通过 Acknowledger 提交最终回执。过期回执必须拒绝；PARTIAL/PARTIALLY_APPLIED 必须产生可观察的降级诊断。
 
 源码与回归测试目前为 SOURCE_PARTIAL；未运行构建、JUnit 或 Android 真实控件验证。RenderPlan 被接受/排队不代表屏幕已显示颜色。
 
