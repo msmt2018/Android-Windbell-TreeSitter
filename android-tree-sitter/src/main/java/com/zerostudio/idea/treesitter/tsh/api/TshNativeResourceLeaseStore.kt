@@ -125,13 +125,13 @@ class TshNativeResourceLeaseStore {
     private fun Entry<out TSNativeObject>.closeSafely() {
         try {
             resource.close()
-        } catch (error: Throwable) {
+        } catch (error: Exception) {
             recordCloseFailure(objectId, "Native resource close failed", error)
         }
         dependencies.asReversed().forEach { dependency ->
             try {
                 dependency.close()
-            } catch (error: Throwable) {
+            } catch (error: Exception) {
                 recordCloseFailure(objectId, "Native resource dependency close failed", error)
             }
         }
