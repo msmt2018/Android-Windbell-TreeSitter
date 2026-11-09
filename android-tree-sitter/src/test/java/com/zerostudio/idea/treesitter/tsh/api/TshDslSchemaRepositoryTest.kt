@@ -176,6 +176,34 @@ class TshDslSchemaRepositoryTest {
     }
 
     @Test
+    fun schemaChecksCapabilityVersionAndRejectsNumericBoundsOnStrings() {
+        val registry = TshSchemaRegistry()
+        registry.register(TshDeclarationSchema(
+            TshDslDeclarationKind.STYLE,
+            mapOf(
+                "feature" to TshPropertySchema(
+                    name = "feature", type = TshDslType.BooleanType,
+                    requiredCapability = "render.font", requiredCapabilityVersion = 2
+                ),
+                "label" to TshPropertySchema(
+                    name = "label", type = TshDslType.StringType, minimum = 1.0
+                )
+            )
+        ))
+        val result = registry.validate(
+            TshDslDeclaration(TshDslDeclarationKind.STYLE, "x", mapOf(
+                "feature" to TshDslValue.BooleanValue(true),
+                "label" to TshDslValue.StringValue("hello")
+            )),
+            TshDslVersion(1),
+            availableCapabilities = TshCapabilitySet.of(TshCapability("render.font", version = 1))
+        )
+        assertTrue(result is TshResult.Failure)
+        assertTrue(result.diagnostics().any { it.code == "TSH-SCHEMA-011" })
+        assertTrue(result.diagnostics().any { it.code == "TSH-SCHEMA-015" })
+    }
+
+    @Test
     fun configRepositoryUsesOptimisticRevisionReplacement() {
         val repository = TshConfigRepository()
         fun artifact(revision: String) = TshConfigArtifact(
