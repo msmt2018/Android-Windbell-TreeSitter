@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Added
+- 新增 DSL Runtime Consumer Registry/Dispatcher，确保 Schema 校验通过不再被误认为运行时已生效；报告每个属性的 applied/unapplied 状态。
 - 新增 OwnerScope 自动 detach 和 AttachmentManager 的并发竞态保护；Provider refresh 保留原始 required/optional/API range 条件。
 - Query Execution Budget 显式标记 unsupported：strictNodeValidation 默认关闭，显式开启时报 unsupported；maxSteps 默认 null，显式请求时报 unsupported；stepsUsed 改为可空，Cursor 同时设置 pending match limit 和总 Match 数限制。
 - Text chunk 读取拒绝切开 UTF-16 surrogate pair，TextEdit replacement 拒绝不成对 surrogate。
@@ -14,6 +15,7 @@
 - 修复 Schema nullable/default/Measure range unit/Map key/Capability version/unknown-property retention；未知属性进入 unappliedProperties 并产生诊断。
 - 修复 Oniguruma 编译器将 UTF-8 pattern bytes 错误逐字节复制为 UTF-16 的问题，改为严格 UTF-8 解码及 UTF-16LE 编码。
 - 修复旧 Spannable 高亮路径清除所有 CharacterStyle 的行为：仅移除 TSH-owned spans，并拒绝奇数/非法/越界 UTF-16LE byte range。
+- Native Resource/Query Lease close 失败改为结构化诊断，可通过 Engine.shutdownDiagnostics 查询；OwnerScope cleanup 错误通过 closeWithReport 返回。
 - JNI 大文本路径移除额外完整 UTF-16 native vector 复制，改为受控 GetStringChars 生命周期；Highlight/Fold 结果按固定批次写入 Java 数组，避免额外 N*3 临时 native 数组。
 - 大文本高亮核心将按全文长度预留 Span 容量改为有界初始预留，并以 prefix-max-end 索引替代 AST/Regex span 的双重全量嵌套扫描。
 - 建立 TSH 统一 API 架构文档、对象/文本模型、编辑器集成、高亮渲染、TSH 语言、ATS/Regex、诊断和路线图规范。
