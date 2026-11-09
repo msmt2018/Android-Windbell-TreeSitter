@@ -162,6 +162,129 @@ class TshTreeSitterParserOwner private constructor(
     }
 
     /**
+     * Applies a complete edit transaction under one exclusive Native tree lease.
+     *
+     * All edits must already be compiled against the same before-version snapshot and supplied
+     * in descending byte-offset order. Snapshot/version metadata is published exactly once,
+     * after every Native edit succeeds. If any edit has been attempted and a later operation
+     * fails, the old tree is retired: a partially edited tree is never published as usable.
+     */
+    fun editTreeBatch(
+        ownedTree: TshOwnedSyntaxTree,
+        edits: List<com.zerostudio.idea.treesitter.TSInputEdit>,
+        targetDocumentVersion: Long,
+        targetTreeRevision: Long
+    ): TshResult<Unit> {
+        val initialSnapshot = ownedTree.snapshot
+        if (initialSnapshot.grammar.fingerprint != grammar.fingerprint) {
+            return failure(
+                "TSH-PARSER-OWNER-010",
+                "Cannot edit a tree produced by a different Grammar",
+                TshDiagnosticStage.PARSE,
+                ownedTree.registration.descriptor.id
+            )
+        }
+        if (targetDocumentVersion <= initialSnapshot.documentVersion ||
+            targetTreeRevision < initialSnapshot.treeRevision) {
+            return failure(
+                "TSH-PARSER-OWNER-019",
+                "Batch edit must advance document version and cannot move tree revision backwards",
+                TshDiagnosticStage.PARSE,
+                ownedTree.registration.descriptor.id
+            )
+        }
+        if (edits.isEmpty()) {
+            return failure(
+                "TSH-PARSER-OWNER-025",
+                "An empty Native edit batch cannot advance the syntax tree version",
+                TshDiagnosticStage.PARSE,
+                ownedTree.registration.descriptor.id
+            )
+        }
+
+        val lease = resources.acquireExclusive(ownedTree.registration.handle)
+            ?: return failure(
+                "TSH-PARSER-OWNER-011",
+                "Cannot acquire an exclusive lease for the syntax tree",
+                TshDiagnosticStage.LIFECYCLE,
+                ownedTree.registration.descriptor.id
+            )
+        var editAttempted = false
+        return try {
+            val currentSnapshot = ownedTree.snapshot
+            if (currentSnapshot.documentVersion != initialSnapshot.documentVersion ||
+                currentSnapshot.treeRevision != initialSnapshot.treeRevision) {
+                return failure(
+                    "TSH-PARSER-OWNER-021",
+                    "Syntax tree changed while the batch edit was being prepared",
+                    TshDiagnosticStage.PARSE,
+                    ownedTree.registration.descriptor.id
+                )
+            }
+            // Tree-sitter applies edits in sequence. The compiler supplies descending offsets
+            // so each earlier edit retains its coordinates in the original snapshot.
+            edits.forEach { edit ->
+                editAttempted = true
+                lease.resource.edit(edit)
+            }
+
+            val root = lease.resource.rootNode
+            if (!root.canAccess()) {
+                resources.retire(ownedTree.registration.descriptor.id)
+                return failure(
+                    "TSH-PARSER-OWNER-020",
+                    "Edited syntax tree root node is inaccessible",
+                    TshDiagnosticStage.PARSE,
+                    ownedTree.registration.descriptor.id
+                )
+            }
+            val updatedSnapshot = currentSnapshot.copy(
+                documentVersion = targetDocumentVersion,
+                treeRevision = targetTreeRevision,
+                rootByteRange = TshByteRange(root.startByte, root.endByte)
+            )
+            val metadata = resources.updateMetadata(
+                ownedTree.registration.handle,
+                mapOf(
+                    "documentId" to updatedSnapshot.documentId,
+                    "documentVersion" to updatedSnapshot.documentVersion.toString(),
+                    "treeRevision" to updatedSnapshot.treeRevision.toString(),
+                    "grammarFingerprint" to updatedSnapshot.grammar.fingerprint,
+                    "inputMode" to "chunked-utf16le"
+                )
+            )
+            if (metadata is TshResult.Failure) {
+                resources.retire(ownedTree.registration.descriptor.id)
+                return metadata
+            }
+            ownedTree.updateRegistration(ownedTree.registration.copy(descriptor = metadata.value))
+            ownedTree.updateSnapshot(updatedSnapshot)
+            ownedTree.lastEditedDocumentVersion = targetDocumentVersion
+            TshResult.Success(Unit)
+        } catch (error: Exception) {
+            if (editAttempted) resources.retire(ownedTree.registration.descriptor.id)
+            failure(
+                "TSH-PARSER-OWNER-026",
+                "Tree-sitter batch edit failed; the partially edited tree was retired: ${error.message}",
+                TshDiagnosticStage.PARSE,
+                ownedTree.registration.descriptor.id,
+                error
+            )
+        } catch (error: LinkageError) {
+            if (editAttempted) resources.retire(ownedTree.registration.descriptor.id)
+            failure(
+                "TSH-PARSER-OWNER-027",
+                "Tree-sitter Native linkage failed during batch edit; the tree was retired",
+                TshDiagnosticStage.PARSE,
+                ownedTree.registration.descriptor.id,
+                error
+            )
+        } finally {
+            lease.close()
+        }
+    }
+
+    /**
      * Applies one Tree-sitter input edit without exposing its raw Native handle.
      * Multiple edits for one transaction may use the same target versions. Coordinates must be
      * computed in the current edited tree's UTF-16LE byte/point space.
