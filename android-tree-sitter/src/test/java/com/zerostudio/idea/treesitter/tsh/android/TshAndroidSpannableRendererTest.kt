@@ -59,8 +59,11 @@ class TshAndroidSpannableRendererTest {
         val renderer = TshAndroidSpannableRenderer(target)
         val acknowledger = Acknowledger()
 
-        assertTrue(renderer.submit(plan("generation-1", revisions, 0xFFFF0000u), acknowledger)
-            is TshResult.Success)
+        val first = renderer.submit(plan("generation-1", revisions, 0xFFFF0000u), acknowledger)
+            as TshResult.Success<TshRenderReceipt>
+        assertEquals(TshRenderReceiptStatus.APPLIED, first.value.status)
+        assertTrue(first.value.confirmsHostMutation)
+        assertTrue(!first.value.confirmsActualDraw)
         assertEquals(2, text.getSpans(0, 4, CharacterStyle::class.java).size)
 
         target.failInvalidation = true
