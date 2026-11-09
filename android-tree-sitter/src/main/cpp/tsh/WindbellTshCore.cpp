@@ -163,7 +163,9 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
     const UChar* text_end = text_start + total_bytes;
 
     std::vector<HighlightSpan> micro_spans;
-    micro_spans.reserve(length_chars / 4);
+    // Avoid reserving proportional to the whole document: sparse rules on a 300 MB file
+    // must not pre-allocate hundreds of megabytes of span capacity.
+    micro_spans.reserve(std::min<size_t>(length_chars / 128u, 4096u));
 
     for (const auto& rule : grammar->regex_rules) {
         if (rule.type == RegexRuleType::BLOCK && rule.onig_start && rule.onig_end) {
@@ -226,7 +228,7 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
 
     std::vector<HighlightSpan> macro_spans;
     if (tree && !grammar->ast_selector_rules.empty()) {
-        macro_spans.reserve(length_chars / 6);
+        macro_spans.reserve(std::min<size_t>(length_chars / 256u, 2048u));
         TSTreeCursor cursor = ts_tree_cursor_new(ts_tree_root_node(tree));
 
         while (true) {
@@ -324,32 +326,73 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
             }
         }
 
+        // Container containment lookup: prefix maximum end makes each lookup O(log n)
+        // rather than scanning every container for every AST span.
+        std::vector<uint32_t> container_prefix_max_end;
+        container_prefix_max_end.reserve(container_spans.size());
+        uint32_t max_container_end = 0;
+        for (const auto& container : container_spans) {
+            max_container_end = std::max(max_container_end, container.end_byte);
+            container_prefix_max_end.push_back(max_container_end);
+        }
+
         for (const auto& mac : macro_spans) {
-            bool enclosed = false;
-            for (const auto& cont : container_spans) {
-                if (mac.start_byte >= cont.start_byte && mac.end_byte <= cont.end_byte) {
-                    enclosed = true;
-                    break;
+            const auto upper = std::upper_bound(
+                container_spans.begin(), container_spans.end(), mac.start_byte,
+                [](uint32_t start, const HighlightSpan& container) {
+                    return start < container.start_byte;
                 }
+            );
+            bool enclosed = false;
+            if (upper != container_spans.begin()) {
+                const size_t index = static_cast<size_t>(upper - container_spans.begin() - 1);
+                enclosed = container_prefix_max_end[index] >= mac.end_byte;
             }
-            if (!enclosed) {
-                final_spans.push_back(mac);
-            }
+            if (!enclosed) final_spans.push_back(mac);
         }
 
         final_spans.insert(final_spans.end(), container_spans.begin(), container_spans.end());
+        std::sort(final_spans.begin(), final_spans.end(), [](const HighlightSpan& a, const HighlightSpan& b) {
+            return (a.start_byte != b.start_byte) ? a.start_byte < b.start_byte : a.end_byte < b.end_byte;
+        });
+
+        // Overlap lookup uses a prefix maximum-end index. It avoids the former O(m*n)
+        // nested scan when both regex and AST produce many spans in a large source file.
+        std::vector<uint32_t> final_prefix_max_end;
+        final_prefix_max_end.reserve(final_spans.size());
+        uint32_t max_final_end = 0;
+        for (const auto& current_span : final_spans) {
+            max_final_end = std::max(max_final_end, current_span.end_byte);
+            final_prefix_max_end.push_back(max_final_end);
+        }
 
         for (const auto& mic : other_micro_spans) {
             bool overlapped = false;
-            for (const auto& cur : final_spans) {
-                if (!(mic.end_byte <= cur.start_byte || mic.start_byte >= cur.end_byte)) {
-                    overlapped = true;
-                    break;
+            const auto upper = std::upper_bound(
+                final_spans.begin(), final_spans.end(), mic.start_byte,
+                [](uint32_t start, const HighlightSpan& current_span) {
+                    return start < current_span.start_byte;
                 }
+            );
+            if (upper != final_spans.begin()) {
+                const size_t previous = static_cast<size_t>(upper - final_spans.begin() - 1);
+                overlapped = final_prefix_max_end[previous] > mic.start_byte;
             }
             if (!overlapped) {
-                final_spans.push_back(mic);
+                const auto end = std::lower_bound(
+                    upper, final_spans.end(), mic.end_byte,
+                    [](const HighlightSpan& current_span, uint32_t end_byte) {
+                        return current_span.start_byte < end_byte;
+                    }
+                );
+                for (auto it = upper; it != end; ++it) {
+                    if (it->end_byte > mic.start_byte) {
+                        overlapped = true;
+                        break;
+                    }
+                }
             }
+            if (!overlapped) final_spans.push_back(mic);
         }
     }
 
