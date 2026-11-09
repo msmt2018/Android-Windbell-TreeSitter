@@ -13,7 +13,21 @@ class TshAndroidSpannableBinding private constructor(
     val attachment: TshAttachmentReport
 ) : AutoCloseable {
     private val closed = AtomicBoolean(false)
+    val renderCoordinator = TshRenderCoordinator(renderer)
+    @Volatile var closeDiagnostics: List<TshDiagnostic> = emptyList()
+        private set
     @Volatile private var cleanupRegistration: AutoCloseable? = null
+    @Volatile private var detachSubscription: AutoCloseable? = null
+
+    val isClosed: Boolean get() = closed.get()
+
+    internal fun installDetachSubscription(registration: AutoCloseable) {
+        detachSubscription = registration
+        if (closed.get()) {
+            detachSubscription = null
+            runCatching { registration.close() }
+        }
+    }
     @Volatile private var closeFailureDiagnostics: List<TshDiagnostic> = emptyList()
 
     /** Cleanup failures are observable even though AutoCloseable.close() has no result value. */
@@ -165,6 +179,23 @@ class TshAndroidSpannableBinding private constructor(
             val success = attached as TshResult.Success<TshAttachmentReport>
             val report = success.value
             val binding = TshAndroidSpannableBinding(engine, renderer, report)
+            val detachedSubscription = engine.attachments.subscribeDetached(report.handle) {
+                binding.close()
+            }
+            if (detachedSubscription == null) {
+                binding.close()
+                return failure(
+                    "TSH-ANDROID-BINDING-009",
+                    "Attachment was detached before its lifecycle observer could be installed"
+                )
+            }
+            binding.installDetachSubscription(detachedSubscription)
+            if (binding.isClosed) {
+                return failure(
+                    "TSH-ANDROID-BINDING-010",
+                    "Attachment was detached while the Android binding was being installed"
+                )
+            }
             val cleanup = try {
                 ownerScope.registerCleanup { binding.close() }
             } catch (error: Exception) {
