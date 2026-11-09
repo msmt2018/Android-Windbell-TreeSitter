@@ -82,7 +82,8 @@
 - [x] Match 具有 canonical UTF-16 range、source provenance、pipeline revision、document version。
 - [x] MatchMerger 支持两来源汇合、去重、稳定排序、stale Match 排除和 partial 状态。
 - [ ] Tree-sitter/ATS Capture 与 Regex 执行结果尚未接入 TshMatch。
-- [ ] Scope parser/stack/assignment pipeline、Selector parser/compiler/specificity 尚未完成。
+- [x] 首版 ScopeSelector AST、exact/suffix path 匹配、StyleRule priority/specificity merge、MatchSet→RenderPlan resolver 源码与测试源码。
+- [ ] Scope parser/stack/assignment pipeline、DSL Selector parser/compiler/specificity 与高级冲突策略尚未完成。
 - [ ] 完整重叠/包含/交叉冲突策略与跨管线一致性测试尚未完成。
 
 ### Style / Render / 真实绘制
@@ -92,7 +93,7 @@
 - [x] 异步 QUEUED/Ack、过期回执拒绝、PARTIAL/FAILED/REJECTED 诊断和 Provider cancel 扩展点。
 - [x] Provider 必须在实际 Draw 前检查 Acknowledger.isCurrent，完成后 Ack。
 - [x] 旧 Spannable 路径只清理 TSH-owned Span，不再删除宿主 CharacterStyle；非法/奇数/越界 UTF-16LE byte range 被拒绝。
-- [ ] Scope/Selector → Attribute → ResolvedStyle 的完整 Resolver 尚未实现。
+- [x] ScopeSelector/StyleRule/StyleResolver 到 RenderPlan 的首版 Resolver；[ ] Attribute semantic pipeline、DSL selector parser 和完整 Resolver。
 - [ ] Android View/Canvas/Spannable/Compose 具体 Renderer Provider 尚未实现。
 - [ ] 真实 Draw 回执、像素/颜色可见性、字体/Decoration/主题切换设备验证尚未实现。
 - [ ] RenderPlan/Receipt 源码存在不代表应用层已能显示所有 .tsh 高亮颜色。
