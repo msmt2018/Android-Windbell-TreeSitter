@@ -31,32 +31,29 @@ FontSpec 支持 family 列表、weight、style normal/italic/oblique、size+unit
 
 ColorValue 包含 colorSpace、components、alpha。解析器支持十六进制、rgb/rgba、hsl/hsla、token 和变量引用。Decoration 包括 underline solid/dotted/dashed/wavy/double、strike、overline、border、background fill、outline；定义 thickness、offset、range、layer、blend 和合成策略。Gutter/Inlay/CodeLens 不属于 TSH。
 
-## 4. Render Plan
+## 4. Render Plan 与 Receipt（本节为唯一权威契约）
 
-~~~kotlin
-data class TshRenderPlan(
-  val documentId: TshDocumentId,
-  val documentVersion: Long,
-  val configRevision: String,
-  val themeRevision: String,
-  val instructions: List<TshRenderInstruction>,
-  val diagnostics: List<TshDiagnostic>
-)
-interface TshRenderBackend {
-  val capabilities: TshRenderCapabilities
-  fun submit(plan: TshRenderPlan): TshResult<TshRenderReceipt>
-}
-data class TshRenderReceipt(
-  val planId: TshRenderPlanId,
-  val accepted: Boolean,
-  val renderedRevision: String?,
-  val renderedInstructionCount: Int,
-  val degraded: List<TshStyleDegradation>,
-  val rejected: List<TshDiagnostic>
-)
-~~~
+当前 Kotlin 源码模型位于 `TshRenderApi.kt`：
 
-Backend 必须对每个 instruction 返回 applied/degraded/rejected 状态。单纯接收计划不代表绘制完成；异步后端必须提供完成回执或可查询 fence。过期版本拒绝或明确丢弃。
+- `TshRenderRevisions`：绑定 document/version、config、theme、viewport、renderer，以及可选 Tree-sitter/Regex revision。
+- `TshRenderPlan`：携带稳定 Plan ID、完整 revisions、RenderInstruction 与 required capabilities。
+- `TshRenderProvider`：由宿主拥有并实现；负责实际 View/Canvas/Span/Compose 绘制，不转移 UI 对象所有权。
+- `TshRenderAcknowledger`：Provider 必须在每次实际绘制/提交前调用 `isCurrent`，完成后提交 Receipt。
+- `TshRenderCoordinator`：检查 revision、能力、重复 Plan ID、Provider 异常、回执一致性、过期提交和取消。
+
+Receipt 状态为：
+
+| 状态 | 含义 | drawnInstructionCount |
+|---|---|---|
+| QUEUED | 已排队，尚未确认绘制完成 | 必须为 0 |
+| DRAWN | 全部指令已实际绘制 | 必须等于 Plan 指令数 |
+| PARTIAL | 部分指令已实际绘制 | 必须小于 Plan 指令数 |
+| REJECTED | 后端拒绝，未绘制 | 必须为 0 |
+| FAILED | 后端执行失败，未绘制 | 必须为 0 |
+
+`confirmsActualDraw` 仅在 DRAWN 或 PARTIAL 且绘制数量大于 0 时为 true。QUEUED 不是绘制成功。异步 Provider 可先返回 QUEUED，再通过 Acknowledger 提交最终回执。过期回执必须拒绝；PARTIAL 必须产生可观察的降级诊断。
+
+源码与回归测试目前为 SOURCE_PARTIAL；未运行构建、JUnit 或 Android 真实控件验证。RenderPlan 被接受/排队不代表屏幕已显示颜色。
 
 ## 5. 绘制后端适配
 
