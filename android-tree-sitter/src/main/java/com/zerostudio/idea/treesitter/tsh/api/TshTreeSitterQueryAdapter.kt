@@ -28,7 +28,7 @@ class TshTreeSitterQueryCompiler(
     private val languageLeases: TshNativeResourceLeaseStore = TshNativeResourceLeaseStore(),
     private val compilerVersion: String = "treesitter-adapter-1",
     private val resourceRegistry: TshNativeResourceRegistry? = null
-) : TshAtsCompiler {
+) : TshQueryCompiler {
 
     override fun compile(
         source: TshAtsSource,
