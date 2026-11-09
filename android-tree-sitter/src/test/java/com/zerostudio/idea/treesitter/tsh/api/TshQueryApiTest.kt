@@ -17,6 +17,12 @@ class TshQueryApiTest {
             compilerVersion = "ats-1"
         )
 
+    @Test fun unsupportedBudgetsAreNotEnabledByDefault() {
+        assertFalse(TshQueryCompileOptions().strictNodeValidation)
+        assertNull(TshQueryExecutionBudget().maxSteps)
+        assertEquals(100_000, TshQueryExecutionBudget().maxMatches)
+    }
+
     @Test fun byteRangeUsesHalfOpenIntervals() {
         val left = TshByteRange(2, 5)
         assertTrue(left.intersects(TshByteRange(4, 8)))
