@@ -60,7 +60,9 @@
 - [ ] Runtime Consumer 目前逐属性 best-effort，不提供跨 Consumer 原子事务。
 
 - [x] 新增 `TshTreeSitterEditCompiler`：基于 before-version Snapshot 的有界分块单次扫描，仅索引编辑端点坐标，将多 Edit 编译为 UTF-16LE TSInputEdit，并按降序输出以便逐项安全应用；覆盖版本/范围/surrogate/Int byte offset/CRLF 检查（SOURCE_PARTIAL，测试源码未运行）。
-\n### Tree-sitter / ATS Query
+\n- [x] 新增 `TshTreeSitterIncrementalUpdate`：接通 before/after Snapshot → Edit Compiler → 原子 Native Batch Edit → Incremental Parse → 新树发布/旧树回收；编辑后旧树标记 `EDITED_PENDING_PARSE`，QueryExecutor 在 Native Lease 前后拒绝访问，替代树标记 READY（SOURCE_PARTIAL，未运行 Native/JUnit）。
+
+### Tree-sitter / ATS Query
 
 - [x] Tree-sitter Native Query Compiler/Executor Adapter、Query Registry、Query/Tree/Language Lease 有源码。
 - [x] TshQueryCompiler 与 ATS 专用 TshAtsCompiler 契约分离；Native S-expression Adapter 不再冒充 ATS Compiler。
@@ -127,7 +129,7 @@
 ## 仍需完成的缺陷与绑定项
 
 1. 将 TshPieceTreeDocument.snapshotFactory 接入真实 EditorDocument 读锁/编辑串行化入口，并连接 Change/Dispose 事件；补齐 UTF-8/UTF-16/CodePoint 索引 Provider。
-2. 完成 Tree-sitter Host TextAccess 绑定：补齐多 Edit→TSInputEdit 坐标转换、Native parse integration test 和取消/关闭竞态验证。
+2. 完成 Tree-sitter Host TextAccess 绑定：把真实 EditorDocument 的 before/after Snapshot Lease 与变更事件接入 IncrementalUpdate，补充 Native parse integration test 和取消/关闭竞态验证。
 3. 实现 Regex WindowLease 和跨窗口正确性语义；无界模式必须有明确回退/拒绝策略。
 4. 实现 ATS 前端并 Lower 到唯一 Tree-sitter Query 执行管线。
 5. 将 Tree-sitter/ATS 与 Regex 输出真正适配到统一 TshMatch。
