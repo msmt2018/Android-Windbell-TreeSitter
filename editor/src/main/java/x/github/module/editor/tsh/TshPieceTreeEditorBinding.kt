@@ -200,6 +200,18 @@ internal fun editorChangesToTshChange(
     changes: List<EditorDocument.AppliedChange>
 ): TshResult<TshTextChange> = try {
     val edits = changes.asReversed().map { applied ->
+        var lineFeeds = 0
+        var trailingLength = 0L
+        applied.content?.forEachChunk { chunk ->
+            for (character in chunk) {
+                if (character == '\\n') {
+                    lineFeeds = Math.addExact(lineFeeds, 1)
+                    trailingLength = 0L
+                } else {
+                    trailingLength = Math.addExact(trailingLength, 1L)
+                }
+            }
+        }
         TshTextEdit(
             startUtf16 = applied.rangeOffset.toLong(),
             endUtf16 = Math.addExact(
@@ -208,8 +220,8 @@ internal fun editorChangesToTshChange(
             ),
             replacement = "",
             replacementLengthUtf16 = applied.insertedTextLength.toLong(),
-            newEndPointRow = applied.finalLineNumber - 1,
-            newEndPointColumnBytes = Math.multiplyExact(applied.finalColumn - 1, 2)
+            replacementLineFeedCount = lineFeeds,
+            replacementTrailingUtf16Length = trailingLength
         )
     }
     TshResult.Success(TshTextChange(documentId, beforeVersion, afterVersion, edits))
