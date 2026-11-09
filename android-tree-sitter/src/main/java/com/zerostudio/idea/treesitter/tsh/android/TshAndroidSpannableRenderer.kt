@@ -131,6 +131,7 @@ class TshAndroidSpannableRenderer(
         val diagnostics = ArrayList<TshDiagnostic>()
         removeOwnedSpans(spannable)
 
+        var appliedInstructionCount = 0
         var fullyApplied = 0
         for (instruction in plan.instructions) {
             if (!acknowledger.isCurrent(plan.id, plan.revisions) ||
@@ -156,9 +157,10 @@ class TshAndroidSpannableRenderer(
             val after = spannable.getSpans(start.toInt(), end.toInt(), CharacterStyle::class.java)
                 .count { it is TshAndroidOwnedSpan && it.ownerId == id && it.planId == plan.id.value }
             val hadWarning = diagnostics.size > diagnosticsBefore
-            if (after > before && !hadWarning) {
-                fullyApplied++
-            } else if (after == before && !hadWarning) {
+            if (after > before) {
+                appliedInstructionCount++
+                if (!hadWarning) fullyApplied++
+            } else if (!hadWarning) {
                 diagnostics += warning("TSH-ANDROID-RENDER-006", "Instruction contains no drawable style attributes")
             }
         }
@@ -180,7 +182,7 @@ class TshAndroidSpannableRenderer(
             TshRenderReceiptStatus.PARTIAL
         }
         val receipt = TshRenderReceipt(
-            plan.id, id, plan.revisions, status, fullyApplied, diagnostics.toList()
+            plan.id, id, plan.revisions, status, appliedInstructionCount, diagnostics.toList()
         )
         return TshResult.Success(receipt, diagnostics.toList())
     }
