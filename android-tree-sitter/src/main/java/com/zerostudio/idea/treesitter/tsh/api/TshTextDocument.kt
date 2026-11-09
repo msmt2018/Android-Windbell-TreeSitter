@@ -168,6 +168,11 @@ data class TshTextEdit(
     val replacement: String,
     /** UTF-16 length of the replacement; may exceed replacement.length for non-materialized host slices. */
     val replacementLengthUtf16: Long = replacement.length.toLong(),
+    /** Optional before-version row/column coordinates, zero-based and measured in UTF-16 units. */
+    val startLine: Int? = null,
+    val startColumnUtf16: Long? = null,
+    val oldEndLine: Int? = null,
+    val oldEndColumnUtf16: Long? = null,
     /** Optional LF count and UTF-16 tail length for a non-materialized replacement. */
     val replacementLineFeedCount: Int? = null,
     val replacementTrailingUtf16Length: Long? = null
@@ -178,6 +183,20 @@ data class TshTextEdit(
         require(replacementLengthUtf16 >= 0L) { "replacementLengthUtf16 must be >= 0" }
         require(TshUnicode.isWellFormedUtf16(replacement)) {
             "Replacement contains an unpaired UTF-16 surrogate"
+        }
+        val coordinateFields = listOf(startLine, startColumnUtf16, oldEndLine, oldEndColumnUtf16)
+        require(coordinateFields.all { it == null } || coordinateFields.all { it != null }) {
+            "All four before-version line/column coordinates must be supplied together"
+        }
+        require(startLine == null || startLine >= 0)
+        require(startColumnUtf16 == null || startColumnUtf16 >= 0L)
+        require(oldEndLine == null || oldEndLine >= 0)
+        require(oldEndColumnUtf16 == null || oldEndColumnUtf16 >= 0L)
+        if (startLine != null) {
+            require(
+                startLine < oldEndLine!! ||
+                    (startLine == oldEndLine && startColumnUtf16!! <= oldEndColumnUtf16!!)
+            ) { "Old-end coordinate must not precede start coordinate" }
         }
         require((replacementLineFeedCount == null) == (replacementTrailingUtf16Length == null)) {
             "Both replacement LF count and trailing UTF-16 length must be supplied together"
