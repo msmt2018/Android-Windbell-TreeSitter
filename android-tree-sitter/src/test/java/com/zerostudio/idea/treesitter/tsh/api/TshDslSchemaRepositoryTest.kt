@@ -111,6 +111,71 @@ class TshDslSchemaRepositoryTest {
     }
 
     @Test
+    fun nullableIsIndependentFromOptionalTypeAndDefaultsAreValidated() {
+        val registry = TshSchemaRegistry()
+        registry.register(TshDeclarationSchema(
+            kind = TshDslDeclarationKind.COLOR,
+            properties = mapOf(
+                "nullableText" to TshPropertySchema(
+                    name = "nullableText", type = TshDslType.StringType, nullable = true
+                ),
+                "badDefault" to TshPropertySchema(
+                    name = "badDefault", type = TshDslType.IntegerType,
+                    defaultValue = TshDslValue.StringValue("not-an-int")
+                )
+            )
+        ))
+        val nullResult = registry.validate(
+            TshDslDeclaration(TshDslDeclarationKind.COLOR, "accent",
+                mapOf("nullableText" to TshDslValue.NullValue)),
+            TshDslVersion(1)
+        )
+        assertTrue(nullResult is TshResult.Failure)
+        assertTrue(nullResult.diagnostics().any { it.code == "TSH-SCHEMA-013" })
+    }
+
+    @Test
+    fun ignorePolicyNeverSilentlyDropsUnknownProperties() {
+        val registry = TshSchemaRegistry()
+        registry.register(TshDeclarationSchema(
+            TshDslDeclarationKind.COLOR, emptyMap(), TshSchemaUnknownPropertyPolicy.IGNORE
+        ))
+        val result = registry.validate(
+            TshDslDeclaration(TshDslDeclarationKind.COLOR, "x",
+                mapOf("extension" to TshDslValue.BooleanValue(true))),
+            TshDslVersion(1)
+        )
+        assertTrue(result is TshResult.Success)
+        assertEquals(TshDiagnosticSeverity.WARNING,
+            (result as TshResult.Success).diagnostics.single().severity)
+    }
+
+    @Test
+    fun measureRangesRequireAndEnforceAnExplicitUnit() {
+        assertThrows(IllegalArgumentException::class.java) {
+            TshPropertySchema(
+                name = "size", type = TshDslType.MeasureType(setOf(TshDslUnit.SP, TshDslUnit.PX)),
+                minimum = 1.0
+            )
+        }
+        val registry = TshSchemaRegistry()
+        registry.register(TshDeclarationSchema(
+            TshDslDeclarationKind.FONT,
+            mapOf("size" to TshPropertySchema(
+                name = "size", type = TshDslType.MeasureType(setOf(TshDslUnit.SP, TshDslUnit.PX)),
+                minimum = 1.0, rangeUnit = TshDslUnit.SP
+            ))
+        ))
+        val result = registry.validate(
+            TshDslDeclaration(TshDslDeclarationKind.FONT, "editor",
+                mapOf("size" to TshDslValue.MeasureValue(12.0, TshDslUnit.PX))),
+            TshDslVersion(1)
+        )
+        assertTrue(result is TshResult.Failure)
+        assertTrue(result.diagnostics().any { it.code == "TSH-SCHEMA-014" })
+    }
+
+    @Test
     fun configRepositoryUsesOptimisticRevisionReplacement() {
         val repository = TshConfigRepository()
         fun artifact(revision: String) = TshConfigArtifact(
