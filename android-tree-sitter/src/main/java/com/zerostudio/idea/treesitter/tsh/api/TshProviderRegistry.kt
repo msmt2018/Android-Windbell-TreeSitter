@@ -76,8 +76,24 @@ class TshProviderRegistry {
         optional: TshCapabilitySet = TshCapabilitySet.EMPTY,
         apiRange: TshProviderApiRange = TshProviderApiRange()
     ): TshProviderResolution {
-        require(required.all().none { optional.contains(it.id) }) {
-            "A capability cannot be both required and optional"
+        val overlap = required.all().map { it.id }.intersect(optional.all().map { it.id }.toSet())
+        if (overlap.isNotEmpty()) {
+            val diagnostic = TshDiagnostic(
+                code = "TSH-PROVIDER-006",
+                severity = TshDiagnosticSeverity.ERROR,
+                stage = TshDiagnosticStage.PROVIDER,
+                message = "Capabilities cannot be both required and optional: ${overlap.sorted().joinToString()}",
+                objectId = descriptor.id
+            )
+            return TshProviderResolution(
+                selectedProviders = emptyList(),
+                rejectedProviders = emptyList(),
+                missingRequiredCapabilities = overlap,
+                missingOptionalCapabilities = overlap,
+                incompatibleCapabilities = emptySet(),
+                diagnostics = listOf(diagnostic),
+                degradationLevel = TshDegradationLevel.REQUIRED_CAPABILITIES_MISSING
+            )
         }
         val snapshot = synchronized(lock) { providers.values.toList() }
         val diagnostics = ArrayList<TshDiagnostic>()
