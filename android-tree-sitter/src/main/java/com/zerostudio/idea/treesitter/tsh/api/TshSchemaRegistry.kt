@@ -10,12 +10,19 @@ sealed class TshDslType {
     object IdentifierType : TshDslType()
     object ColorType : TshDslType()
     object FontFamilyType : TshDslType()
-    data class MeasureType(val units: Set<TshDslUnit>) : TshDslType()
+    data class MeasureType(val units: Set<TshDslUnit>) : TshDslType() {
+        init { require(units.isNotEmpty()) { "MeasureType requires at least one unit" } }
+    }
     object RegexType : TshDslType()
     object QueryType : TshDslType()
     data class ReferenceType(val targetKind: TshDslDeclarationKind) : TshDslType()
     data class ArrayType(val elementType: TshDslType) : TshDslType()
-    data class MapType(val valueType: TshDslType) : TshDslType()
+    /** Object keys are strings in the AST; keyType is restricted to StringType or IdentifierType. */
+    data class MapType(val valueType: TshDslType, val keyType: TshDslType = StringType) : TshDslType() {
+        init { require(keyType === StringType || keyType === IdentifierType) {
+            "Map keys must use StringType or IdentifierType"
+        } }
+    }
     data class OptionalType(val valueType: TshDslType) : TshDslType()
     data class UnionType(val alternatives: List<TshDslType>) : TshDslType() {
         init { require(alternatives.isNotEmpty()) { "Union requires at least one alternative" } }
@@ -33,6 +40,8 @@ data class TshPropertySchema(
     val allowedValues: Set<TshDslValue> = emptySet(),
     val minimum: Double? = null,
     val maximum: Double? = null,
+    /** Required when minimum/maximum constrain a MeasureValue. No implicit unit conversion occurs. */
+    val rangeUnit: TshDslUnit? = null,
     val inheritable: Boolean = false,
     val mergePolicy: TshAttributeMergePolicy = TshAttributeMergePolicy.REPLACE,
     val introducedIn: TshDslVersion = TshDslVersion(1),
@@ -41,10 +50,18 @@ data class TshPropertySchema(
 ) {
     init {
         require(name.isNotBlank()) { "Property schema name must not be blank" }
+        require(minimum == null || minimum.isFinite())
+        require(maximum == null || maximum.isFinite())
         require(minimum == null || maximum == null || minimum <= maximum) {
             "Property minimum must not exceed maximum"
         }
         require(requiredCapability == null || requiredCapability.isNotBlank())
+        require((minimum == null && maximum == null) || type !is TshDslType.MeasureType || rangeUnit != null) {
+            "Measure range constraints require an explicit rangeUnit"
+        }
+        require(rangeUnit == null || (type is TshDslType.MeasureType && rangeUnit in type.units)) {
+            "rangeUnit must be one of the MeasureType units"
+        }
     }
 }
 
@@ -71,7 +88,7 @@ data class TshSchemaValidationResult(
         get() = diagnostics.none { it.severity == TshDiagnosticSeverity.ERROR }
 }
 
-/** Thread-safe registry. Unknown DSL properties are never silently treated as supported. */
+/** Thread-safe registry. Unknown properties are never silently discarded. */
 class TshSchemaRegistry {
     private val lock = Any()
     private val schemas = LinkedHashMap<TshDslDeclarationKind, TshDeclarationSchema>()
@@ -106,14 +123,17 @@ class TshSchemaRegistry {
         for ((name, value) in declaration.properties) {
             val property = schema.properties[name]
             if (property == null) {
+                // IGNORE is a compatibility policy, never a silent-drop policy.
                 val severity = when {
-                    schema.unknownPropertyPolicy == TshSchemaUnknownPropertyPolicy.IGNORE -> null
                     mode == TshValidationMode.LENIENT -> TshDiagnosticSeverity.WARNING
-                    schema.unknownPropertyPolicy == TshSchemaUnknownPropertyPolicy.WARNING -> TshDiagnosticSeverity.WARNING
+                    schema.unknownPropertyPolicy == TshSchemaUnknownPropertyPolicy.WARNING ||
+                        schema.unknownPropertyPolicy == TshSchemaUnknownPropertyPolicy.IGNORE ->
+                        TshDiagnosticSeverity.WARNING
                     else -> TshDiagnosticSeverity.ERROR
                 }
-                if (severity != null) diagnostics += diagnostic(
-                    "TSH-SCHEMA-003", severity, "Unknown property '$name' in ${declaration.kind}"
+                diagnostics += diagnostic(
+                    "TSH-SCHEMA-003", severity,
+                    "Unknown property '$name' in ${declaration.kind}; value was not applied"
                 )
                 continue
             }
@@ -126,53 +146,79 @@ class TshSchemaRegistry {
                 diagnostics += diagnostic("TSH-SCHEMA-005", TshDiagnosticSeverity.WARNING,
                     "Property '$name' is deprecated since DSL ${property.deprecatedIn}")
             }
-            if (value === TshDslValue.NullValue && !property.nullable) {
-                diagnostics += diagnostic("TSH-SCHEMA-006", TshDiagnosticSeverity.ERROR,
-                    "Property '$name' does not accept null")
-                continue
-            }
-            if (!matches(value, property.type)) {
-                diagnostics += diagnostic("TSH-SCHEMA-007", TshDiagnosticSeverity.ERROR,
-                    "Property '$name' does not match declared type ${property.type}")
-                continue
-            }
-            if (property.allowedValues.isNotEmpty() && value !in property.allowedValues) {
-                diagnostics += diagnostic("TSH-SCHEMA-008", TshDiagnosticSeverity.ERROR,
-                    "Property '$name' has a value outside its allowed set")
-                continue
-            }
-            val numeric = numericValue(value)
-            if (numeric != null && property.minimum != null && numeric < property.minimum) {
-                diagnostics += diagnostic("TSH-SCHEMA-009", TshDiagnosticSeverity.ERROR,
-                    "Property '$name' is below minimum ${property.minimum}")
-                continue
-            }
-            if (numeric != null && property.maximum != null && numeric > property.maximum) {
-                diagnostics += diagnostic("TSH-SCHEMA-010", TshDiagnosticSeverity.ERROR,
-                    "Property '$name' exceeds maximum ${property.maximum}")
-                continue
-            }
-            if (property.requiredCapability != null && !availableCapabilities.contains(property.requiredCapability)) {
-                diagnostics += diagnostic("TSH-SCHEMA-011", TshDiagnosticSeverity.ERROR,
-                    "Property '$name' requires capability '${property.requiredCapability}'")
+            val valueDiagnostics = validateValue(name, value, property, availableCapabilities)
+            if (valueDiagnostics.isNotEmpty()) {
+                diagnostics += valueDiagnostics
                 continue
             }
             normalized[name] = value
         }
 
         for ((name, property) in schema.properties) {
-            if (name !in declaration.properties) {
-                when {
-                    property.defaultValue != null -> normalized[name] = property.defaultValue
-                    property.required -> diagnostics += diagnostic("TSH-SCHEMA-012", TshDiagnosticSeverity.ERROR,
-                        "Required property '$name' is missing")
+            if (name in declaration.properties) continue
+            val default = property.defaultValue
+            if (default != null) {
+                val defaultDiagnostics = validateValue(name, default, property, availableCapabilities)
+                if (defaultDiagnostics.isNotEmpty()) {
+                    diagnostics += defaultDiagnostics.map {
+                        it.copy(code = "TSH-SCHEMA-013", message = "Invalid default for '$name': ${it.message}")
+                    }
+                } else {
+                    normalized[name] = default
                 }
+            } else if (property.required) {
+                diagnostics += diagnostic("TSH-SCHEMA-012", TshDiagnosticSeverity.ERROR,
+                    "Required property '$name' is missing")
             }
         }
 
         val result = TshSchemaValidationResult(declaration, normalized.toMap(), diagnostics.toList())
-        return if (result.isValid) TshResult.Success(result, diagnostics)
+        return if (result.isValid) TshResult.Success(result, diagnostics.toList())
         else TshResult.Failure(diagnostics.toList())
+    }
+
+    private fun validateValue(
+        name: String,
+        value: TshDslValue,
+        property: TshPropertySchema,
+        capabilities: TshCapabilitySet
+    ): List<TshDiagnostic> {
+        val errors = ArrayList<TshDiagnostic>()
+        if (value === TshDslValue.NullValue) {
+            if (!property.nullable) errors += diagnostic(
+                "TSH-SCHEMA-006", TshDiagnosticSeverity.ERROR, "Property '$name' does not accept null"
+            )
+            return errors
+        }
+        if (!matches(value, property.type)) {
+            errors += diagnostic("TSH-SCHEMA-007", TshDiagnosticSeverity.ERROR,
+                "Property '$name' does not match declared type ${property.type}")
+            return errors
+        }
+        if (property.allowedValues.isNotEmpty() && value !in property.allowedValues) {
+            errors += diagnostic("TSH-SCHEMA-008", TshDiagnosticSeverity.ERROR,
+                "Property '$name' has a value outside its allowed set")
+        }
+        val numeric = numericValue(value)
+        if (numeric != null) {
+            if (property.minimum != null && numeric < property.minimum) errors += diagnostic(
+                "TSH-SCHEMA-009", TshDiagnosticSeverity.ERROR,
+                "Property '$name' is below minimum ${property.minimum}${property.rangeUnit ?: ""}"
+            )
+            if (property.maximum != null && numeric > property.maximum) errors += diagnostic(
+                "TSH-SCHEMA-010", TshDiagnosticSeverity.ERROR,
+                "Property '$name' exceeds maximum ${property.maximum}${property.rangeUnit ?: ""}"
+            )
+        }
+        if (value is TshDslValue.MeasureValue && property.rangeUnit != null && value.unit != property.rangeUnit) {
+            errors += diagnostic("TSH-SCHEMA-014", TshDiagnosticSeverity.ERROR,
+                "Property '$name' range is expressed in ${property.rangeUnit}, but value uses ${value.unit}; convert explicitly")
+        }
+        if (property.requiredCapability != null && !capabilities.contains(property.requiredCapability)) {
+            errors += diagnostic("TSH-SCHEMA-011", TshDiagnosticSeverity.ERROR,
+                "Property '$name' requires capability '${property.requiredCapability}'")
+        }
+        return errors
     }
 
     private fun matches(value: TshDslValue, type: TshDslType): Boolean = when (type) {
@@ -190,8 +236,11 @@ class TshSchemaRegistry {
         TshDslType.QueryType -> value is TshDslValue.QueryValue
         is TshDslType.ReferenceType -> value is TshDslValue.ReferenceValue && value.targetKind == type.targetKind
         is TshDslType.ArrayType -> value is TshDslValue.ArrayValue && value.values.all { matches(it, type.elementType) }
-        is TshDslType.MapType -> value is TshDslValue.ObjectValue && value.values.values.all { matches(it, type.valueType) }
-        is TshDslType.OptionalType -> value === TshDslValue.NullValue || matches(value, type.valueType)
+        is TshDslType.MapType -> value is TshDslValue.ObjectValue &&
+            value.values.keys.all { key -> type.keyType === TshDslType.StringType ||
+                (key.isNotBlank() && key.matches(Regex("[A-Za-z_][A-Za-z0-9_]*"))) } &&
+            value.values.values.all { matches(it, type.valueType) }
+        is TshDslType.OptionalType -> matches(value, type.valueType)
         is TshDslType.UnionType -> type.alternatives.any { matches(value, it) }
     }
 
