@@ -140,6 +140,9 @@ class TshPieceTreeEditorBinding private constructor(
 
     /** The host calls this on the EditorView edit/main thread when the document is permanently closed. */
     override fun close() {
+        check(Looper.myLooper() == Looper.getMainLooper()) {
+            "TshPieceTreeEditorBinding.close must run on the EditorView main thread"
+        }
         if (!closed.compareAndSet(false, true)) return
         view.removeEditCallback(callback)
         releasePendingBefore()
