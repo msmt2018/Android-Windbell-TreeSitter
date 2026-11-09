@@ -52,8 +52,8 @@ class TshAttachmentTest {
         val secondScope = TshOwnerScope("renderer-role")
         val request = TshAttachmentRequest(host, "editor")
 
-        val first = (engine.attach(request, firstScope) as TshResult.Success).value
-        val second = (engine.attach(request, secondScope) as TshResult.Success).value
+        val first = (engine.attach(request, firstScope) as TshResult.Success<TshAttachmentReport>).value
+        val second = (engine.attach(request, secondScope) as TshResult.Success<TshAttachmentReport>).value
         assertEquals(first.handle.objectId, second.handle.objectId)
         assertEquals(1, engine.objects.size())
 
@@ -75,7 +75,7 @@ class TshAttachmentTest {
         val scope = TshOwnerScope("external-owner")
         val attached = (engine.attach(
             TshAttachmentRequest(host, "editor"), scope
-        ) as TshResult.Success).value
+        ) as TshResult.Success<TshAttachmentReport>).value
 
         engine.detach(attached.handle)
 
