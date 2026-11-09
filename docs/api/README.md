@@ -17,7 +17,6 @@
 |---|---|---|
 | [Runtime 与 Session](runtime-and-session.md) | Engine、Session、任务与资源 | 多会话隔离、状态机、线程和关闭 |
 | [配置与语言工具](config-and-language-tooling.md) | .tsh、Lexer、Parser、AST、Schema | 编译阶段、诊断、补全、格式化 |
-
 | [Highlight 与 Render](highlight-and-render-api.md) | 属性、主题、高亮、渲染 | 样式级联、RenderPlan、真实绘制 |
 | [Binding、事件与扩展](binding-events-and-extension.md) | Binding、EventBus、Provider | 对象关系、事件线程、扩展卸载 |
 | [ATS、Regex 与 Match](ats-regex-and-match-api.md) | 双管道匹配 | 统一 Match、优先级、增量和窗口 |
@@ -42,6 +41,15 @@
 | [Attribute、Semantic 与 Highlight](attribute-semantic-highlight-api.md) | Attribute Registry、Semantic Resolver、Highlight | DSL 属性真正进入运行时计算与高亮结果 |
 | [Theme、Style 与 Render 完整契约](theme-style-render-contract-api.md) | Theme、Font、Color、Decoration、Backend | 主题管理、完整字体属性、真实绘制回执 |
 | [Kotlin/JNI/C++ 完整性](native-jni-cpp-completeness-api.md) | Native operation catalog、JNI、C ABI | 接口签名、注解生成、句柄、所有权与生命周期 |
+
+## 领域规范唯一权威来源
+
+- 公共原则、宿主所有权、接入流程：public-api-design-principles-and-integration-contract.md。
+- Match 数据模型/生命周期：unified-match-scope-api.md；Regex 窗口执行：regex-window-execution-api.md。
+- RenderPlan/Renderer Provider：theme-style-render-contract-api.md；后端提交/回执/真实绘制验收：render-backend-conformance-api.md。
+- Native/JNI ABI、operation、handle：native-jni-cpp-completeness-api.md。
+- DSL 语法/Schema 语义：tsh-dsl-syntax-and-semantic-contract.md 与 dsl-type-system-and-schema-api.md（前者语法规范，后者类型/校验规范）。
+- 其余文档只描述各自领域的流程或实现状态；出现冲突时以上权威文档和最高层公共规范优先。
 
 ## 公共 API 设计要求
 
