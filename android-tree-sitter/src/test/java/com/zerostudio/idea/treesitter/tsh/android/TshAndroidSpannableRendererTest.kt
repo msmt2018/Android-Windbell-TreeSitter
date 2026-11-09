@@ -112,7 +112,8 @@ class TshAndroidSpannableRendererTest {
         val result = renderer.submit(
             plan("viewport-plan", revisions, 0xFFFF0000u), Acknowledger()
         ) as TshResult.Success<TshRenderReceipt>
-        assertEquals(TshRenderReceiptStatus.PARTIALLY_APPLIED, result.value.status)
+        assertEquals(TshRenderReceiptStatus.APPLIED, result.value.status)
+        assertTrue(result.value.confirmsHostMutation)
         val span = text.getSpans(0, 4, CharacterStyle::class.java).single()
         assertEquals(1, text.getSpanStart(span))
         assertEquals(3, text.getSpanEnd(span))
