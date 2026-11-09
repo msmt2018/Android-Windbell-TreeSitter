@@ -7,14 +7,20 @@ import com.zerostudio.idea.treesitter.TSTree
 /** A syntax tree registered with the Engine resource coordinator and ready for query execution. */
 class TshOwnedSyntaxTree(
     snapshot: TshSyntaxTreeSnapshot,
-    val registration: TshNativeResourceRegistry.Registration<TSTree>
+    registration: TshNativeResourceRegistry.Registration<TSTree>
 ) {
     @Volatile var snapshot: TshSyntaxTreeSnapshot = snapshot
+        private set
+    @Volatile var registration: TshNativeResourceRegistry.Registration<TSTree> = registration
         private set
     @Volatile internal var lastEditedDocumentVersion: Long? = null
 
     internal fun updateSnapshot(value: TshSyntaxTreeSnapshot) {
         snapshot = value
+    }
+
+    internal fun updateRegistration(value: TshNativeResourceRegistry.Registration<TSTree>) {
+        registration = value
     }
 }
 
@@ -225,6 +231,7 @@ class TshTreeSitterParserOwner private constructor(
                 resources.retire(ownedTree.registration.descriptor.id)
                 return metadata
             }
+            ownedTree.updateRegistration(ownedTree.registration.copy(descriptor = metadata.value))
             ownedTree.updateSnapshot(updatedSnapshot)
             ownedTree.lastEditedDocumentVersion = targetDocumentVersion
             TshResult.Success(Unit)
