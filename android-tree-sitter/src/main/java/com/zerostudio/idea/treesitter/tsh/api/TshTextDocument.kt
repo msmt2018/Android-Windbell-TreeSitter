@@ -78,6 +78,12 @@ data class TshTextChunk(
     }
 }
 
+enum class TshTextAccessThreading { UNKNOWN, ANY_THREAD, UI_THREAD_ONLY, SERIALIZED }
+
+fun interface TshTextDocumentDisposedListener {
+    fun onDisposed(documentId: String, finalVersion: Long)
+}
+
 fun interface TshTextChangeListener {
     fun onChanged(change: TshTextChange)
 }
@@ -92,6 +98,10 @@ interface TshTextSubscription : AutoCloseable {
  */
 interface TshTextAccessProvider {
     val id: String
+    /** UNKNOWN requires the host integration layer to choose a safe dispatcher explicitly. */
+    val threading: TshTextAccessThreading get() = TshTextAccessThreading.UNKNOWN
+    /** Conservative default: providers must opt in before TSH performs concurrent snapshot reads. */
+    val supportsConcurrentReads: Boolean get() = false
     fun supports(document: Any): Boolean
     fun snapshot(document: Any): TshResult<TshTextSnapshot>
 
