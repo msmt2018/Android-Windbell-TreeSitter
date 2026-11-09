@@ -20,9 +20,11 @@ data class TshGrammarDescriptor(
 }
 
 /** Native Tree-sitter byte range. End is exclusive; its encoding is carried by the tree snapshot. */
-data class TshByteRange(val startByte: Int, val endByte: Int) {
+data class TshByteRange(val startByte: Long, val endByte: Long) {
+    constructor(startByte: Int, endByte: Int) : this(startByte.toLong(), endByte.toLong())
+
     init {
-        require(startByte >= 0)
+        require(startByte >= 0L)
         require(endByte >= startByte)
     }
     val isEmpty: Boolean get() = startByte == endByte
