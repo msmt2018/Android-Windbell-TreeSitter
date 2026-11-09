@@ -8,6 +8,7 @@ import com.zerostudio.idea.treesitter.tsh.api.TshTextChange
 import com.zerostudio.idea.treesitter.tsh.api.TshTextEdit
 import com.zerostudio.idea.treesitter.tsh.api.TshTextSnapshotLease
 import x.github.module.editor.model.EditorDocument
+import x.github.module.editor.model.PieceTreeBuffer
 import x.github.module.editor.view.EditorView
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -136,7 +137,7 @@ class TshPieceTreeEditorBinding private constructor(
         }
     }
 
-    /** The host calls this when the editor/document is permanently closed. */
+    /** The host calls this on the EditorView edit/main thread when the document is permanently closed. */
     override fun close() {
         if (!closed.compareAndSet(false, true)) return
         view.removeEditCallback(callback)
@@ -177,6 +178,9 @@ class TshPieceTreeEditorBinding private constructor(
             onInvalidated: (TshResult.Failure) -> Unit = {}
         ): TshPieceTreeEditorBinding {
             require(documentId.isNotBlank()) { "documentId must not be blank" }
+            require(view.getBuffer() is PieceTreeBuffer) {
+                "TshPieceTreeEditorBinding requires an EditorView backed by PieceTreeBuffer"
+            }
             val document = TshPieceTreeDocument(
                 documentId = documentId,
                 languageId = languageId,
