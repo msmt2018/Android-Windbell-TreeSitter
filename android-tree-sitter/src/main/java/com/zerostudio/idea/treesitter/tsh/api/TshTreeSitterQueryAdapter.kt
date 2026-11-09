@@ -396,11 +396,23 @@ class TshTreeSitterQueryExecutor(
         } catch (error: Throwable) {
             failure("TSH-QUERY-EXEC-016", "Tree-sitter query execution failed: ${error.message}", cause = error)
         } finally {
-            runCatching { cursor.close() }
+            cursor.close()
         }
         } finally {
             treeLease.close()
         }
+        } catch (error: Exception) {
+            failure(
+                "TSH-QUERY-EXEC-027",
+                "Tree-sitter query resource cleanup failed: ${error.message}",
+                cause = error
+            )
+        } catch (error: LinkageError) {
+            failure(
+                "TSH-QUERY-EXEC-028",
+                "Tree-sitter query cleanup failed with a Native linkage error: ${error.message}",
+                cause = error
+            )
         } finally {
             queryLease.close()
         }
