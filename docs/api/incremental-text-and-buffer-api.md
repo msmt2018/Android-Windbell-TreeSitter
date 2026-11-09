@@ -80,7 +80,7 @@ PieceTreeSnapshot 的创建成本为 O(piece count) 并复制当前仍在 change
 
 - 强制校验 documentId 与 beforeVersion 必须匹配提供的不可变 Snapshot；不允许把其他文档/版本的编辑应用到旧树。
 - 所有偏移均以 UTF-16 code unit 表示，转换为 Tree-sitter UTF-16LE byte offset 时使用 64-bit 中间计算，并在 Native Int 边界显式拒绝溢出。
-- 通过有界 32K UTF-16 分块单次扫描，仅缓存本批编辑实际请求的端点坐标，不创建全文 String，也不创建与总行数成比例的行索引；扫描同时检查 Snapshot 的 UTF-16 surrogate 完整性。
+- 若 `TshTextEdit` 提供 before-version 行列坐标，直接使用该坐标，不扫描全文；否则通过有界 32K UTF-16 分块单次扫描，仅缓存本批编辑实际请求的端点坐标，不创建全文 String，也不创建与总行数成比例的行索引；扫描同时检查 Snapshot 的 UTF-16 surrogate 完整性。
 - 编辑范围不得越界或切开 surrogate pair；起点/旧终点/新终点分别转换为 Tree-sitter row/byte-column。
 - 输入编辑按原始文档坐标升序描述，编译结果反向输出为降序；整个批次一次性传给 `TshTreeSitterParserOwner.editTreeBatch`，在一个独占 Native Lease 内依次应用，较高偏移的编辑不会改变较低偏移编辑的坐标。
 - CRLF 中的 CR 计入当前 Tree-sitter byte column，LF 才推进 row；替换文本中的换行也按同一规则计算。
@@ -102,7 +102,7 @@ PieceTreeSnapshot 的创建成本为 O(piece count) 并复制当前仍在 change
 editor 模块新增 `TshPieceTreeEditorBinding.attach(view, documentId, languageId, ...)`：
 
 - 在 `beforeTextChanged` 回调中获取 before Snapshot Lease；在 `afterTextChanged` 中、整个批次已应用后获取 after Snapshot Lease。
-- `EditorDocument.AppliedChange` 本身已携带旧范围 UTF-16 offset/删除长度、插入长度、插入后的行列元数据。绑定层据此生成 TSH Change，不调用 `TextSlice.toText()`，大型 undo/redo 不会为了构造事件而复制大块插入文本。
+- `EditorDocument.AppliedChange` 本身已携带旧范围 UTF-16 offset/行列、删除长度和插入长度。PieceTree EOL 已归一化时，绑定层直接把旧范围行列作为 TSH endpoint metadata，避免每次编辑扫描整个 before Snapshot；未归一化时回退到 Snapshot 分块坐标扫描，以正确处理 CR-only 等非 Tree-sitter 换行。绑定层同时扫描 `TextSlice.forEachChunk` 计算替换 LF/tail 指标，不调用 `TextSlice.toText()`，大型 undo/redo 不会为了构造事件而复制大块插入文本。
 - `TshTextEdit` 新增 `replacementLengthUtf16`、`replacementLineFeedCount` 与 `replacementTrailingUtf16Length`，描述未物化替换内容的长度/行尾指标，不把 Tree-sitter Native Point 泄漏进通用文本 API；普通调用方仍可使用 String replacement。PieceTable 的 `TextSlice.forEachChunk` 可遍历文本切片的只读块视图，不构造完整 String。
 - 多编辑从 EditorDocument 的 bottom-up applied 顺序恢复为 TSH before-version 升序；Tree-sitter compiler 再反向生成 Native 降序 Edit。相同 offset 的多个纯插入保留稳定顺序；重叠替换仍拒绝。
 - `TshPieceTreeDocument` / Provider 增加 change subscription 与 disposal notification；Provider capability 显式声明 `text.change-subscription` 和 `text.disposal-notification`。
