@@ -332,7 +332,7 @@ class TshPieceTreeIncrementalSession private constructor(
             "TshPieceTreeIncrementalSession.close must run on the EditorView main thread"
         }
         if (!closed.compareAndSet(false, true)) return
-        binding.close()
+        runCatching { binding.close() }
         val abandoned = synchronized(workLock) {
             pendingWork.also {
                 pendingWork = null
