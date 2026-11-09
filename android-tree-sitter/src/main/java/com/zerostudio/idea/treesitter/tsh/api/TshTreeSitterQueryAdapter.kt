@@ -282,6 +282,14 @@ class TshTreeSitterQueryExecutor(
             return failure("TSH-QUERY-EXEC-010", "Requested query range is outside the syntax tree root range")
         }
 
+        if (effectiveRange.startByte > Int.MAX_VALUE.toLong() ||
+            effectiveRange.endByte > Int.MAX_VALUE.toLong()) {
+            return failure(
+                "TSH-QUERY-EXEC-020",
+                "Native TSQueryCursor byte-range ABI is Int-limited; requested range exceeds Int.MAX_VALUE"
+            )
+        }
+
         val cursor = try {
             TSQueryCursor.create()
         } catch (error: Throwable) {
@@ -291,7 +299,7 @@ class TshTreeSitterQueryExecutor(
         try {
             // Tree-sitter's match limit bounds pending in-progress matches, not total results.
             // Enforce maxMatches while draining the cursor instead.
-            cursor.setByteRange(effectiveRange.startByte, effectiveRange.endByte)
+            cursor.setByteRange(effectiveRange.startByte.toInt(), effectiveRange.endByte.toInt())
             cursor.setPredicateEvaluationEnabled(query.options.enablePredicates)
             if (query.options.enablePredicates) {
                 predicateHandlers.forEach(cursor::addPredicateHandler)
