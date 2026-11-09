@@ -1,5 +1,7 @@
 # JNI 与 Native Bridge API 规范
 
+> 本文为 JNI 架构概览；Native operation/ABI/handle/lifecycle 的唯一权威契约以 [native-jni-cpp-completeness-api.md](native-jni-cpp-completeness-api.md) 为准。
+
 ## 目标
 
 JNI 是 Kotlin/Java 与 C/C++ 内核之间的内部桥接层。应用层公共 API 不应要求开发者直接调用 JNI、传递裸指针或理解 Native 数组布局。NativeBridge 必须提供稳定的所有权、编码、错误和线程边界。
