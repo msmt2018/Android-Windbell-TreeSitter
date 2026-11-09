@@ -110,7 +110,7 @@ interface TshTextAccessProvider {
             threading == TshTextAccessThreading.SERIALIZED
     /** Serializes provider calls when concurrent reads are not explicitly supported. */
     fun <T> withReadAccess(block: () -> T): T =
-        if (supportsConcurrentReads) block() else synchronized(this, block)
+        if (supportsConcurrentReads && threading != TshTextAccessThreading.SERIALIZED) block() else synchronized(this, block)
     fun supports(document: Any): Boolean
     fun snapshot(document: Any): TshResult<TshTextSnapshot>
 
