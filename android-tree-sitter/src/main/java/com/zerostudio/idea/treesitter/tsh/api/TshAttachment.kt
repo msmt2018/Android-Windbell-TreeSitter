@@ -135,7 +135,8 @@ class TshAttachmentManager(
     private data class Entry(
         var report: TshAttachmentReport,
         var scopeRegistration: AutoCloseable?,
-        val request: TshAttachmentRequest
+        val request: TshAttachmentRequest,
+        val detachedListeners: MutableList<() -> Unit> = ArrayList()
     )
     private data class ObjectRegistrationLease(
         var references: Int,
@@ -277,6 +278,31 @@ class TshAttachmentManager(
     }
 
     /** Re-runs provider negotiation after providers are installed, removed or upgraded. */
+    /** Observes detach caused by OwnerScope close, explicit detach, or Engine shutdown. */
+    fun subscribeDetached(
+        handle: TshAttachmentHandle,
+        listener: () -> Unit
+    ): AutoCloseable? {
+        var invokeImmediately = false
+        val registration = synchronized(lock) {
+            val entry = entries[handle.id] ?: return null
+            if (entry.report.handle != handle) return null
+            if (entry.report.status == TshAttachmentStatus.DETACHED) {
+                invokeImmediately = true
+                AutoCloseable { }
+            } else {
+                entry.detachedListeners += listener
+                AutoCloseable {
+                    synchronized(lock) {
+                        entries[handle.id]?.detachedListeners?.remove(listener)
+                    }
+                }
+            }
+        }
+        if (invokeImmediately) runCatching(listener)
+        return registration
+    }
+
     fun refresh(handle: TshAttachmentHandle): TshResult<TshAttachmentReport> {
         val entrySnapshot = synchronized(lock) {
             entries[handle.id]?.takeIf { it.report.handle == handle }
@@ -324,16 +350,20 @@ class TshAttachmentManager(
 
     /** Idempotent; unregisters only TSH's identity entry and never closes the host object. */
     fun detach(handle: TshAttachmentHandle): Boolean {
-        val entry = synchronized(lock) {
-            val found = entries[handle.id] ?: return false
-            if (found.report.handle != handle || found.report.status == TshAttachmentStatus.DETACHED) return false
-            found.report = found.report.copy(
+        val detached = synchronized(lock) {
+            val entry = entries[handle.id] ?: return false
+            if (entry.report.handle != handle || entry.report.status == TshAttachmentStatus.DETACHED) return false
+            entry.report = entry.report.copy(
                 status = TshAttachmentStatus.DETACHED,
                 updatedAtNanos = System.nanoTime()
             )
-            found
+            val registration = entry.scopeRegistration
+            entry.scopeRegistration = null
+            val listeners = entry.detachedListeners.toList()
+            entry.detachedListeners.clear()
+            Triple(entry, registration, listeners)
         }
-        val diagnostics = entry.report.diagnostics.toMutableList()
+        val diagnostics = detached.first.report.diagnostics.toMutableList()
         if (!releaseObjectRegistration(handle.objectId)) {
             diagnostics += TshDiagnostic(
                 code = "TSH-ATTACH-008",
@@ -343,28 +373,37 @@ class TshAttachmentManager(
                 objectId = handle.objectId
             )
         }
-        val registration = entry.scopeRegistration
-        entry.scopeRegistration = null
-        if (registration != null) {
+        try {
+            detached.second?.close()
+        } catch (error: Exception) {
+            diagnostics += TshDiagnostic(
+                code = "TSH-ATTACH-009", severity = TshDiagnosticSeverity.WARNING,
+                stage = TshDiagnosticStage.LIFECYCLE,
+                message = "OwnerScope cleanup registration could not be removed",
+                objectId = handle.objectId, cause = error
+            )
+        } catch (error: LinkageError) {
+            diagnostics += TshDiagnostic(
+                code = "TSH-ATTACH-010", severity = TshDiagnosticSeverity.WARNING,
+                stage = TshDiagnosticStage.LIFECYCLE,
+                message = "OwnerScope cleanup registration failed with a linkage error",
+                objectId = handle.objectId, cause = error
+            )
+        }
+        detached.third.forEach { listener ->
             try {
-                registration.close()
+                listener()
             } catch (error: Exception) {
                 diagnostics += TshDiagnostic(
-                    code = "TSH-ATTACH-009",
-                    severity = TshDiagnosticSeverity.WARNING,
-                    stage = TshDiagnosticStage.LIFECYCLE,
-                    message = "OwnerScope cleanup registration could not be removed",
-                    objectId = handle.objectId,
-                    cause = error
+                    "TSH-ATTACH-016", TshDiagnosticSeverity.WARNING, TshDiagnosticStage.LIFECYCLE,
+                    "Attachment detach listener failed: ${error.message}",
+                    objectId = handle.objectId, cause = error
                 )
             } catch (error: LinkageError) {
                 diagnostics += TshDiagnostic(
-                    code = "TSH-ATTACH-010",
-                    severity = TshDiagnosticSeverity.WARNING,
-                    stage = TshDiagnosticStage.LIFECYCLE,
-                    message = "OwnerScope cleanup registration failed with a linkage error",
-                    objectId = handle.objectId,
-                    cause = error
+                    "TSH-ATTACH-017", TshDiagnosticSeverity.WARNING, TshDiagnosticStage.LIFECYCLE,
+                    "Attachment detach listener failed with a linkage error",
+                    objectId = handle.objectId, cause = error
                 )
             }
         }
