@@ -53,7 +53,7 @@ data class TshTextChange(
             "Text change must advance the document version"
         }
         require(edits.zipWithNext().all { (left, right) ->
-            left.startUtf16 <= right.startUtf16 && left.endUtf16 <= right.startUtf16
+            left.startUtf16 < right.startUtf16 && left.endUtf16 <= right.startUtf16
         }) { "Edits must be ascending and non-overlapping in before-version coordinates" }
     }
 }
@@ -115,7 +115,7 @@ interface TshTextAccessProvider {
         if (startUtf16 > snapshot.lengthUtf16) return failure(
             "TSH-TEXT-002", "Chunk start is outside the snapshot"
         )
-        val end = minOf(snapshot.lengthUtf16, startUtf16 + maxUtf16Length.toLong())
+        val end = startUtf16 + minOf(snapshot.lengthUtf16 - startUtf16, maxUtf16Length.toLong())
         return try {
             val text = snapshot.readUtf16(startUtf16, end)
             TshResult.Success(TshTextChunk(snapshot.documentId, snapshot.version, startUtf16, end, text))
