@@ -7,7 +7,6 @@ import com.zerostudio.idea.treesitter.tsh.api.TshResult
 import com.zerostudio.idea.treesitter.tsh.api.TshTextChange
 import com.zerostudio.idea.treesitter.tsh.api.TshTextEdit
 import com.zerostudio.idea.treesitter.tsh.api.TshTextSnapshotLease
-import com.zerostudio.idea.treesitter.tsh.api.TshTextSubscription
 import x.github.module.editor.model.EditorDocument
 import x.github.module.editor.view.EditorView
 import java.util.concurrent.atomic.AtomicBoolean
@@ -128,6 +127,13 @@ class TshPieceTreeEditorBinding private constructor(
 
     init {
         view.addEditCallback(callback)
+        when (val acquired = provider.acquireSnapshot(document)) {
+            is TshResult.Success -> {
+                lastVersion = acquired.value.snapshot.version
+                acquired.value.close()
+            }
+            is TshResult.Failure -> onInvalidated(acquired)
+        }
     }
 
     /** The host calls this when the editor/document is permanently closed. */
