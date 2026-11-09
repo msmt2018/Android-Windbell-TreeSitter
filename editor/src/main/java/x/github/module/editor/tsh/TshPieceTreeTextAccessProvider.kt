@@ -6,6 +6,7 @@ import com.zerostudio.idea.treesitter.tsh.api.TshCapabilitySet
 import com.zerostudio.idea.treesitter.tsh.api.TshDiagnostic
 import com.zerostudio.idea.treesitter.tsh.api.TshDiagnosticSeverity
 import com.zerostudio.idea.treesitter.tsh.api.TshDiagnosticStage
+import com.zerostudio.idea.treesitter.tsh.api.TshObjectDescriptor
 import com.zerostudio.idea.treesitter.tsh.api.TshResult
 import com.zerostudio.idea.treesitter.tsh.api.TshSharedTextSnapshotLease
 import com.zerostudio.idea.treesitter.tsh.api.TshTextAccessProvider
