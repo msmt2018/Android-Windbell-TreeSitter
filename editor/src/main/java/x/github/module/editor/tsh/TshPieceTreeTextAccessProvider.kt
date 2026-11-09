@@ -11,6 +11,12 @@ import com.zerostudio.idea.treesitter.tsh.api.TshResult
 import com.zerostudio.idea.treesitter.tsh.api.TshTextAccessProvider
 import com.zerostudio.idea.treesitter.tsh.api.TshTextAccessThreading
 import com.zerostudio.idea.treesitter.tsh.api.TshTextSnapshot
+import com.zerostudio.idea.treesitter.tsh.api.TshTextChange
+import com.zerostudio.idea.treesitter.tsh.api.TshTextChangeListener
+import com.zerostudio.idea.treesitter.tsh.api.TshTextDocumentDisposedListener
+import com.zerostudio.idea.treesitter.tsh.api.TshTextSubscription
+import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Host document facade for the repository's PieceTreeTextBuffer.
@@ -27,7 +33,47 @@ class TshPieceTreeDocument(
     val languageId: String?,
     private val snapshotFactory: () -> PieceTreeSnapshot
 ) {
-    fun createSnapshot(): PieceTreeSnapshot = snapshotFactory()
+    private val changeListeners = CopyOnWriteArrayList<TshTextChangeListener>()
+    private val disposedListeners = CopyOnWriteArrayList<TshTextDocumentDisposedListener>()
+    private val disposed = AtomicBoolean(false)
+
+    fun createSnapshot(): PieceTreeSnapshot {
+        check(!disposed.get()) { "PieceTree document $documentId is disposed" }
+        return snapshotFactory()
+    }
+
+    fun publishChange(change: TshTextChange) {
+        check(!disposed.get()) { "Cannot publish a change for a disposed document" }
+        require(change.documentId == documentId) { "Change belongs to another document" }
+        changeListeners.forEach { listener -> listener.onChanged(change) }
+    }
+
+    fun dispose(finalVersion: Long) {
+        if (!disposed.compareAndSet(false, true)) return
+        changeListeners.clear()
+        disposedListeners.forEach { listener -> listener.onDisposed(documentId, finalVersion) }
+        disposedListeners.clear()
+    }
+
+    fun isDisposed(): Boolean = disposed.get()
+
+    internal fun addChangeListener(listener: TshTextChangeListener) {
+        check(!disposed.get()) { "Cannot subscribe to a disposed document" }
+        changeListeners.addIfAbsent(listener)
+    }
+
+    internal fun removeChangeListener(listener: TshTextChangeListener) {
+        changeListeners.remove(listener)
+    }
+
+    internal fun addDisposedListener(listener: TshTextDocumentDisposedListener) {
+        check(!disposed.get()) { "Cannot subscribe to a disposed document" }
+        disposedListeners.addIfAbsent(listener)
+    }
+
+    internal fun removeDisposedListener(listener: TshTextDocumentDisposedListener) {
+        disposedListeners.remove(listener)
+    }
 }
 
 /**
@@ -42,6 +88,8 @@ class TshPieceTreeTextAccessProvider(
     override val apiVersion: Int get() = 1
     override val threading: TshTextAccessThreading get() = TshTextAccessThreading.ANY_THREAD
     override val supportsConcurrentReads: Boolean get() = true
+    override val supportsChangeSubscriptions: Boolean get() = true
+    override val supportsDisposalNotifications: Boolean get() = true
     override val capabilities: TshCapabilitySet
         get() = TshCapabilitySet.of(
             TshCapability("text.snapshot", 1),
@@ -88,6 +136,48 @@ class TshPieceTreeTextAccessProvider(
                 "PieceTree snapshot creation failed: ${error.message}",
                 error
             )
+        }
+    }
+
+    override fun subscribe(
+        document: Any,
+        listener: TshTextChangeListener
+    ): TshResult<TshTextSubscription> {
+        val host = document as? TshPieceTreeDocument ?: return failure(
+            "TSH-PIECETREE-007",
+            "Document is not a TshPieceTreeDocument"
+        )
+        return try {
+            host.addChangeListener(listener)
+            TshResult.Success(object : TshTextSubscription {
+                private val closed = AtomicBoolean(false)
+                override fun close() {
+                    if (closed.compareAndSet(false, true)) host.removeChangeListener(listener)
+                }
+            })
+        } catch (error: Exception) {
+            failure("TSH-PIECETREE-008", "Cannot subscribe to PieceTree changes", error)
+        }
+    }
+
+    override fun subscribeDisposed(
+        document: Any,
+        listener: TshTextDocumentDisposedListener
+    ): TshResult<TshTextSubscription> {
+        val host = document as? TshPieceTreeDocument ?: return failure(
+            "TSH-PIECETREE-009",
+            "Document is not a TshPieceTreeDocument"
+        )
+        return try {
+            host.addDisposedListener(listener)
+            TshResult.Success(object : TshTextSubscription {
+                private val closed = AtomicBoolean(false)
+                override fun close() {
+                    if (closed.compareAndSet(false, true)) host.removeDisposedListener(listener)
+                }
+            })
+        } catch (error: Exception) {
+            failure("TSH-PIECETREE-010", "Cannot subscribe to PieceTree disposal", error)
         }
     }
 
