@@ -1,177 +1,131 @@
 # TSH 引擎开发计划地图
 
-> 目标：把 .tsh 声明稳定地编译成可执行的双管线规则、统一语义结果和可验证的应用层绘制。TSH 是语法/高亮/样式/渲染引擎，不是通用编辑器框架。
+> 产品目标：让第三方开发者将 TSH 接入已有 Editor、Document、Piece Tree/Rope、Layout、Theme 和 Renderer 时，不需要替换宿主对象或重构编辑器。TSH 只负责语法/查询/Regex/Match/Scope/Style/RenderPlan，不成为通用编辑器框架。
 >
-> 状态口径：**契约**=文档已定义；**源码**=代码已提交；**构建**=目标模块成功编译；**测试**=自动化测试通过；**设备**=真实 Android 控件绘制验证。状态逐项记录，不以文档存在推断实现完成。
+> 最高层规范：[TSH Public API 设计总规范与宿主接入契约](api/public-api-design-principles-and-integration-contract.md)。
 
-## 本轮完整缺陷修复批次
+## 状态口径
 
-本轮先处理上一轮静态审计发现的全部确定问题，再补齐缺失的接入契约，最后进入真实宿主绑定。未完成项不得从地图删除或用文档描述伪装完成。
+- SPEC_ONLY：只有规范。
+- SOURCE_PARTIAL：有源码切片，未覆盖完整契约。
+- SOURCE_COMPLETE：源码覆盖规范范围，仍不代表可构建。
+- BUILD_VERIFIED：指定模块/变体构建通过，记录命令与 commit。
+- TEST_VERIFIED：指定测试集通过，记录命令与结果。
+- DEVICE_VERIFIED：指定设备/API/真实宿主控件端到端验证通过。
 
-- [x] 公共 API 总规范首版、ATS 状态矛盾修正和证据等级定义；领域唯一权威来源映射仍需逐文档落实。
-- [x] Attach/Detach、OwnerScope、Attachment Report、Engine attach/inspect/refresh/detach 首版源码与测试源码；[x] Provider Resolution/API/Capability 版本协商源码与测试源码；[ ] 动态 Provider 事件和并发验证。
-- [x] Snapshot Lease/chunk/range/变更订阅扩展点及 Edit 顺序校验源码；[ ] 宿主固定版本 Lease、真实变更/销毁订阅与线程验证。
-- [x] 公共 SourcePosition/ByteRange 改为 Long（Int 构造兼容），Native Int narrowing 检查；[x] UTF-8/UTF-16/不成对 surrogate 策略修复；[ ] Piece Tree 索引转换与完整 UAX #29 Grapheme Provider。
-- [x] Schema nullable/default/Map key/Measure unit/unknown-property 静默丢弃问题源码修复及测试源码；[ ] 内建 Schema Catalog、ReferenceResolver、SemanticAnalyzer、Lowering 和 Runtime Consumer。
-- [x] ATS 实现状态矛盾修复、Tree-sitter 通用 QueryCompiler 与 ATS 专用 TshAtsCompiler 分离；[ ] maxSteps 真实预算、strictNodeValidation Grammar Schema、Native 可中断取消。
-- [x] Oniguruma Regex pattern 的标准 UTF-8 → UTF-16LE 解码修复源码；[ ] 窗口边界/Lease/预算/增量语义及 Native 测试。
-- [x] 旧 Spannable 路径只清理 TSH-owned Span，byte range 奇数/越界校验；[ ] Match/Scope/Style/RenderPlan/Receipt 完整闭环和真实控件绘制。
-- [x] Engine 初始化前置条件、strictProviderValidation/enableDiagnostics 消费、Provider supports 异常隔离源码；[ ] close/attach/detach 并发竞态和测试。
-- [x] JNI 大文本避免额外完整 UTF-16 vector 复制、结果批量 marshaling；C++ Span 容量预留有界化、重叠检查从 O(m*n) 改为 prefix index；[ ] 完整测试矩阵：Kotlin/JVM、Native/JNI、并发、超大文件、真实 Android Renderer。
+本分支本轮新增与修复内容目前均最多为 SOURCE_PARTIAL。未运行 Gradle/JUnit/CMake/NDK/JNI/Android 设备验证，不得标为 BUILD_VERIFIED、TEST_VERIFIED 或 DEVICE_VERIFIED。
 
-## 证据状态说明
+## 本轮已落地的源码切片
 
-本轮新增/修复源码与测试源码均为 SOURCE_PARTIAL；当前未运行 Gradle、JUnit、CMake/NDK、JNI 或 Android 设备测试。大文本 JNI 已减少一次完整 Native 文本副本，但 GetStringChars 仍由 JVM 决定是否 pin/copy；尚未实现 Piece Tree/Rope 到 Tree-sitter 的流式 Input callback，不能声称真正 zero-copy parser。`TshCoordinateConverter` 的 grapheme 行为依赖运行时 BreakIterator，不宣称完整 UAX #29。Snapshot 默认 Lease 不会自动 pin 可变宿主缓冲区。Provider Resolution 已有源码但尚未构成 Attach/Detach 闭环。
+### 公共 API 与宿主接入
 
-## 架构不变量
+- [x] 新增公共 API 最高层设计规范：Host Ownership First、No Framework Lock-in、Capability-based Integration、Zero-copy Where Possible、Explicit Coordinates、Version-safe Execution、Two Pipelines Only、Renderer-owned Drawing、No Silent Degradation。
+- [x] SourcePosition Offset 与 Tree-sitter ByteRange 改为 Long，保留 Int 构造兼容入口。
+- [x] Native TSQueryCursor Int byte-range 边界显式检查，超过 Int.MAX_VALUE 拒绝而不是截断。
+- [x] Provider API version range、Capability 最低版本、优先级、稳定排序、冲突/缺失诊断与 supports 异常隔离。
+- [x] TshEngineOptions.strictProviderValidation 与 enableDiagnostics 接入 Provider resolution。
+- [x] 新增 OwnerScope、AttachmentRequest/Handle/Report、AttachmentManager，以及 Engine attach/inspect/refresh/detach。
+- [x] OwnerScope 自动 detach；detach 只注销 TSH 自己的身份登记，不关闭宿主对象。
+- [x] Native resource/query raw object getter 收敛为 internal，阻止宿主绕过 Lease 直接 close。
+- [x] Native close/dependency close 错误进入结构化诊断；Engine 提供 shutdownDiagnostics；OwnerScope 提供 closeWithReport。
 
-1. 只有两条执行管线：Tree-sitter + ATS；独立 Regex（Oniguruma）。
-2. ATS 是 Tree-sitter Query/SCM 的受控简化混合表达，不是第三个执行引擎。
-3. 两条管线在统一 Match 模型汇合；不混淆各自的执行、范围与错误语义。
-4. 所有 .tsh 属性必须有类型/Schema、编译语义、Runtime consumer 和可验证输出。
-5. Render 必须形成 Plan → Backend Submit → Receipt/Ack → 实际绘制验证闭环。
-6. 旧 WindbellTshEngine/JNI 入口保持兼容，采用 Facade/Adapter 渐进迁移。
-7. 不实现通用 Editor 功能：折叠、Outline、导航、光标/选区、多光标、Undo/Redo、命令、Gutter、Inlay、CodeLens 等由宿主负责。
+### Text Access 与坐标
 
-## 当前基线
+- [x] TextSnapshot Lease、bounded chunk read、TextChange subscription 扩展点、Document disposed subscription 扩展点。
+- [x] Text Provider 声明线程策略与 concurrent-read 能力；UNKNOWN 默认不作线程安全假设。
+- [x] TextEdit replacement 拒绝不成对 surrogate；TextChange Edit 列表要求 before-version 坐标、升序且不重叠。
+- [x] Chunk read 不允许切开 UTF-16 surrogate pair，读取关闭的 Snapshot Lease 会失败。
+- [x] 坐标转换拒绝不成对 UTF-16 surrogate；UTF-8 byte 累积使用 Long；String 输入避免不必要的 toString 复制。
+- [ ] 真正固定可变 Piece Tree/Rope 版本的宿主 Snapshot Lease 尚未实现；默认 Lease 仅包装不可变 Snapshot。
+- [ ] Piece Tree/Rope 索引化 UTF-8/UTF-16/Code Point/Grapheme 转换尚未实现。
+- [ ] Grapheme 目前使用运行时 BreakIterator，不宣称完整 UAX #29。
+- [ ] Text Provider 的实际线程调度、变更事件与销毁事件尚未连接真实宿主。
 
-| 子系统 | 当前可确认状态 | 尚未证明 |
-|---|---|---|
-| 公共 API 基础 | TshEngine、TshResult、诊断/坐标/对象/Provider 注册、TextSnapshot 等 Kotlin 源码已存在 | 全模块构建、ABI 稳定性、与 Native 执行入口接通 |
-| DSL | Parser-neutral typed AST、Schema Registry、Config Repository Kotlin 源码已提交 | .tsh Lexer/Parser、C++ Compiler Schema 接入、Gradle 构建与测试 |
-| ATS/Tree-sitter | Query 数据契约、Registry、基于既有 TSQuery/TSQueryCursor 的 Compiler/Executor Adapter、Query/Tree/Language Lease 与协调式 Resource Registry 源码已提交 | ATS Lexer/Parser、宿主全面迁移、增量查询、真实 Native 测试与构建验证仍待完成 |
-| 旧 TSH 执行入口 | WindbellTshEngine、TshCompiler、WindbellEngine、JNI 入口存在 | 与新 Facade 的完整桥接、错误结构化、所有权治理 |
-| 双管线 | C++ core 有 Regex 与 Tree-sitter/Query 混合处理 | ATS 完整语法、统一 Match/Scope、Regex 窗口正确性 |
-| 样式/绘制 | 旧 Palette 与 Spannable 前景色/粗体路径存在 | 完整 Font/Color/Decoration、通用 RenderPlan、后端回执及设备覆盖 |
-| 测试 | 部分 Kotlin/C++ 测试源码存在 | 本轮未运行 Gradle/Native 测试，不宣称通过 |
+### DSL / Schema / Runtime Consumer
 
-## 开发阶段地图
+- [x] 修复 nullable 与 OptionalType 混淆、默认值校验、Measure range unit、Map key type、Capability version 和非数值 range。
+- [x] 未知属性不再静默丢弃；进入 unappliedProperties 并产生诊断。
+- [x] 新增 RuntimeConsumerRegistry/Dispatcher；Schema 通过不再等于属性已生效。
+- [x] Runtime Dispatcher 报告每个属性 applied/unapplied，检查 Capability 版本并隔离 Consumer 异常。
+- [ ] 内建 Schema Catalog、ReferenceResolver、完整 SemanticAnalyzer、ATS Lowering 和内建 Runtime Consumer Catalog 尚未完成。
+- [ ] .tsh Lexer/Parser 尚未实现；typed AST 仍为 parser-neutral 模型。
+- [ ] 既有 C++ TshCompiler 尚未接入统一 Schema/Runtime Consumer 契约。
+- [ ] Runtime Consumer 目前逐属性 best-effort，不提供跨 Consumer 原子事务。
 
-### A. 公共 API 基础与类型模型
-- [x] TshResult、Diagnostic、Coordinate、ObjectId、Capability、ObjectRegistry、ProviderRegistry 的首批 Kotlin 源码。
-- [x] TextSnapshot/TextAccessProvider 的最小宿主文本访问契约。
-- [ ] 完成公共 API 构建、二进制兼容和并发/生命周期测试。
-- [ ] 让 TshEngine 通过可替换 Adapter 调用旧 WindbellTshEngine，而不是复制 Native 执行逻辑。
+### Tree-sitter / ATS Query
 
-### B. DSL 类型系统、Schema 与配置仓库
-- [x] 完整类型系统/Schema 的目标契约文档。
-- [x] DSL Value/Type/Declaration/Document Kotlin 模型源码（Parser-neutral typed AST 基础）。
-- [x] Schema Registry：类型、单位、默认值、范围、枚举、版本、能力和未知属性策略校验。
-- [x] Config Artifact/Repository/Catalog：get/list/install/乐观并发 replace/unload。
-- [x] Schema 与 Config Repository 首批 JUnit 测试源码。
-- [ ] Lexer/Parser AST 与既有 C++ TshCompiler 的语法兼容审计。
-- [ ] C++ Parser/Compiler 逐步补齐 Schema/语义校验，并提供结构化诊断。
-- [ ] DSL v1 fixtures、错误恢复、迁移和兼容性测试。
+- [x] Tree-sitter Native Query Compiler/Executor Adapter、Query Registry、Query/Tree/Language Lease 有源码。
+- [x] TshQueryCompiler 与 ATS 专用 TshAtsCompiler 契约分离；Native S-expression Adapter 不再冒充 ATS Compiler。
+- [x] ATS 输入当前明确返回 unsupported；文档状态统一为 ATS Lexer/Parser/AST/Compiler/Lowering 尚未实现。
+- [x] strictNodeValidation 默认关闭；显式启用会返回 unsupported，而不是静默忽略。
+- [x] maxSteps 默认 null；显式请求会在进入 Native 前返回 unsupported；stepsUsed 为 null 表示 Native API 不提供计数。
+- [x] maxMatches 同时配置 Cursor pending-match limit 和 drain 阶段总返回 Match 上限。
+- [x] Long ByteRange 在进入 Int-limited Native Cursor 前显式检查。
+- [ ] ATS Lexer/Parser/AST/Compiler/Lowering 尚未实现，ATS 最终必须编译到现有 Tree-sitter Query 管线。
+- [ ] Grammar Node Schema Provider / strictNodeValidation 尚未实现。
+- [ ] Tree-sitter 真实 step budget、Native 可中断取消、增量 Edit/changed-range 尚未实现。
+- [ ] ParserOwner 仍以完整 String 为输入；未实现 Tree-sitter Input callback 对接 Piece Tree/Rope chunk provider。
+- [ ] 旧宿主所有 Tree/Language/Parser owner 尚未全部迁移到统一 Resource Registry。
 
-### C. Grammar 与 Tree-sitter + ATS 查询
-- [x] Grammar Descriptor、带输入编码契约的 Native ByteRange、Query Source/Options、CompiledQuery、SyntaxTreeSnapshot、Capture、ExecutionBudget、Result 等 Kotlin API 模型。
-- [x] TshAtsCompiler/TshQueryExecutor 公共接口与 Grammar fingerprint 兼容检查。
-- [x] CompiledQuery Registry：重复注册保护、替换、查询、Grammar 兼容查找和注销。
-- [x] 查询 API 首批单元测试源码（范围、Grammar fingerprint、Registry、stale result）。
-- [ ] Grammar/Language Definition Registry、版本和依赖模型。
-- [ ] ATS Lexer/Parser/AST/Compiler，映射为 Tree-sitter Query plan。
-- [x] 基于现有 TSQuery/TSQueryCursor 的 Kotlin Compiler/Executor Adapter：Query 编译、Cursor 执行、Capture 转换、Grammar 检查、结构化错误和 Cursor finally-close。
-- [x] Native Query lease/refcount：编译器与执行器共享 Lease Store；release/替换先退役，活动执行结束后延迟 close。
-- [x] Tree/Language Native lease 首版源码接入：Tree Executor 持有 Tree Lease；Language Compiler 将 Language Lease 转交为 Query 依赖 Lease，覆盖 Query 整个存活期；共享 Store 负责 retire/retireAll 后延迟 close。
-- [x] Native Resource Lease Store 支持资源依赖 Lease，Native resource close 后逆序释放依赖；新增 `TshTreeSitterParserOwner`，Parser 生命周期保留 Grammar Language Lease，每棵 Tree 独立保留 Language Lease，Tree 可安全晚于 Parser/Grammar Provider 释放。
-- [x] `TshSyntaxTreeSnapshot` 显式携带 UTF8/UTF16_LE/UTF16_BE 输入编码；`TshByteRange` 与 Capture range 定义为 Native Tree-sitter byte offset，不再错误假设所有 Parser 输入都是 UTF-8。当前 Java `TSParser.parseString` 路径标记 UTF16_LE。
-- [x] 新增 `TshNativeResourceRegistry` 协调 ObjectRegistry 与 Native Resource Lease Store 的注册、类型/实例校验获取、retire/作用域化 retireAll；`TshObjectRegistry.registerUnique` 原子拒绝重复实例发布；补充生命周期测试源码。
-- [x] Resource Registry 先在协调锁内撤销 ID 的获取资格并移除对象索引，再在锁外执行 Native retire/close；增加永久 close 状态，避免 Native close 回调在协调锁内运行。
-- [x] Query Lease Store 增加 `registerDeferred` / `retireDeferred`：高层 Query Registry 事务锁内只切换 revision/登记退役，旧 Query 与依赖 Language Lease 的 close action 在事务锁外执行；增加 deferred close 测试源码。
-- [x] `TshEngine` 持有自己的 Native Resource Lease Store/Registry；Engine.close 先关闭该 Registry 并退役其拥有的 Native 资源，再清理 Provider/Object 索引。
-- [x] 新增 Engine Native 生命周期测试源码：验证 idle resource 在 Engine.close 时释放、活动 Lease 延迟释放，以及 Engine 关闭后拒绝新资源注册。
-- [x] Engine 拥有 `TshCompiledQueryRegistry` 和 `TshNativeQueryLeaseStore`；提供 `createTreeSitterQueryCompiler/Executor` 与 `openTreeSitterParser` 工厂，强制使用同一个 Engine ObjectRegistry、Query catalog、Query Lease Store 与 Native Resource Registry；补充 Engine 关闭后拒绝打开 Parser 的测试源码。
-- [x] Engine.close 按 Query → Parser/Tree → Language 顺序退役；Native Query Lease Store 增加永久 close，关闭后拒绝 Query 发布，活动 Query Lease 释放后再关闭 Query 和 Language 依赖。
-- [x] Native Resource Lease 支持从仍然持有的 Lease 派生子 Lease；Grammar 已退役时不允许从 Store 重新 acquire，但 Parser 可从其存活的 Language dependency lease 派生 Tree dependency lease；新增退役后 child retain 与并发 retain/release 测试源码。
-- [x] 修复 Query Compiler Native Query 的失败清理路径：统一由外层 finally 释放未转移所有权的 Query，避免错误分支提前 close 后 finally 再次 close；修复 cleanup 变量作用域。
-- [x] 修复 `TSQuery.create(String)` JNI 编码契约：将 Java UTF-16 显式编码为标准 UTF-8，并把真实 UTF-8 字节长度传给 `ts_query_new`；不再混用 `GetStringUTFChars` 的 Modified UTF-8 与 `GetStringLength` 的 UTF-16 长度。标准 UTF-8 转换已收敛到 `utils/jni_string`，并接入 Query JNI、TSH DSL 源码加载和动态 Grammar 路径/符号名转换；Native 返回的 Capture Name/Query String Value 按标准 UTF-8 解码为 Java UTF-16；增加含 `é` 与补充平面 emoji 的 Query 编译/字符串回读测试源码。
-- [x] Tree-sitter Compiler/Executor Adapter 增加可选 `TshNativeResourceRegistry` 注入：启用时 Language/Tree Lease 获取经统一协调入口完成；旧底层 Store 注入保留为兼容迁移路径。
-- [ ] 旧宿主所有 Tree/Language/Parser owner 迁移到协调 Registry 的 register/acquire/retire，清除绕过 Store 的直接 close；新 API 应通过 Engine 工厂创建 Compiler/Executor；增加并发/真实 Native 测试。ParserOwner 目前是新 API 的可用源码，不代表旧宿主调用点已迁移。
-- [ ] 审计 Engine.close 与并发 register/retire/compile/execute 的线性化和等待语义；Store 已具备关闭门闩及活动 Lease 延迟释放，但尚未完成全场景并发验证。
-- [x] Predicate Handler 结果语义：OK 接受当前表达式、ERR 拒绝当前 match、UNHANDLED 委派下一 Handler；按 Done 分隔表达式并逐个执行，同一 pattern 的多个表达式全部通过才保留 match；按注册顺序确定 Handler 调用顺序。
-- [ ] Tree-sitter incremental edit/changed-range 查询。
-- [ ] 与现有 dynamic_ts_query 及旧 native 方法建立兼容 Adapter。
-- [ ] 实现可中断 Native 执行/真实 step budget；当前 Cursor 不暴露 VM steps，取消只能在两次 nextMatch 调用之间检查。
-- [ ] ATS 与原生 Tree-sitter Query 一致性测试。
+### 独立 Regex / Oniguruma
 
-### D. 独立 Regex 与窗口执行
-- [ ] Regex Pattern/Options/CompiledRegex API。
-- [ ] Oniguruma WindowLease：稳定连续 buffer、编码和全局 offset 映射。
-- [ ] 有界跨窗口 overlap 与无界模式整段回退/明确拒绝。
-- [ ] 增量 dirty range、锚点/lookaround 语义、取消/超时/预算。
-- [ ] Piece Tree chunk 边界、Unicode、超长行与整段基准对比测试。
+- [x] 修复 UTF-8 Regex pattern 被逐字节复制为 UTF-16 的问题，改为严格 UTF-8 解码和 UTF-16LE 编码。
+- [x] OnigRegion 使用 RAII 管理，避免分支异常/早退时泄漏。
+- [ ] Regex WindowLease、连续 Native buffer、Piece Tree chunk provider 尚未实现。
+- [ ] 有界 overlap、无界模式整段回退/拒绝语义尚未实现。
+- [ ] Regex 增量 dirty range、预算、超时、取消与 Native 测试尚未实现。
 
-### E. 统一 Match、Scope、Selector
-- [ ] TshMatch/MatchSet/Capture/Provenance/Revision 统一模型。
-- [ ] Byte/UTF-16 坐标规范化和 stale-result 防护。
-- [ ] Scope path/stack、Selector parser/compiler/specificity。
-- [ ] 双管线 Match 冲突、嵌套、重叠、去重和稳定排序。
-- [ ] 来源追踪和跨管线一致性测试。
+### 统一 Match / Scope / Selector
 
-### F. Attribute、Semantic 与 Highlight
-- [ ] Attribute Registry、TypedAttribute、默认值/继承/合并策略。
-- [ ] Semantic Resolver：Match + Capture + Scope + Selector → Attributes。
-- [ ] Highlight Resolver：Attributes → Theme/Style。
-- [ ] 每个 DSL 属性登记实际 Runtime consumer。
-- [ ] 端到端证明属性从 DSL 到最终 RenderInstruction 的值与来源。
+- [x] 新增 TshMatch/TshMatchSet/TshScopePath/TshMatchMerger 首版纯 Kotlin 模型。
+- [x] Match 具有 canonical UTF-16 range、source provenance、pipeline revision、document version。
+- [x] MatchMerger 支持两来源汇合、去重、稳定排序、stale Match 排除和 partial 状态。
+- [ ] Tree-sitter/ATS Capture 与 Regex 执行结果尚未接入 TshMatch。
+- [ ] Scope parser/stack/assignment pipeline、Selector parser/compiler/specificity 尚未完成。
+- [ ] 完整重叠/包含/交叉冲突策略与跨管线一致性测试尚未完成。
 
-### G. Theme、Style、Font、Color、Decoration
-- [ ] Theme/Style get/list/activate/preview/reset/explain。
-- [ ] 字体族、字重、字形、字号/单位、stretch、行高、字距、baseline、OpenType、variable axes、fallback。
-- [ ] ColorSpace/Alpha/Token/变量与颜色混合策略。
-- [ ] Text Decoration 类型、层级、范围、合成与能力降级。
-- [ ] Android 字体资源 Provider 和后端真实属性消费。
+### Style / Render / 真实绘制
 
-### H. Render 闭环
-- [ ] RenderPlan/Instruction/Backend/Capabilities/Receipt API。
-- [ ] Span/Canvas 等宿主绘制适配，核心模块不依赖具体 Editor。
-- [ ] plan revision、局部失效、过期计划拒绝和异步 Ack。
-- [ ] 属性来源 → resolved value → instruction → backend outcome 可追踪。
-- [ ] Android 控件像素/字体/装饰/主题切换设备测试。
+- [x] 新增平台无关 ResolvedStyle、RenderInstruction、RenderPlan、Renderer Provider、Receipt、Coordinator。
+- [x] Coordinator 校验 document/config/theme/viewport/renderer revisions 和 Provider capabilities。
+- [x] 异步 QUEUED/Ack、过期回执拒绝、PARTIAL/FAILED/REJECTED 诊断和 Provider cancel 扩展点。
+- [x] Provider 必须在实际 Draw 前检查 Acknowledger.isCurrent，完成后 Ack。
+- [x] 旧 Spannable 路径只清理 TSH-owned Span，不再删除宿主 CharacterStyle；非法/奇数/越界 UTF-16LE byte range 被拒绝。
+- [ ] Scope/Selector → Attribute → ResolvedStyle 的完整 Resolver 尚未实现。
+- [ ] Android View/Canvas/Spannable/Compose 具体 Renderer Provider 尚未实现。
+- [ ] 真实 Draw 回执、像素/颜色可见性、字体/Decoration/主题切换设备验证尚未实现。
+- [ ] RenderPlan/Receipt 源码存在不代表应用层已能显示所有 .tsh 高亮颜色。
 
-### I. Native/JNI 完整性
-- [ ] Native operation manifest 与 Kotlin external API 对照。
-- [ ] 类型化 handle/generation/refcount/lease，不把 jlong 当裸指针 API。
-- [ ] JNI/C ABI/C++ 错误码、编码、范围和线程约束。
-- [ ] 注解/KSP/AP 生成、JNI registration 与 C header 同步检查。
-- [ ] 异常边界、重复释放、use-after-free、并发关闭、ASAN/泄漏测试。
-- [ ] 保持旧 JNI 名称/签名兼容，逐项迁移而非一次性破坏。
+### JNI / 大文本 / Native 生命周期
 
-### J. 集成、性能与发布
-- [ ] Kotlin 单元测试、C++ 单元测试、JNI 集成测试。
-- [ ] Android API/ABI matrix、真实宿主控件绘制验证。
-- [ ] 大文档、增量、Unicode、并发、内存、超时与性能基准。
-- [ ] 更新 API changelog、迁移指南和实现状态矩阵。
+- [x] JNI 高亮/折叠/Outline 路径移除额外完整 UTF-16 Native vector copy，改用作用域化 GetStringChars。
+- [x] Highlight/Fold 结果按固定批次写入 Java 数组，避免额外 N*3 临时 Native 数组。
+- [x] Span 初始 reserve 不再按全文长度无界预分配。
+- [x] AST/Regex Span overlap 从双重全量扫描改为 prefix-max-end 索引。
+- [x] JNI 大文本 Highlight/Fold/Outline Native 异常转换为 Java 异常，不让 C++ exception 越过 JNI。
+- [ ] GetStringChars 仍由 JVM 决定 pin/copy，不能称为 zero-copy。
+- [ ] Tree-sitter 流式 Input callback 和 Piece Tree/Rope parser binding 尚未实现。
+- [ ] 全量 Native operation/handle/generation manifest、ASAN、泄漏和设备压力测试尚未完成。
 
-## 本轮实施顺序
+## 仍需完成的缺陷与绑定项
 
-1. [x] 实现 B 的 Kotlin 类型系统、Schema Registry 和配置 Artifact Repository（纯 JVM 层，尚未连接 C++ Parser）。
-2. [x] 为该切片补充单元测试源码。
-3. [x] 实现 C 阶段第一批 Query/Grammar/Capture API 模型、Executor/Compiler 接口和编译查询 Registry。
-4. [x] 为查询 API 首批契约补充单元测试源码。
-5. [ ] 执行 Gradle 构建与测试并修复实际编译问题。
-6. [ ] 审计既有 .tsh 语法和 C++ Compiler，制定 DSL v1 兼容表。
-7. [ ] 实现 ATS Lexer/Parser/Compiler，并接入现有 TSQuery/TSQueryCursor。
-8. [ ] 实现 D 的独立 Regex Window Adapter，不能让 Regex 借用 ATS 执行接口。
-9. [ ] 贯通 E/F/G/H 的结果与真实绘制闭环。
-10. [ ] 完成 I 的 Native/JNI 同步与全矩阵验收；期间始终保持旧入口可用。
+1. 完成 TextSnapshot 的真实 Host Lease、事件订阅与 Piece Tree/Rope 索引 Provider。
+2. 给 Tree-sitter Parser 增加 Input callback/增量输入能力，使用 Host TextAccess 分块读取，不构造全文 String。
+3. 实现 Regex WindowLease 和跨窗口正确性语义；无界模式必须有明确回退/拒绝策略。
+4. 实现 ATS 前端并 Lower 到唯一 Tree-sitter Query 执行管线。
+5. 将 Tree-sitter/ATS 与 Regex 输出真正适配到统一 TshMatch。
+6. 实现 Scope/Selector/Attribute/Style Resolver，将 Match 生成 RenderPlan。
+7. 实现 Android 宿主 Renderer Provider，严格管理 TSH-owned draw state，并用真实控件回执验证颜色可见。
+8. 完成 Engine/Provider/OwnerScope/Native Lease 并发、关闭、替换和失败清理测试。
+9. 执行 Gradle/JUnit/CMake/NDK/JNI 全矩阵；随后在 Android API/ABI 与真实宿主编辑器上验证。
+10. 逐个领域收敛 normative source；保持旧 WindbellTshEngine/JNI 兼容迁移，不引入第三执行管线。
 
-## API 文档映射
+## 当前证据结论
 
-- B：`dsl-type-system-and-schema-api.md`、`tsh-file-config-management-api.md`、`tsh-dsl-syntax-and-semantic-contract.md`
-- C：`ats-tree-sitter-query-api.md`、`grammar-and-query-api.md`
-- D：`regex-window-execution-api.md`、`security-and-regex-safety.md`
-- E：`unified-match-scope-api.md`、`scope-selector-and-semantic-api.md`
-- F：`attribute-semantic-highlight-api.md`、`highlight-resolution-and-token-api.md`
-- G/H：`theme-style-render-contract-api.md`、`theme-style-font-color-api.md`、`render-plan-and-invalidation-api.md`
-- I：`native-jni-cpp-completeness-api.md`、`jni-native-bridge-api.md`、`native-handle-and-memory-ownership-api.md`
-- 全阶段：`tsh-core-api-coverage-matrix.md`、`public-api-review-checklist.md`、`changelog.md`
-
-**完成标准：** 每个功能独立记录契约/源码/构建/单测/集成/设备状态。源码提交不等于构建通过；构建通过不等于运行正确；API 可调用不等于 .tsh 属性真实生效或已绘制。
-
-## 最近一次源码提交
-
-- DSL：新增 `TshDslModel.kt`、`TshSchemaRegistry.kt`、`TshConfigRepository.kt` 与对应测试源码。
-- ATS/Tree-sitter：新增 `TshQueryApi.kt`、`TshCompiledQueryRegistry.kt`、`TshQueryApiTest.kt`；新增 `TshTreeSitterQueryAdapter.kt`，基于现有 `TSQuery.create`、`TSQueryCursor.create/exec/nextMatch`、`TSQueryMatch`、`TSQueryCapture` 实现编译/执行与 Capture 映射；新增 Adapter 合约测试源码。
-- 已检查现有实现：仓库包含 `TSQuery`、`TSQueryCursor` Java 封装，以及 C++ `TshCompiler` 和 `TshGrammar.dynamic_ts_query`。下一步应在这些既有入口上做 Adapter，不创建第二套 Native Query 引擎。
-- **状态：上述 Kotlin 源码和测试源码已提交；Gradle 构建、JUnit 执行、Native Query/Tree/Language lease 与协调式 Resource Registry 均尚未验证；宿主所有者迁移尚未完成；ATS 编译执行和设备运行均未验证。Tree-sitter Query Adapter 已有真实 Native 调用代码与 Lease 管理源码；Query revision 替换/release 的 close action 已移出 Query catalog 锁；ParserOwner、Engine 统一工厂、Query Store shutdown、退役后 child Lease 和 Query JNI 标准 UTF-8 修复已有源码/测试源码，但尚未通过构建/运行测试。**
+- 源码：上述切片已提交到 feat/tsh-unified-api-foundation。
+- 构建：未验证。
+- 单元测试：新增测试源码，未运行。
+- Native/JNI：未构建/运行验证。
+- Android 设备：未验证。
+- 超大文件：已减少 JNI/Span 中的若干额外内存和 O(m*n) 扫描，但未证明 200–300 MB 文件端到端稳定高亮与真实绘制。
+- Draft PR #2：保持 Draft；未合并、未改变 PR 状态。
