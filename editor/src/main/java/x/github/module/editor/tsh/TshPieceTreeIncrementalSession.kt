@@ -1,5 +1,6 @@
 package x.github.module.editor.tsh
 
+import android.os.Handler
 import android.os.Looper
 import com.zerostudio.idea.treesitter.tsh.api.TshDiagnostic
 import com.zerostudio.idea.treesitter.tsh.api.TshDiagnosticSeverity
@@ -28,6 +29,8 @@ import java.util.concurrent.atomic.AtomicBoolean
  * The session owns the worker and the currently published syntax tree, but not ParserOwner.
  * Native parse is synchronous and is not force-cancelled by Thread.interrupt. close() prevents
  * queued work from starting and retires the tree after any currently running Native call returns.
+ * Tree/failure callbacks are delivered on the main thread. A queued tree callback is dropped if
+ * a newer tree has already replaced it or the session has closed.
  * attach(), resync() and close() must run on the EditorView main thread.
  */
 class TshPieceTreeIncrementalSession private constructor(
@@ -47,6 +50,7 @@ class TshPieceTreeIncrementalSession private constructor(
     private var treeRevision: Long = 0L
 
     private val closed = AtomicBoolean(false)
+    private val mainHandler = Handler(Looper.getMainLooper())
     private val workLock = Any()
     private var pendingWork: PendingWork? = null
     private var drainScheduled = false
@@ -320,11 +324,19 @@ class TshPieceTreeIncrementalSession private constructor(
             return
         }
         currentTree = tree
-        runCatching { onTreeUpdated(tree) }
+        mainHandler.post {
+            if (!closed.get() && currentTree === tree) {
+                runCatching { onTreeUpdated(tree) }
+            }
+        }
     }
 
     private fun reportFailure(result: TshResult.Failure) {
-        if (!closed.get()) runCatching { onFailure(result) }
+        if (!closed.get()) {
+            mainHandler.post {
+                if (!closed.get()) runCatching { onFailure(result) }
+            }
+        }
     }
 
     override fun close() {
@@ -377,9 +389,14 @@ class TshPieceTreeIncrementalSession private constructor(
                 onFailure,
                 worker
             )
-            session.attach(view, documentId, languageId)
-            session.startInitialParse()
-            return session
+            try {
+                session.attach(view, documentId, languageId)
+                session.startInitialParse()
+                return session
+            } catch (error: Throwable) {
+                worker.shutdownNow()
+                throw error
+            }
         }
 
         private fun failure(
