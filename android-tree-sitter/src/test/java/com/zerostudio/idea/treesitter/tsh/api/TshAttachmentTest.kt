@@ -60,7 +60,7 @@ class TshAttachmentTest {
         engine.providers.register(Provider(
             "text-provider", TshCapabilitySet.of(TshCapability("text.read", 2))
         ))
-        val refreshed = engine.refreshAttachment(attached.value.handle) as TshResult.Success
+        val refreshed = engine.refreshAttachment(attached.value.handle) as TshResult.Success<TshAttachmentReport>
         assertEquals(TshAttachmentStatus.READY, refreshed.value.status)
         scope.close()
         assertEquals(TshAttachmentStatus.DETACHED,
