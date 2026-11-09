@@ -166,7 +166,7 @@ data class TshTextEdit(
     val endUtf16: Long,
     /** Materialized replacement for ordinary API callers; host PieceTree bindings may leave it empty. */
     val replacement: String,
-    /** UTF-16 length of the replacement; may exceed replacement.length for zero-copy host slices. */
+    /** UTF-16 length of the replacement; may exceed replacement.length for non-materialized host slices. */
     val replacementLengthUtf16: Long = replacement.length.toLong(),
     /** Optional LF count and UTF-16 tail length for a non-materialized replacement. */
     val replacementLineFeedCount: Int? = null,
@@ -211,7 +211,7 @@ data class TshTextChange(
     val documentId: String,
     val beforeVersion: Long,
     val afterVersion: Long,
-    /** Edits are ascending by start offset and must not overlap in the before-version snapshot. */
+    /** Edits are ascending and non-overlapping in before-version coordinates; equal offsets are valid only for insertions. */
     val edits: List<TshTextEdit>
 ) {
     init {
