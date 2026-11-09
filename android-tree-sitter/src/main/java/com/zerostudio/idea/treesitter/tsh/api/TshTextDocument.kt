@@ -15,6 +15,8 @@ interface TshTextSnapshot {
 /** A stable reference to a snapshot. close() releases only the snapshot lease, never the host document. */
 interface TshTextSnapshotLease : AutoCloseable {
     val snapshot: TshTextSnapshot
+    /** Providers should expose the closed state; false is the compatibility default. */
+    val isClosed: Boolean get() = false
     override fun close()
 }
 
@@ -110,7 +112,9 @@ interface TshTextAccessProvider {
         when (val result = snapshot(document)) {
             is TshResult.Success -> TshResult.Success(object : TshTextSnapshotLease {
                 override val snapshot: TshTextSnapshot = result.value
-                override fun close() = Unit
+                @Volatile private var closed = false
+                override val isClosed: Boolean get() = closed
+                override fun close() { closed = true }
             }, result.diagnostics)
             is TshResult.Failure -> result
         }
@@ -121,6 +125,7 @@ interface TshTextAccessProvider {
         startUtf16: Long,
         maxUtf16Length: Int
     ): TshResult<TshTextChunk> {
+        if (lease.isClosed) return failure("TSH-TEXT-009", "Snapshot lease is already closed")
         if (startUtf16 < 0L || maxUtf16Length <= 0) return failure(
             "TSH-TEXT-001", "Chunk start must be non-negative and max length must be positive"
         )
