@@ -222,7 +222,7 @@ internal fun editorChangesToTshChange(
         applied.content?.forEachChunk { chunk ->
             for (character in chunk) {
                 scannedLength = Math.addExact(scannedLength, 1L)
-                if (character == '\\n') {
+                if (character == '\n') {
                     lineFeeds = Math.addExact(lineFeeds, 1)
                     trailingLength = 0L
                 } else {
