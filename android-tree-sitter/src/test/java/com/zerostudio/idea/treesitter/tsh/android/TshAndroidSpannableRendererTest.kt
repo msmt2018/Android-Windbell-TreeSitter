@@ -24,13 +24,19 @@ class TshAndroidSpannableRendererTest {
         val revisions: TshRenderRevisions
     ) : TshAndroidSpannableRenderTarget {
         var failInvalidation = false
+        var renderThread = true
         var onInvalidate: (() -> Unit)? = null
         var visibleRange: TshAndroidVisibleRange? =
             TshAndroidVisibleRange(0L, text.length.toLong())
         var provideViewport = true
         override fun visibleRangeUtf16(documentId: String) =
             if (provideViewport) visibleRange else null
-        override fun isOnRenderThread() = true
+        override fun isOnRenderThread() = renderThread
+        override fun postToRenderThread(action: () -> Unit): Boolean {
+            renderThread = true
+            action()
+            return true
+        }
         override fun currentRevisions(documentId: String) = revisions
         override fun resolveSpannable(documentId: String) = text
         override fun resolveTextSizePx(value: TshDslValue.MeasureValue): Float? = 16f
@@ -172,6 +178,31 @@ class TshAndroidSpannableRendererTest {
         assertTrue(engine.providers.all().none { it.id == renderer.id })
         assertEquals(0, engine.objects.size())
         engine.close()
+    }
+
+    @Test
+    fun rendererClearAllDispatchesOwnedSpanCleanupToHostRenderThread() {
+        val revisions = TshRenderRevisions(
+            TshDocumentId("doc"), 1L, "config", "theme", "viewport", "renderer"
+        )
+        val text = SpannableStringBuilder("code")
+        val hostSpan = ForegroundColorSpan(Color.BLUE)
+        text.setSpan(hostSpan, 0, 4, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+        val target = Target(text, revisions)
+        val renderer = TshAndroidSpannableRenderer(target)
+        assertTrue(renderer.submit(
+            plan("cleanup-dispatch", revisions, 0xFFFF0000u), Acknowledger()
+        ) is TshResult.Success)
+        assertEquals(2, text.getSpans(0, 4, CharacterStyle::class.java).size)
+
+        target.renderThread = false
+        val cleared = renderer.clearAll()
+        assertTrue(cleared is TshResult.Success)
+        assertEquals(1, text.getSpans(0, 4, CharacterStyle::class.java).size)
+        assertTrue(text.getSpans(0, 4, CharacterStyle::class.java).any { it === hostSpan })
+        assertTrue(renderer.submit(
+            plan("after-clear", revisions, 0xFFFF0000u), Acknowledger()
+        ) is TshResult.Failure)
     }
 
     @Test
