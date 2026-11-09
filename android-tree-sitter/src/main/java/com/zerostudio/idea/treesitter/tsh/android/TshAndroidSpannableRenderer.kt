@@ -227,6 +227,7 @@ class TshAndroidSpannableRenderer(
                 "Host viewport range exceeds the current Spannable length"
             )
         }
+        synchronized(renderedDocumentIds) { renderedDocumentIds += documentId }
         val diagnostics = ArrayList<TshDiagnostic>()
         // Keep the last committed TSH spans until the replacement plan is fully applied.
         val previousSpans = try {
@@ -404,7 +405,6 @@ class TshAndroidSpannableRenderer(
                 "RenderPlan became stale or was cancelled during host invalidation${detail}"
             )
         }
-        synchronized(renderedDocumentIds) { renderedDocumentIds += documentId }
         val status = if (fullyApplied == visibleInstructionCount && droppedInstructionCount == 0) {
             TshRenderReceiptStatus.APPLIED
         } else {
