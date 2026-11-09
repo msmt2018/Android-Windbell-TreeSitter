@@ -24,8 +24,9 @@ import java.util.concurrent.atomic.AtomicBoolean
  * - if the tree reached EDITED_PENDING_PARSE, the session retries parsing that edited tree;
  * - a failed parse never publishes a pending/stale tree as READY.
  *
- * Native parse is synchronous and is not force-cancelled by Thread.interrupt. close() prevents
- * queued work from starting and retires the tree after any currently running Native call returns.
+ * Native parse is synchronous and is not force-cancelled by Thread.interrupt. close() must be
+ * called on the EditorView edit/main thread; it prevents queued work from starting and retires
+ * the tree after any currently running Native call returns.
  */
 class TshPieceTreeIncrementalSession private constructor(
     private val parserOwner: TshTreeSitterParserOwner,
@@ -229,12 +230,16 @@ class TshPieceTreeIncrementalSession private constructor(
     }
 
     private fun publish(tree: TshOwnedSyntaxTree) {
+        if (closed.get()) {
+            parserOwner.retireTree(tree)
+            return
+        }
         currentTree = tree
         runCatching { onTreeUpdated(tree) }
     }
 
     private fun reportFailure(result: TshResult.Failure) {
-        runCatching { onFailure(result) }
+        if (!closed.get()) runCatching { onFailure(result) }
     }
 
     private fun enqueue(task: () -> Unit): Boolean {
