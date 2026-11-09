@@ -30,7 +30,7 @@
 - [x] Engine lifecycle lock 线性化 initialize/attach/provider resolution/adapter creation/parser open 与 close；公开 Object/Provider/CompiledQuery registries 在 Engine close 后永久拒绝新注册。
 - [x] strictProviderValidation 统一覆盖 attach/refresh/resolveProviders；严格 attach 缺失必需能力时 detach 回滚，lenient 模式保留 INCOMPLETE report。
 - [x] 同一宿主对象支持多个 OwnerScope/Attachment 并以引用计数管理注册；宿主外部拥有的 ObjectRegistry 注册不会被 TSH detach 注销。
-- [x] Attachment detach notifications 驱动 Android Binding 关闭 RenderCoordinator；Engine close/OwnerScope close 后拒绝新 RenderPlan 和迟到回执。
+- [x] Attachment detach notifications 驱动 Android Binding 关闭 RenderCoordinator、清理本 Renderer 拥有的 Span；Engine close/OwnerScope close 后拒绝新 RenderPlan 和迟到回执；后台清理由宿主 postToRenderThread 派发。
 - [x] Native close/dependency close 错误进入结构化诊断；Engine 提供 shutdownDiagnostics；OwnerScope 提供 closeWithReport。
 
 ### Text Access 与坐标
