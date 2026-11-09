@@ -4,6 +4,21 @@
 >
 > 状态口径：**契约**=文档已定义；**源码**=代码已提交；**构建**=目标模块成功编译；**测试**=自动化测试通过；**设备**=真实 Android 控件绘制验证。状态逐项记录，不以文档存在推断实现完成。
 
+## 本轮完整缺陷修复批次
+
+本轮先处理上一轮静态审计发现的全部确定问题，再补齐缺失的接入契约，最后进入真实宿主绑定。未完成项不得从地图删除或用文档描述伪装完成。
+
+- [ ] 公共 API 总规范、领域唯一权威文档与证据等级统一。
+- [ ] Attach/Detach、OwnerScope、Provider Resolution/Capability 版本协商。
+- [ ] Text Snapshot Lease、chunk/range、变更订阅、文档销毁和线程契约。
+- [ ] Offset/Range 统一 Long，UTF-8/UTF-16/非法 surrogate 与 grapheme 算法边界。
+- [ ] Schema nullable/default/Map key/Measure unit/unknown-property/Runtime Consumer 修复。
+- [ ] ATS 状态矛盾、Query compiler 命名/预算/严格节点验证和取消边界修复。
+- [ ] Regex UTF-8 pattern 转换、窗口边界/Lease/预算与增量语义修复。
+- [ ] Match/Scope/Style/RenderPlan/Receipt 闭环及宿主 Span 所有权修复。
+- [ ] Engine options、初始化前置条件、Provider 异常隔离和关闭竞态修复。
+- [ ] 完整测试矩阵：Kotlin/JVM、Native/JNI、并发、超大文件、真实 Android Renderer。
+
 ## 架构不变量
 
 1. 只有两条执行管线：Tree-sitter + ATS；独立 Regex（Oniguruma）。
