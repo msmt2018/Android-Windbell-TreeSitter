@@ -1,5 +1,6 @@
 package x.github.module.editor.tsh
 
+import android.os.Looper
 import com.zerostudio.idea.treesitter.tsh.api.TshOwnedSyntaxTree
 import com.zerostudio.idea.treesitter.tsh.api.TshResult
 import com.zerostudio.idea.treesitter.tsh.api.TshTextChange
@@ -206,6 +207,9 @@ class TshPieceTreeIncrementalSession private constructor(
      * cannot race an in-progress edit.
      */
     fun resync(): Boolean {
+        check(Looper.myLooper() == Looper.getMainLooper()) {
+            "TshPieceTreeIncrementalSession.resync must run on the EditorView main thread"
+        }
         if (closed.get()) return false
         val lease = when (val acquired = provider.acquireSnapshot(binding.document)) {
             is TshResult.Success -> acquired.value
@@ -258,6 +262,9 @@ class TshPieceTreeIncrementalSession private constructor(
     }
 
     override fun close() {
+        check(Looper.myLooper() == Looper.getMainLooper()) {
+            "TshPieceTreeIncrementalSession.close must run on the EditorView main thread"
+        }
         if (!closed.compareAndSet(false, true)) return
         binding.close()
         try {
