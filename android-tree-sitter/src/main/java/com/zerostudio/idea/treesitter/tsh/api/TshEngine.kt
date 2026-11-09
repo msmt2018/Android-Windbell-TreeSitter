@@ -213,6 +213,8 @@ class TshEngine private constructor(val options: TshEngineOptions) : AutoCloseab
 }
 
 data class TshEngineOptions(
+    /** Controls non-fatal diagnostics returned by Engine.resolveProviders; errors are never suppressed. */
     val enableDiagnostics: Boolean = true,
+    /** Makes Engine.resolveProviders return Failure when a required capability is unavailable. */
     val strictProviderValidation: Boolean = true
 )
