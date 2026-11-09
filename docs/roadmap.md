@@ -100,7 +100,7 @@
 - [x] QUEUED 不允许声称已有应用/绘制数量，真实 PARTIAL draw 必须报告有效部分数量。
 - [x] 旧 Spannable 路径只清理 TSH-owned Span，不再删除宿主 CharacterStyle；非法/奇数/越界 UTF-16LE byte range 被拒绝。
 - [x] ScopeSelector/StyleRule/StyleResolver 到 RenderPlan 的首版 Resolver；[ ] Attribute semantic pipeline、DSL selector parser 和完整 Resolver。
-- [x] Android Spannable Renderer Provider + OwnerScope-scoped host binding，Provider Registry 可按宿主对象身份发现；Render generation 事务回滚保留旧 TSH/宿主 Span；Robolectric test 源码覆盖 rollback、decoration、binding。 [ ] Canvas/Compose/custom View Renderer Provider 尚未实现。
+- [x] Android Spannable Renderer Provider + OwnerScope-scoped host binding，Provider Registry 可按宿主对象身份发现；Render generation 事务回滚保留旧 TSH/宿主 Span；仅为 host viewport 分配 Span，离屏指令记为 deferred；Receipt 对 applied/deferred/dropped 完整计数；Robolectric test 源码覆盖 rollback、decoration、binding、viewport。 [ ] Canvas/Compose/custom View Renderer Provider 尚未实现。
 - [ ] Robolectric test 运行、真实 Draw 回执、像素/颜色可见性、字体/Decoration/主题切换设备验证尚未完成。
 - [ ] RenderPlan/Receipt 源码存在不代表应用层已能显示所有 .tsh 高亮颜色。
 
