@@ -261,12 +261,28 @@ interface TshTextAccessProvider : TshProvider {
         if (!isAccessAllowedOnCurrentThread()) {
             return failure("TSH-TEXT-010", "TextAccessProvider snapshot access is not allowed on the current thread")
         }
-        return when (val result = withReadAccess { snapshot(document) }) {
-            is TshResult.Success -> TshResult.Success(
-                TshSharedTextSnapshotLease.acquire(result.value),
-                result.diagnostics
-            )
-            is TshResult.Failure -> result
+        return try {
+            when (val result = withReadAccess { snapshot(document) }) {
+                is TshResult.Success -> {
+                    val value = result.value
+                    if (value.documentId.isBlank() || value.version < 0L || value.lengthUtf16 < 0L) {
+                        failure("TSH-TEXT-011", "Provider returned a Snapshot with invalid identity, version, or length")
+                    } else {
+                        TshResult.Success(TshSharedTextSnapshotLease.acquire(value), result.diagnostics)
+                    }
+                }
+                is TshResult.Failure -> result
+            }
+        } catch (error: LinkageError) {
+            failure("TSH-TEXT-013", "TextAccessProvider snapshot acquisition failed with a linkage error")
+        } catch (error: Exception) {
+            TshResult.Failure(listOf(TshDiagnostic(
+                code = "TSH-TEXT-012",
+                severity = TshDiagnosticSeverity.ERROR,
+                stage = TshDiagnosticStage.BINDING,
+                message = "TextAccessProvider snapshot acquisition failed: ${error.message}",
+                cause = error
+            )))
         }
     }
 
