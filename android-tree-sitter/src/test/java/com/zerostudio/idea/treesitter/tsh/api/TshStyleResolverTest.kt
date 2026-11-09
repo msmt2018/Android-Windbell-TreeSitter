@@ -50,7 +50,7 @@ class TshStyleResolverTest {
                     ),
                     TshScopeSelectorMode.EXACT_PATH
                 ),
-                TshResolvedStyle(backgroundArgb = 0xFF202020u),
+                TshResolvedStyle(backgroundArgb = 0xFF202020u, italic = true, decorations = setOf("italic")),
                 priority = 1
             ),
             TshStyleRule(
@@ -59,7 +59,7 @@ class TshStyleResolverTest {
                     TshScopeSelectorSegment.Exact("meta.function"),
                     TshScopeSelectorSegment.Exact("entity.name")
                 )),
-                TshResolvedStyle(foregroundArgb = 0xFFFF0000u),
+                TshResolvedStyle(foregroundArgb = 0xFFFF0000u, italic = false),
                 priority = 2
             )
         )
@@ -70,6 +70,8 @@ class TshStyleResolverTest {
         assertEquals(1, plan.instructions.size)
         assertEquals(0xFFFF0000u, plan.instructions.single().style.foregroundArgb)
         assertEquals(0xFF202020u, plan.instructions.single().style.backgroundArgb)
+        assertEquals(false, plan.instructions.single().style.italic)
+        assertFalse("italic" in plan.instructions.single().style.decorations)
         assertEquals(setOf(TshMatchId("m1")), plan.instructions.single().sourceMatchIds)
     }
 
