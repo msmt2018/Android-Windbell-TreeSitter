@@ -86,7 +86,8 @@ data class TshSchemaValidationResult(
     val normalizedProperties: Map<String, TshDslValue>,
     val diagnostics: List<TshDiagnostic>,
     /** Unknown/unsupported values are retained here for diagnostics, migration or extension handling. */
-    val unappliedProperties: Map<String, TshDslValue> = emptyMap()
+    val unappliedProperties: Map<String, TshDslValue> = emptyMap(),
+    val dslVersion: TshDslVersion = TshDslVersion(1)
 ) {
     val isValid: Boolean
         get() = diagnostics.none { it.severity == TshDiagnosticSeverity.ERROR }
@@ -193,7 +194,7 @@ class TshSchemaRegistry {
             }
         }
 
-        val result = TshSchemaValidationResult(declaration, normalized.toMap(), diagnostics.toList(), unapplied.toMap())
+        val result = TshSchemaValidationResult(declaration, normalized.toMap(), diagnostics.toList(), unapplied.toMap(), version)
         return if (result.isValid) TshResult.Success(result, diagnostics.toList())
         else TshResult.Failure(diagnostics.toList())
     }
