@@ -19,6 +19,9 @@ class TshTextAccessBinding private constructor(
     private val lock = Any()
     private val subscriptions = LinkedHashSet<TshTextSubscription>()
 
+    @Volatile var closeDiagnostics: List<TshDiagnostic> = emptyList()
+        private set
+
     @Volatile private var cleanupRegistration: AutoCloseable? = null
     @Volatile private var detachSubscription: AutoCloseable? = null
     @Volatile private var disposalSubscription: TshTextSubscription? = null
@@ -29,7 +32,13 @@ class TshTextAccessBinding private constructor(
         if (closed.get()) return failure(
             "TSH-TEXT-BINDING-001", "TextAccessBinding is closed"
         )
-        return provider.acquireSnapshot(document)
+        return try {
+            provider.acquireSnapshot(document)
+        } catch (error: Exception) {
+            failure("TSH-TEXT-BINDING-015", "Snapshot acquisition failed: ${error.message}", error)
+        } catch (error: LinkageError) {
+            failure("TSH-TEXT-BINDING-016", "Snapshot acquisition failed with a linkage error", error)
+        }
     }
 
     fun subscribeChanges(listener: TshTextChangeListener): TshResult<TshTextSubscription> {
@@ -39,12 +48,18 @@ class TshTextAccessBinding private constructor(
         if (!provider.supportsChangeSubscriptions) return failure(
             "TSH-TEXT-BINDING-002", "TextAccessProvider does not advertise change subscriptions"
         )
-        val result = provider.subscribe(document, listener)
+        val result = try {
+            provider.subscribe(document, listener)
+        } catch (error: Exception) {
+            return failure("TSH-TEXT-BINDING-017", "Text change subscription failed: ${error.message}", error)
+        } catch (error: LinkageError) {
+            return failure("TSH-TEXT-BINDING-018", "Text change subscription failed with a linkage error", error)
+        }
         if (result is TshResult.Failure) return result
         val subscription = (result as TshResult.Success<TshTextSubscription>).value
         synchronized(lock) {
             if (closed.get()) {
-                runCatching { subscription.close() }
+                closeSubscription(subscription)
                 return failure("TSH-TEXT-BINDING-001", "TextAccessBinding closed while subscribing")
             }
             subscriptions += subscription
@@ -56,7 +71,7 @@ class TshTextAccessBinding private constructor(
         detachSubscription = registration
         if (closed.get()) {
             detachSubscription = null
-            runCatching { registration.close() }
+            closeRegistration(registration, "TSH-TEXT-BINDING-019")
         }
     }
 
@@ -64,7 +79,7 @@ class TshTextAccessBinding private constructor(
         cleanupRegistration = registration
         if (closed.get()) {
             cleanupRegistration = null
-            runCatching { registration.close() }
+            closeRegistration(registration, "TSH-TEXT-BINDING-020")
         }
     }
 
@@ -72,27 +87,90 @@ class TshTextAccessBinding private constructor(
         disposalSubscription = subscription
         if (closed.get()) {
             disposalSubscription = null
-            runCatching { subscription.close() }
+            closeSubscription(subscription)
         }
     }
 
     override fun close() {
         if (!closed.compareAndSet(false, true)) return
+        val diagnostics = ArrayList<TshDiagnostic>()
         val pendingSubscriptions = synchronized(lock) {
             subscriptions.toList().also { subscriptions.clear() }
         }
-        pendingSubscriptions.forEach { runCatching { it.close() } }
-        disposalSubscription?.let { runCatching { it.close() } }
+        pendingSubscriptions.forEach { subscription ->
+            try { subscription.close() } catch (error: Exception) {
+                diagnostics += closeDiagnostic("TSH-TEXT-BINDING-021", "Text change subscription close failed: ${error.message}", error)
+            } catch (error: LinkageError) {
+                diagnostics += closeDiagnostic("TSH-TEXT-BINDING-022", "Text change subscription close failed with a linkage error", error)
+            }
+        }
+        disposalSubscription?.let { subscription ->
+            try { subscription.close() } catch (error: Exception) {
+                diagnostics += closeDiagnostic("TSH-TEXT-BINDING-023", "Document disposal subscription close failed: ${error.message}", error)
+            } catch (error: LinkageError) {
+                diagnostics += closeDiagnostic("TSH-TEXT-BINDING-024", "Document disposal subscription close failed with a linkage error", error)
+            }
+        }
         disposalSubscription = null
 
-        engine.detach(attachment.handle)
-        if (ownsProviderRegistration) engine.providers.unregister(provider.id)
-
-        detachSubscription?.let { runCatching { it.close() } }
+        try {
+            engine.detach(attachment.handle)
+        } catch (error: Exception) {
+            diagnostics += closeDiagnostic("TSH-TEXT-BINDING-025", "Text document detach failed: ${error.message}", error)
+        } catch (error: LinkageError) {
+            diagnostics += closeDiagnostic("TSH-TEXT-BINDING-026", "Text document detach failed with a linkage error", error)
+        }
+        if (ownsProviderRegistration) {
+            try {
+                engine.providers.unregister(provider.id)
+            } catch (error: Exception) {
+                diagnostics += closeDiagnostic("TSH-TEXT-BINDING-027", "TextAccessProvider unregister failed: ${error.message}", error)
+            } catch (error: LinkageError) {
+                diagnostics += closeDiagnostic("TSH-TEXT-BINDING-028", "TextAccessProvider unregister failed with a linkage error", error)
+            }
+        }
+        detachSubscription?.let { registration ->
+            try { registration.close() } catch (error: Exception) {
+                diagnostics += closeDiagnostic("TSH-TEXT-BINDING-029", "Detach subscription close failed: ${error.message}", error)
+            } catch (error: LinkageError) {
+                diagnostics += closeDiagnostic("TSH-TEXT-BINDING-030", "Detach subscription close failed with a linkage error", error)
+            }
+        }
         detachSubscription = null
-        cleanupRegistration?.let { runCatching { it.close() } }
+        cleanupRegistration?.let { registration ->
+            try { registration.close() } catch (error: Exception) {
+                diagnostics += closeDiagnostic("TSH-TEXT-BINDING-031", "OwnerScope cleanup close failed: ${error.message}", error)
+            } catch (error: LinkageError) {
+                diagnostics += closeDiagnostic("TSH-TEXT-BINDING-032", "OwnerScope cleanup close failed with a linkage error", error)
+            }
+        }
         cleanupRegistration = null
+        closeDiagnostics = diagnostics.toList()
     }
+
+    private fun closeSubscription(subscription: TshTextSubscription) {
+        try { subscription.close() } catch (error: Exception) {
+            closeDiagnostics = closeDiagnostics + closeDiagnostic(
+                "TSH-TEXT-BINDING-033", "Cannot close late text subscription: ${error.message}", error
+            )
+        } catch (error: LinkageError) {
+            closeDiagnostics = closeDiagnostics + closeDiagnostic(
+                "TSH-TEXT-BINDING-034", "Late text subscription close failed with a linkage error", error
+            )
+        }
+    }
+
+    private fun closeRegistration(registration: AutoCloseable, code: String) {
+        try { registration.close() } catch (error: Exception) {
+            closeDiagnostics = closeDiagnostics + closeDiagnostic(code, "Lifecycle registration close failed: ${error.message}", error)
+        } catch (error: LinkageError) {
+            closeDiagnostics = closeDiagnostics + closeDiagnostic(code, "Lifecycle registration close failed with a linkage error", error)
+        }
+    }
+
+    private fun closeDiagnostic(code: String, message: String, cause: Throwable) = TshDiagnostic(
+        code, TshDiagnosticSeverity.WARNING, TshDiagnosticStage.LIFECYCLE, message, cause = cause
+    )
 
     companion object {
         fun attach(
@@ -116,7 +194,14 @@ class TshTextAccessBinding private constructor(
                 "TSH-TEXT-BINDING-003",
                 "Capabilities cannot be both required and optional: ${overlap.sorted().joinToString()}"
             )
-            if (!provider.supports(document)) return failure(
+            val providerSupportsDocument = try {
+                provider.supports(document)
+            } catch (error: Exception) {
+                return failure("TSH-TEXT-BINDING-035", "TextAccessProvider supports() failed: ${error.message}", error)
+            } catch (error: LinkageError) {
+                return failure("TSH-TEXT-BINDING-036", "TextAccessProvider supports() failed with a linkage error", error)
+            }
+            if (!providerSupportsDocument) return failure(
                 "TSH-TEXT-BINDING-004", "TextAccessProvider does not support the supplied host document"
             )
             if (registerProvider) {
@@ -182,7 +267,15 @@ class TshTextAccessBinding private constructor(
             )
 
             if (provider.supportsDisposalNotifications) {
-                val disposal = provider.subscribeDisposed(document) { binding.close() }
+                val disposal = try {
+                    provider.subscribeDisposed(document) { binding.close() }
+                } catch (error: Exception) {
+                    binding.close()
+                    return failure("TSH-TEXT-BINDING-037", "Document disposal subscription failed: ${error.message}", error)
+                } catch (error: LinkageError) {
+                    binding.close()
+                    return failure("TSH-TEXT-BINDING-038", "Document disposal subscription failed with a linkage error", error)
+                }
                 if (disposal is TshResult.Failure) {
                     binding.close()
                     return TshResult.Failure(disposal.diagnostics)
