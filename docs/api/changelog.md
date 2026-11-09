@@ -21,6 +21,9 @@
 - Engine.strictProviderValidation 现在一致作用于 attach/refresh/resolveProviders；严格 attach 缺少必需能力时会回滚 Attachment 和对象注册，lenient 模式仍可返回 INCOMPLETE 报告。
 - Tree-sitter Query Cursor close、PredicateHandler 声明读取和 Provider.supports LinkageError 不再静默吞掉；错误转为结构化诊断，Cursor cleanup failure 不会覆盖为假成功。
 - RenderCoordinator 新增最大 pending plan 数量与 backpressure，Provider submission/cancel 的 LinkageError 会清理 pending 状态并返回诊断。
+- OwnerScope close 具备重入保护，cleanup action 在自身回调中再次 close 不会 join 自己造成死锁；新增回归测试源码。
+- Android Spannable Renderer 缺失 viewport 时明确拒绝全文 Span 分配；Android Binding close/cleanup 失败通过 closeDiagnostics 暴露，不再静默吞掉；新增回归测试源码。
+- Attachment refresh 的 Provider 协商异常统一映射为结构化失败，不向宿主调用方泄漏未处理异常。
 - Android Spannable Renderer 的 host thread/revision/Spannable/viewport/Span snapshot/Span inspection 回调异常均转换为结构化诊断；事务提交失败时尽力回滚并报告回滚失败，避免把部分 Span 更新误报为成功。
 - 新增 TSH Public API 最高层设计规范：明确 Host Ownership First、No Framework Lock-in、Capability negotiation、零拷贝文本访问、Long 坐标、版本安全、双管线、Renderer-owned drawing 和证据等级。
 - 新增 TshOwnerScope/TshAttachmentManager/TshAttachmentReport 与 Engine attach/inspect/refresh/detach，支持宿主对象身份注册、Provider 能力协商、OwnerScope 自动 detach；detach 不销毁宿主对象。
