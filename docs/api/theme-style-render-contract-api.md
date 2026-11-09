@@ -33,7 +33,7 @@ ColorValue 包含 colorSpace、components、alpha。解析器支持十六进制�
 
 ## 4. Render Plan 与 Receipt（本节为唯一权威契约）
 
-当前 Kotlin 源码模型位于 `TshRenderApi.kt`：
+本节是 RenderPlan/Provider/Receipt 的唯一权威契约；后端实际绘制能力与像素验证见 `render-backend-conformance-api.md`。当前 Kotlin 源码模型位于 `TshRenderApi.kt`：
 
 - `TshRenderRevisions`：绑定 document/version、config、theme、viewport、renderer，以及可选 Tree-sitter/Regex revision。
 - `TshRenderPlan`：携带稳定 Plan ID、完整 revisions、RenderInstruction 与 required capabilities。
