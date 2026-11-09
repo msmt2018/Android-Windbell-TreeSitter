@@ -46,3 +46,13 @@ TextReader 提供 read(range)、readChunk(offset, maxUnits)、iterateChunks(rang
 - 编辑批次版本断裂或范围重叠会返回诊断。
 - Piece Tree/Rope 增量解析不需要全量 String。
 - UTF-8 多字节字符、UTF-16 surrogate 和 CRLF 边界均有测试。
+
+## 已实现的 Tree-sitter 分块输入契约（SOURCE_PARTIAL）
+
+当前 Java/JNI 入口为 `TSParser.parseInput(TSInput)`，输入编码固定为 UTF-16LE。TSInput.read 接收 Tree-sitter byte offset，并将宿主 Snapshot 的 UTF-16 code unit 分块编码到 Native 提供的有界 byte array；该路径不构造全文 String 或连续全文 Native buffer。
+
+`TshSnapshotTreeSitterInput` 不仅信任 Provider 的默认实现：即使宿主覆盖 `readChunk`，也会再次校验 documentId/version/start/end、最大长度、非空进展、UTF-16 well-formedness，以及块首尾是否切开 surrogate pair。Provider 违反契约时解析失败并报告输入异常，不会将损坏字节交给 Tree-sitter。
+
+Snapshot Lease 必须在整个同步 parseInput 调用期间保持打开。调用方不得在解析期间并发 close；若发生关闭，后续回调会失败而不会继续读取。当前 Lease 接口尚未提供跨调用 retain/fork，因此异步调度层必须由宿主负责把 Lease 生命周期覆盖到任务结束。
+
+此实现只代表分块输入源码具备首版契约；Piece Tree/Rope 的真实节点索引 Provider、并发编辑压力测试、Native 构建和设备级大文件验证仍未完成。
