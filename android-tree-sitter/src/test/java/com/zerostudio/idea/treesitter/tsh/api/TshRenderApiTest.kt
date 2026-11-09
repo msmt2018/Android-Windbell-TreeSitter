@@ -101,6 +101,24 @@ class TshRenderApiTest {
     }
 
     @Test
+    fun closeInvalidatesPendingPlansAndRejectsLateReceipts() {
+        val provider = QueuedProvider()
+        val coordinator = TshRenderCoordinator(provider)
+        coordinator.updateCurrentRevisions(revisions())
+        val queued = coordinator.submit(plan()) as TshResult.Success<TshRenderReceipt>
+        val close = coordinator.close() as TshResult.Success<Unit>
+        assertTrue(coordinator.pendingPlanIds().isEmpty())
+        assertFalse(provider.acknowledger.isCurrent(queued.value.planId, queued.value.revisions))
+        assertTrue(close.diagnostics.isNotEmpty())
+        val late = provider.acknowledger.acknowledge(TshRenderReceipt(
+            queued.value.planId, provider.id, queued.value.revisions,
+            TshRenderReceiptStatus.DRAWN, 1
+        ))
+        assertTrue(late is TshResult.Failure)
+        assertTrue(coordinator.submit(plan("after-close")) is TshResult.Failure)
+    }
+
+    @Test
     fun appliedReceiptCanAccountForInstructionsDeferredOutsideViewport() {
         val provider = object : TshRenderProvider {
             override val id = "viewport-renderer"
