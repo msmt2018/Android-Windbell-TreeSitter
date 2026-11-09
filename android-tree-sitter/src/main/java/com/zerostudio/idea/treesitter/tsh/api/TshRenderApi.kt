@@ -97,8 +97,8 @@ data class TshRenderReceipt(
 
     /** True when the host display object was updated, even if a later View draw has not occurred. */
     val confirmsHostMutation: Boolean
-        get() = (status == TshRenderReceiptStatus.APPLIED ||
-            status == TshRenderReceiptStatus.PARTIALLY_APPLIED) && appliedInstructionCount > 0
+        get() = status == TshRenderReceiptStatus.APPLIED ||
+            status == TshRenderReceiptStatus.PARTIALLY_APPLIED
 }
 
 interface TshRenderAcknowledger {
