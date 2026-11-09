@@ -1,0 +1,57 @@
+package com.zerostudio.idea.treesitter.tsh.api
+
+import org.junit.jupiter.api.Assertions.*
+import org.junit.jupiter.api.Test
+
+class TshSnapshotTreeSitterInputTest {
+    private class Snapshot : TshTextSnapshot {
+        override val documentId = "streamed-doc"
+        override val version = 9L
+        private val content = "A😀é"
+        override val lengthUtf16 = content.length.toLong()
+        override fun readUtf16(start: Long, end: Long): CharSequence =
+            content.substring(start.toInt(), end.toInt())
+    }
+
+    private class Provider : TshTextAccessProvider {
+        override val id = "piece-tree-provider"
+        private val value = Snapshot()
+        override fun supports(document: Any) = true
+        override fun snapshot(document: Any): TshResult<TshTextSnapshot> =
+            TshResult.Success(value)
+    }
+
+    @Test
+    fun streamsUtf16leInBoundedChunksWithoutSplittingSurrogatePairs() {
+        val provider = Provider()
+        val lease = (provider.acquireSnapshot(Any()) as TshResult.Success).value
+        val input = TshSnapshotTreeSitterInput(provider, lease)
+        val buffer = ByteArray(4)
+
+        val first = input.read(0L, 0, 0, buffer)
+        assertEquals(2, first)
+        assertArrayEquals(byteArrayOf(0x41, 0x00, 0x00, 0x00), buffer)
+
+        val emoji = input.read(2L, 0, 1, buffer)
+        assertEquals(4, emoji)
+        assertArrayEquals(byteArrayOf(0x3D, 0xD8.toByte(), 0x00, 0xDE.toByte()), buffer)
+
+        val finalChar = input.read(6L, 0, 3, buffer)
+        assertEquals(2, finalChar)
+        assertEquals(0xE9.toByte(), buffer[0])
+        assertEquals(0x00.toByte(), buffer[1])
+        assertEquals(0, input.read(8L, 0, 4, buffer))
+        lease.close()
+    }
+
+    @Test
+    fun rejectsOddNativeByteOffsets() {
+        val provider = Provider()
+        val lease = (provider.acquireSnapshot(Any()) as TshResult.Success).value
+        val input = TshSnapshotTreeSitterInput(provider, lease)
+        assertThrows(TshTextInputException::class.java) {
+            input.read(1L, 0, 0, ByteArray(8))
+        }
+        lease.close()
+    }
+}
