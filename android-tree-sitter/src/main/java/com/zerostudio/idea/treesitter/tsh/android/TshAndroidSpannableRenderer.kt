@@ -145,7 +145,7 @@ class TshAndroidSpannableRenderer(
         for (instruction in plan.instructions) {
             if (!acknowledger.isCurrent(plan.id, plan.revisions) ||
                 target.currentRevisions(documentId) != plan.revisions) {
-                removePlanSpans(spannable, plan.id.value)
+                removeNewOwnedSpans(spannable, previousSpans)
                 return failure("TSH-ANDROID-RENDER-004", "RenderPlan became stale during Spannable mutation")
             }
             val start = instruction.range.start.offset
@@ -164,7 +164,12 @@ class TshAndroidSpannableRenderer(
                 .count { it is TshAndroidOwnedSpan && it.ownerId == id && it.planId == plan.id.value }
             val spanPriority = instruction.zIndex.coerceIn(0, 255) shl Spanned.SPAN_PRIORITY_SHIFT
             val spanFlags = Spannable.SPAN_EXCLUSIVE_EXCLUSIVE or spanPriority
-            applyStyle(spannable, start.toInt(), end.toInt(), plan.id.value, style, spanFlags, diagnostics)
+            try {
+                applyStyle(spannable, start.toInt(), end.toInt(), plan.id.value, style, spanFlags, diagnostics)
+            } catch (error: Exception) {
+                removeNewOwnedSpans(spannable, previousSpans)
+                return failure("TSH-ANDROID-RENDER-010", "Applying a Spannable style failed: ${error.message}")
+            }
             val after = spannable.getSpans(start.toInt(), end.toInt(), CharacterStyle::class.java)
                 .count { it is TshAndroidOwnedSpan && it.ownerId == id && it.planId == plan.id.value }
             val hadWarning = diagnostics.size > diagnosticsBefore
@@ -283,10 +288,14 @@ class TshAndroidSpannableRenderer(
         }
     }
 
-    private fun removePlanSpans(spannable: Spannable, planId: String) {
+    private fun removeNewOwnedSpans(
+        spannable: Spannable,
+        previous: List<TshAndroidSpanSnapshot>
+    ) {
+        val previousObjects = previous.map { it.span }.toSet()
         spannable.getSpans(0, spannable.length, CharacterStyle::class.java)
             .filterIsInstance<TshAndroidOwnedSpan>()
-            .filter { it.ownerId == id && it.planId == planId }
+            .filter { it.ownerId == id && it !in previousObjects }
             .forEach { spannable.removeSpan(it as Any) }
     }
 
