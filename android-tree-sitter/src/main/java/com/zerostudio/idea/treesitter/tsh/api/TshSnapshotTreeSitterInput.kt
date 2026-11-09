@@ -19,13 +19,19 @@ class TshSnapshotTreeSitterInput(
         if (byteOffset < 0L || (byteOffset and 1L) != 0L) {
             throw TshTextInputException("Tree-sitter requested a byte offset inside a UTF-16 code unit")
         }
+        if (row < 0 || column < 0) {
+            throw TshTextInputException("Tree-sitter input point exceeds the supported signed coordinate range")
+        }
         if (destination.isEmpty() || (destination.size and 1) != 0) {
             throw TshTextInputException("Tree-sitter input buffer must have a positive even byte capacity")
         }
 
         val snapshot = snapshotLease.snapshot
         val startUtf16 = byteOffset / 2L
-        if (startUtf16 >= snapshot.lengthUtf16) return 0
+        if (snapshot.lengthUtf16 < 0L || startUtf16 > snapshot.lengthUtf16) {
+            throw TshTextInputException("Tree-sitter requested an offset outside the Snapshot")
+        }
+        if (startUtf16 == snapshot.lengthUtf16) return 0
         val maxUtf16Length = destination.size / 2
         val result = textProvider.readChunk(snapshotLease, startUtf16, maxUtf16Length)
         val chunk = when (result) {
