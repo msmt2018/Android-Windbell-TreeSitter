@@ -84,6 +84,59 @@ class TshTextAccessProviderContractTest {
         override fun snapshot(document: Any) = TshResult.Success(value)
     }
 
+
+    @Test
+    fun retainedSnapshotLeasesCloseIndependentlyAndReleaseRootOnce() {
+        val snapshot = Snapshot()
+        var releaseCount = 0
+        val first = TshSharedTextSnapshotLease.acquire(snapshot) { releaseCount++ }
+        val second = first.retain() as TshResult.Success
+        val secondLease = second.value
+        val third = secondLease.retain() as TshResult.Success
+        val thirdLease = third.value
+
+        first.close()
+        assertTrue(first.isClosed)
+        assertFalse(secondLease.isClosed)
+        assertFalse(thirdLease.isClosed)
+        assertEquals("abcdef", secondLease.snapshot.readUtf16(0, 6).toString())
+        assertEquals(0, releaseCount)
+
+        secondLease.close()
+        secondLease.close()
+        assertEquals(0, releaseCount)
+        thirdLease.close()
+        assertEquals(1, releaseCount)
+        assertTrue(thirdLease.isClosed)
+        assertTrue(thirdLease.retain() is TshResult.Failure)
+    }
+
+    @Test
+    fun defaultProviderLeaseCanBeRetainedWithoutSharingCloseState() {
+        val provider = Provider()
+        val first = (provider.acquireSnapshot(Any()) as TshResult.Success).value
+        val second = (first.retain() as TshResult.Success).value
+
+        first.close()
+        assertTrue(first.isClosed)
+        assertFalse(second.isClosed)
+        assertEquals("abcdef", second.snapshot.readUtf16(0, 6).toString())
+        second.close()
+    }
+
+    @Test
+    fun legacyCustomLeaseWithoutRetainFailsExplicitly() {
+        val snapshot = Snapshot()
+        val legacyLease = object : TshTextSnapshotLease {
+            override val snapshot: TshTextSnapshot = snapshot
+            override val isClosed: Boolean = false
+            override fun close() = Unit
+        }
+        val result = legacyLease.retain()
+        assertTrue(result is TshResult.Failure)
+        assertEquals("TSH-TEXT-LEASE-001", (result as TshResult.Failure).diagnostics.single().code)
+    }
+
     @Test
     fun rejectsOverlappingOrUnorderedEdits() {
         assertThrows(IllegalArgumentException::class.java) {
