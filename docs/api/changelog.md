@@ -124,3 +124,14 @@
 - Restrict the editor-coordinate fast path to normalized LF/CRLF buffers; Tree-sitter row semantics are LF-based, so other EOL forms use bounded snapshot scanning.
 - Deliver tree/failure callbacks on the Android main thread and drop stale tree notifications; shut down the worker if session attachment fails.
 - Updated CI triggers for PRs targeting `main` and pushes to this feature branch. GitHub Actions run #552 is now executing both release assembly and debug tests; its result is pending.
+
+## 2026-11-10 — CI failure analysis and corrective fixes (SOURCE_PARTIAL)
+
+- Corrected TshCoordinateConverter expression-body control flow and retained the Long result type in its mapInt adapter.
+- Aligned TextAccessBinding disposal subscription with the provider's (reason, version) callback contract.
+- Unwrapped successful TshResult.Success<TshObjectDescriptor> metadata updates explicitly in both parser-owner edit paths.
+- Replaced query predicate-step assumptions with the actual TSQuery.predicatesFor(UInt) API; only custom predicates are checked against registered handlers, while built-in Tree-sitter predicates remain handled by the native query implementation.
+- Constructed renderer shutdown diagnostics locally with the correct warning severity and render stage.
+- Fixed PieceTreeSnapshot.getNearestChunk default-range overflow: start + Int.MAX_VALUE could wrap negative and corrupt snapshot reads. The requested length is now bounded by the remaining source-piece length before computing the end offset.
+- Pinned CI grammar tooling to Node.js 20 and made the test job install all grammar package dependencies, matching the release job.
+- GitHub Actions run #552 exposed the failures above. Corrective commits are on feat/tsh-unified-api-foundation; the new workflow run must complete before build/test status can be upgraded. No test has been marked verified from source inspection alone.
