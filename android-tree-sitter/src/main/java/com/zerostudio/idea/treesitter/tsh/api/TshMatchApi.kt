@@ -34,11 +34,12 @@ data class TshMatchProvenance(
             TshMatchSource.TREE_SITTER_ATS -> {
                 require(!grammarFingerprint.isNullOrBlank())
                 require(!queryId.isNullOrBlank())
-                require(regexId.isNullOrBlank()) { "Tree-sitter provenance must not contain a Regex id" }
+                require(regexId.isNullOrBlank() && regexRevision.isNullOrBlank()) { "Tree-sitter provenance must not contain a Regex id" }
             }
             TshMatchSource.REGEX -> {
                 require(!regexId.isNullOrBlank())
-                require(grammarFingerprint.isNullOrBlank() && queryId.isNullOrBlank()) {
+                require(grammarFingerprint.isNullOrBlank() && queryId.isNullOrBlank() &&
+                    queryRevision.isNullOrBlank()) {
                     "Regex provenance must not masquerade as Tree-sitter"
                 }
             }
