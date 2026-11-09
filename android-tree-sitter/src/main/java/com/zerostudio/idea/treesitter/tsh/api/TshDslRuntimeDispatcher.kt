@@ -87,7 +87,6 @@ class TshDslRuntimeDispatcher(
 ) {
     fun apply(
         validation: TshSchemaValidationResult,
-        dslVersion: TshDslVersion,
         availableCapabilities: TshCapabilitySet = TshCapabilitySet.EMPTY
     ): TshResult<TshRuntimeApplyReport> {
         val applied = LinkedHashSet<String>()
@@ -113,7 +112,7 @@ class TshDslRuntimeDispatcher(
         }
 
         val context = TshRuntimePropertyContext(
-            validation.declaration.kind, validation.declaration.id, dslVersion
+            validation.declaration.kind, validation.declaration.id, validation.dslVersion
         )
         for ((name, value) in validation.normalizedProperties) {
             val registration = consumers.find(TshRuntimePropertyKey(validation.declaration.kind, name))
