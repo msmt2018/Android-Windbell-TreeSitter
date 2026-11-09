@@ -36,9 +36,7 @@ class TshSnapshotTreeSitterInput(
         }
         if (startUtf16 == snapshot.lengthUtf16) return 0
         val maxUtf16Length = destination.size / 2
-        val result = textProvider.withReadAccess {
-            textProvider.readChunk(snapshotLease, startUtf16, maxUtf16Length)
-        }
+        val result = textProvider.readChunk(snapshotLease, startUtf16, maxUtf16Length)
         val chunk = when (result) {
             is TshResult.Success -> result.value
             is TshResult.Failure -> throw TshTextInputException(
