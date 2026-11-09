@@ -80,7 +80,10 @@ class TshAndroidSpannableRendererTest {
         val revisions = TshRenderRevisions(
             TshDocumentId("doc"), 1L, "config", "theme", "viewport", "renderer"
         )
-        val target = Target(SpannableStringBuilder("code"), revisions)
+        val text = SpannableStringBuilder("code")
+        val hostSpan = ForegroundColorSpan(Color.BLUE)
+        text.setSpan(hostSpan, 0, 4, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+        val target = Target(text, revisions)
         val renderer = TshAndroidSpannableRenderer(target)
         val scope = TshOwnerScope("android-editor")
         val binding = (renderer.attachTo(
@@ -89,9 +92,16 @@ class TshAndroidSpannableRendererTest {
         ) as TshResult.Success<TshAndroidSpannableBinding>).value
         assertTrue(binding.attachment.resolution.selectedProviders.any { it === renderer })
         assertTrue(engine.objects.find(target.hostObject) != null)
+        binding.renderCoordinator.updateCurrentRevisions(revisions)
+        assertTrue(binding.renderCoordinator.submit(
+            plan("binding-render", revisions, 0xFFFF0000u)
+        ) is TshResult.Success)
+        assertEquals(2, text.getSpans(0, 4, CharacterStyle::class.java).size)
 
         scope.close()
 
+        assertEquals(1, text.getSpans(0, 4, CharacterStyle::class.java).size)
+        assertTrue(text.getSpans(0, 4, CharacterStyle::class.java).any { it === hostSpan })
         assertEquals(TshAttachmentStatus.DETACHED, engine.inspectAttachment(binding.attachment.handle)?.status)
         assertTrue(engine.objects.find(target.hostObject) == null)
         assertTrue(engine.providers.all().none { it.id == renderer.id })
