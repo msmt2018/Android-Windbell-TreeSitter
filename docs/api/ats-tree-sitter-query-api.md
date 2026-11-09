@@ -15,13 +15,13 @@ GrammarProvider → TshParserSession → TshSyntaxTreeSnapshot → TshAtsCompile
 源码位置：`com.zerostudio.idea.treesitter.tsh.api`
 
 - `TshGrammarDescriptor`：languageId、grammarVersion、ABI、fingerprint、capabilities。
-- `TshByteRange`：Native Tree-sitter byte offset 半开范围；实际字节编码由 `TshSyntaxTreeSnapshot.inputEncoding` 指明，不得默认把所有 Native byte offset 当作 UTF-8。
+- `TshByteRange`：Long 型 Native Tree-sitter byte offset 半开范围；实际字节编码由 `TshSyntaxTreeSnapshot.inputEncoding` 指明。当前 TSQueryCursor Java ABI 接收 Int，Executor 在边界检查并显式 narrowing，超过 Int.MAX_VALUE 会拒绝。
 - `TshAtsSource` / `TshQuerySourceLanguage`：区分 ATS 与原生 Tree-sitter Query 输入。
-- `TshQueryCompileOptions`：谓词开关、严格节点验证开关、模式数量上限。当前 strictNodeValidation 尚无可用的完整节点/字段元数据校验实现，不应将其视为已生效；需要在 Grammar Schema Provider 接入后实现。
+- `TshQueryCompileOptions`：谓词开关、严格节点验证开关、模式数量上限。strictNodeValidation 默认 false；显式设为 true 时，当前 Compiler 返回 unsupported 错误，因为 Grammar Node Schema Provider 尚未接入。
 - `TshCompiledQuery`：queryId/revision、Grammar 绑定、source hash、compiler version、options、可选 native object id。
 - `TshSyntaxTreeSnapshot`：document/version/tree revision、Grammar、root byte range、Native tree object ID 和源文本编码（UTF8/UTF16_LE/UTF16_BE）。
-- `TshCapture` / `TshQueryResult`：捕获元数据、文档/树/查询版本、执行步数及捕获 byte range 所属的源文本编码。
-- `TshQueryExecutionBudget` / `TshQueryCancellation`：执行预算与协作式取消契约。
+- `TshCapture` / `TshQueryResult`：捕获元数据、文档/树/查询版本、可空执行步数（null 表示 Native API 不提供计数）及捕获 byte range 所属的源文本编码。
+- `TshQueryExecutionBudget` / `TshQueryCancellation`：总 Match 数/Native pending-match limit 与协作式取消契约。maxSteps 默认 null；显式设置时当前 Executor 在进入 Native 前返回 unsupported 错误。
 - `TshQueryCompiler` / `TshQueryExecutor`：通用 Tree-sitter 查询编译和执行接口。
 - `TshAtsCompiler`：ATS 前端专用扩展契约，ATS 编译器必须 Lower 到同一 Tree-sitter Query 执行管线。当前 Native S-expression Adapter 不再错误实现 ATS 接口。
 - `TshCompiledQueryRegistry`：编译查询注册、替换、查找和 Grammar 兼容检查。
@@ -35,7 +35,7 @@ CompiledQuery 必须绑定 grammar identity/version、ABI 和 fingerprint；只�
 
 ## 5. 增量查询
 
-输入变化通过 Tree-sitter edit 更新 Tree；查询可按 changed ranges 限定执行，但必须处理可能跨越 changed range 的祖先/后代依赖。结果带 documentVersion、treeRevision、grammarFingerprint、queryRevision。旧版本结果必须被丢弃或标记 stale。当前 `TshQueryResult.isCurrentFor(tree)` 只提供版本身份判断，不实现增量查询调度。
+输入变化通过 Tree-sitter edit 更新 Tree；查询可按 changed ranges 限定执行，但必须处理可能跨越 changed range 的祖先/后代依赖。结果带 documentVersion、treeRevision、grammarFingerprint、queryRevision。旧版本结果必须被丢弃或标记 stale。当前 `TshQueryResult.isCurrentFor(tree)` 只提供版本身份判断，不实现增量查询调度。当前 Cursor 设置 pending match limit，并在 drain 阶段另行限制总 Match 数；maxSteps 不支持时明确拒绝。
 
 ## 6. 捕获语义
 
