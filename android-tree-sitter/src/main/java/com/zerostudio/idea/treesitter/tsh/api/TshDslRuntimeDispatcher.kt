@@ -152,8 +152,12 @@ class TshDslRuntimeDispatcher(
             }
             when (result) {
                 is TshResult.Success -> {
-                    applied += name
                     diagnostics += result.diagnostics
+                    if (result.diagnostics.any { it.severity == TshDiagnosticSeverity.ERROR }) {
+                        unapplied[name] = value
+                    } else {
+                        applied += name
+                    }
                 }
                 is TshResult.Failure -> {
                     unapplied[name] = value
