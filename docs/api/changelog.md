@@ -95,3 +95,13 @@
 ### Status
 - 本轮新增的 Kotlin API 和测试仅代表源码已提交；没有运行 Gradle、JUnit、C++/JNI 构建或 Android 设备验证。Tree-sitter Adapter 调用了既有 Native API；Query/Tree/Language lease、Predicate 过滤和协调式 Resource Registry 源码及测试源码已提交；Resource Registry 锁边界、Engine.close 退役接线和 Query catalog 锁外 close action、ParserOwner、Engine 统一 Compiler/Executor/Parser 工厂、Query Store 永久 shutdown、退役后 child Lease 和 Query/TSH DSL/Grammar JNI UTF-8 修复也已加入源码/测试源码，但未做 Gradle/JUnit/C++ 或真实 Native 运行验证。
 - 现有仓库已检查到 `TSQuery`、`TSQueryCursor`、`TshCompiler`、`TshGrammar.dynamic_ts_query`；后续实现应复用这些既有能力并保持旧 JNI 入口兼容。
+
+
+## 2026-11-10 — Incremental Tree-sitter edit transaction (SOURCE_PARTIAL)
+
+- Added `TshTreeSitterEditCompiler` to compile a version-checked `TshTextChange` into descending UTF-16LE `TSInputEdit` values using bounded snapshot reads and endpoint-only coordinate storage.
+- Added `TshTreeSitterParserOwner.editTreeBatch`: one exclusive Native lease per batch, strict byte/point alignment and non-overlap validation, one-time metadata publication, and retirement of partially edited trees on failure.
+- Added `TshTreeSitterIncrementalUpdate.apply` to connect before/after Snapshot Leases, edit compilation, atomic Native edits, and incremental parsing. The old tree is retired only after the replacement tree is published.
+- Added the `EDITED_PENDING_PARSE` tree state. Query execution rejects such a tree before Native lease acquisition and rechecks after acquisition; replacement snapshot parses publish `READY` trees.
+- Added edit compiler boundary tests and a query preflight regression test. These test sources have not yet been run.
+- Host EditorDocument snapshot locking, change/disposal event wiring, Gradle/JUnit, Native/JNI and device validation remain outstanding.
