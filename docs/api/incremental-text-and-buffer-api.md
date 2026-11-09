@@ -80,7 +80,7 @@ PieceTreeSnapshot 的创建成本为 O(piece count) 并复制当前仍在 change
 
 - 强制校验 documentId 与 beforeVersion 必须匹配提供的不可变 Snapshot；不允许把其他文档/版本的编辑应用到旧树。
 - 所有偏移均以 UTF-16 code unit 表示，转换为 Tree-sitter UTF-16LE byte offset 时使用 64-bit 中间计算，并在 Native Int 边界显式拒绝溢出。
-- 通过有界 32K UTF-16 分块构建行起点索引，不创建全文 String；索引同时检查 Snapshot 的 UTF-16 surrogate 完整性。
+- 通过有界 32K UTF-16 分块单次扫描，仅缓存本批编辑实际请求的端点坐标，不创建全文 String，也不创建与总行数成比例的行索引；扫描同时检查 Snapshot 的 UTF-16 surrogate 完整性。
 - 编辑范围不得越界或切开 surrogate pair；起点/旧终点/新终点分别转换为 Tree-sitter row/byte-column。
 - 输入编辑按原始文档坐标升序描述，编译结果反向输出为降序。按此顺序逐个调用现有 `TshTreeSitterParserOwner.editTree`，较高偏移的编辑不会改变较低偏移编辑的坐标。
 - CRLF 中的 CR 计入当前 Tree-sitter byte column，LF 才推进 row；替换文本中的换行也按同一规则计算。
