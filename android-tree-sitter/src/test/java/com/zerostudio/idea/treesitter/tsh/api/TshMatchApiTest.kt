@@ -49,7 +49,7 @@ class TshMatchApiTest {
     @Test
     fun mergesBothPipelinesWithStableOrderingAndDeduplication() {
         val matches = listOf(
-            treeMatch("tree-2", 4, 8, priority = 0),
+            treeMatch("tree-2", 4, 8),
             treeMatch("tree-duplicate", 4, 8),
             regexMatch("regex-1", 0, 3)
         )
