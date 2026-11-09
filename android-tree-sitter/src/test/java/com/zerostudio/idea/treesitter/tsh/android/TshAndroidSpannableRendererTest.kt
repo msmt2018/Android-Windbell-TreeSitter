@@ -141,6 +141,26 @@ class TshAndroidSpannableRendererTest {
     }
 
     @Test
+    fun engineShutdownClosesRendererCoordinatorEvenWhenOwnerScopeRemainsOpen() {
+        val engine = TshEngine.create()
+        engine.initialize()
+        val revisions = TshRenderRevisions(
+            TshDocumentId("doc"), 1L, "config", "theme", "viewport", "renderer"
+        )
+        val target = Target(SpannableStringBuilder("code"), revisions)
+        val renderer = TshAndroidSpannableRenderer(target)
+        val scope = TshOwnerScope("engine-shutdown")
+        val binding = (renderer.attachTo(engine, scope) as TshResult.Success<TshAndroidSpannableBinding>).value
+
+        engine.close()
+
+        assertTrue(binding.isClosed)
+        assertTrue(binding.renderCoordinator.submit(plan("after-engine-close", revisions, 0xFFFF0000u))
+            is TshResult.Failure)
+        scope.close()
+    }
+
+    @Test
     fun scopedRendererBindingDoesNotUnregisterAnExternallyOwnedHostObject() {
         val engine = TshEngine.create()
         engine.initialize()
