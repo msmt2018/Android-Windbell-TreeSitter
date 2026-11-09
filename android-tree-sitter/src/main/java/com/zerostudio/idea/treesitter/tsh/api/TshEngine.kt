@@ -13,6 +13,8 @@ class TshEngine private constructor(val options: TshEngineOptions) : AutoCloseab
 
     val objects: TshObjectRegistry = TshObjectRegistry()
     val providers: TshProviderRegistry = TshProviderRegistry()
+    /** Manages host attachment records without taking ownership of host objects. */
+    val attachments: TshAttachmentManager = TshAttachmentManager(objects, providers)
     private val nativeResourceLeases = TshNativeResourceLeaseStore()
     /** Shared query catalog and Native query leases for every adapter created by this Engine. */
     val compiledQueries: TshCompiledQueryRegistry = TshCompiledQueryRegistry()
@@ -103,6 +105,39 @@ class TshEngine private constructor(val options: TshEngineOptions) : AutoCloseab
         )
     }
 
+    /** Attaches a host object without requiring inheritance or transferring host ownership. */
+    fun attach(
+        request: TshAttachmentRequest,
+        ownerScope: TshOwnerScope
+    ): TshResult<TshAttachmentReport> {
+        if (state != TshEngineState.INITIALIZED) {
+            return TshResult.Failure(listOf(TshDiagnostic(
+                code = "TSH-ENGINE-002",
+                severity = TshDiagnosticSeverity.ERROR,
+                stage = TshDiagnosticStage.ENGINE,
+                message = "TSH engine must be initialized before attaching host objects"
+            )))
+        }
+        return attachments.attach(request, ownerScope)
+    }
+
+    fun inspectAttachment(handle: TshAttachmentHandle): TshAttachmentReport? =
+        attachments.inspect(handle)
+
+    fun refreshAttachment(handle: TshAttachmentHandle): TshResult<TshAttachmentReport> {
+        if (state != TshEngineState.INITIALIZED) {
+            return TshResult.Failure(listOf(TshDiagnostic(
+                code = "TSH-ENGINE-002",
+                severity = TshDiagnosticSeverity.ERROR,
+                stage = TshDiagnosticStage.ENGINE,
+                message = "TSH engine must be initialized before refreshing attachments"
+            )))
+        }
+        return attachments.refresh(handle)
+    }
+
+    fun detach(handle: TshAttachmentHandle): Boolean = attachments.detach(handle)
+
     /**
      * Resolves host providers using this Engine's strictness and diagnostics options.
      * Strict mode rejects missing required capabilities; lenient mode returns a degraded report.
@@ -160,6 +195,7 @@ class TshEngine private constructor(val options: TshEngineOptions) : AutoCloseab
         if (previous != TshEngineState.CLOSED) {
             // Retire queries first: each compiled query may retain a Grammar Language lease.
             // Then retire Trees, Parsers and Languages owned by the resource coordinator.
+            attachments.close()
             nativeQueryLeases.close()
             compiledQueries.clear()
             nativeResources.close()
