@@ -24,6 +24,17 @@ class TshQueryApiTest {
         assertTrue(TshByteRange(3, 3).isEmpty)
     }
 
+    @Test fun publicOffsetsUseLongWhilePreservingIntConstructionCompatibility() {
+        val position = TshSourcePosition(
+            offset = 3_000_000_000L,
+            coordinateSystem = TshCoordinateSystem.UTF16_CODE_UNIT
+        )
+        assertEquals(3_000_000_000L, position.offset)
+        val range = TshByteRange(2_500_000_000L, 2_500_000_010L)
+        assertEquals(2_500_000_000L, range.startByte)
+        assertEquals(5L, TshByteRange(2, 7).endByte - TshByteRange(2, 7).startByte)
+    }
+
     @Test fun compiledQueryRequiresExactGrammarFingerprint() {
         val compiled = query()
         assertTrue(compiled.isCompatibleWith(grammar()))
