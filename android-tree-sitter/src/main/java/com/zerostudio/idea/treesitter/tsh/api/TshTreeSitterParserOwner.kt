@@ -139,6 +139,14 @@ class TshTreeSitterParserOwner private constructor(
                 parser.descriptor.id,
                 error
             )
+        } catch (error: LinkageError) {
+            return failure(
+                "TSH-PARSER-OWNER-022",
+                "Tree-sitter Native linkage failed during parse: ${error.message}",
+                TshDiagnosticStage.PARSE,
+                parser.descriptor.id,
+                error
+            )
         } finally {
             tree?.let { runCatching { it.close() } }
             if (!languageLeaseTransferred) languageLease.close()
@@ -249,6 +257,15 @@ class TshTreeSitterParserOwner private constructor(
             failure(
                 "TSH-PARSER-OWNER-012",
                 "Tree-sitter input edit failed: ${error.message}",
+                TshDiagnosticStage.PARSE,
+                ownedTree.registration.descriptor.id,
+                error
+            )
+        } catch (error: LinkageError) {
+            if (editAttempted) resources.retire(ownedTree.registration.descriptor.id)
+            failure(
+                "TSH-PARSER-OWNER-023",
+                "Tree-sitter Native linkage failed during tree edit: ${error.message}",
                 TshDiagnosticStage.PARSE,
                 ownedTree.registration.descriptor.id,
                 error
@@ -399,6 +416,14 @@ class TshTreeSitterParserOwner private constructor(
             return failure(
                 "TSH-PARSER-OWNER-017",
                 "Tree-sitter streaming parse or publication failed: ${error.message}",
+                TshDiagnosticStage.PARSE,
+                parser.descriptor.id,
+                error
+            )
+        } catch (error: LinkageError) {
+            return failure(
+                "TSH-PARSER-OWNER-024",
+                "Tree-sitter Native linkage failed during streaming parse: ${error.message}",
                 TshDiagnosticStage.PARSE,
                 parser.descriptor.id,
                 error
