@@ -59,13 +59,15 @@ class TshPieceTreeIncrementalSession private constructor(
             val forceFullParse: Boolean
         ) : PendingWork() {
             override fun close() {
-                before.close()
-                after.close()
+                runCatching { before.close() }
+                runCatching { after.close() }
             }
         }
 
         class Snapshot(val lease: TshTextSnapshotLease) : PendingWork() {
-            override fun close() = lease.close()
+            override fun close() {
+                runCatching { lease.close() }
+            }
         }
     }
 
@@ -161,7 +163,7 @@ class TshPieceTreeIncrementalSession private constructor(
                 drainScheduled = false
                 pendingWork.also { pendingWork = null }
             }
-            abandoned?.close()
+            abandoned?.let { runCatching { it.close() } }
             reportFailure(failure(
                 "TSH-PIECETREE-SESSION-002",
                 "Incremental session worker rejected pending work",
@@ -193,7 +195,7 @@ class TshPieceTreeIncrementalSession private constructor(
                     error
                 ))
             } finally {
-                work.close()
+                runCatching { work.close() }
             }
         }
     }
