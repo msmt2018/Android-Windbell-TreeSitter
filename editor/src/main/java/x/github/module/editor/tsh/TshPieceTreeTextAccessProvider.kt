@@ -51,7 +51,7 @@ class TshPieceTreeDocument(
     fun dispose(finalVersion: Long) {
         if (!disposed.compareAndSet(false, true)) return
         changeListeners.clear()
-        disposedListeners.forEach { listener -> listener.onDisposed(documentId, finalVersion) }
+        disposedListeners.forEach { listener -> runCatching { listener.onDisposed(documentId, finalVersion) } }
         disposedListeners.clear()
     }
 
