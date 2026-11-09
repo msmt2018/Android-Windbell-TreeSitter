@@ -55,7 +55,7 @@ TextReader 提供 read(range)、readChunk(offset, maxUnits)、iterateChunks(rang
 
 Snapshot Lease 必须在整个同步 parseInput 调用期间保持打开。调用方不得在解析期间并发 close；若发生关闭，后续回调会失败而不会继续读取。当前 Lease 接口尚未提供跨调用 retain/fork，因此异步调度层必须由宿主负责把 Lease 生命周期覆盖到任务结束。
 
-此实现只代表分块输入源码具备首版契约；Piece Tree/Rope 的真实节点索引 Provider、并发编辑压力测试、Native 构建和设备级大文件验证仍未完成。
+Tree-sitter 分块输入已经具备首版源码契约。项目现有 PieceTreeTextBuffer 的宿主适配器已加入 editor 模块：通过宿主提供的 snapshotFactory 创建 PieceTreeSnapshot，并按范围读取，不调用 PieceTreeTextBuffer.toString()。PieceTreeSnapshot 保留原始文本块引用、复制仍在变化的输入缓冲区内容，且可在后续编辑期间独立读取。当前仍缺少真实 EditorDocument 锁/调度接线、变更与销毁事件订阅、坐标索引 Provider、Native 构建和设备级大文件验证。
 
 ## 可独立续租的 Snapshot Lease（SOURCE_PARTIAL）
 
@@ -63,6 +63,12 @@ Snapshot Lease 必须在整个同步 parseInput 调用期间保持打开。调�
 
 `TshSharedTextSnapshotLease` 提供引用计数实现：每个句柄只释放自己的引用；最后一个句柄关闭后才执行一次 `onFinalRelease`。该回调只能释放被固定的快照根/宿主快照资源，不得关闭宿主 Document。回调失败保留在 `finalReleaseDiagnostics` 中。
 
-默认 Provider 的 Snapshot 契约要求快照本身不可变，因此默认 `acquireSnapshot` 使用可续租的共享 Lease，并校验 documentId/version/length；Provider 获取异常和非法元数据以结构化诊断返回。可变 Piece Tree/Rope Provider 必须在创建共享 Lease 时 pin 住持久化根或版本资源，并在最终释放回调中 unpin；不得只包装一个仍指向可变当前根的对象。
+默认 Provider 的 Snapshot 契约要求快照本身不可变，因此默认 `acquireSnapshot` 使用可续租的共享 Lease，并校验 documentId/version/length；Provider 获取异常和非法元数据以结构化诊断返回。项目 PieceTree 适配器不直接 pin 可变树根，而是使用 PieceTreeTextBuffer.createSnapshot() 产生独立不可变 PieceTreeSnapshot；其对象持有原始 chunk 引用并复制活动 change buffer 的当前有效文本，因此 Lease 生命周期由不可变 Snapshot 对象引用保证。snapshotFactory 必须由宿主在现有编辑互斥/读锁下调用，不能仅靠 TSH 在 buffer 上 synchronized 来假设与编辑器写锁互斥。其他可变 Piece Tree/Rope 实现仍必须 pin 持久化根或版本资源，并在最终 Lease 释放时 unpin。
 
 `TshTreeSitterParserOwner.parse(snapshotLease, textProvider, treeRevision, oldTree, chunkSizeBytes)` 会先 retain 一份独立 Lease，再执行 `TSParser.parseInput`，并可传入已按同版本编辑过的旧语法树执行增量解析，并在 Native parse 返回后释放自己的句柄。调用方可以独立关闭原始句柄；但若任务尚未开始，调度层必须先 retain 并把该任务句柄交给任务，不能把已关闭句柄排队。
+
+## 项目 PieceTreeTextBuffer 适配器（SOURCE_PARTIAL）
+
+editor 模块新增 `TshPieceTreeDocument` 与 `TshPieceTreeTextAccessProvider`，并依赖 `android-tree-sitter` 的公共 TSH API。宿主提供 `snapshotFactory`，在其现有读锁/编辑串行化机制内调用 `PieceTreeTextBuffer.createSnapshot()`。适配器把 `PieceTreeSnapshot.versionId` 映射为 TSH document version，`length` 映射为 UTF-16 长度，范围读取使用 `PieceTreeSnapshot.substring(start, end)`；不会调用 `PieceTreeTextBuffer.toString()` 或构造全文 String。
+
+PieceTreeSnapshot 的创建成本为 O(piece count) 并复制当前仍在 change buffer 的有效文本；原始不可变 chunks 通过引用保留。快照创建后可跨线程读取，并在 live buffer 后续编辑、compact 或 EOL 变化时保持原版本内容。其当前底层长度和偏移 API 仍为 Int，因此适配器显式拒绝超过 Int offset 能力的范围；不能将该限制描述为已经支持超过 2 Gi UTF-16 code units 的单个 PieceTreeSnapshot。
