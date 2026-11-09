@@ -55,7 +55,7 @@ class TshAttachmentTest {
                 requiredCapabilities = TshCapabilitySet.of(TshCapability("text.read", 2))
             ),
             scope
-        ) as TshResult.Success
+        ) as TshResult.Success<TshAttachmentReport>
         assertEquals(TshAttachmentStatus.INCOMPLETE, attached.value.status)
         engine.providers.register(Provider(
             "text-provider", TshCapabilitySet.of(TshCapability("text.read", 2))
