@@ -6,9 +6,10 @@
 - [x] 文本坐标系、位置和范围基础类型
 - [x] 对象 ID、能力和对象描述符
 - [x] 基于实例身份的对象注册表
-- [x] Provider 注册与对象能力匹配
+- [x] Provider 注册、优先级、API 版本范围、能力版本匹配与异常隔离（源码/测试源码，未运行）
 - [x] TextDocument/TextSnapshot/TextEdit/TextChange 抽象
-- [x] 内存文本 UTF-8/UTF-16/Code Point/Grapheme 边界转换
+- [x] Snapshot Lease、bounded chunk read、Edit 排序/重叠校验（默认 Lease 不 pin 可变宿主版本）
+- [x] 内存文本 UTF-8/UTF-16/Code Point/Grapheme 边界转换（不成对 surrogate 拒绝；BreakIterator 不承诺完整 UAX #29）
 - [x] 引擎创建、初始化、关闭状态机
 - [x] 对应单元测试源码
 - [ ] Piece Tree/Rope 索引化坐标 Provider
@@ -52,7 +53,7 @@ engine.objects.unregister(descriptor.id)
 
 ## Provider
 
-Provider 必须声明稳定 ID、API 版本、能力集合，并对给定实例和描述符明确回答是否支持。当前注册中心提供注册、注销、枚举和匹配查询；尚未提供自动反射探测、优先级选择、异步绑定或渲染执行。
+Provider 必须声明稳定 ID、API 版本、能力集合，并对给定实例和描述符明确回答是否支持。注册中心已有优先级、API 版本范围、Capability 最低版本、确定性选择、缺失能力报告和 supports 异常隔离源码；Engine 可按 strictProviderValidation 将必需能力缺失作为失败或返回降级报告。Attach/Detach、OwnerScope 和完整 Attachment Report 尚未实现。
 
 ## 诊断与结果
 
