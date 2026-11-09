@@ -168,9 +168,9 @@ data class TshTextEdit(
     val replacement: String,
     /** UTF-16 length of the replacement; may exceed replacement.length for zero-copy host slices. */
     val replacementLengthUtf16: Long = replacement.length.toLong(),
-    /** Optional exact Tree-sitter endpoint in zero-based row / UTF-16LE byte-column coordinates. */
-    val newEndPointRow: Int? = null,
-    val newEndPointColumnBytes: Int? = null
+    /** Optional LF count and UTF-16 tail length for a non-materialized replacement. */
+    val replacementLineFeedCount: Int? = null,
+    val replacementTrailingUtf16Length: Long? = null
 ) {
     init {
         require(startUtf16 >= 0L) { "startUtf16 must be >= 0" }
@@ -179,14 +179,16 @@ data class TshTextEdit(
         require(TshUnicode.isWellFormedUtf16(replacement)) {
             "Replacement contains an unpaired UTF-16 surrogate"
         }
-        require((newEndPointRow == null) == (newEndPointColumnBytes == null)) {
-            "Both new-end Tree-sitter point coordinates must be supplied together"
+        require((replacementLineFeedCount == null) == (replacementTrailingUtf16Length == null)) {
+            "Both replacement LF count and trailing UTF-16 length must be supplied together"
         }
-        require(newEndPointRow == null || newEndPointRow >= 0)
-        require(newEndPointColumnBytes == null ||
-            (newEndPointColumnBytes >= 0 && (newEndPointColumnBytes and 1) == 0))
-        require(newEndPointRow != null || replacementLengthUtf16 == replacement.length.toLong()) {
-            "A non-materialized replacement must supply its exact new-end Tree-sitter point"
+        require(replacementLineFeedCount == null || replacementLineFeedCount >= 0)
+        require(replacementTrailingUtf16Length == null ||
+            (replacementTrailingUtf16Length >= 0L &&
+                replacementTrailingUtf16Length <= replacementLengthUtf16))
+        require(replacementLineFeedCount != null ||
+            replacementLengthUtf16 == replacement.length.toLong()) {
+            "A non-materialized replacement must supply its LF/tail metrics"
         }
     }
 }
