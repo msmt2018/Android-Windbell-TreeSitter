@@ -103,7 +103,7 @@ editor 模块新增 `TshPieceTreeEditorBinding.attach(view, documentId, language
 
 - 在 `beforeTextChanged` 回调中获取 before Snapshot Lease；在 `afterTextChanged` 中、整个批次已应用后获取 after Snapshot Lease。
 - `EditorDocument.AppliedChange` 本身已携带旧范围 UTF-16 offset/删除长度、插入长度、插入后的行列元数据。绑定层据此生成 TSH Change，不调用 `TextSlice.toText()`，大型 undo/redo 不会为了构造事件而复制大块插入文本。
-- `TshTextEdit` 新增 `replacementLengthUtf16` 与可选 `newEndPointRow/newEndPointColumnBytes`，允许宿主提供精确 Native endpoint 元数据；普通调用方仍可使用 String replacement。
+- `TshTextEdit` 新增 `replacementLengthUtf16`、`replacementLineFeedCount` 与 `replacementTrailingUtf16Length`，描述未物化替换内容的长度/行尾指标，不把 Tree-sitter Native Point 泄漏进通用文本 API；普通调用方仍可使用 String replacement。PieceTable 的 `TextSlice.forEachChunk` 可遍历文本切片的只读块视图，不构造完整 String。
 - 多编辑从 EditorDocument 的 bottom-up applied 顺序恢复为 TSH before-version 升序；Tree-sitter compiler 再反向生成 Native 降序 Edit。相同 offset 的多个纯插入保留稳定顺序；重叠替换仍拒绝。
 - `TshPieceTreeDocument` / Provider 增加 change subscription 与 disposal notification；Provider capability 显式声明 `text.change-subscription` 和 `text.disposal-notification`。
 - `onTransaction(change, beforeLease, afterLease)` 是后台调度边界。消费者接管两个 Lease 后必须在 parse/retry 结束时关闭；不得在 EditorView 回调中同步执行大文件 Native parse。
