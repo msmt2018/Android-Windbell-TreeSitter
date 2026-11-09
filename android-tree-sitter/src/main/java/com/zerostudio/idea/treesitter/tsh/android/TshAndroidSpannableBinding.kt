@@ -66,7 +66,8 @@ class TshAndroidSpannableBinding private constructor(
                 engine.providers.unregister(renderer.id)
                 return attached
             }
-            val report = (attached as TshResult.Success).value
+            val success = attached as TshResult.Success<TshAttachmentReport>
+            val report = success.value
             val binding = TshAndroidSpannableBinding(engine, renderer, report)
             val cleanup = ownerScope.registerCleanup { binding.close() }
             if (cleanup == null) {
@@ -77,7 +78,7 @@ class TshAndroidSpannableBinding private constructor(
                 )
             }
             binding.installCleanup(cleanup)
-            return TshResult.Success(binding, attached.diagnostics())
+            return TshResult.Success(binding, success.diagnostics)
         }
 
         private fun failure(code: String, message: String, cause: Throwable? = null) =
