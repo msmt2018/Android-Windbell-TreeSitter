@@ -213,6 +213,30 @@ class PieceTreeSliceTest {
         assertEquals("", buffer.toString())
     }
 
+
+    @Test
+    fun referenceSliceCanBeScannedInChunksWithoutFlattening() {
+        val text = ("abcdefghij\\n".repeat(20_000))
+        val buffer = TestSupport.buildBuffer(text)
+        buffer.sliceTextThreshold = 0
+        val result = buffer.applyEditsWithSliceUndo(
+            listOf(SingleEditOperation(
+                Range(1, 1, buffer.getLineCount(), buffer.getLineMaxColumn(buffer.getLineCount())),
+                ""
+            ))
+        )
+        val slice = result.reverseEdits.single().content!!
+        assertFalse(slice.isText)
+        var length = 0
+        var lineFeeds = 0
+        slice.forEachChunk { chunk ->
+            length += chunk.length
+            for (character in chunk) if (character == '\\n') lineFeeds++
+        }
+        assertEquals(text.length, length)
+        assertEquals(text.count { it == '\\n' }, lineFeeds)
+    }
+
     @Test
     fun shortContentIsKeptAsText() {
         val buffer = TestSupport.buildBuffer("hello world")
