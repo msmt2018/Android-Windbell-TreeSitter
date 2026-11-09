@@ -107,8 +107,8 @@ class TshTreeSitterEditCompilerTest {
                     endUtf16 = 2L,
                     replacement = "",
                     replacementLengthUtf16 = 1L,
-                    newEndPointRow = 0,
-                    newEndPointColumnBytes = 4
+                    replacementLineFeedCount = 0,
+                    replacementTrailingUtf16Length = 1L
                 )
             )
         )
