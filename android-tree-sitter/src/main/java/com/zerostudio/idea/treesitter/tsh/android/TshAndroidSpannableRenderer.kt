@@ -127,6 +127,22 @@ class TshAndroidSpannableRenderer(
     override fun supports(instance: Any, descriptor: com.zerostudio.idea.treesitter.tsh.api.TshObjectDescriptor): Boolean =
         instance === target.hostObject
 
+    internal fun hostObjectForBinding(): Any = target.hostObject
+
+    /** Registers this renderer and attaches the exact host object for the OwnerScope lifetime. */
+    fun attachTo(
+        engine: com.zerostudio.idea.treesitter.tsh.api.TshEngine,
+        ownerScope: com.zerostudio.idea.treesitter.tsh.api.TshOwnerScope,
+        objectType: String = "editor",
+        objectCapabilities: TshCapabilitySet = TshCapabilitySet.EMPTY,
+        metadata: Map<String, String> = emptyMap(),
+        requiredCapabilities: TshCapabilitySet = TshCapabilitySet.EMPTY,
+        optionalCapabilities: TshCapabilitySet? = null
+    ): TshResult<TshAndroidSpannableBinding> = TshAndroidSpannableBinding.attach(
+        engine, ownerScope, this, objectType, objectCapabilities, metadata,
+        requiredCapabilities, optionalCapabilities ?: capabilities
+    )
+
     override fun submit(
         plan: TshRenderPlan,
         acknowledger: TshRenderAcknowledger
