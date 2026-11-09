@@ -221,6 +221,12 @@ class TshAndroidSpannableBinding private constructor(
                 )
             }
             binding.installCleanup(cleanup)
+            if (binding.isClosed) {
+                return failure(
+                    "TSH-ANDROID-BINDING-011",
+                    "OwnerScope or Engine detached the Android binding during setup"
+                )
+            }
             return TshResult.Success(binding, success.diagnostics)
         }
 
