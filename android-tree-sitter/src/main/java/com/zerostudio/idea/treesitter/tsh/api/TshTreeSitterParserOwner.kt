@@ -193,6 +193,13 @@ class TshTreeSitterParserOwner private constructor(
                 TshDiagnosticStage.PARSE
             )
         }
+        if (!textProvider.isAccessAllowedOnCurrentThread()) {
+            return failure(
+                "TSH-PARSER-OWNER-018",
+                "TextAccessProvider does not permit reads on the current parse thread",
+                TshDiagnosticStage.BINDING
+            )
+        }
         val snapshot = snapshotLease.snapshot
         if (snapshot.documentId.isBlank() || snapshot.version < 0L || treeRevision < 0L ||
             chunkSizeBytes < 4 || chunkSizeBytes > 1024 * 1024 || (chunkSizeBytes and 1) != 0) {
