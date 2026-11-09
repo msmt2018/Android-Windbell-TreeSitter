@@ -164,13 +164,29 @@ interface TshTextDocument {
 data class TshTextEdit(
     val startUtf16: Long,
     val endUtf16: Long,
-    val replacement: String
+    /** Materialized replacement for ordinary API callers; host PieceTree bindings may leave it empty. */
+    val replacement: String,
+    /** UTF-16 length of the replacement; may exceed replacement.length for zero-copy host slices. */
+    val replacementLengthUtf16: Long = replacement.length.toLong(),
+    /** Optional exact Tree-sitter endpoint in zero-based row / UTF-16LE byte-column coordinates. */
+    val newEndPointRow: Int? = null,
+    val newEndPointColumnBytes: Int? = null
 ) {
     init {
         require(startUtf16 >= 0L) { "startUtf16 must be >= 0" }
         require(endUtf16 >= startUtf16) { "endUtf16 must be >= startUtf16" }
+        require(replacementLengthUtf16 >= 0L) { "replacementLengthUtf16 must be >= 0" }
         require(TshUnicode.isWellFormedUtf16(replacement)) {
             "Replacement contains an unpaired UTF-16 surrogate"
+        }
+        require((newEndPointRow == null) == (newEndPointColumnBytes == null)) {
+            "Both new-end Tree-sitter point coordinates must be supplied together"
+        }
+        require(newEndPointRow == null || newEndPointRow >= 0)
+        require(newEndPointColumnBytes == null ||
+            (newEndPointColumnBytes >= 0 && (newEndPointColumnBytes and 1) == 0))
+        require(newEndPointRow != null || replacementLengthUtf16 == replacement.length.toLong()) {
+            "A non-materialized replacement must supply its exact new-end Tree-sitter point"
         }
     }
 }
@@ -188,8 +204,10 @@ data class TshTextChange(
             "Text change must advance the document version"
         }
         require(edits.zipWithNext().all { (left, right) ->
-            left.startUtf16 < right.startUtf16 && left.endUtf16 <= right.startUtf16
-        }) { "Edits must be ascending and non-overlapping in before-version coordinates" }
+            left.startUtf16 <= right.startUtf16 && left.endUtf16 <= right.startUtf16 &&
+                (left.startUtf16 != right.startUtf16 ||
+                    (left.startUtf16 == left.endUtf16 && right.startUtf16 == right.endUtf16))
+        }) { "Edits must be ascending and non-overlapping; equal offsets are allowed only for insertions" }
     }
 }
 
