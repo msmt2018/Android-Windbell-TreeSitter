@@ -8,11 +8,15 @@ class TshCompiledQueryRegistry {
     @PublishedApi
     internal val lock = Any()
     private val queries = LinkedHashMap<String, TshCompiledQuery>()
+    private var closed = false
 
     internal inline fun <T> withLock(action: () -> T): T = synchronized(lock, action)
 
     fun register(query: TshCompiledQuery, replace: Boolean = false): TshResult<TshCompiledQuery> =
         synchronized(lock) {
+            if (closed) return@synchronized failure(
+                "TSH-QUERY-REGISTRY-004", "Compiled query registry is closed"
+            )
             val current = queries[query.queryId]
             if (current != null && !replace) {
                 return@synchronized failure(
@@ -49,6 +53,14 @@ class TshCompiledQueryRegistry {
         synchronized(lock) { queries.remove(queryId) }
 
     fun clear(): List<TshCompiledQuery> = synchronized(lock) {
+        val removed = queries.values.toList()
+        queries.clear()
+        removed
+    }
+
+    /** Permanently closes the catalog and rejects future query publication. */
+    fun close(): List<TshCompiledQuery> = synchronized(lock) {
+        closed = true
         val removed = queries.values.toList()
         queries.clear()
         removed
