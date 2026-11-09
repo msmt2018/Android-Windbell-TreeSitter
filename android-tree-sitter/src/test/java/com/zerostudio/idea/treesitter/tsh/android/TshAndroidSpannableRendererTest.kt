@@ -1,6 +1,7 @@
 package com.zerostudio.idea.treesitter.tsh.android
 
 import android.graphics.Color
+import android.text.Spannable
 import android.text.SpannableStringBuilder
 import android.text.TextPaint
 import android.text.style.CharacterStyle
@@ -130,7 +131,7 @@ class TshAndroidSpannableRendererTest {
         )
         val text = SpannableStringBuilder("code")
         val hostSpan = ForegroundColorSpan(Color.BLUE)
-        text.setSpan(hostSpan, 0, 4, SpannableStringBuilder.SPAN_EXCLUSIVE_EXCLUSIVE)
+        text.setSpan(hostSpan, 0, 4, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
         val target = Target(text, revisions)
         val renderer = TshAndroidSpannableRenderer(target)
         val acknowledger = Acknowledger()
