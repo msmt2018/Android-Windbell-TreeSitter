@@ -22,7 +22,7 @@ class TshNativeQueryLeaseStore {
     }
 
     inner class Lease internal constructor(private val entry: Entry) : AutoCloseable {
-        val query: TSQuery get() = entry.query
+        internal val query: TSQuery get() = entry.query
         val objectId: TshObjectId get() = entry.objectId
         private var released = false
 
