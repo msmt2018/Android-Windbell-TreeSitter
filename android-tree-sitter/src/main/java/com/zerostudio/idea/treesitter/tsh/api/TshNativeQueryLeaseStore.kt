@@ -163,13 +163,13 @@ class TshNativeQueryLeaseStore {
     private fun Entry.closeSafely() {
         try {
             query.close()
-        } catch (error: Throwable) {
+        } catch (error: Exception) {
             recordCloseFailure(objectId, "Native query close failed", error)
         }
         dependencies.asReversed().forEach { dependency ->
             try {
                 dependency.close()
-            } catch (error: Throwable) {
+            } catch (error: Exception) {
                 recordCloseFailure(objectId, "Native query dependency close failed", error)
             }
         }
