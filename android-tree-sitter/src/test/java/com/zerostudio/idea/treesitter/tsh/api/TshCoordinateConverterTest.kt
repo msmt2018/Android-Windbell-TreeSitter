@@ -45,6 +45,16 @@ class TshCoordinateConverterTest {
     }
 
     @Test
+    fun refusesToFlattenHostCharSequenceForCoordinateConversion() {
+        val result = TshCoordinateConverter.convert(
+            StringBuilder("large host text"), 2,
+            TshCoordinateSystem.UTF16_CODE_UNIT, TshCoordinateSystem.UTF8_BYTE
+        )
+        assertTrue(result is TshResult.Failure)
+        assertTrue(result.diagnostics().any { it.code == "TSH-COORD-007" })
+    }
+
+    @Test
     fun reportsThatPixelAndLineColumnNeedLayoutProvider() {
         val result = TshCoordinateConverter.convert(
             "abc", 1, TshCoordinateSystem.UTF16_CODE_UNIT, TshCoordinateSystem.SCREEN_PIXEL
