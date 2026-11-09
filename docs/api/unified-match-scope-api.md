@@ -1,6 +1,6 @@
 # 统一 Match 与 Scope API 契约
 
-> 状态：SOURCE_PARTIAL。新增 TshMatch/TshMatchSet/TshScopePath/TshMatchMerger 首版纯 Kotlin 模型，支持双来源 provenance、Long/UTF-16 canonical range、revision 校验、去重、稳定排序和 stale Match 排除；Scope/Selector 解析、冲突策略、Tree-sitter/Regex 真实执行结果适配和端到端验证尚未完成。
+> 状态：SOURCE_PARTIAL。新增 TshMatch/TshMatchSet/TshScopePath/TshMatchMerger、TshScopeSelector AST 和 TshStyleResolver 首版纯 Kotlin 模型，支持双来源 provenance、Long/UTF-16 canonical range、revision 校验、去重、稳定排序、stale Match 排除、selector suffix/exact path 匹配及 Style merge；Scope parser/assignment 生成、DSL selector parser、真实执行结果适配和端到端验证尚未完成。
 
 ## 1. TshMatch
 
