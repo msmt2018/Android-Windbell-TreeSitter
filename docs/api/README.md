@@ -20,6 +20,7 @@
 | 公共原则、宿主接入与所有权 | [public-api-design-principles-and-integration-contract.md](public-api-design-principles-and-integration-contract.md) |
 | Engine、对象身份与生命周期 | [core-foundation.md](core-foundation.md) |
 | TextDocument、Snapshot、Edit 与坐标 | [object-and-text-model.md](object-and-text-model.md) |
+| TextAccessProvider 与 Document Binding 生命周期 | [object-and-text-model.md](object-and-text-model.md) + [binding-events-and-extension.md](binding-events-and-extension.md) |
 | DSL 类型与 Schema 校验 | [dsl-type-system-and-schema-api.md](dsl-type-system-and-schema-api.md) |
 | DSL 语法、AST 与语义 | [tsh-dsl-syntax-and-semantic-contract.md](tsh-dsl-syntax-and-semantic-contract.md) |
 | ATS/Tree-sitter Query | [ats-tree-sitter-query-api.md](ats-tree-sitter-query-api.md) |
