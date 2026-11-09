@@ -58,7 +58,7 @@ class TshAttachmentTest {
         )
         assertTrue(result is TshResult.Failure)
         assertNull(engine.objects.find(host))
-        assertTrue(engine.attachments.let { it !== null })
+        assertEquals(0, engine.objects.size())
         scope.close()
         engine.close()
     }
