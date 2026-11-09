@@ -6,10 +6,10 @@
 
 ## 已实现基础 API
 
-- [公共 API 基础层](core-foundation.md)：Engine 生命周期、对象注册、Capability、Provider Registry、诊断与坐标基础类型。
-- [对象与文本模型](object-and-text-model.md)：TextDocument、TextSnapshot、TextEdit、坐标模型与宿主缓冲区抽象。
+- [公共 API 基础层](core-foundation.md)：Engine 生命周期、对象注册、Capability/Provider Resolution、OwnerScope/Attachment、诊断与 Long 坐标基础类型。
+- [对象与文本模型](object-and-text-model.md)：TextDocument、Snapshot Lease、分块读取、TextEdit、Long 坐标与宿主缓冲区抽象。
 
-> 当前基础 API 与 DSL Schema/Config Repository 的首批 Kotlin 源码已提交；尚未完成本轮 Gradle 编译/测试和设备端验证。其余领域文档定义目标契约，不代表对应实现已经存在。
+> 当前 API Foundation、Attach/Detach、Provider Resolution、Text Snapshot/Chunk 和 Schema 修复均为 SOURCE_PARTIAL，尚未完成本轮 Gradle 编译/测试和设备端验证。其余领域文档定义目标契约，不代表对应实现已经存在。
 
 ## API 领域规范
 
