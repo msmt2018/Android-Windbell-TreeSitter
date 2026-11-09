@@ -42,6 +42,7 @@ class TshNativeQueryLeaseStore {
     private val byObjectId = LinkedHashMap<TshObjectId, Entry>()
     private val byQueryId = LinkedHashMap<String, Entry>()
     private var closed = false
+    private val closeFailures = ArrayList<TshDiagnostic>()
 
     /** Registers a newly-created query. The same query ID may replace a retired entry only. */
     fun register(
@@ -146,6 +147,8 @@ class TshNativeQueryLeaseStore {
         return retiredCount
     }
 
+    fun closeDiagnostics(): List<TshDiagnostic> = synchronized(lock) { closeFailures.toList() }
+
     fun activeLeaseCount(objectId: TshObjectId): Int = synchronized(lock) {
         byObjectId[objectId]?.activeLeases ?: 0
     }
@@ -158,7 +161,30 @@ class TshNativeQueryLeaseStore {
     }
 
     private fun Entry.closeSafely() {
-        runCatching { query.close() }
-        dependencies.asReversed().forEach { dependency -> runCatching { dependency.close() } }
+        try {
+            query.close()
+        } catch (error: Throwable) {
+            recordCloseFailure(objectId, "Native query close failed", error)
+        }
+        dependencies.asReversed().forEach { dependency ->
+            try {
+                dependency.close()
+            } catch (error: Throwable) {
+                recordCloseFailure(objectId, "Native query dependency close failed", error)
+            }
+        }
+    }
+
+    private fun recordCloseFailure(objectId: TshObjectId, message: String, error: Throwable) {
+        synchronized(lock) {
+            closeFailures += TshDiagnostic(
+                code = "TSH-NATIVE-QUERY-001",
+                severity = TshDiagnosticSeverity.ERROR,
+                stage = TshDiagnosticStage.LIFECYCLE,
+                message = message,
+                objectId = objectId,
+                cause = error
+            )
+        }
     }
 }
