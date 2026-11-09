@@ -47,8 +47,17 @@ object TshTreeSitterEditCompiler {
                     "TSH-EDIT-COMPILE-005", "Edit end splits a UTF-16 surrogate pair or is invalid"
                 )
                 val newEnd = Math.addExact(edit.startUtf16, edit.replacementLengthUtf16)
-                val newEndPoint = if (edit.newEndPointRow != null) {
-                    TSPoint.create(edit.newEndPointRow, edit.newEndPointColumnBytes!!)
+                val newEndPoint = if (edit.replacementLineFeedCount != null) {
+                    val row = Math.addExact(startPoint.row, edit.replacementLineFeedCount)
+                    val column = if (edit.replacementLineFeedCount == 0) {
+                        Math.addExact(
+                            startPoint.column,
+                            Math.multiplyExact(edit.replacementLengthUtf16, 2L).toInt()
+                        )
+                    } else {
+                        Math.multiplyExact(edit.replacementTrailingUtf16Length!!, 2L).toInt()
+                    }
+                    TSPoint.create(row, column)
                 } else {
                     advance(startPoint, edit.replacement)
                 }
