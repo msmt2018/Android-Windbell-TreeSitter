@@ -27,7 +27,7 @@
 
 ## 5. Android Span 安全
 
-Span 后端必须由宿主提供明确的 UTF-16 可见范围；缺失范围时拒绝全量 Span 渲染，避免大文档无界分配。Span 后端只能移除 TSH 自己标记/拥有的 Span；不得清空目标 Spannable 中所有 CharacterStyle。应采用可识别 TSH Span 类型或 owner marker，并测试第三方 Span 保留。Canvas/View 后端需在宿主绘制生命周期内执行，不得依赖离屏生成后无人消费的 RenderPlan。
+Span 后端必须由宿主提供明确的 UTF-16 可见范围；缺失范围时拒绝全量 Span 渲染，避免大文档无界分配。Renderer detach/close 必须清除自己拥有的 Span，后台清理通过宿主 render-thread dispatcher 执行。Span 后端只能移除 TSH 自己标记/拥有的 Span；不得清空目标 Spannable 中所有 CharacterStyle。应采用可识别 TSH Span 类型或 owner marker，并测试第三方 Span 保留。Canvas/View 后端需在宿主绘制生命周期内执行，不得依赖离屏生成后无人消费的 RenderPlan。
 
 ## 6. 一致性与回执
 
