@@ -184,7 +184,8 @@ class TshPieceTreeEditorBinding private constructor(
             val document = TshPieceTreeDocument(
                 documentId = documentId,
                 languageId = languageId,
-                snapshotFactory = { view.getTextBuffer().createSnapshot() }
+                snapshotFactory = { view.getTextBuffer().createSnapshot() },
+                snapshotThread = Thread.currentThread()
             )
             return TshPieceTreeEditorBinding(view, document, provider, onTransaction, onInvalidated)
         }
