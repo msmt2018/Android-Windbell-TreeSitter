@@ -22,6 +22,8 @@ import com.zerostudio.idea.treesitter.tsh.api.TshResult
 
 /** Host adapter for an existing editor text object; no Editor/View inheritance is required. */
 interface TshAndroidSpannableRenderTarget {
+    /** Exact host object this adapter serves; override when the adapter is a separate wrapper. */
+    val hostObject: Any get() = this
     fun isOnRenderThread(): Boolean
     fun currentRevisions(documentId: String): TshRenderRevisions?
     fun resolveSpannable(documentId: String): Spannable?
@@ -121,6 +123,9 @@ class TshAndroidSpannableRenderer(
         TshCapability("render.decoration", 1),
         TshCapability("render.partial-range", 1)
     )
+
+    override fun supports(instance: Any, descriptor: com.zerostudio.idea.treesitter.tsh.api.TshObjectDescriptor): Boolean =
+        instance === target.hostObject
 
     override fun submit(
         plan: TshRenderPlan,
