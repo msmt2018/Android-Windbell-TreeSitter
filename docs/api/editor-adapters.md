@@ -65,14 +65,14 @@ TSH 不拥有宿主 View/Editor/Document；除非注册选项明确声明强引�
 ```kotlin
 val provider = TshPieceTreeTextAccessProvider()
 val document = TshPieceTreeDocument(
-    documentId = editorDocument.id,
-    languageId = editorDocument.languageId
+    documentId = hostDocumentId, // stable ID supplied by the host
+    languageId = hostLanguageId
 ) {
-    editorDocument.withReadLock {
-        (editorDocument.buffer as PieceTreeBuffer).pieceTree.createSnapshot()
-    }
+    // This closure must run through the host's real read-lock or serialized edit boundary.
+    // It is deliberately not implemented by synchronizing on PieceTreeTextBuffer.
+    (editorDocument.buffer as PieceTreeBuffer).pieceTree.createSnapshot()
 }
 val lease = provider.acquireSnapshot(document)
 ```
 
-上例中的 `withReadLock` 代表宿主自己的真实编辑锁/串行化入口，不是 TSH 提供的函数。不要使用 `synchronized(pieceTree)` 替代编辑器实际写锁。Snapshot 创建后可在后台线程读取；当前适配器只覆盖快照/分块读取，尚未连接 EditorDocument 的 Change/Dispose 事件和真实 Renderer。
+`hostDocumentId` / `hostLanguageId` are values supplied by the host integration. The example's snapshot closure must be invoked while the host excludes concurrent edits; if that requires a dispatcher, the host must provide a synchronous dispatch/read-lock bridge before calling `acquireSnapshot`. Do not use `synchronized(pieceTree)` as a substitute for the editor's actual write lock. Snapshot creation can then happen once at the serialized boundary, while the immutable snapshot is read on background threads. The current adapter covers snapshot/chunk reads only; EditorDocument Change/Dispose events and the real Renderer are not connected yet.
