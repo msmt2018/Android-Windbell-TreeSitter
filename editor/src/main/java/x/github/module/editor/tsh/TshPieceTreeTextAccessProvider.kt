@@ -45,7 +45,7 @@ class TshPieceTreeDocument(
     fun publishChange(change: TshTextChange) {
         check(!disposed.get()) { "Cannot publish a change for a disposed document" }
         require(change.documentId == documentId) { "Change belongs to another document" }
-        changeListeners.forEach { listener -> listener.onChanged(change) }
+        changeListeners.forEach { listener -> runCatching { listener.onChanged(change) } }
     }
 
     fun dispose(finalVersion: Long) {
