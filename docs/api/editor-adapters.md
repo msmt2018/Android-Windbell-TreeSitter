@@ -57,3 +57,22 @@ TSH 不拥有宿主 View/Editor/Document；除非注册选项明确声明强引�
 ## 验收
 
 用至少三种不同编辑器模型验证：Spannable、Canvas 自绘、Piece Tree/Rope。每种验证文本读取、版本更新、坐标映射、真实屏幕渲染、销毁清理和宿主原有样式不受影响。
+
+## 项目 Piece Tree 直接适配
+
+仓库 editor 模块提供 `TshPieceTreeDocument` 和 `TshPieceTreeTextAccessProvider`。创建文档 facade 时传入稳定的 documentId、languageId 和 `snapshotFactory`：
+
+```kotlin
+val provider = TshPieceTreeTextAccessProvider()
+val document = TshPieceTreeDocument(
+    documentId = editorDocument.id,
+    languageId = editorDocument.languageId
+) {
+    editorDocument.withReadLock {
+        (editorDocument.buffer as PieceTreeBuffer).pieceTree.createSnapshot()
+    }
+}
+val lease = provider.acquireSnapshot(document)
+```
+
+上例中的 `withReadLock` 代表宿主自己的真实编辑锁/串行化入口，不是 TSH 提供的函数。不要使用 `synchronized(pieceTree)` 替代编辑器实际写锁。Snapshot 创建后可在后台线程读取；当前适配器只覆盖快照/分块读取，尚未连接 EditorDocument 的 Change/Dispose 事件和真实 Renderer。
