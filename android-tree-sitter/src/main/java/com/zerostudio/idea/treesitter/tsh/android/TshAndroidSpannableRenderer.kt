@@ -200,8 +200,8 @@ class TshAndroidSpannableRenderer(
                 removeNewOwnedSpans(spannable, previousSpans)
                 return failure("TSH-ANDROID-RENDER-004", "RenderPlan became stale during Spannable mutation")
             }
-            val start = instruction.range.start.offset
-            val end = instruction.range.end.offset
+            val rawStart = instruction.range.start.offset
+            val rawEnd = instruction.range.end.offset
             if (instruction.zIndex !in 0..255) {
                 diagnostics += warning(
                     "TSH-ANDROID-RENDER-012",
@@ -209,8 +209,8 @@ class TshAndroidSpannableRenderer(
                 )
                 continue
             }
-            if (start < 0L || end <= start || end > spannable.length.toLong() ||
-                start > Int.MAX_VALUE.toLong()) {
+            if (rawStart < 0L || rawEnd <= rawStart || rawEnd > spannable.length.toLong() ||
+                rawStart > Int.MAX_VALUE.toLong()) {
                 diagnostics += warning(
                     "TSH-ANDROID-RENDER-005",
                     "Instruction range is empty or outside the current Spannable"
