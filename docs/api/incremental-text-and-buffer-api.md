@@ -82,10 +82,10 @@ PieceTreeSnapshot 的创建成本为 O(piece count) 并复制当前仍在 change
 - 所有偏移均以 UTF-16 code unit 表示，转换为 Tree-sitter UTF-16LE byte offset 时使用 64-bit 中间计算，并在 Native Int 边界显式拒绝溢出。
 - 通过有界 32K UTF-16 分块单次扫描，仅缓存本批编辑实际请求的端点坐标，不创建全文 String，也不创建与总行数成比例的行索引；扫描同时检查 Snapshot 的 UTF-16 surrogate 完整性。
 - 编辑范围不得越界或切开 surrogate pair；起点/旧终点/新终点分别转换为 Tree-sitter row/byte-column。
-- 输入编辑按原始文档坐标升序描述，编译结果反向输出为降序。按此顺序逐个调用现有 `TshTreeSitterParserOwner.editTree`，较高偏移的编辑不会改变较低偏移编辑的坐标。
+- 输入编辑按原始文档坐标升序描述，编译结果反向输出为降序；整个批次一次性传给 `TshTreeSitterParserOwner.editTreeBatch`，在一个独占 Native Lease 内依次应用，较高偏移的编辑不会改变较低偏移编辑的坐标。
 - CRLF 中的 CR 计入当前 Tree-sitter byte column，LF 才推进 row；替换文本中的换行也按同一规则计算。
 
-当前新增单元测试源码覆盖多 Edit 降序、版本错配、surrogate 边界与 CRLF/UTF-16LE byte column。尚未运行 Gradle/JUnit，也尚未把真实 EditorDocument 的 change/dispose 事件接入该编译器；因此仍为 SOURCE_PARTIAL。
+当前新增单元测试源码覆盖多 Edit 降序、版本错配、surrogate 边界与 CRLF/UTF-16LE byte column。EditorView Binding 已将真实 AppliedChange 接入 Change 编译入口；Gradle/JUnit、EditorView 集成和 Native 验证尚未运行，因此仍为 SOURCE_PARTIAL。
 
 
 ## Snapshot-to-incremental-parse orchestrator (SOURCE_PARTIAL)
@@ -94,7 +94,7 @@ PieceTreeSnapshot 的创建成本为 O(piece count) 并复制当前仍在 change
 
 编辑成功但增量 parse 失败时，旧树保留在 afterVersion 的 EDITED_PENDING_PARSE 状态，可供重试 parse，但不可执行 Query。ParserOwner 对单 Edit 与批量 Edit 都写入该状态；QueryExecutor 在获取 Native Query/Tree Lease 前预检该状态，并在获取 Tree Lease 后再次检查以封闭并发竞态。新 Snapshot parse 注册的替代树标记为 READY。空文本 Edit 允许只推进版本元数据，不触发 Native edit；这覆盖内容未变化但宿主版本推进的情况。
 
-该编排层已接通 Snapshot → Compiler → Batch Edit → Incremental Parse 的源码路径；真实 EditorDocument 事件如何在编辑前固定 before Snapshot、编辑后固定 after Snapshot，仍由宿主绑定层负责，尚未端到端验证。
+该编排层现由 `TshPieceTreeEditorBinding` 与 `TshPieceTreeIncrementalSession` 接入真实 EditorView：编辑前后固定 Snapshot，完整批次转成 Change，并在单线程 worker 串行执行增量更新。源码路径已连接，但端到端 Native/JUnit 和设备验证尚未完成。
 
 
 ## EditorView / EditorDocument transaction binding (SOURCE_PARTIAL)
