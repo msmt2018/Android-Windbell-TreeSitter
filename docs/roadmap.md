@@ -94,7 +94,9 @@
 - [x] Coordinator 校验 document/config/theme/viewport/renderer revisions 和 Provider capabilities。
 - [x] 异步 QUEUED/Ack、过期回执拒绝、PARTIAL/FAILED/REJECTED 诊断和 Provider cancel 扩展点。
 - [x] Provider 必须在实际 Draw 前检查 Acknowledger.isCurrent，完成后 Ack。
-- [x] Render Receipt 的 DRAWN/PARTIAL 实际绘制确认语义一致；QUEUED 不允许声称已有绘制数量，并补充回归测试源码。
+- [x] Render Receipt 区分 APPLIED/PARTIALLY_APPLIED 宿主对象变更与 DRAWN/PARTIAL 实际绘制；Span renderer 不再把 invalidate 冒充真实 Draw。
+- [x] Android Spannable Renderer 使用 generation staging/rollback；替换失败保留旧 TSH Span 和宿主 Span，新增 Robolectric 回归测试源码。
+- [x] QUEUED 不允许声称已有应用/绘制数量，真实 PARTIAL draw 必须报告有效部分数量。
 - [x] 旧 Spannable 路径只清理 TSH-owned Span，不再删除宿主 CharacterStyle；非法/奇数/越界 UTF-16LE byte range 被拒绝。
 - [x] ScopeSelector/StyleRule/StyleResolver 到 RenderPlan 的首版 Resolver；[ ] Attribute semantic pipeline、DSL selector parser 和完整 Resolver。
 - [x] Android Spannable Renderer Provider 与 host Span ownership instrumented test 源码；[ ] Canvas/Compose/custom View Renderer Provider 尚未实现。
