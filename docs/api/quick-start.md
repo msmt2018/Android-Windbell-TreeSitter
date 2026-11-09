@@ -95,6 +95,8 @@ val target = object : TshAndroidSpannableRenderTarget {
     override fun resolveTextSizePx(value: TshDslValue.MeasureValue): Float? =
         hostResolveTextSize(value)
     override fun invalidate(documentId: String) = editorView.invalidate()
+    override fun postToRenderThread(action: () -> Unit) =
+        Handler(Looper.getMainLooper()).post(action)
 }
 
 val ownerScope = TshOwnerScope("editor-view")
@@ -116,7 +118,7 @@ val bindingDiagnostics = binding.closeDiagnostics // renderer/provider cleanup
 // Report both lists; neither operation closes the host editor object
 ```
 
-visibleRangeUtf16 是必需契约；返回 null 或缺失 viewport 时拒绝 Span 渲染。Span 更新回执为 APPLIED/PARTIALLY_APPLIED，不代表 Android 已完成真实像素绘制。真实 Draw 必须由宿主 View 绘制/像素测试确认。宿主原有 Span 不会被 TSH 清除。
+visibleRangeUtf16 是必需契约；返回 null 或缺失 viewport 时拒绝 Span 渲染。Span 更新回执为 APPLIED/PARTIALLY_APPLIED，不代表 Android 已完成真实像素绘制。真实 Draw 必须由宿主 View 绘制/像素测试确认。宿主原有 Span 不会被 TSH 清除。Binding detach/Engine close 会关闭 RenderCoordinator 并清理本 Renderer 拥有的 Span；若关闭可能发生在后台线程，宿主应实现 postToRenderThread，清理会排队到 UI/render thread。
 
 ## 6. 坐标转换
 
