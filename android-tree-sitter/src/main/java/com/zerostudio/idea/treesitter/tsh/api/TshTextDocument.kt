@@ -125,6 +125,7 @@ interface TshTextAccessProvider {
             }, result.diagnostics)
             is TshResult.Failure -> result
         }
+    }
 
     /** Bounded range read. Large callers should request multiple chunks. */
     fun readChunk(
