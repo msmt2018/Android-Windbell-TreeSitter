@@ -74,6 +74,9 @@ class TshProviderRegistry {
         optional: TshCapabilitySet = TshCapabilitySet.EMPTY,
         apiRange: TshProviderApiRange = TshProviderApiRange()
     ): TshProviderResolution {
+        require(required.all().none { optional.contains(it.id) }) {
+            "A capability cannot be both required and optional"
+        }
         val snapshot = synchronized(lock) { providers.values.toList() }
         val diagnostics = ArrayList<TshDiagnostic>()
         val rejected = ArrayList<TshProviderRejection>()
@@ -136,9 +139,16 @@ class TshProviderRegistry {
             }
         }
 
-        val selectedCaps = selected.values.flatMap { it.capabilities.all() }.associateBy { it.id }
-        val missingRequired = requested.keys - selectedCaps.keys
-        val missingOptional = optionalRequested.keys - selectedCaps.keys
+        val selectedCaps = selected.values
+            .flatMap { it.capabilities.all() }
+            .groupBy { it.id }
+            .mapValues { (_, versions) -> versions.maxBy { it.version } }
+        val missingRequired = requested.filter { (id, requirement) ->
+            (selectedCaps[id]?.version ?: 0) < requirement.version
+        }.keys
+        val missingOptional = optionalRequested.filter { (id, requirement) ->
+            (selectedCaps[id]?.version ?: 0) < requirement.version
+        }.keys
         if (missingRequired.isNotEmpty()) diagnostics += TshDiagnostic(
             code = "TSH-PROVIDER-003",
             severity = TshDiagnosticSeverity.ERROR,
@@ -155,7 +165,7 @@ class TshProviderRegistry {
         )
         if (incompatible.isNotEmpty()) diagnostics += TshDiagnostic(
             code = "TSH-PROVIDER-005",
-            severity = TshDiagnosticSeverity.ERROR,
+            severity = if (incompatible.any { it in requested }) TshDiagnosticSeverity.ERROR else TshDiagnosticSeverity.WARNING,
             stage = TshDiagnosticStage.PROVIDER,
             message = "No provider satisfies required capability versions: ${incompatible.sorted().joinToString()}",
             objectId = descriptor.id
