@@ -384,7 +384,8 @@ class TshAndroidSpannableRenderer(
         } catch (error: LinkageError) {
             val rollbackFailure = runCatching {
                 removeNewOwnedSpans(spannable, previousSpans)
-                restoreSpans(spannable, previousSpans)
+                if (closed.get()) removeOwnedSpans(spannable)
+                else restoreSpans(spannable, previousSpans)
                 target.invalidate(documentId)
             }.exceptionOrNull()
             val detail = rollbackFailure?.let { "; rollback also failed: ${it.message}" }.orEmpty()
@@ -497,6 +498,83 @@ class TshAndroidSpannableRenderer(
         if (hasDecorationDeclaration) {
             spannable.setSpan(TshAndroidDecorationSpan(id, planId, underline, strike), start, end, flags)
         }
+    }
+
+    /**
+     * Permanently stops this renderer and removes only Spans owned by this renderer instance.
+     * Off-thread callers require the host to accept a render-thread dispatch.
+     */
+    fun clearAll(): TshResult<Unit> {
+        if (!closed.compareAndSet(false, true)) return TshResult.Success(Unit)
+        val documents = synchronized(renderedDocumentIds) {
+            renderedDocumentIds.toList().also { renderedDocumentIds.clear() }
+        }
+        if (documents.isEmpty()) return TshResult.Success(Unit)
+        val onRenderThread = try {
+            target.isOnRenderThread()
+        } catch (error: Exception) {
+            return failure("TSH-ANDROID-RENDER-040", "Cannot verify render thread during renderer close: ${error.message}")
+        } catch (error: LinkageError) {
+            return failure("TSH-ANDROID-RENDER-041", "Render-thread check failed with a linkage error during renderer close")
+        }
+        if (onRenderThread) return clearDocuments(documents)
+        val posted = try {
+            target.postToRenderThread {
+                cleanupDiagnostics = clearDocuments(documents).diagnostics()
+            }
+        } catch (error: Exception) {
+            return failure("TSH-ANDROID-RENDER-042", "Cannot dispatch Span cleanup to the render thread: ${error.message}")
+        } catch (error: LinkageError) {
+            return failure("TSH-ANDROID-RENDER-043", "Render-thread cleanup dispatch failed with a linkage error")
+        }
+        return if (posted) TshResult.Success(Unit, listOf(TshDiagnostic(
+            "TSH-ANDROID-RENDER-044", TshDiagnosticSeverity.INFO, TshDiagnosticStage.LIFECYCLE,
+            "TSH Span cleanup was queued on the host render thread"
+        ))) else failure(
+            "TSH-ANDROID-RENDER-045",
+            "Renderer closed off-thread but the host did not provide render-thread cleanup dispatch"
+        )
+    }
+
+    private fun clearDocuments(documentIds: List<String>): TshResult<Unit> {
+        val diagnostics = ArrayList<TshDiagnostic>()
+        documentIds.forEach { documentId ->
+            try {
+                val spannable = target.resolveSpannable(documentId)
+                if (spannable == null) {
+                    diagnostics += warning(
+                        "TSH-ANDROID-RENDER-046",
+                        "Host Spannable is no longer available while clearing TSH-owned Spans"
+                    )
+                    return@forEach
+                }
+                removeOwnedSpans(spannable)
+                target.invalidate(documentId)
+            } catch (error: Exception) {
+                diagnostics += TshDiagnostic(
+                    "TSH-ANDROID-RENDER-047", TshDiagnosticSeverity.WARNING,
+                    TshDiagnosticStage.LIFECYCLE,
+                    "Could not completely clear TSH-owned Spans: ${error.message}",
+                    cause = error
+                )
+            } catch (error: LinkageError) {
+                diagnostics += TshDiagnostic(
+                    "TSH-ANDROID-RENDER-048", TshDiagnosticSeverity.WARNING,
+                    TshDiagnosticStage.LIFECYCLE,
+                    "Span cleanup failed with a linkage error",
+                    cause = error
+                )
+            }
+        }
+        cleanupDiagnostics = diagnostics.toList()
+        return TshResult.Success(Unit, diagnostics)
+    }
+
+    private fun removeOwnedSpans(spannable: Spannable) {
+        spannable.getSpans(0, spannable.length, CharacterStyle::class.java)
+            .filterIsInstance<TshAndroidOwnedSpan>()
+            .filter { it.ownerId == id }
+            .forEach { spannable.removeSpan(it as Any) }
     }
 
     private fun captureOwnedSpans(spannable: Spannable): List<TshAndroidSpanSnapshot> =
