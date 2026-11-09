@@ -1,6 +1,6 @@
 # ATS 与 Tree-sitter 统一查询 API 契约
 
-> 状态：API 数据模型、CompiledQuery Registry、基于既有 TSQuery/TSQueryCursor 的 Tree-sitter Compiler/Executor Adapter 已有 Kotlin 源码；ATS Lexer/Parser/Compiler、Tree/Language lease 已有首版源码接入，增量查询和真实 Native 验证仍未完成；Native Query lease 已有源码。仅 Tree-sitter + ATS 查询管线；Regex 保持独立，不引入第三管线。
+> 状态（按证据分级）：Tree-sitter Query 数据模型、Registry、Native Compiler/Executor Adapter、Query/Tree/Language Lease 为 SOURCE_PARTIAL（源码存在，未构建/测试验证）；ATS Lexer/Parser/AST/Compiler/Lowering 为 SPEC_ONLY（尚未实现）。当前 Tree-sitter Compiler 对 ATS 输入明确返回 TSH-ATS-COMPILER-001。ATS 最终 Lowering 到现有 Tree-sitter Query 管线，不是第三执行管线；Regex 独立。
 
 ## 1. 分层
 
