@@ -315,15 +315,6 @@ class TshTextAccessBinding private constructor(
                 "TSH-TEXT-BINDING-010", "Attachment detached while TextAccessBinding was being installed"
             )
 
-            val supportsDisposal = try {
-                provider.supportsDisposalNotifications
-            } catch (error: Exception) {
-                binding.close()
-                return failure("TSH-TEXT-BINDING-043", "Cannot inspect document disposal capability: ${error.message}", error)
-            } catch (error: LinkageError) {
-                binding.close()
-                return failure("TSH-TEXT-BINDING-044", "Document disposal capability lookup failed with a linkage error", error)
-            }
             if (supportsDisposal) {
                 val disposal = try {
                     provider.subscribeDisposed(document) { binding.close() }
