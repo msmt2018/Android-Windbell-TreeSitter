@@ -219,6 +219,14 @@ class TshTreeSitterQueryExecutor(
         if (query.nativeObjectId == null) {
             return failure("TSH-QUERY-EXEC-002", "Compiled query has no registered native query handle")
         }
+        // Reject an edited-but-not-reparsed tree before acquiring either Native resource.
+        val preflightTreeMetadata = objects.descriptor(tree.nativeObjectId)?.metadata
+        if (preflightTreeMetadata?.get("treeState") == "EDITED_PENDING_PARSE") {
+            return failure(
+                "TSH-QUERY-EXEC-031",
+                "Syntax tree has been edited for a newer document version and cannot be queried until incremental parsing publishes a replacement tree"
+            )
+        }
         val acquisition = queries.withLock {
             val registered = queries.get(query.queryId)
             val isCurrent = registered?.revision == query.revision &&
