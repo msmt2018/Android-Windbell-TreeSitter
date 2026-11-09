@@ -28,6 +28,7 @@
 - [x] OwnerScope 自动 detach；detach 只注销 TSH 自己的身份登记，不关闭宿主对象。
 - [x] Native resource/query raw object getter 收敛为 internal，阻止宿主绕过 Lease 直接 close。
 - [x] Engine lifecycle lock 线性化 initialize/attach/provider resolution/adapter creation/parser open 与 close；公开 Object/Provider/CompiledQuery registries 在 Engine close 后永久拒绝新注册。
+- [x] strictProviderValidation 统一覆盖 attach/refresh/resolveProviders；严格 attach 缺失必需能力时 detach 回滚，lenient 模式保留 INCOMPLETE report。
 - [x] Native close/dependency close 错误进入结构化诊断；Engine 提供 shutdownDiagnostics；OwnerScope 提供 closeWithReport。
 
 ### Text Access 与坐标
@@ -97,7 +98,8 @@
 - [x] Provider 必须在实际 Draw 前检查 Acknowledger.isCurrent，完成后 Ack。
 - [x] Render Receipt 区分 APPLIED/PARTIALLY_APPLIED 宿主对象变更与 DRAWN/PARTIAL 实际绘制；Span renderer 不再把 invalidate 冒充真实 Draw。
 - [x] Android Spannable Renderer 使用 generation staging/rollback；替换失败保留旧 TSH Span 和宿主 Span，新增 Robolectric 回归测试源码。
-- [x] QUEUED 不允许声称已有应用/绘制数量，真实 PARTIAL draw 必须报告有效部分数量。
+- [x] QUEUED 不允许声称已有应用/绘制数量，真实 PARTIAL draw 必须报告有效部分数量；Receipt 必须完整核算 applied/deferred/dropped，viewport 外指令 deferred。
+- [x] RenderCoordinator 限制 pending plan 数量，防止异步 Provider 不回执时无界积累；Provider LinkageError 转为结构化诊断并清理 pending。
 - [x] 旧 Spannable 路径只清理 TSH-owned Span，不再删除宿主 CharacterStyle；非法/奇数/越界 UTF-16LE byte range 被拒绝。
 - [x] ScopeSelector/StyleRule/StyleResolver 到 RenderPlan 的首版 Resolver；[ ] Attribute semantic pipeline、DSL selector parser 和完整 Resolver。
 - [x] Android Spannable Renderer Provider + OwnerScope-scoped host binding，Provider Registry 可按宿主对象身份发现；Render generation 事务回滚保留旧 TSH/宿主 Span；强制 host 提供有界 viewport 后才分配 Span，离屏指令记为 deferred；Receipt 对 applied/deferred/dropped 完整计数；Robolectric test 源码覆盖 rollback、decoration、binding、viewport。 [ ] Canvas/Compose/custom View Renderer Provider 尚未实现。
