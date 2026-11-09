@@ -15,8 +15,8 @@ interface TshTextSnapshot {
 /** A stable reference to a snapshot. close() releases only the snapshot lease, never the host document. */
 interface TshTextSnapshotLease : AutoCloseable {
     val snapshot: TshTextSnapshot
-    /** Providers should expose the closed state; false is the compatibility default. */
-    val isClosed: Boolean get() = false
+    /** Providers must expose the closed state so TSH can reject use-after-close. */
+    val isClosed: Boolean
     override fun close()
 }
 
