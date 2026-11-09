@@ -146,8 +146,11 @@ object TshMatchMerger {
         val source: TshMatchSource,
         val ruleId: String,
         val captureName: String?,
+        val patternIndex: Int?,
         val start: Long,
         val end: Long,
+        val rawRange: TshSourceRange?,
+        val captures: List<TshCaptureValue>,
         val pipelineRevision: String
     )
 
@@ -182,8 +185,9 @@ object TshMatchMerger {
         val deduplicated = LinkedHashMap<DedupKey, TshMatch>()
         accepted.forEach { match ->
             val key = DedupKey(
-                match.source, match.ruleId.value, match.captureName,
-                match.range.start.offset, match.range.end.offset, match.pipelineRevision
+                match.source, match.ruleId.value, match.captureName, match.patternIndex,
+                match.range.start.offset, match.range.end.offset, match.rawRange,
+                match.captures, match.pipelineRevision
             )
             deduplicated.putIfAbsent(key, match)
         }
