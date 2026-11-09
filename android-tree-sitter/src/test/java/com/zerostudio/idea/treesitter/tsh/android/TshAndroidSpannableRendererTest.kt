@@ -81,6 +81,31 @@ class TshAndroidSpannableRendererTest {
     }
 
     @Test
+    fun multipleEditorsCanOwnIndependentAndroidRendererBindings() {
+        val engine = TshEngine.create()
+        engine.initialize()
+        val revisions = TshRenderRevisions(
+            TshDocumentId("doc"), 1L, "config", "theme", "viewport", "renderer"
+        )
+        val firstTarget = Target(SpannableStringBuilder("one"), revisions)
+        val secondTarget = Target(SpannableStringBuilder("two"), revisions)
+        val firstRenderer = TshAndroidSpannableRenderer(firstTarget)
+        val secondRenderer = TshAndroidSpannableRenderer(secondTarget)
+        assertTrue(firstRenderer.id != secondRenderer.id)
+        val firstScope = TshOwnerScope("first-editor")
+        val secondScope = TshOwnerScope("second-editor")
+        firstRenderer.attachTo(engine, firstScope)
+        secondRenderer.attachTo(engine, secondScope)
+        assertEquals(2, engine.providers.all().size)
+
+        firstScope.close()
+        assertEquals(listOf(secondRenderer.id), engine.providers.all().map { it.id })
+        secondScope.close()
+        assertTrue(engine.providers.all().isEmpty())
+        engine.close()
+    }
+
+    @Test
     fun failedBindingSetupRollsBackProviderRegistration() {
         val engine = TshEngine.create()
         engine.initialize()
