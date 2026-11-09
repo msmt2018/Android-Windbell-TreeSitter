@@ -56,6 +56,7 @@ class TshNativeResourceLeaseStore {
 
     private val lock = Any()
     private val entries = LinkedHashMap<TshObjectId, Entry<out TSNativeObject>>()
+    private val closeFailures = ArrayList<TshDiagnostic>()
 
     fun <T : TSNativeObject> register(
         objectId: TshObjectId,
@@ -108,6 +109,8 @@ class TshNativeResourceLeaseStore {
         return retiredCount
     }
 
+    fun closeDiagnostics(): List<TshDiagnostic> = synchronized(lock) { closeFailures.toList() }
+
     fun activeLeaseCount(objectId: TshObjectId): Int = synchronized(lock) {
         entries[objectId]?.leases ?: 0
     }
@@ -120,7 +123,30 @@ class TshNativeResourceLeaseStore {
     }
 
     private fun Entry<out TSNativeObject>.closeSafely() {
-        runCatching { resource.close() }
-        dependencies.asReversed().forEach { dependency -> runCatching { dependency.close() } }
+        try {
+            resource.close()
+        } catch (error: Throwable) {
+            recordCloseFailure(objectId, "Native resource close failed", error)
+        }
+        dependencies.asReversed().forEach { dependency ->
+            try {
+                dependency.close()
+            } catch (error: Throwable) {
+                recordCloseFailure(objectId, "Native resource dependency close failed", error)
+            }
+        }
+    }
+
+    private fun recordCloseFailure(objectId: TshObjectId, message: String, error: Throwable) {
+        synchronized(lock) {
+            closeFailures += TshDiagnostic(
+                code = "TSH-NATIVE-LEASE-001",
+                severity = TshDiagnosticSeverity.ERROR,
+                stage = TshDiagnosticStage.LIFECYCLE,
+                message = message,
+                objectId = objectId,
+                cause = error
+            )
+        }
     }
 }
