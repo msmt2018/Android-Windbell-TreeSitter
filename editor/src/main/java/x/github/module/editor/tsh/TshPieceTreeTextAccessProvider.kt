@@ -6,7 +6,6 @@ import com.zerostudio.idea.treesitter.tsh.api.TshCapabilitySet
 import com.zerostudio.idea.treesitter.tsh.api.TshDiagnostic
 import com.zerostudio.idea.treesitter.tsh.api.TshDiagnosticSeverity
 import com.zerostudio.idea.treesitter.tsh.api.TshDiagnosticStage
-import com.zerostudio.idea.treesitter.tsh.api.TshObjectDescriptor
 import com.zerostudio.idea.treesitter.tsh.api.TshResult
 import com.zerostudio.idea.treesitter.tsh.api.TshSharedTextSnapshotLease
 import com.zerostudio.idea.treesitter.tsh.api.TshTextAccessProvider
@@ -52,7 +51,7 @@ class TshPieceTreeTextAccessProvider(
     override fun supports(instance: Any): Boolean = instance is TshPieceTreeDocument
 
     override fun supports(instance: Any, descriptor: TshObjectDescriptor): Boolean =
-        instance is TshPieceTreeDocument && descriptor.type == "document"
+        supports(instance)
 
     override fun snapshot(document: Any): TshResult<TshTextSnapshot> {
         val host = document as? TshPieceTreeDocument ?: return failure(
