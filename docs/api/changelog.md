@@ -104,15 +104,15 @@
 - Added `TshTreeSitterIncrementalUpdate.apply` to connect before/after Snapshot Leases, edit compilation, atomic Native edits, and incremental parsing. The old tree is retired only after the replacement tree is published.
 - Added the `EDITED_PENDING_PARSE` tree state. Query execution rejects such a tree before Native lease acquisition and rechecks after acquisition; replacement snapshot parses publish `READY` trees.
 - Added edit compiler boundary tests and a query preflight regression test. These test sources have not yet been run.
-- Host EditorDocument snapshot locking, change/disposal event wiring, Gradle/JUnit, Native/JNI and device validation remain outstanding.
+- Automatic buffer-replacement/rebind, host permanent-close integration, Gradle/JUnit, Native/JNI and device validation remain outstanding.
 
 
 ## 2026-11-10 — EditorView PieceTree transaction binding (SOURCE_PARTIAL)
 
 - Added `TshPieceTreeEditorBinding` to pin a before Snapshot Lease in `beforeTextChanged` and an after Snapshot Lease in `afterTextChanged`, once per complete EditorDocument edit batch.
 - Converted bottom-up `AppliedChange` records to ascending before-version `TshTextChange` without calling `TextSlice.toText()`. Large undo/redo replacement content remains in PieceTree storage; only UTF-16 lengths and LF/tail metrics from TextSlice chunk views cross the binding boundary.
-- Extended `TshTextEdit` with explicit replacement UTF-16 length and optional exact Tree-sitter endpoint metadata, retaining the existing String replacement API.
+- Extended `TshTextEdit` with replacement UTF-16 length, LF count and trailing UTF-16 length metadata, retaining the existing String replacement API and keeping Native Tree-sitter points out of the generic text contract.
 - Allowed stable same-offset insertion sequences while continuing to reject overlapping replacement ranges.
-- Added PieceTree provider change/disposal subscriptions and advertised both capabilities; added source tests for zero-copy change conversion and lifecycle notifications.
+- Added PieceTree provider change/disposal subscriptions and advertised both capabilities; added source tests for non-materializing change conversion and lifecycle notifications.
 - `onTransaction` transfers snapshot Lease ownership to the consumer, which must dispatch parsing off the EditorView edit thread and close both leases after completion.
 - Automatic buffer-replacement/rebind and host permanent-close integration, Gradle/JUnit execution, Native/JNI validation and device tests remain outstanding.
