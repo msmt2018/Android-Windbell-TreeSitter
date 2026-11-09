@@ -193,6 +193,7 @@ class TshAndroidSpannableRenderer(
         val previousSpans = captureOwnedSpans(spannable)
 
         var appliedInstructionCount = 0
+        var visibleInstructionCount = 0
         var fullyApplied = 0
         for (instruction in plan.instructions) {
             if (!acknowledger.isCurrent(plan.id, plan.revisions) ||
@@ -202,13 +203,6 @@ class TshAndroidSpannableRenderer(
             }
             val rawStart = instruction.range.start.offset
             val rawEnd = instruction.range.end.offset
-            if (instruction.zIndex !in 0..255) {
-                diagnostics += warning(
-                    "TSH-ANDROID-RENDER-012",
-                    "Android Spannable supports zIndex values from 0 to 255; this instruction was skipped"
-                )
-                continue
-            }
             if (rawStart < 0L || rawEnd <= rawStart || rawEnd > spannable.length.toLong() ||
                 rawStart > Int.MAX_VALUE.toLong()) {
                 diagnostics += warning(
@@ -224,6 +218,14 @@ class TshAndroidSpannableRenderer(
                     "TSH-ANDROID-RENDER-016", TshDiagnosticSeverity.INFO,
                     TshDiagnosticStage.RENDER,
                     "Instruction is outside the current host viewport and was deferred"
+                )
+                continue
+            }
+            visibleInstructionCount++
+            if (instruction.zIndex !in 0..255) {
+                diagnostics += warning(
+                    "TSH-ANDROID-RENDER-012",
+                    "Android Spannable supports zIndex values from 0 to 255; this instruction was skipped"
                 )
                 continue
             }
@@ -245,7 +247,7 @@ class TshAndroidSpannableRenderer(
             val hadWarning = diagnostics.size > diagnosticsBefore
             if (after > before) {
                 appliedInstructionCount++
-                if (!hadWarning && !clippedToViewport) fullyApplied++
+                if (!hadWarning) fullyApplied++
                 if (clippedToViewport) diagnostics += TshDiagnostic(
                     "TSH-ANDROID-RENDER-017", TshDiagnosticSeverity.INFO,
                     TshDiagnosticStage.RENDER,
@@ -277,7 +279,7 @@ class TshAndroidSpannableRenderer(
             runCatching { target.invalidate(documentId) }
             return failure("TSH-ANDROID-RENDER-011", "Host invalidation failed with a linkage error: ${error.message}")
         }
-        val status = if (fullyApplied == plan.instructions.size) {
+        val status = if (fullyApplied == visibleInstructionCount) {
             TshRenderReceiptStatus.APPLIED
         } else {
             TshRenderReceiptStatus.PARTIALLY_APPLIED
