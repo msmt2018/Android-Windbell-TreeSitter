@@ -103,7 +103,11 @@ class TshRenderApiTest {
         }
         val coordinator = TshRenderCoordinator(provider)
         coordinator.updateCurrentRevisions(revisions())
-        val result = coordinator.submit(plan()) as TshResult.Success<TshRenderReceipt>
+        val basePlan = plan()
+        val twoInstructionPlan = basePlan.copy(
+            instructions = basePlan.instructions + basePlan.instructions.single()
+        )
+        val result = coordinator.submit(twoInstructionPlan) as TshResult.Success<TshRenderReceipt>
         assertTrue(result.value.confirmsActualDraw)
         assertTrue(coordinator.pendingPlanIds().isEmpty())
     }
