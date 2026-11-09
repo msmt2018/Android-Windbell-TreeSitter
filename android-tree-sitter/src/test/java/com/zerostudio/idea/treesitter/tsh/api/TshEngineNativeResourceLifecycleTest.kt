@@ -26,6 +26,29 @@ class TshEngineNativeResourceLifecycleTest {
     }
 
     @Test
+    fun engineClosePermanentlyClosesExposedRegistries() {
+        val engine = TshEngine.create()
+        engine.close()
+        try {
+            engine.objects.register(Any(), "editor")
+            fail("Expected closed object registry to reject registration")
+        } catch (_: IllegalStateException) {
+            // Expected.
+        }
+        try {
+            engine.providers.register(object : TshProvider {
+                override val id = "late-provider"
+                override val apiVersion = 1
+                override val capabilities = TshCapabilitySet.EMPTY
+                override fun supports(instance: Any, descriptor: TshObjectDescriptor) = true
+            })
+            fail("Expected closed provider registry to reject registration")
+        } catch (_: IllegalStateException) {
+            // Expected.
+        }
+    }
+
+    @Test
     fun engineCloseWaitsForAnInFlightProviderResolution() {
         val engine = TshEngine.create()
         engine.initialize()
