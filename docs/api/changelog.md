@@ -3,6 +3,16 @@
 ## Unreleased
 
 ### Added
+- 新增 TSH Public API 最高层设计规范：明确 Host Ownership First、No Framework Lock-in、Capability negotiation、零拷贝文本访问、Long 坐标、版本安全、双管线、Renderer-owned drawing 和证据等级。
+- 新增 TshOwnerScope/TshAttachmentManager/TshAttachmentReport 与 Engine attach/inspect/refresh/detach，支持宿主对象身份注册、Provider 能力协商、OwnerScope 自动 detach；detach 不销毁宿主对象。
+- Provider Registry 增加 API 版本范围、Capability 最低版本、优先级、稳定选择、冲突/缺失诊断与 supports 异常隔离；TshEngineOptions 的严格模式和诊断开关接入 Provider resolution。
+- Text Access 增加 Snapshot Lease、bounded chunk read、变更订阅扩展点和 Edit 顺序/重叠校验；默认 Snapshot Lease 仅包装不可变快照，不冒充对可变宿主缓冲区的 pin。
+- 公共 SourcePosition Offset 与 Tree-sitter ByteRange 改为 Long，并保留 Int 构造兼容；Native Cursor Int range narrowing 增加溢出检查。
+- 修复 Schema nullable/default/Measure range unit/Map key/Capability version/unknown-property retention；未知属性进入 unappliedProperties 并产生诊断。
+- 修复 Oniguruma 编译器将 UTF-8 pattern bytes 错误逐字节复制为 UTF-16 的问题，改为严格 UTF-8 解码及 UTF-16LE 编码。
+- 修复旧 Spannable 高亮路径清除所有 CharacterStyle 的行为：仅移除 TSH-owned spans，并拒绝奇数/非法/越界 UTF-16LE byte range。
+- JNI 大文本路径移除额外完整 UTF-16 native vector 复制，改为受控 GetStringChars 生命周期；Highlight/Fold 结果按固定批次写入 Java 数组，避免额外 N*3 临时 native 数组。
+- 大文本高亮核心将按全文长度预留 Span 容量改为有界初始预留，并以 prefix-max-end 索引替代 AST/Regex span 的双重全量嵌套扫描。
 - 建立 TSH 统一 API 架构文档、对象/文本模型、编辑器集成、高亮渲染、TSH 语言、ATS/Regex、诊断和路线图规范。
 - 新增 TshEngine 生命周期门面、结构化结果/诊断、坐标与范围基础类型。
 - 新增实例身份对象注册表、能力描述符和 Provider 注册/发现契约。
