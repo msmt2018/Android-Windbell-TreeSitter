@@ -15,6 +15,8 @@ class TshSnapshotTreeSitterInputTest {
 
     private class Provider : TshTextAccessProvider {
         override val id = "piece-tree-provider"
+        override val threading = TshTextAccessThreading.ANY_THREAD
+        override val supportsConcurrentReads = true
         private val value = Snapshot()
         override fun supports(document: Any) = true
         override fun snapshot(document: Any): TshResult<TshTextSnapshot> =
