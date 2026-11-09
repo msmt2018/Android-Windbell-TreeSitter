@@ -43,11 +43,13 @@ class TshRenderApiTest {
         override val apiVersion = 1
         override val capabilities = TshCapabilitySet.of(TshCapability("render.color", 1))
         lateinit var acknowledger: TshRenderAcknowledger
+        lateinit var submittedPlan: TshRenderPlan
         override fun submit(
             plan: TshRenderPlan,
             acknowledger: TshRenderAcknowledger
         ): TshResult<TshRenderReceipt> {
             this.acknowledger = acknowledger
+            this.submittedPlan = plan
             return TshResult.Success(TshRenderReceipt(
                 plan.id, id, plan.revisions, TshRenderReceiptStatus.QUEUED, 0
             ))
@@ -61,6 +63,23 @@ class TshRenderApiTest {
         val result = coordinator.submit(plan()) as TshResult.Success<TshRenderReceipt>
         assertTrue(result.value.confirmsActualDraw)
         assertTrue(coordinator.pendingPlanIds().isEmpty())
+    }
+
+    @Test
+    fun coordinatorSnapshotsCallerOwnedInstructionCollections() {
+        val provider = QueuedProvider()
+        val coordinator = TshRenderCoordinator(provider)
+        coordinator.updateCurrentRevisions(revisions())
+        val mutableInstructions = mutableListOf(plan().instructions.single())
+        val callerPlan = plan().copy(instructions = mutableInstructions)
+        coordinator.submit(callerPlan)
+        mutableInstructions.clear()
+        assertEquals(1, provider.submittedPlan.instructions.size)
+        val receipt = provider.acknowledger.acknowledge(TshRenderReceipt(
+            callerPlan.id, provider.id, callerPlan.revisions,
+            TshRenderReceiptStatus.DRAWN, 1
+        ))
+        assertTrue(receipt is TshResult.Success)
     }
 
     @Test
