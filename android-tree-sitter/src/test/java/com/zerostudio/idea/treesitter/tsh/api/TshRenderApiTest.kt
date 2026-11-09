@@ -66,6 +66,24 @@ class TshRenderApiTest {
     }
 
     @Test
+    fun providerLinkageFailureIsReturnedAsDiagnosticAndReleasesPendingPlan() {
+        val provider = object : TshRenderProvider {
+            override val id = "broken-renderer"
+            override val apiVersion = 1
+            override val capabilities = TshCapabilitySet.of(TshCapability("render.color", 1))
+            override fun submit(plan: TshRenderPlan, acknowledger: TshRenderAcknowledger): TshResult<TshRenderReceipt> {
+                throw UnsatisfiedLinkError("simulated backend linkage failure")
+            }
+        }
+        val coordinator = TshRenderCoordinator(provider)
+        coordinator.updateCurrentRevisions(revisions())
+        val result = coordinator.submit(plan())
+        assertTrue(result is TshResult.Failure)
+        assertTrue(result.diagnostics().any { it.code == "TSH-RENDER-024" })
+        assertTrue(coordinator.pendingPlanIds().isEmpty())
+    }
+
+    @Test
     fun coordinatorSnapshotsCallerOwnedInstructionCollections() {
         val provider = QueuedProvider()
         val coordinator = TshRenderCoordinator(provider)
