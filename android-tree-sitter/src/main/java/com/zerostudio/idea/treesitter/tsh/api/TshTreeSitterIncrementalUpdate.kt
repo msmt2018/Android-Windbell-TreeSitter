@@ -49,6 +49,25 @@ object TshTreeSitterIncrementalUpdate {
                 "Old syntax tree is not based on the supplied before-version Snapshot"
             )
         }
+        val expectedAfterLength = try {
+            change.edits.fold(before.lengthUtf16) { length, edit ->
+                Math.addExact(
+                    Math.subtractExact(length, edit.endUtf16 - edit.startUtf16),
+                    edit.replacementLengthUtf16
+                )
+            }
+        } catch (error: ArithmeticException) {
+            return failure(
+                "TSH-INCREMENTAL-UPDATE-004",
+                "TextChange length arithmetic overflowed"
+            )
+        }
+        if (expectedAfterLength != after.lengthUtf16) {
+            return failure(
+                "TSH-INCREMENTAL-UPDATE-005",
+                "TextChange predicts UTF-16 length $expectedAfterLength but after Snapshot has ${after.lengthUtf16}"
+            )
+        }
 
         val compiledResult = TshTreeSitterEditCompiler.compile(before, change)
         if (compiledResult is TshResult.Failure) return compiledResult
