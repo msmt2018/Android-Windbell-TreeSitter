@@ -44,6 +44,7 @@
 ### DSL / Schema / Runtime Consumer
 
 - [x] 修复 nullable 与 OptionalType 混淆、默认值校验、Measure range unit、Map key type、Capability version 和非数值 range。
+- [x] Schema 数值范围比较保留 Long 整数精度，避免超过 2^53 后转 Double 丢失精度；新增边界回归测试源码。
 - [x] 未知属性不再静默丢弃；进入 unappliedProperties 并产生诊断。
 - [x] 新增 RuntimeConsumerRegistry/Dispatcher；Schema 通过不再等于属性已生效。
 - [x] Runtime Dispatcher 报告每个属性 applied/unapplied，检查 Capability 版本并隔离 Consumer 异常。
@@ -125,7 +126,7 @@
 
 ## 当前证据结论
 
-- 源码：上述切片已提交到 feat/tsh-unified-api-foundation；新增 Render Receipt 状态语义修复及回归测试源码。
+- 源码：上述切片已提交到 feat/tsh-unified-api-foundation；新增 Render Receipt 状态语义、Schema Long 数值精度修复及回归测试源码。
 - 构建：未验证。
 - 单元测试：新增测试源码，未运行。
 - Native/JNI：未构建/运行验证。
