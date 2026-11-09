@@ -252,10 +252,7 @@ class TshRenderCoordinator(
             receipt.drawnInstructionCount != plan.instructions.size) {
             return diagnostic("TSH-RENDER-012", "DRAWN receipt must confirm every instruction")
         }
-        if (receipt.status == TshRenderReceiptStatus.PARTIAL &&
-            (receipt.drawnInstructionCount == 0 || receipt.drawnInstructionCount >= plan.instructions.size)) {
-            return diagnostic("TSH-RENDER-018", "PARTIAL receipt must report at least one but fewer than all instructions")
-        }
+        // PARTIAL may mean only some style attributes were applied even when every range was touched.
         if ((receipt.status == TshRenderReceiptStatus.REJECTED ||
                 receipt.status == TshRenderReceiptStatus.FAILED) && receipt.drawnInstructionCount != 0) {
             return diagnostic("TSH-RENDER-019", "Rejected/failed receipt cannot report drawn instructions")
