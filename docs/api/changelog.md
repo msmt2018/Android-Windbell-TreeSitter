@@ -111,7 +111,7 @@
 
 - Added `TshPieceTreeEditorBinding` to pin a before Snapshot Lease in `beforeTextChanged` and an after Snapshot Lease in `afterTextChanged`, once per complete EditorDocument edit batch.
 - Converted bottom-up `AppliedChange` records to ascending before-version `TshTextChange` without calling `TextSlice.toText()`. Large undo/redo replacement content remains in PieceTree storage; only UTF-16 lengths and LF/tail metrics from TextSlice chunk views cross the binding boundary.
-- Extended `TshTextEdit` with replacement UTF-16 length, LF count and trailing UTF-16 length metadata, retaining the existing String replacement API and keeping Native Tree-sitter points out of the generic text contract.
+- Extended `TshTextEdit` with replacement UTF-16 length, LF/tail metrics and optional before-version UTF-16 row/column coordinates, retaining the String replacement API and keeping Native Tree-sitter points out of the generic text contract. Normalized PieceTree edits use host coordinates and avoid a full before-snapshot scan; non-normalized EOL falls back to bounded streaming scan.
 - Allowed stable same-offset insertion sequences while continuing to reject overlapping replacement ranges.
 - Added PieceTree provider change/disposal subscriptions and advertised both capabilities; added source tests for non-materializing change conversion and lifecycle notifications.
 - `onTransaction` transfers snapshot Lease ownership to the consumer, which must dispatch parsing off the EditorView edit thread and close both leases after completion.
