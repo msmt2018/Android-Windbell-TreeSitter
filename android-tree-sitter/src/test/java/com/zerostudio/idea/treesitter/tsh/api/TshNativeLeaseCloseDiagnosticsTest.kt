@@ -24,6 +24,26 @@ class TshNativeLeaseCloseDiagnosticsTest {
     }
 
     @Test
+    fun exclusiveLeasePreventsConcurrentNativeReadersAndMutations() {
+        val store = TshNativeResourceLeaseStore()
+        val id = TshObjectId(88)
+        val handle = store.register(id, FailingNative())
+        val reader = store.acquire(handle)!!
+        assertNull(store.acquireExclusive(handle))
+        reader.close()
+
+        val writer = store.acquireExclusive(handle)!!
+        assertNull(store.acquire(handle))
+        writer.close()
+
+        val nextReader = store.acquire(handle)!!
+        assertTrue(store.retire(id))
+        assertNull(store.acquire(handle))
+        nextReader.close()
+        assertEquals(1, store.closeDiagnostics().size)
+    }
+
+    @Test
     fun ownerScopeReportsCleanupFailuresInsteadOfSilentlySwallowingThem() {
         val scope = TshOwnerScope("failing-scope")
         scope.registerCleanup { error("simulated cleanup failure") }
