@@ -413,7 +413,9 @@ class TshTreeSitterParserOwner private constructor(
                 resources.retire(ownedTree.registration.descriptor.id)
                 return metadata
             }
-            ownedTree.updateRegistration(ownedTree.registration.copy(descriptor = metadata.value))
+            ownedTree.updateRegistration(ownedTree.registration.copy(
+                descriptor = (metadata as TshResult.Success<TshObjectDescriptor>).value
+            ))
             ownedTree.updateSnapshot(updatedSnapshot)
             ownedTree.lastEditedDocumentVersion = targetDocumentVersion
             TshResult.Success(Unit)
