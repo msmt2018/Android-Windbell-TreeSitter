@@ -56,18 +56,40 @@ class TshAndroidSpannableBinding private constructor(
                     "Cannot register Android renderer Provider: ${error.message}",
                     error
                 )
+            } catch (error: LinkageError) {
+                return failure(
+                    "TSH-ANDROID-BINDING-004",
+                    "Android renderer Provider registration failed with a linkage error: ${error.message}",
+                    error
+                )
             }
-            val attached = engine.attach(
-                TshAttachmentRequest(
-                    instance = renderer.hostObjectForBinding(),
-                    objectType = objectType,
-                    capabilities = objectCapabilities,
-                    metadata = metadata,
-                    requiredCapabilities = requiredCapabilities,
-                    optionalCapabilities = optionalCapabilities
-                ),
-                ownerScope
-            )
+            val attached = try {
+                engine.attach(
+                    TshAttachmentRequest(
+                        instance = renderer.hostObjectForBinding(),
+                        objectType = objectType,
+                        capabilities = objectCapabilities,
+                        metadata = metadata,
+                        requiredCapabilities = requiredCapabilities,
+                        optionalCapabilities = optionalCapabilities
+                    ),
+                    ownerScope
+                )
+            } catch (error: Exception) {
+                engine.providers.unregister(renderer.id)
+                return failure(
+                    "TSH-ANDROID-BINDING-005",
+                    "Cannot attach Android renderer to the host object: ${error.message}",
+                    error
+                )
+            } catch (error: LinkageError) {
+                engine.providers.unregister(renderer.id)
+                return failure(
+                    "TSH-ANDROID-BINDING-006",
+                    "Android host attachment failed with a linkage error: ${error.message}",
+                    error
+                )
+            }
             if (attached is TshResult.Failure) {
                 engine.providers.unregister(renderer.id)
                 return attached
@@ -75,7 +97,23 @@ class TshAndroidSpannableBinding private constructor(
             val success = attached as TshResult.Success<TshAttachmentReport>
             val report = success.value
             val binding = TshAndroidSpannableBinding(engine, renderer, report)
-            val cleanup = ownerScope.registerCleanup { binding.close() }
+            val cleanup = try {
+                ownerScope.registerCleanup { binding.close() }
+            } catch (error: Exception) {
+                binding.close()
+                return failure(
+                    "TSH-ANDROID-BINDING-007",
+                    "Cannot register Android binding cleanup: ${error.message}",
+                    error
+                )
+            } catch (error: LinkageError) {
+                binding.close()
+                return failure(
+                    "TSH-ANDROID-BINDING-008",
+                    "Android binding cleanup registration failed with a linkage error: ${error.message}",
+                    error
+                )
+            }
             if (cleanup == null) {
                 binding.close()
                 return failure(
