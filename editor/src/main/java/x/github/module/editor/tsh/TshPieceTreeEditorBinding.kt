@@ -30,6 +30,7 @@ class TshPieceTreeEditorBinding private constructor(
     private val onInvalidated: (TshResult.Failure) -> Unit
 ) : AutoCloseable {
     private var beforeLease: TshTextSnapshotLease? = null
+    private var beforeCoordinatesSupported: Boolean = false
     private var lastVersion: Long = -1L
     private val closed = AtomicBoolean(false)
 
@@ -39,6 +40,7 @@ class TshPieceTreeEditorBinding private constructor(
         ) {
             releasePendingBefore()
             if (closed.get()) return
+            beforeCoordinatesSupported = view.getTextBuffer().isEOLNormalized()
             when (val acquired = provider.acquireSnapshot(document)) {
                 is TshResult.Success -> {
                     beforeLease = acquired.value
@@ -100,7 +102,8 @@ class TshPieceTreeEditorBinding private constructor(
                 documentId = document.documentId,
                 beforeVersion = beforeVersion,
                 afterVersion = afterVersion,
-                changes = changes
+                changes = changes,
+                useEditorLineCoordinates = beforeCoordinatesSupported
             )
             if (changeResult is TshResult.Failure) {
                 before.close()
@@ -207,7 +210,8 @@ internal fun editorChangesToTshChange(
     documentId: String,
     beforeVersion: Long,
     afterVersion: Long,
-    changes: List<EditorDocument.AppliedChange>
+    changes: List<EditorDocument.AppliedChange>,
+    useEditorLineCoordinates: Boolean = true
 ): TshResult<TshTextChange> = try {
     val edits = changes.asReversed().map { applied ->
         var lineFeeds = 0
@@ -235,6 +239,10 @@ internal fun editorChangesToTshChange(
             ),
             replacement = "",
             replacementLengthUtf16 = applied.insertedTextLength.toLong(),
+            startLine = if (useEditorLineCoordinates) applied.range.startLine - 1 else null,
+            startColumnUtf16 = if (useEditorLineCoordinates) applied.range.startColumn - 1L else null,
+            oldEndLine = if (useEditorLineCoordinates) applied.range.endLine - 1 else null,
+            oldEndColumnUtf16 = if (useEditorLineCoordinates) applied.range.endColumn - 1L else null,
             replacementLineFeedCount = lineFeeds,
             replacementTrailingUtf16Length = trailingLength
         )
