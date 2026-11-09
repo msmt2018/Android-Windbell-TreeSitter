@@ -56,7 +56,9 @@ class TshEngine private constructor(val options: TshEngineOptions) : AutoCloseab
         languages: TshGrammarLanguageResolver,
         compilerVersion: String = "treesitter-adapter-1"
     ): TshTreeSitterQueryCompiler {
-        check(state != TshEngineState.CLOSED) { "TSH engine is closed" }
+        check(state == TshEngineState.INITIALIZED) {
+            "TSH engine must be initialized before creating a query compiler"
+        }
         return TshTreeSitterQueryCompiler(
             languages = languages,
             objects = objects,
@@ -73,12 +75,12 @@ class TshEngine private constructor(val options: TshEngineOptions) : AutoCloseab
         languageHandle: TshNativeResourceLeaseStore.Handle<com.zerostudio.idea.treesitter.TSLanguage>,
         grammar: TshGrammarDescriptor
     ): TshResult<TshTreeSitterParserOwner> {
-        if (state == TshEngineState.CLOSED) {
+        if (state != TshEngineState.INITIALIZED) {
             return TshResult.Failure(listOf(TshDiagnostic(
-                code = "TSH-ENGINE-003",
+                code = "TSH-ENGINE-002",
                 severity = TshDiagnosticSeverity.ERROR,
-                stage = TshDiagnosticStage.LIFECYCLE,
-                message = "Cannot open a Tree-sitter parser from a closed TSH engine"
+                stage = TshDiagnosticStage.ENGINE,
+                message = "TSH engine must be initialized before opening a Tree-sitter parser"
             )))
         }
         return TshTreeSitterParserOwner.open(nativeResources, languageHandle, grammar)
@@ -88,7 +90,9 @@ class TshEngine private constructor(val options: TshEngineOptions) : AutoCloseab
     fun createTreeSitterQueryExecutor(
         predicateHandlers: List<com.zerostudio.idea.treesitter.predicate.TSPredicateHandler> = emptyList()
     ): TshTreeSitterQueryExecutor {
-        check(state != TshEngineState.CLOSED) { "TSH engine is closed" }
+        check(state == TshEngineState.INITIALIZED) {
+            "TSH engine must be initialized before creating a query executor"
+        }
         return TshTreeSitterQueryExecutor(
             objects = objects,
             queries = compiledQueries,
@@ -97,6 +101,42 @@ class TshEngine private constructor(val options: TshEngineOptions) : AutoCloseab
             predicateHandlers = predicateHandlers,
             resourceRegistry = nativeResources
         )
+    }
+
+    /**
+     * Resolves host providers using this Engine's strictness and diagnostics options.
+     * Strict mode rejects missing required capabilities; lenient mode returns a degraded report.
+     */
+    fun resolveProviders(
+        instance: Any,
+        descriptor: TshObjectDescriptor,
+        required: TshCapabilitySet = TshCapabilitySet.EMPTY,
+        optional: TshCapabilitySet = TshCapabilitySet.EMPTY,
+        apiRange: TshProviderApiRange = TshProviderApiRange()
+    ): TshResult<TshProviderResolution> {
+        if (state != TshEngineState.INITIALIZED) {
+            return TshResult.Failure(listOf(TshDiagnostic(
+                code = "TSH-ENGINE-002",
+                severity = TshDiagnosticSeverity.ERROR,
+                stage = TshDiagnosticStage.ENGINE,
+                message = "TSH engine must be initialized before provider resolution"
+            )))
+        }
+        val resolution = providers.resolveFor(instance, descriptor, required, optional, apiRange)
+        if (options.strictProviderValidation && !resolution.isSatisfiable) {
+            return TshResult.Failure(resolution.diagnostics.filter {
+                it.severity == TshDiagnosticSeverity.ERROR
+            }.ifEmpty { listOf(TshDiagnostic(
+                code = "TSH-PROVIDER-006",
+                severity = TshDiagnosticSeverity.ERROR,
+                stage = TshDiagnosticStage.PROVIDER,
+                message = "Provider resolution is not satisfiable",
+                objectId = descriptor.id
+            )) })
+        }
+        val visibleDiagnostics = if (options.enableDiagnostics) resolution.diagnostics else
+            resolution.diagnostics.filter { it.severity == TshDiagnosticSeverity.ERROR }
+        return TshResult.Success(resolution, visibleDiagnostics)
     }
 
     fun requireInitialized(): TshResult<TshEngine> =
