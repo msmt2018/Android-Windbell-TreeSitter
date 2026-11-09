@@ -121,4 +121,56 @@ class TshPieceTreeTextAccessProviderTest {
         assertTrue(document.isDisposed())
     }
 
+    @Test
+    fun convertsAppliedChangesWithoutMaterializingLargeTextSlices() {
+        val changes = listOf(
+            x.github.module.editor.model.EditorDocument.AppliedChange(
+                range = com.zerostudio.idea.piecetable.common.Range(2, 3, 2, 5),
+                rangeOffset = 7,
+                insertedLinesCnt = 0,
+                insertedTextLength = 40_000,
+                deletedLinesCnt = 0,
+                deletedTextLength = 2,
+                finalLineNumber = 2,
+                finalColumn = 40_003,
+                content = null
+            ),
+            x.github.module.editor.model.EditorDocument.AppliedChange(
+                range = com.zerostudio.idea.piecetable.common.Range(1, 2, 1, 2),
+                rangeOffset = 1,
+                insertedLinesCnt = 1,
+                insertedTextLength = 30_000,
+                deletedLinesCnt = 0,
+                deletedTextLength = 0,
+                finalLineNumber = 2,
+                finalColumn = 12,
+                content = null
+            )
+        )
+        val result = editorChangesToTshChange("piece-tree-doc", 10L, 11L, changes)
+        assertTrue(result is TshResult.Success)
+        val edits = (result as TshResult.Success).value.edits
+        assertEquals(listOf(1L, 7L), edits.map { it.startUtf16 })
+        assertEquals(listOf(30_000L, 40_000L), edits.map { it.replacementLengthUtf16 })
+        assertTrue(edits.all { it.replacement.isEmpty() })
+        assertEquals(1, edits[0].newEndPointRow)
+        assertEquals(22, edits[0].newEndPointColumnBytes)
+    }
+
+    @Test
+    fun providerReportsDocumentDisposalToSubscribers() {
+        val (_, document) = document("hello")
+        val provider = TshPieceTreeTextAccessProvider()
+        var finalVersion = -1L
+        val listener = com.zerostudio.idea.treesitter.tsh.api.TshTextDocumentDisposedListener { _, version ->
+            finalVersion = version
+        }
+        val subscription = (provider.subscribeDisposed(document, listener) as TshResult.Success).value
+        document.dispose(17L)
+        subscription.close()
+        assertEquals(17L, finalVersion)
+        assertTrue(document.isDisposed())
+        assertTrue(provider.snapshot(document) is TshResult.Failure)
+    }
+
 }
