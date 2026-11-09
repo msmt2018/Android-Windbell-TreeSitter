@@ -200,15 +200,78 @@ uint32_t TshCompiler::parseColorHex(const std::string& hex_str) {
     return val;
 }
 
+/**
+ * Decode standard UTF-8 into UTF-16 code units before passing the pattern to
+ * Oniguruma's UTF-16LE encoding. Copying UTF-8 bytes into uint16_t (the old
+ * implementation) corrupts every non-ASCII pattern and can split code points.
+ */
+static bool decodeStandardUtf8ToUtf16(
+    const std::string& input,
+    std::vector<uint16_t>& output
+) {
+    output.clear();
+    output.reserve(input.size());
+    size_t i = 0;
+    while (i < input.size()) {
+        const uint8_t first = static_cast<uint8_t>(input[i]);
+        uint32_t cp = 0;
+        size_t count = 0;
+        if (first <= 0x7F) {
+            cp = first;
+            count = 1;
+        } else if (first >= 0xC2 && first <= 0xDF) {
+            cp = first & 0x1F;
+            count = 2;
+        } else if (first >= 0xE0 && first <= 0xEF) {
+            cp = first & 0x0F;
+            count = 3;
+        } else if (first >= 0xF0 && first <= 0xF4) {
+            cp = first & 0x07;
+            count = 4;
+        } else {
+            return false;
+        }
+        if (i + count > input.size()) return false;
+        for (size_t j = 1; j < count; ++j) {
+            const uint8_t next = static_cast<uint8_t>(input[i + j]);
+            if ((next & 0xC0) != 0x80) return false;
+            cp = (cp << 6) | (next & 0x3F);
+        }
+        // Reject overlong encodings, UTF-8 encoded surrogates and values > U+10FFFF.
+        if ((count == 2 && cp < 0x80) ||
+            (count == 3 && cp < 0x800) ||
+            (count == 4 && cp < 0x10000) ||
+            (cp >= 0xD800 && cp <= 0xDFFF) ||
+            cp > 0x10FFFF) {
+            return false;
+        }
+        if (cp <= 0xFFFF) {
+            output.push_back(static_cast<uint16_t>(cp));
+        } else {
+            cp -= 0x10000;
+            output.push_back(static_cast<uint16_t>(0xD800 + (cp >> 10)));
+            output.push_back(static_cast<uint16_t>(0xDC00 + (cp & 0x3FF)));
+        }
+        i += count;
+    }
+    return true;
+}
+
 static regex_t* compileOnigurumaUtf16(const std::string& pattern_str) {
     if (pattern_str.empty()) return nullptr;
-    std::vector<uint16_t> u16(pattern_str.begin(), pattern_str.end());
+    std::vector<uint16_t> u16;
+    if (!decodeStandardUtf8ToUtf16(pattern_str, u16)) {
+        LOGE("WindbellTSH", "Oniguruma regex pattern is not valid standard UTF-8");
+        return nullptr;
+    }
     regex_t* reg = nullptr;
     OnigErrorInfo einfo;
+    const UChar* begin = reinterpret_cast<const UChar*>(u16.data());
+    const UChar* end = begin + (u16.size() * sizeof(uint16_t));
     int r = onig_new(
         &reg,
-        reinterpret_cast<const UChar*>(u16.data()),
-        reinterpret_cast<const UChar*>(u16.data() + u16.size()),
+        begin,
+        end,
         ONIG_OPTION_DEFAULT,
         ONIG_ENCODING_UTF16_LE,
         ONIG_SYNTAX_DEFAULT,
