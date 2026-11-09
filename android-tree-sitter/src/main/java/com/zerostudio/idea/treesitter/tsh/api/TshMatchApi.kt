@@ -194,8 +194,13 @@ object TshMatchMerger {
             )
             valid
         }
+        val idGroups = accepted.groupBy { it.id }
+        if (idGroups.values.any { group -> group.distinct().size > 1 }) {
+            return failure("TSH-MATCH-005", "A Match id identifies more than one distinct Match payload")
+        }
+        val acceptedById = idGroups.values.map { it.first() }
         val deduplicated = LinkedHashMap<DedupKey, TshMatch>()
-        accepted.forEach { match ->
+        acceptedById.forEach { match ->
             val key = DedupKey(
                 match.source, match.ruleId.value, match.captureName, match.patternIndex,
                 match.range.start.offset, match.range.end.offset, match.rawRange,
