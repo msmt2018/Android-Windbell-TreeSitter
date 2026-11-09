@@ -33,6 +33,18 @@ class TshCoordinateConverterTest {
     }
 
     @Test
+    fun rejectsUnpairedSurrogatesAndProvidesLongOffsetEntryPoint() {
+        val invalid = TshCoordinateConverter.convert(
+            "\uD800", 0, TshCoordinateSystem.UTF16_CODE_UNIT, TshCoordinateSystem.UTF8_BYTE
+        )
+        assertTrue(invalid is TshResult.Failure)
+        val large = TshCoordinateConverter.convertLong(
+            "abc", 2L, TshCoordinateSystem.UTF16_CODE_UNIT, TshCoordinateSystem.UTF8_BYTE
+        )
+        assertEquals(2L, (large as TshResult.Success).value)
+    }
+
+    @Test
     fun reportsThatPixelAndLineColumnNeedLayoutProvider() {
         val result = TshCoordinateConverter.convert(
             "abc", 1, TshCoordinateSystem.UTF16_CODE_UNIT, TshCoordinateSystem.SCREEN_PIXEL
