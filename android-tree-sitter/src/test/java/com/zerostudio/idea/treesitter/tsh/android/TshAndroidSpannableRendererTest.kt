@@ -50,6 +50,29 @@ class TshAndroidSpannableRendererTest {
     )
 
     @Test
+    fun attachToBindsRendererAndOwnerScopeDetachesWithoutOwningHostObject() {
+        val engine = TshEngine.create()
+        engine.initialize()
+        val revisions = TshRenderRevisions(
+            TshDocumentId("doc"), 1L, "config", "theme", "viewport", "renderer"
+        )
+        val target = Target(SpannableStringBuilder("code"), revisions)
+        val renderer = TshAndroidSpannableRenderer(target)
+        val scope = TshOwnerScope("android-editor")
+        val binding = (renderer.attachTo(engine, scope) as TshResult.Success).value
+        assertTrue(binding.attachment.resolution.selectedProviders.any { it === renderer })
+        assertTrue(engine.objects.find(target.hostObject) != null)
+
+        scope.close()
+
+        assertEquals(TshAttachmentStatus.DETACHED, engine.inspectAttachment(binding.attachment.handle)?.status)
+        assertTrue(engine.objects.find(target.hostObject) == null)
+        assertTrue(engine.providers.all().none { it.id == renderer.id })
+        binding.close()
+        engine.close()
+    }
+
+    @Test
     fun rendererCanBeDiscoveredAsAnEngineHostProvider() {
         val revisions = TshRenderRevisions(
             TshDocumentId("doc"), 1L, "config", "theme", "viewport", "renderer"
