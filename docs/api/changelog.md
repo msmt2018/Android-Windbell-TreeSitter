@@ -115,7 +115,7 @@
 - Allowed stable same-offset insertion sequences while continuing to reject overlapping replacement ranges.
 - Added PieceTree provider change/disposal subscriptions and advertised both capabilities; added source tests for non-materializing change conversion and lifecycle notifications.
 - `onTransaction` transfers snapshot Lease ownership to the consumer, which must dispatch parsing off the EditorView edit thread and close both leases after completion.
-- Added `TshPieceTreeIncrementalSession`: one worker serializes initial parse, edit/parse transactions, pending-parse retry, full-parse fallback, and old-tree retirement; close queues final tree retirement after active Native work.
+- Added `TshPieceTreeIncrementalSession`: one worker serializes initial parse, edit/parse transactions, pending-parse retry, full-parse fallback, and old-tree retirement; pending work is coalesced to one transaction/snapshot so rapid typing cannot retain an unbounded queue of large PieceTree snapshots; close queues final tree retirement after active Native work.
 - Added a ParserOwner-level Native parse lock so a shared `TSParser` is never used concurrently by multiple document sessions.
 - Added `resync()` for same-document PieceTree buffer replacement after the host replacement callback. Switching document identity still requires closing and reattaching.
 - Host must call `close()` on permanent document close. Automatic host lifecycle hook, Gradle/JUnit execution, Native/JNI validation and device tests remain outstanding.
