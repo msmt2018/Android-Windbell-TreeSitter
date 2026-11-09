@@ -54,6 +54,25 @@ class TshProviderRegistryTest {
     }
 
     @Test
+    fun selectedProviderCannotAccidentallySatisfyHigherRequiredCapabilityVersion() {
+        val registry = TshProviderRegistry()
+        registry.register(Provider(
+            "editor-provider",
+            capabilities = TshCapabilitySet.of(
+                TshCapability("editor.attach", 1),
+                TshCapability("text.read", 1)
+            )
+        ))
+        val result = registry.resolveFor(
+            Any(), descriptor(),
+            required = TshCapabilitySet.of(TshCapability("text.read", 2)),
+            optional = TshCapabilitySet.of(TshCapability("editor.attach", 1))
+        )
+        assertFalse(result.isSatisfiable)
+        assertTrue(result.missingRequiredCapabilities.contains("text.read"))
+    }
+
+    @Test
     fun isolatesSupportsExceptionsAndReportsThem() {
         val registry = TshProviderRegistry()
         registry.register(Provider("broken", capabilities = TshCapabilitySet.of(TshCapability("text.read"))) {
