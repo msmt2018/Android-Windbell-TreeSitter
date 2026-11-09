@@ -120,6 +120,26 @@ class TshAndroidSpannableRendererTest {
     }
 
     @Test
+    fun fullyOffscreenPlanIsAcknowledgedAsDeferredWithoutCreatingSpans() {
+        val revisions = TshRenderRevisions(
+            TshDocumentId("doc"), 1L, "config", "theme", "viewport", "renderer"
+        )
+        val text = SpannableStringBuilder("code")
+        val target = Target(text, revisions).apply {
+            visibleRange = TshAndroidVisibleRange(4L, 4L)
+        }
+        val renderer = TshAndroidSpannableRenderer(target)
+        val result = renderer.submit(
+            plan("offscreen-plan", revisions, 0xFFFF0000u), Acknowledger()
+        ) as TshResult.Success<TshRenderReceipt>
+        assertEquals(TshRenderReceiptStatus.APPLIED, result.value.status)
+        assertEquals(0, result.value.appliedInstructionCount)
+        assertEquals(1, result.value.deferredInstructionCount)
+        assertTrue(result.value.confirmsHostMutation)
+        assertTrue(text.getSpans(0, 4, CharacterStyle::class.java).isEmpty())
+    }
+
+    @Test
     fun decorationSpanResetsUnspecifiedDecorationFlags() {
         val revisions = TshRenderRevisions(
             TshDocumentId("doc"), 1L, "config", "theme", "viewport", "renderer"
