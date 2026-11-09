@@ -304,9 +304,9 @@ class TshTreeSitterQueryExecutor(
             }
             val required = buildSet {
                 for (pattern in 0U until nativeQuery.patternCount) {
-                    nativeQuery.predicatesFor(pattern).forEach { predicate ->
-                        add(predicate.name.removePrefix("#"))
-                    }
+                    nativeQuery.predicatesFor(pattern)
+                        .filterIsInstance<com.zerostudio.idea.treesitter.TSQueryPredicate.Generic>()
+                        .forEach { predicate -> add(predicate.name.removePrefix("#")) }
                 }
             }
             val missing = required - declared
