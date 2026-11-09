@@ -122,6 +122,27 @@ class TshAndroidSpannableRendererTest {
     }
 
     @Test
+    fun scopedRendererBindingDoesNotUnregisterAnExternallyOwnedHostObject() {
+        val engine = TshEngine.create()
+        engine.initialize()
+        val revisions = TshRenderRevisions(
+            TshDocumentId("doc"), 1L, "config", "theme", "viewport", "renderer"
+        )
+        val target = Target(SpannableStringBuilder("code"), revisions)
+        val descriptor = engine.objects.register(target.hostObject, "editor")
+        val renderer = TshAndroidSpannableRenderer(target)
+        val scope = TshOwnerScope("externally-owned-editor")
+        val binding = (renderer.attachTo(engine, scope) as TshResult.Success<TshAndroidSpannableBinding>).value
+
+        scope.close()
+
+        assertEquals(descriptor.id, engine.objects.find(target.hostObject)?.id)
+        assertTrue(engine.providers.all().none { it.id == renderer.id })
+        binding.close()
+        engine.close()
+    }
+
+    @Test
     fun rendererCanBeDiscoveredAsAnEngineHostProvider() {
         val revisions = TshRenderRevisions(
             TshDocumentId("doc"), 1L, "config", "theme", "viewport", "renderer"
