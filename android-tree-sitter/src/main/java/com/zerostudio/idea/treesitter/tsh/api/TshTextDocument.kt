@@ -37,6 +37,9 @@ data class TshTextEdit(
     init {
         require(startUtf16 >= 0L) { "startUtf16 must be >= 0" }
         require(endUtf16 >= startUtf16) { "endUtf16 must be >= startUtf16" }
+        require(TshUnicode.isWellFormedUtf16(replacement)) {
+            "Replacement contains an unpaired UTF-16 surrogate"
+        }
     }
 }
 
@@ -115,9 +118,31 @@ interface TshTextAccessProvider {
         if (startUtf16 > snapshot.lengthUtf16) return failure(
             "TSH-TEXT-002", "Chunk start is outside the snapshot"
         )
-        val end = startUtf16 + minOf(snapshot.lengthUtf16 - startUtf16, maxUtf16Length.toLong())
         return try {
+            var end = startUtf16 + minOf(snapshot.lengthUtf16 - startUtf16, maxUtf16Length.toLong())
+            if (startUtf16 > 0L && startUtf16 < snapshot.lengthUtf16) {
+                val previous = snapshot.readUtf16(startUtf16 - 1L, startUtf16)
+                val first = snapshot.readUtf16(startUtf16, startUtf16 + 1L)
+                if (previous.isNotEmpty() && first.isNotEmpty() &&
+                    Character.isHighSurrogate(previous[0]) && Character.isLowSurrogate(first[0])) {
+                    return failure("TSH-TEXT-005", "Chunk start splits a UTF-16 surrogate pair")
+                }
+            }
+            if (end > startUtf16 && end < snapshot.lengthUtf16) {
+                val last = snapshot.readUtf16(end - 1L, end)
+                val next = snapshot.readUtf16(end, end + 1L)
+                if (last.isNotEmpty() && next.isNotEmpty() &&
+                    Character.isHighSurrogate(last[0]) && Character.isLowSurrogate(next[0])) {
+                    end--
+                }
+            }
+            if (end == startUtf16 && startUtf16 < snapshot.lengthUtf16) {
+                return failure("TSH-TEXT-006", "Chunk limit is too small to include the next Unicode code point")
+            }
             val text = snapshot.readUtf16(startUtf16, end)
+            if (!TshUnicode.isWellFormedUtf16(text)) {
+                return failure("TSH-TEXT-007", "Snapshot chunk contains malformed UTF-16")
+            }
             TshResult.Success(TshTextChunk(snapshot.documentId, snapshot.version, startUtf16, end, text))
         } catch (error: Throwable) {
             TshResult.Failure(listOf(TshDiagnostic(
@@ -131,7 +156,7 @@ interface TshTextAccessProvider {
     /** Providers that support live edits override this; default explicitly reports unsupported. */
     fun subscribe(document: Any, listener: TshTextChangeListener): TshResult<TshTextSubscription> =
         TshResult.Failure(listOf(TshDiagnostic(
-            code = "TSH-TEXT-004", severity = TshDiagnosticSeverity.WARNING,
+            code = "TSH-TEXT-004", severity = TshDiagnosticSeverity.ERROR,
             stage = TshDiagnosticStage.BINDING,
             message = "This TextAccessProvider does not support change subscriptions"
         )))
@@ -140,4 +165,24 @@ interface TshTextAccessProvider {
         code = code, severity = TshDiagnosticSeverity.ERROR,
         stage = TshDiagnosticStage.BINDING, message = message
     )))
+}
+
+
+/** Shared strict UTF-16 validation for text edits and chunk boundaries. */
+internal object TshUnicode {
+    fun isWellFormedUtf16(value: CharSequence): Boolean {
+        var index = 0
+        while (index < value.length) {
+            val current = value[index]
+            when {
+                Character.isHighSurrogate(current) -> {
+                    if (index + 1 >= value.length || !Character.isLowSurrogate(value[index + 1])) return false
+                    index += 2
+                }
+                Character.isLowSurrogate(current) -> return false
+                else -> index++
+            }
+        }
+        return true
+    }
 }
