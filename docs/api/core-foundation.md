@@ -7,6 +7,8 @@
 - [x] 对象 ID、能力和对象描述符
 - [x] 基于实例身份的对象注册表
 - [x] Provider 注册、优先级、API 版本范围、能力版本匹配与异常隔离（源码/测试源码，未运行）
+- [x] OwnerScope、Attach/Detach、Attachment Report、Provider refresh（源码/测试源码，未运行）
+- [x] Long SourcePosition/ByteRange 与 Native Int narrowing 检查
 - [x] TextDocument/TextSnapshot/TextEdit/TextChange 抽象
 - [x] Snapshot Lease、bounded chunk read、Edit 排序/重叠校验（默认 Lease 不 pin 可变宿主版本）
 - [x] 内存文本 UTF-8/UTF-16/Code Point/Grapheme 边界转换（不成对 surrogate 拒绝；BreakIterator 不承诺完整 UAX #29）
