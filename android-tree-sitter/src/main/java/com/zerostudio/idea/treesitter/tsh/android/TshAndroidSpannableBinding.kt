@@ -14,22 +14,90 @@ class TshAndroidSpannableBinding private constructor(
 ) : AutoCloseable {
     private val closed = AtomicBoolean(false)
     @Volatile private var cleanupRegistration: AutoCloseable? = null
+    @Volatile private var closeFailureDiagnostics: List<TshDiagnostic> = emptyList()
+
+    /** Cleanup failures are observable even though AutoCloseable.close() has no result value. */
+    fun closeDiagnostics(): List<TshDiagnostic> = closeFailureDiagnostics
 
     internal fun installCleanup(registration: AutoCloseable) {
         cleanupRegistration = registration
         if (closed.get()) {
             cleanupRegistration = null
-            runCatching { registration.close() }
+            closeRegistration(registration, "TSH-ANDROID-BINDING-009")
         }
     }
 
     override fun close() {
         if (!closed.compareAndSet(false, true)) return
-        engine.detach(attachment.handle)
-        engine.providers.unregister(renderer.id)
-        cleanupRegistration?.let { runCatching { it.close() } }
+        val failures = ArrayList<TshDiagnostic>()
+        try {
+            engine.detach(attachment.handle)
+        } catch (error: Exception) {
+            failures += closeDiagnostic(
+                "TSH-ANDROID-BINDING-010",
+                "Cannot detach Android renderer attachment: ${error.message}",
+                error
+            )
+        } catch (error: LinkageError) {
+            failures += closeDiagnostic(
+                "TSH-ANDROID-BINDING-011",
+                "Android renderer detach failed with a linkage error",
+                error
+            )
+        }
+        try {
+            engine.providers.unregister(renderer.id)
+        } catch (error: Exception) {
+            failures += closeDiagnostic(
+                "TSH-ANDROID-BINDING-012",
+                "Cannot unregister Android renderer Provider: ${error.message}",
+                error
+            )
+        } catch (error: LinkageError) {
+            failures += closeDiagnostic(
+                "TSH-ANDROID-BINDING-013",
+                "Android renderer Provider unregister failed with a linkage error",
+                error
+            )
+        }
+        cleanupRegistration?.let { registration ->
+            try {
+                registration.close()
+            } catch (error: Exception) {
+                failures += closeDiagnostic(
+                    "TSH-ANDROID-BINDING-014",
+                    "Cannot remove Android Binding OwnerScope cleanup registration: ${error.message}",
+                    error
+                )
+            } catch (error: LinkageError) {
+                failures += closeDiagnostic(
+                    "TSH-ANDROID-BINDING-015",
+                    "Android Binding cleanup unregister failed with a linkage error",
+                    error
+                )
+            }
+        }
         cleanupRegistration = null
+        closeFailureDiagnostics = failures.toList()
     }
+
+    private fun closeRegistration(registration: AutoCloseable, code: String) {
+        try {
+            registration.close()
+        } catch (error: Exception) {
+            closeFailureDiagnostics = closeFailureDiagnostics + closeDiagnostic(
+                code, "Cannot remove Android Binding cleanup registration: ${error.message}", error
+            )
+        } catch (error: LinkageError) {
+            closeFailureDiagnostics = closeFailureDiagnostics + closeDiagnostic(
+                code, "Android Binding cleanup registration failed with a linkage error", error
+            )
+        }
+    }
+
+    private fun closeDiagnostic(code: String, message: String, cause: Throwable) = TshDiagnostic(
+        code, TshDiagnosticSeverity.ERROR, TshDiagnosticStage.LIFECYCLE, message, cause = cause
+    )
 
     companion object {
         internal fun attach(
