@@ -44,6 +44,7 @@ class TshAndroidSpannableBinding private constructor(
         if (!closed.compareAndSet(false, true)) return
         val failures = ArrayList<TshDiagnostic>()
         failures += renderCoordinator.close().diagnostics()
+        failures += renderer.clearAll().diagnostics()
 
         try {
             engine.detach(attachment.handle)
