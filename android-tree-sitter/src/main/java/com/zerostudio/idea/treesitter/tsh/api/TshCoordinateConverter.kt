@@ -159,9 +159,9 @@ object TshCoordinateConverter {
 
     private fun <T> TshResult<T>.mapInt(): TshResult<Int> = when (this) {
         is TshResult.Success -> {
-            val value = value.toLong()
-            if (value > Int.MAX_VALUE) failure("TSH-COORD-005", "Converted offset exceeds Int.MAX_VALUE")
-            else TshResult.Success(value.toInt(), diagnostics)
+            val converted = value
+            if (converted > Int.MAX_VALUE.toLong()) failure("TSH-COORD-005", "Converted offset exceeds Int.MAX_VALUE")
+            else TshResult.Success(converted.toInt(), diagnostics)
         }
         is TshResult.Failure -> this
     }
