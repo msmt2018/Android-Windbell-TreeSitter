@@ -64,7 +64,8 @@
 - [ ] ATS Lexer/Parser/AST/Compiler/Lowering 尚未实现，ATS 最终必须编译到现有 Tree-sitter Query 管线。
 - [ ] Grammar Node Schema Provider / strictNodeValidation 尚未实现。
 - [ ] Tree-sitter 真实 step budget、Native 可中断取消、增量 Edit/changed-range 尚未实现。
-- [ ] ParserOwner 仍以完整 String 为输入；未实现 Tree-sitter Input callback 对接 Piece Tree/Rope chunk provider。
+- [x] TSParser.parseInput(TSInput) / JNI callback / TshSnapshotTreeSitterInput / ParserOwner Snapshot chunk parse 源码与 adapter 测试源码。
+- [ ] 真实宿主 Piece Tree/Rope Provider、增量多 Edit→TSInputEdit 转换和 Native parse integration test。
 - [ ] 旧宿主所有 Tree/Language/Parser owner 尚未全部迁移到统一 Resource Registry。
 
 ### 独立 Regex / Oniguruma
