@@ -57,12 +57,15 @@ class TshTextAccessBinding private constructor(
         }
         if (result is TshResult.Failure) return result
         val subscription = (result as TshResult.Success<TshTextSubscription>).value
-        synchronized(lock) {
-            if (closed.get()) {
-                closeSubscription(subscription)
-                return failure("TSH-TEXT-BINDING-001", "TextAccessBinding closed while subscribing")
+        val rejected = synchronized(lock) {
+            if (closed.get()) true else {
+                subscriptions += subscription
+                false
             }
-            subscriptions += subscription
+        }
+        if (rejected) {
+            closeSubscription(subscription)
+            return failure("TSH-TEXT-BINDING-001", "TextAccessBinding closed while subscribing")
         }
         return TshResult.Success(subscription, result.diagnostics)
     }
