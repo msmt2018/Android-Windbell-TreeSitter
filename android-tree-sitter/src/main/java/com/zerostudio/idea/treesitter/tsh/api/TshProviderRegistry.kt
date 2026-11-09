@@ -36,8 +36,15 @@ data class TshProviderResolution(
 }
 
 class TshProviderRegistry {
+    private data class ScopedRegistration(
+        val provider: TshProvider,
+        var references: Int,
+        var externallyOwned: Boolean
+    )
+
     private val lock = Any()
     private val providers = LinkedHashMap<String, TshProvider>()
+    private val scopedRegistrations = LinkedHashMap<String, ScopedRegistration>()
     private var closed = false
 
     fun register(provider: TshProvider) {
@@ -50,6 +57,50 @@ class TshProviderRegistry {
                 "A different provider already uses this id"
             }
             providers[provider.id] = provider
+            scopedRegistrations[provider.id]?.let { registration ->
+                if (registration.provider === provider) registration.externallyOwned = true
+            }
+        }
+    }
+
+    /**
+     * Acquires a reference-counted Provider registration. Multiple document bindings may share
+     * the same provider instance; a manually registered provider remains externally owned.
+     */
+    fun acquireScoped(provider: TshProvider): AutoCloseable {
+        require(provider.id.isNotBlank()) { "provider id must not be blank" }
+        require(provider.apiVersion > 0) { "provider apiVersion must be positive" }
+        synchronized(lock) {
+            check(!closed) { "Provider registry is closed" }
+            val existing = providers[provider.id]
+            check(existing == null || existing === provider) {
+                "A different provider already uses this id"
+            }
+            val registration = scopedRegistrations[provider.id]
+            if (registration == null) {
+                providers[provider.id] = provider
+                scopedRegistrations[provider.id] = ScopedRegistration(
+                    provider, 1, externallyOwned = existing === provider
+                )
+            } else {
+                check(registration.provider === provider) { "Scoped Provider identity changed" }
+                registration.references++
+            }
+        }
+        val released = java.util.concurrent.atomic.AtomicBoolean(false)
+        return AutoCloseable {
+            if (released.compareAndSet(false, true)) synchronized(lock) {
+                val registration = scopedRegistrations[provider.id] ?: return@synchronized
+                if (registration.provider !== provider) return@synchronized
+                check(registration.references > 0) { "Provider registration reference count underflow" }
+                registration.references--
+                if (registration.references == 0) {
+                    scopedRegistrations.remove(provider.id)
+                    if (!registration.externallyOwned && providers[provider.id] === provider) {
+                        providers.remove(provider.id)
+                    }
+                }
+            }
         }
     }
 
@@ -65,6 +116,7 @@ class TshProviderRegistry {
     }
 
     fun unregister(id: String): Boolean = synchronized(lock) {
+        scopedRegistrations.remove(id)
         providers.remove(id) != null
     }
 
