@@ -103,6 +103,9 @@ class TshNativeResourceRegistry(
         if (shouldClose) retireAll()
     }
 
+    /** Native close/dependency failures captured during retire or close. */
+    fun closeDiagnostics(): List<TshDiagnostic> = leases.closeDiagnostics()
+
     /** Number of active operations retaining this resource. */
     fun activeLeaseCount(objectId: TshObjectId): Int = leases.activeLeaseCount(objectId)
 }
