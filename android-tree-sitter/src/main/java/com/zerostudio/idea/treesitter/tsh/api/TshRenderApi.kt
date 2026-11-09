@@ -108,10 +108,8 @@ interface TshRenderAcknowledger {
 }
 
 /** Renderer owns all View/Canvas/Span/Compose objects and must only mutate TSH-owned draw state. */
-interface TshRenderProvider {
-    val id: String
-    val apiVersion: Int
-    val capabilities: TshCapabilitySet
+interface TshRenderProvider : TshProvider {
+    override fun supports(instance: Any, descriptor: TshObjectDescriptor): Boolean = false
 
     /**
      * QUEUED may be acknowledged asynchronously after this method returns. Synchronous providers
