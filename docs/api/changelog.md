@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Added
+- editor 模块新增 TshPieceTreeDocument/TshPieceTreeTextAccessProvider，直接适配仓库现有 PieceTreeTextBuffer/PieceTreeSnapshot；按 UTF-16 范围读取，不调用全文 toString；使用不可变快照持有原始 chunk 引用并保留旧版本读取能力；新增 PieceTree 适配测试源码，editor 模块接入 android-tree-sitter API 依赖。
 - TextAccessProvider 默认 Snapshot acquisition 增加 documentId/version/length 校验；Provider snapshot 获取异常与 LinkageError 转为结构化诊断，避免异常穿透绑定层；新增非法 Snapshot 与 final release failure 测试源码。
 - 新增可独立关闭的 TshTextSnapshotLease.retain() 与 TshSharedTextSnapshotLease 引用计数实现；默认不可变 Snapshot Lease 可续租，旧自定义 Lease 未实现续租时返回明确诊断；最后一个 Lease 释放时只执行一次 host snapshot release callback，并保留释放诊断。
 - TshTreeSitterParserOwner 的 Snapshot parse overload 现在独立 retain 输入快照并通过 TSParser.parseInput(TSInput) 分块解析；支持传入已编辑的旧语法树做增量解析，Native parse 结束后释放任务 Lease；新增 Lease 引用计数/独立关闭测试源码。
