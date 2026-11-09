@@ -212,14 +212,18 @@ class TshTreeSitterParserOwner private constructor(
                     newEndPoint.row < 0 || newEndPoint.column < 0 ||
                     (startPoint.column and 1) != 0 ||
                     (oldEndPoint.column and 1) != 0 ||
-                    (newEndPoint.column and 1) != 0
+                    (newEndPoint.column and 1) != 0 ||
+                    (startPoint.row > oldEndPoint.row ||
+                        (startPoint.row == oldEndPoint.row && startPoint.column > oldEndPoint.column)) ||
+                    (startPoint.row > newEndPoint.row ||
+                        (startPoint.row == newEndPoint.row && startPoint.column > newEndPoint.column))
             } || edits.zipWithNext().any { (left, right) ->
                 left.startByte < right.startByte ||
                     right.oldEndByte > left.startByte
             }) {
             return failure(
                 "TSH-PARSER-OWNER-028",
-                "Batch edits must use valid UTF-16LE byte/point boundaries, be non-overlapping, and be ordered by descending start byte",
+                "Batch edits must use valid monotonic UTF-16LE byte/point boundaries, be non-overlapping, and be ordered by descending start byte",
                 TshDiagnosticStage.PARSE,
                 ownedTree.registration.descriptor.id
             )
