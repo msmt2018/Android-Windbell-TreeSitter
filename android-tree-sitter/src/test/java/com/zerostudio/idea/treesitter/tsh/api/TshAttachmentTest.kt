@@ -32,7 +32,7 @@ class TshAttachmentTest {
                 optionalCapabilities = TshCapabilitySet.of(TshCapability("render.custom"))
             ),
             scope
-        ) as TshResult.Success
+        ) as TshResult.Success<TshAttachmentReport>
         assertEquals(TshAttachmentStatus.DEGRADED, attached.value.status)
         assertSame(host, engine.objects.find(attached.value.handle.objectId))
         assertTrue(engine.detach(attached.value.handle))
