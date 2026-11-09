@@ -59,7 +59,10 @@ class TshAndroidSpannableRendererTest {
         val target = Target(SpannableStringBuilder("code"), revisions)
         val renderer = TshAndroidSpannableRenderer(target)
         val scope = TshOwnerScope("android-editor")
-        val binding = (renderer.attachTo(engine, scope) as TshResult.Success).value
+        val binding = (renderer.attachTo(
+            engine, scope,
+            requiredCapabilities = TshCapabilitySet.of(TshCapability("render.foreground", 1))
+        ) as TshResult.Success<TshAndroidSpannableBinding>).value
         assertTrue(binding.attachment.resolution.selectedProviders.any { it === renderer })
         assertTrue(engine.objects.find(target.hostObject) != null)
 
