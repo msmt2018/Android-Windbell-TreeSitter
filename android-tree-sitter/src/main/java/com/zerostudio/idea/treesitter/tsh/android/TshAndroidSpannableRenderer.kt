@@ -321,7 +321,9 @@ class TshAndroidSpannableRenderer(
         }
         val underline = style.underline ?: ("underline" in decorations)
         val strike = style.strikeThrough ?: ("strike" in decorations || "strikethrough" in decorations)
-        if (underline || strike) {
+        val hasDecorationDeclaration = style.underline != null || style.strikeThrough != null ||
+            "underline" in decorations || "strike" in decorations || "strikethrough" in decorations
+        if (hasDecorationDeclaration) {
             spannable.setSpan(TshAndroidDecorationSpan(id, planId, underline, strike), start, end, flags)
         }
     }
