@@ -79,6 +79,7 @@ class TshPieceTreeEditorBinding private constructor(
             }
             val beforeVersion = before.snapshot.version
             val afterVersion = after.snapshot.version
+            lastVersion = afterVersion
             if (afterVersion == beforeVersion) {
                 // No text changed (for example, a history-only/no-op transaction).
                 before.close()
