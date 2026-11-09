@@ -140,7 +140,9 @@ class TshAndroidSpannableRenderer(
         optionalCapabilities: TshCapabilitySet? = null
     ): TshResult<TshAndroidSpannableBinding> = TshAndroidSpannableBinding.attach(
         engine, ownerScope, this, objectType, objectCapabilities, metadata,
-        requiredCapabilities, optionalCapabilities ?: capabilities
+        requiredCapabilities, optionalCapabilities ?: TshCapabilitySet.from(
+            capabilities.all().filterNot { requiredCapabilities.contains(it.id) }
+        )
     )
 
     override fun submit(
