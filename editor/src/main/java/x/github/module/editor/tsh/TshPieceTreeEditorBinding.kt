@@ -1,5 +1,6 @@
 package x.github.module.editor.tsh
 
+import android.os.Looper
 import com.zerostudio.idea.treesitter.tsh.api.TshDiagnostic
 import com.zerostudio.idea.treesitter.tsh.api.TshDiagnosticSeverity
 import com.zerostudio.idea.treesitter.tsh.api.TshDiagnosticStage
@@ -178,6 +179,9 @@ class TshPieceTreeEditorBinding private constructor(
             onInvalidated: (TshResult.Failure) -> Unit = {}
         ): TshPieceTreeEditorBinding {
             require(documentId.isNotBlank()) { "documentId must not be blank" }
+            check(Looper.myLooper() == Looper.getMainLooper()) {
+                "TshPieceTreeEditorBinding.attach must run on the EditorView main thread"
+            }
             require(view.getBuffer() is PieceTreeBuffer) {
                 "TshPieceTreeEditorBinding requires an EditorView backed by PieceTreeBuffer"
             }
