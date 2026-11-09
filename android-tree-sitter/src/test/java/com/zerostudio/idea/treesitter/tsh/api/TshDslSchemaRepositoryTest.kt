@@ -14,7 +14,8 @@ class TshDslSchemaRepositoryTest {
                     name = "size",
                     type = TshDslType.MeasureType(setOf(TshDslUnit.SP, TshDslUnit.PX)),
                     required = true,
-                    minimum = 1.0
+                    minimum = 1.0,
+                    rangeUnit = TshDslUnit.SP
                 ),
                 "weight" to TshPropertySchema(
                     name = "weight",
@@ -133,6 +134,7 @@ class TshDslSchemaRepositoryTest {
             TshDslVersion(1)
         )
         assertTrue(nullResult is TshResult.Failure)
+        assertFalse(nullResult.diagnostics().any { it.code == "TSH-SCHEMA-006" })
         assertTrue(nullResult.diagnostics().any { it.code == "TSH-SCHEMA-013" })
     }
 
@@ -148,8 +150,9 @@ class TshDslSchemaRepositoryTest {
             TshDslVersion(1)
         )
         assertTrue(result is TshResult.Success)
-        assertEquals(TshDiagnosticSeverity.WARNING,
-            (result as TshResult.Success).diagnostics.single().severity)
+        val success = result as TshResult.Success
+        assertEquals(TshDiagnosticSeverity.WARNING, success.diagnostics.single().severity)
+        assertEquals(TshDslValue.BooleanValue(true), success.value.unappliedProperties["extension"])
     }
 
     @Test
