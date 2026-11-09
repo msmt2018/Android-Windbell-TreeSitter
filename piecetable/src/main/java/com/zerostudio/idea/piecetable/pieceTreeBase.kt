@@ -1173,8 +1173,12 @@ internal class PieceTreeBase {
             val buffer = this._buffers[nodePos.node.piece.bufferIndex]
             val startOffset = this.offsetInBuffer(nodePos.node.piece.bufferIndex, nodePos.node.piece.start)
             val targetOffset = startOffset + nodePos.remainder
-            val targetEnd = Math.min(startOffset + nodePos.node.piece.length, targetOffset + Math.max(1, maxLength))
-            return buffer.buffer.substring(targetOffset, targetEnd)
+            // Bound the requested length before adding it to targetOffset. With the default
+            // Int.MAX_VALUE request, targetOffset + maxLength can overflow and produce a
+            // negative substring end while readers race with edits on immutable snapshots.
+            val remaining = startOffset + nodePos.node.piece.length - targetOffset
+            val chunkLength = Math.min(remaining, maxLength.coerceAtLeast(1))
+            return buffer.buffer.substring(targetOffset, targetOffset + chunkLength)
         }
     }
 
