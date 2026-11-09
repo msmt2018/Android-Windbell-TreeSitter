@@ -107,7 +107,9 @@ class TshDslSchemaRepositoryTest {
             TshValidationMode.LENIENT
         )
         assertTrue(result is TshResult.Success)
-        assertEquals(TshDiagnosticSeverity.WARNING, (result as TshResult.Success).diagnostics.single().severity)
+        val success = result as TshResult.Success
+        assertEquals(TshDiagnosticSeverity.WARNING, success.diagnostics.single().severity)
+        assertEquals(TshDslValue.StringValue("x"), success.value.unappliedProperties["vendorExtension"])
     }
 
     @Test
