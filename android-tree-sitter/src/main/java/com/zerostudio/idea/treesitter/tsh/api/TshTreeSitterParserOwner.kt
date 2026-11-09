@@ -5,10 +5,17 @@ import com.zerostudio.idea.treesitter.TSParser
 import com.zerostudio.idea.treesitter.TSTree
 
 /** A syntax tree registered with the Engine resource coordinator and ready for query execution. */
-data class TshOwnedSyntaxTree(
-    val snapshot: TshSyntaxTreeSnapshot,
+class TshOwnedSyntaxTree(
+    @Volatile var snapshot: TshSyntaxTreeSnapshot,
+        private set,
     val registration: TshNativeResourceRegistry.Registration<TSTree>
-)
+) {
+    @Volatile internal var lastEditedDocumentVersion: Long? = null
+
+    internal fun updateSnapshot(value: TshSyntaxTreeSnapshot) {
+        snapshot = value
+    }
+}
 
 /**
  * Owns one Tree-sitter parser and its Grammar dependency.
@@ -133,17 +140,33 @@ class TshTreeSitterParserOwner private constructor(
     }
 
     /**
-     * Applies one Tree-sitter input edit to an owned old tree without exposing its raw Native handle.
-     * The caller must compute byte offsets/points in the tree's configured UTF-16LE coordinate space.
+     * Applies one Tree-sitter input edit without exposing its raw Native handle.
+     * Multiple edits for one transaction may use the same target versions. Coordinates must be
+     * computed in the current edited tree's UTF-16LE byte/point space.
      */
     fun editTree(
         ownedTree: TshOwnedSyntaxTree,
-        edit: com.zerostudio.idea.treesitter.TSInputEdit
+        edit: com.zerostudio.idea.treesitter.TSInputEdit,
+        targetDocumentVersion: Long,
+        targetTreeRevision: Long
     ): TshResult<Unit> {
         if (ownedTree.snapshot.grammar.fingerprint != grammar.fingerprint) {
             return failure(
                 "TSH-PARSER-OWNER-010",
                 "Cannot edit a tree produced by a different Grammar",
+                TshDiagnosticStage.PARSE,
+                ownedTree.registration.descriptor.id
+            )
+        }
+        val initialSnapshot = ownedTree.snapshot
+        if (targetDocumentVersion < initialSnapshot.documentVersion ||
+            targetTreeRevision < initialSnapshot.treeRevision ||
+            (targetDocumentVersion == initialSnapshot.documentVersion &&
+                targetTreeRevision == initialSnapshot.treeRevision &&
+                ownedTree.lastEditedDocumentVersion != targetDocumentVersion)) {
+            return failure(
+                "TSH-PARSER-OWNER-019",
+                "Tree edit target revisions must advance or continue an existing edit transaction",
                 TshDiagnosticStage.PARSE,
                 ownedTree.registration.descriptor.id
             )
@@ -155,10 +178,57 @@ class TshTreeSitterParserOwner private constructor(
                 TshDiagnosticStage.LIFECYCLE,
                 ownedTree.registration.descriptor.id
             )
+        var editApplied = false
         return try {
+            val currentSnapshot = ownedTree.snapshot
+            if (targetDocumentVersion < currentSnapshot.documentVersion ||
+                targetTreeRevision < currentSnapshot.treeRevision ||
+                (targetDocumentVersion == currentSnapshot.documentVersion &&
+                    targetTreeRevision == currentSnapshot.treeRevision &&
+                    ownedTree.lastEditedDocumentVersion != targetDocumentVersion)) {
+                return failure(
+                    "TSH-PARSER-OWNER-019",
+                    "Tree edit target revisions changed while waiting for the exclusive lease",
+                    TshDiagnosticStage.PARSE,
+                    ownedTree.registration.descriptor.id
+                )
+            }
             lease.resource.edit(edit)
+            editApplied = true
+            val root = lease.resource.rootNode
+            if (!root.canAccess()) {
+                resources.retire(ownedTree.registration.descriptor.id)
+                return failure(
+                    "TSH-PARSER-OWNER-020",
+                    "Edited syntax tree root node is inaccessible",
+                    TshDiagnosticStage.PARSE,
+                    ownedTree.registration.descriptor.id
+                )
+            }
+            val updatedSnapshot = currentSnapshot.copy(
+                documentVersion = targetDocumentVersion,
+                treeRevision = targetTreeRevision,
+                rootByteRange = TshByteRange(root.startByte, root.endByte)
+            )
+            val metadata = resources.updateMetadata(
+                ownedTree.registration.handle,
+                mapOf(
+                    "documentId" to updatedSnapshot.documentId,
+                    "documentVersion" to updatedSnapshot.documentVersion.toString(),
+                    "treeRevision" to updatedSnapshot.treeRevision.toString(),
+                    "grammarFingerprint" to updatedSnapshot.grammar.fingerprint,
+                    "inputMode" to "chunked-utf16le"
+                )
+            )
+            if (metadata is TshResult.Failure) {
+                resources.retire(ownedTree.registration.descriptor.id)
+                return metadata
+            }
+            ownedTree.updateSnapshot(updatedSnapshot)
+            ownedTree.lastEditedDocumentVersion = targetDocumentVersion
             TshResult.Success(Unit)
         } catch (error: Exception) {
+            if (editApplied) resources.retire(ownedTree.registration.descriptor.id)
             failure(
                 "TSH-PARSER-OWNER-012",
                 "Tree-sitter input edit failed: ${error.message}",
@@ -211,7 +281,7 @@ class TshTreeSitterParserOwner private constructor(
         }
         if (oldTree != null && (
             oldTree.snapshot.documentId != snapshot.documentId ||
-                oldTree.snapshot.documentVersion >= snapshot.version ||
+                oldTree.snapshot.documentVersion != snapshot.version ||
                 oldTree.snapshot.grammar.fingerprint != grammar.fingerprint
             )) {
             return failure(
