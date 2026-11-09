@@ -94,54 +94,19 @@ class TshPieceTreeEditorBinding private constructor(
                 return
             }
 
-            val edits = try {
-                // EditorDocument reports applied edits bottom-up. Reverse to the ascending
-                // before-version order required by TshTextChange. The native compiler reverses
-                // them again for safe Tree-sitter application.
-                changes.asReversed().map { applied ->
-                    TshTextEdit(
-                        startUtf16 = applied.rangeOffset.toLong(),
-                        endUtf16 = Math.addExact(
-                            applied.rangeOffset.toLong(),
-                            applied.deletedTextLength.toLong()
-                        ),
-                        replacement = "",
-                        replacementLengthUtf16 = applied.insertedTextLength.toLong(),
-                        newEndPointRow = applied.finalLineNumber - 1,
-                        newEndPointColumnBytes = Math.multiplyExact(
-                            applied.finalColumn - 1,
-                            2
-                        )
-                    )
-                }
-            } catch (error: Exception) {
+            val changeResult = editorChangesToTshChange(
+                documentId = document.documentId,
+                beforeVersion = beforeVersion,
+                afterVersion = afterVersion,
+                changes = changes
+            )
+            if (changeResult is TshResult.Failure) {
                 before.close()
                 after.close()
-                invalidate(
-                    "TSH-PIECETREE-BINDING-003",
-                    "Cannot convert EditorDocument changes to TSH edits: ${error.message}",
-                    error
-                )
+                onInvalidated(changeResult)
                 return
             }
-
-            val change = try {
-                TshTextChange(
-                    documentId = document.documentId,
-                    beforeVersion = beforeVersion,
-                    afterVersion = afterVersion,
-                    edits = edits
-                )
-            } catch (error: Exception) {
-                before.close()
-                after.close()
-                invalidate(
-                    "TSH-PIECETREE-BINDING-004",
-                    "EditorDocument emitted an edit batch that violates TSH change invariants: ${error.message}",
-                    error
-                )
-                return
-            }
+            val change = (changeResult as TshResult.Success<TshTextChange>).value
 
             try {
                 document.publishChange(change)
@@ -214,4 +179,40 @@ class TshPieceTreeEditorBinding private constructor(
             return TshPieceTreeEditorBinding(view, document, provider, onTransaction, onInvalidated)
         }
     }
+}
+
+
+/**
+ * Converts EditorDocument's bottom-up applied changes into the ascending TSH before-version
+ * contract. Replacement contents remain in PieceTree storage; only lengths and exact endpoint
+ * coordinates cross the boundary.
+ */
+internal fun editorChangesToTshChange(
+    documentId: String,
+    beforeVersion: Long,
+    afterVersion: Long,
+    changes: List<EditorDocument.AppliedChange>
+): TshResult<TshTextChange> = try {
+    val edits = changes.asReversed().map { applied ->
+        TshTextEdit(
+            startUtf16 = applied.rangeOffset.toLong(),
+            endUtf16 = Math.addExact(
+                applied.rangeOffset.toLong(),
+                applied.deletedTextLength.toLong()
+            ),
+            replacement = "",
+            replacementLengthUtf16 = applied.insertedTextLength.toLong(),
+            newEndPointRow = applied.finalLineNumber - 1,
+            newEndPointColumnBytes = Math.multiplyExact(applied.finalColumn - 1, 2)
+        )
+    }
+    TshResult.Success(TshTextChange(documentId, beforeVersion, afterVersion, edits))
+} catch (error: Exception) {
+    TshResult.Failure(listOf(TshDiagnostic(
+        code = "TSH-PIECETREE-BINDING-003",
+        severity = TshDiagnosticSeverity.ERROR,
+        stage = TshDiagnosticStage.BINDING,
+        message = "EditorDocument change batch cannot be represented by TSH: ${error.message}",
+        cause = error
+    )))
 }
