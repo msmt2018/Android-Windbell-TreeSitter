@@ -372,6 +372,26 @@ class TshAndroidSpannableRenderer(
                 "Host Span commit/invalidation failed with a linkage error${detail}"
             )
         }
+        val currentAfterCommit = try {
+            acknowledger.isCurrent(plan.id, plan.revisions) &&
+                target.currentRevisions(documentId) == plan.revisions
+        } catch (error: Exception) {
+            false
+        } catch (error: LinkageError) {
+            false
+        }
+        if (!currentAfterCommit) {
+            val rollbackFailure = runCatching {
+                removeNewOwnedSpans(spannable, previousSpans)
+                restoreSpans(spannable, previousSpans)
+                target.invalidate(documentId)
+            }.exceptionOrNull()
+            val detail = rollbackFailure?.let { "; rollback also failed: ${it.message}" }.orEmpty()
+            return failure(
+                "TSH-ANDROID-RENDER-038",
+                "RenderPlan became stale or was cancelled during host invalidation${detail}"
+            )
+        }
         val status = if (fullyApplied == visibleInstructionCount && droppedInstructionCount == 0) {
             TshRenderReceiptStatus.APPLIED
         } else {
