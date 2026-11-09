@@ -227,7 +227,16 @@ class TshAndroidSpannableRenderer(
                 "Host viewport range exceeds the current Spannable length"
             )
         }
-        synchronized(renderedDocumentIds) { renderedDocumentIds += documentId }
+        val trackedForCleanup = synchronized(renderedDocumentIds) {
+            if (closed.get()) false else {
+                renderedDocumentIds += documentId
+                true
+            }
+        }
+        if (!trackedForCleanup) return failure(
+            "TSH-ANDROID-RENDER-039",
+            "Android Spannable renderer closed while preparing the document viewport"
+        )
         val diagnostics = ArrayList<TshDiagnostic>()
         // Keep the last committed TSH spans until the replacement plan is fully applied.
         val previousSpans = try {
