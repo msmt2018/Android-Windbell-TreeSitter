@@ -32,7 +32,7 @@ data class TshProviderResolution(
     val diagnostics: List<TshDiagnostic>,
     val degradationLevel: TshDegradationLevel
 ) {
-    val isSatisfiable: Boolean get() = missingRequiredCapabilities.isEmpty() && incompatibleCapabilities.isEmpty()
+    val isSatisfiable: Boolean get() = missingRequiredCapabilities.isEmpty()
 }
 
 class TshProviderRegistry {
