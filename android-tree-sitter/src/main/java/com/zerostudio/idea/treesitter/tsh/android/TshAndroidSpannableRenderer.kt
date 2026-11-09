@@ -144,6 +144,7 @@ class TshAndroidSpannableRenderer(
     init { require(id.isNotBlank()) }
 
     private val closed = AtomicBoolean(false)
+    internal val isClosed: Boolean get() = closed.get()
     private val renderedDocumentIds = LinkedHashSet<String>()
     @Volatile var cleanupDiagnostics: List<TshDiagnostic> = emptyList()
         private set
