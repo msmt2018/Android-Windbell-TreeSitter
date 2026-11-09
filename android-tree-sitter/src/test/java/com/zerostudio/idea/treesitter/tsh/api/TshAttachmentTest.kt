@@ -44,8 +44,28 @@ class TshAttachmentTest {
     }
 
     @Test
-    fun ownerScopeAutomaticallyDetachesAndRefreshUsesOriginalRequirements() {
+    fun strictAttachRejectsAndRollsBackMissingRequiredCapabilities() {
         val engine = TshEngine.create()
+        engine.initialize()
+        val host = HostEditor()
+        val scope = TshOwnerScope("strict-editor")
+        val result = engine.attach(
+            TshAttachmentRequest(
+                host, "editor",
+                requiredCapabilities = TshCapabilitySet.of(TshCapability("text.read", 1))
+            ),
+            scope
+        )
+        assertTrue(result is TshResult.Failure)
+        assertNull(engine.objects.find(host))
+        assertTrue(engine.attachments.let { it !== null })
+        scope.close()
+        engine.close()
+    }
+
+    @Test
+    fun ownerScopeAutomaticallyDetachesAndRefreshUsesOriginalRequirements() {
+        val engine = TshEngine.create(TshEngineOptions(strictProviderValidation = false))
         engine.initialize()
         val host = HostEditor()
         val scope = TshOwnerScope("document-view")
