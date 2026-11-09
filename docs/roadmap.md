@@ -161,3 +161,11 @@
 - [x] 修复 RenderCoordinator close 诊断构造与 Warning severity。
 - [x] CI 固定 Node.js 20；debug test job 与 release job 一样安装全部 grammar npm dependencies。
 - [ ] 等待最新 feature-branch Actions 完成；需要依据最新 commit 的完整日志修复剩余编译/测试/Grammar 生成问题，不能引用旧 commit 的结果。
+
+### 2026-11-10 follow-up：PieceTree 双路径越界与 CI 队列
+
+- [x] 不只修复 PieceTreeSnapshot；同时修复 PieceTreeBase.getNearestChunk() 中等价的 targetOffset + Int.MAX_VALUE 溢出。
+- [x] 回归测试同时覆盖 live buffer 与 immutable snapshot 的 Int.MAX_VALUE、有限 maxLength、文档末尾读取。
+- [x] CI 增加 workflow concurrency group，自动取消同分支/PR 的过期运行；移除重复的单 job 取消 action。
+- [x] Debug grammar npm install 与 Release 对齐，均提供 legacy peer dependency fallback。
+- [ ] 最新提交完整 Release + Debug CI 通过后才能升级验证状态。
