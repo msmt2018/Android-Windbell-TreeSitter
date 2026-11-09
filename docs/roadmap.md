@@ -79,6 +79,7 @@
 - [x] OwnedSyntaxTree exclusive edit lease、snapshot/registry metadata revision 同步和 QueryExecutor stale snapshot rejection 源码。
 - [x] 项目 PieceTreeTextBuffer 的 Snapshot/Chunk Provider 源码与测试源码（SOURCE_PARTIAL）。
 - [x] 新增 `TshPieceTreeEditorBinding`：在 EditorView 批量编辑前后固定 PieceTree Snapshot Lease，将 AppliedChange 转成不物化替换文本的元数据型 TshTextChange；Provider 增加 Change/Disposal subscription capability 与事件；源码及转换测试已提交（SOURCE_PARTIAL）。
+- [x] 新增 `TshPieceTreeIncrementalSession`：每文档单线程串行化初始 Parse、增量 Edit/Parse、pending parse retry、full-parse fallback 与旧树回收；Session 接管并 finally 释放快照 Lease（SOURCE_PARTIAL，未运行测试）。
 - [ ] EditorView buffer replacement/文件身份变化自动重建 Binding、宿主永久关闭自动触发 dispose，以及端到端 Native parse integration test。
 - [ ] 旧宿主所有 Tree/Language/Parser owner 尚未全部迁移到统一 Resource Registry。
 
@@ -130,7 +131,7 @@
 ## 仍需完成的缺陷与绑定项
 
 1. 完成 TshPieceTreeEditorBinding 的宿主生命周期接线：自动处理 EditorView buffer replacement/文件身份变化和永久关闭；补齐 UTF-8/UTF-16/CodePoint 索引 Provider。
-2. 将 EditorView Binding 的 onTransaction 接入后台调度器与 TshTreeSitterIncrementalUpdate.apply，补充真实 EditorDocument 批量编辑/撤销/重做 Native parse integration test 和取消/关闭竞态验证。
+2. 为 EditorView Binding/IncrementalSession 补充真实 EditorDocument 批量编辑/撤销/重做 Native parse integration test、快速连续输入、初次 parse 竞态、buffer replacement/resync 和关闭竞态验证。
 3. 实现 Regex WindowLease 和跨窗口正确性语义；无界模式必须有明确回退/拒绝策略。
 4. 实现 ATS 前端并 Lower 到唯一 Tree-sitter Query 执行管线。
 5. 将 Tree-sitter/ATS 与 Regex 输出真正适配到统一 TshMatch。
