@@ -52,10 +52,10 @@ object TshTreeSitterEditCompiler {
                     val column = if (edit.replacementLineFeedCount == 0) {
                         Math.addExact(
                             startPoint.column,
-                            Math.toIntExact(Math.multiplyExact(edit.replacementLengthUtf16, 2L))
+                            checkedColumn(Math.multiplyExact(edit.replacementLengthUtf16, 2L))
                         )
                     } else {
-                        Math.toIntExact(Math.multiplyExact(edit.replacementTrailingUtf16Length!!, 2L))
+                        checkedColumn(Math.multiplyExact(edit.replacementTrailingUtf16Length!!, 2L))
                     }
                     TSPoint.create(row, column)
                 } else {
@@ -80,6 +80,13 @@ object TshTreeSitterEditCompiler {
             failure("TSH-EDIT-COMPILE-008",
                 "Tree-sitter Native object factory is unavailable", error)
         }
+    }
+
+    private fun checkedColumn(bytes: Long): Int {
+        require(bytes >= 0L && bytes <= Int.MAX_VALUE.toLong()) {
+            "UTF-16LE byte column exceeds Native Int boundary"
+        }
+        return bytes.toInt()
     }
 
     private fun checkedByteOffset(offset: Long): Int {
