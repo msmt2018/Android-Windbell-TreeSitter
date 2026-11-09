@@ -10,6 +10,8 @@ enum class TshEngineState { CREATED, INITIALIZED, CLOSED }
  */
 class TshEngine private constructor(val options: TshEngineOptions) : AutoCloseable {
     private val stateRef = AtomicReference(TshEngineState.CREATED)
+    /** Linearizes public operations against close() so no resource can publish after shutdown. */
+    private val lifecycleLock = Any()
 
     val objects: TshObjectRegistry = TshObjectRegistry()
     val providers: TshProviderRegistry = TshProviderRegistry()
@@ -30,26 +32,16 @@ class TshEngine private constructor(val options: TshEngineOptions) : AutoCloseab
     val shutdownDiagnostics: List<TshDiagnostic>
         get() = nativeQueryLeases.closeDiagnostics() + nativeResources.closeDiagnostics()
 
-    fun initialize(): TshResult<TshEngine> {
-        while (true) {
-            when (val current = stateRef.get()) {
-                TshEngineState.CREATED -> {
-                    if (stateRef.compareAndSet(current, TshEngineState.INITIALIZED)) {
-                        return TshResult.Success(this)
-                    }
-                }
-                TshEngineState.INITIALIZED -> return TshResult.Success(this)
-                TshEngineState.CLOSED -> return TshResult.Failure(
-                    listOf(
-                        TshDiagnostic(
-                            code = "TSH-ENGINE-001",
-                            severity = TshDiagnosticSeverity.ERROR,
-                            stage = TshDiagnosticStage.ENGINE,
-                            message = "A closed TSH engine cannot be initialized again"
-                        )
-                    )
-                )
+    fun initialize(): TshResult<TshEngine> = synchronized(lifecycleLock) {
+        when (stateRef.get()) {
+            TshEngineState.CREATED -> {
+                stateRef.set(TshEngineState.INITIALIZED)
+                TshResult.Success(this)
             }
+            TshEngineState.INITIALIZED -> TshResult.Success(this)
+            TshEngineState.CLOSED -> engineFailure(
+                "TSH-ENGINE-001", "A closed TSH engine cannot be initialized again"
+            )
         }
     }
 
@@ -61,18 +53,14 @@ class TshEngine private constructor(val options: TshEngineOptions) : AutoCloseab
     fun createTreeSitterQueryCompiler(
         languages: TshGrammarLanguageResolver,
         compilerVersion: String = "treesitter-adapter-1"
-    ): TshTreeSitterQueryCompiler {
+    ): TshTreeSitterQueryCompiler = synchronized(lifecycleLock) {
         check(state == TshEngineState.INITIALIZED) {
             "TSH engine must be initialized before creating a query compiler"
         }
-        return TshTreeSitterQueryCompiler(
-            languages = languages,
-            objects = objects,
-            queries = compiledQueries,
-            leases = nativeQueryLeases,
-            languageLeases = nativeResourceLeases,
-            compilerVersion = compilerVersion,
-            resourceRegistry = nativeResources
+        TshTreeSitterQueryCompiler(
+            languages = languages, objects = objects, queries = compiledQueries,
+            leases = nativeQueryLeases, languageLeases = nativeResourceLeases,
+            compilerVersion = compilerVersion, resourceRegistry = nativeResources
         )
     }
 
@@ -80,31 +68,25 @@ class TshEngine private constructor(val options: TshEngineOptions) : AutoCloseab
     fun openTreeSitterParser(
         languageHandle: TshNativeResourceLeaseStore.Handle<com.zerostudio.idea.treesitter.TSLanguage>,
         grammar: TshGrammarDescriptor
-    ): TshResult<TshTreeSitterParserOwner> {
+    ): TshResult<TshTreeSitterParserOwner> = synchronized(lifecycleLock) {
         if (state != TshEngineState.INITIALIZED) {
-            return TshResult.Failure(listOf(TshDiagnostic(
-                code = "TSH-ENGINE-002",
-                severity = TshDiagnosticSeverity.ERROR,
-                stage = TshDiagnosticStage.ENGINE,
-                message = "TSH engine must be initialized before opening a Tree-sitter parser"
-            )))
+            return@synchronized engineFailure(
+                "TSH-ENGINE-002", "TSH engine must be initialized before opening a Tree-sitter parser"
+            )
         }
-        return TshTreeSitterParserOwner.open(nativeResources, languageHandle, grammar)
+        TshTreeSitterParserOwner.open(nativeResources, languageHandle, grammar)
     }
 
     /** Creates an executor sharing the exact Native query/resource stores owned by this Engine. */
     fun createTreeSitterQueryExecutor(
         predicateHandlers: List<com.zerostudio.idea.treesitter.predicate.TSPredicateHandler> = emptyList()
-    ): TshTreeSitterQueryExecutor {
+    ): TshTreeSitterQueryExecutor = synchronized(lifecycleLock) {
         check(state == TshEngineState.INITIALIZED) {
             "TSH engine must be initialized before creating a query executor"
         }
-        return TshTreeSitterQueryExecutor(
-            objects = objects,
-            queries = compiledQueries,
-            leases = nativeQueryLeases,
-            treeLeases = nativeResourceLeases,
-            predicateHandlers = predicateHandlers,
+        TshTreeSitterQueryExecutor(
+            objects = objects, queries = compiledQueries, leases = nativeQueryLeases,
+            treeLeases = nativeResourceLeases, predicateHandlers = predicateHandlers,
             resourceRegistry = nativeResources
         )
     }
@@ -113,34 +95,29 @@ class TshEngine private constructor(val options: TshEngineOptions) : AutoCloseab
     fun attach(
         request: TshAttachmentRequest,
         ownerScope: TshOwnerScope
-    ): TshResult<TshAttachmentReport> {
-        if (state != TshEngineState.INITIALIZED) {
-            return TshResult.Failure(listOf(TshDiagnostic(
-                code = "TSH-ENGINE-002",
-                severity = TshDiagnosticSeverity.ERROR,
-                stage = TshDiagnosticStage.ENGINE,
-                message = "TSH engine must be initialized before attaching host objects"
-            )))
-        }
-        return attachments.attach(request, ownerScope)
+    ): TshResult<TshAttachmentReport> = synchronized(lifecycleLock) {
+        if (state != TshEngineState.INITIALIZED) return@synchronized engineFailure(
+            "TSH-ENGINE-002", "TSH engine must be initialized before attaching host objects"
+        )
+        attachments.attach(request, ownerScope)
     }
 
     fun inspectAttachment(handle: TshAttachmentHandle): TshAttachmentReport? =
-        attachments.inspect(handle)
-
-    fun refreshAttachment(handle: TshAttachmentHandle): TshResult<TshAttachmentReport> {
-        if (state != TshEngineState.INITIALIZED) {
-            return TshResult.Failure(listOf(TshDiagnostic(
-                code = "TSH-ENGINE-002",
-                severity = TshDiagnosticSeverity.ERROR,
-                stage = TshDiagnosticStage.ENGINE,
-                message = "TSH engine must be initialized before refreshing attachments"
-            )))
+        synchronized(lifecycleLock) {
+            if (state == TshEngineState.CLOSED) null else attachments.inspect(handle)
         }
-        return attachments.refresh(handle)
-    }
 
-    fun detach(handle: TshAttachmentHandle): Boolean = attachments.detach(handle)
+    fun refreshAttachment(handle: TshAttachmentHandle): TshResult<TshAttachmentReport> =
+        synchronized(lifecycleLock) {
+            if (state != TshEngineState.INITIALIZED) return@synchronized engineFailure(
+                "TSH-ENGINE-002", "TSH engine must be initialized before refreshing attachments"
+            )
+            attachments.refresh(handle)
+        }
+
+    fun detach(handle: TshAttachmentHandle): Boolean = synchronized(lifecycleLock) {
+        state != TshEngineState.CLOSED && attachments.detach(handle)
+    }
 
     /**
      * Resolves host providers using this Engine's strictness and diagnostics options.
@@ -152,51 +129,40 @@ class TshEngine private constructor(val options: TshEngineOptions) : AutoCloseab
         required: TshCapabilitySet = TshCapabilitySet.EMPTY,
         optional: TshCapabilitySet = TshCapabilitySet.EMPTY,
         apiRange: TshProviderApiRange = TshProviderApiRange()
-    ): TshResult<TshProviderResolution> {
-        if (state != TshEngineState.INITIALIZED) {
-            return TshResult.Failure(listOf(TshDiagnostic(
-                code = "TSH-ENGINE-002",
-                severity = TshDiagnosticSeverity.ERROR,
-                stage = TshDiagnosticStage.ENGINE,
-                message = "TSH engine must be initialized before provider resolution"
-            )))
-        }
+    ): TshResult<TshProviderResolution> = synchronized(lifecycleLock) {
+        if (state != TshEngineState.INITIALIZED) return@synchronized engineFailure(
+            "TSH-ENGINE-002", "TSH engine must be initialized before provider resolution"
+        )
         val resolution = providers.resolveFor(instance, descriptor, required, optional, apiRange)
         if (options.strictProviderValidation && !resolution.isSatisfiable) {
-            return TshResult.Failure(resolution.diagnostics.filter {
+            return@synchronized TshResult.Failure(resolution.diagnostics.filter {
                 it.severity == TshDiagnosticSeverity.ERROR
             }.ifEmpty { listOf(TshDiagnostic(
-                code = "TSH-PROVIDER-006",
-                severity = TshDiagnosticSeverity.ERROR,
-                stage = TshDiagnosticStage.PROVIDER,
-                message = "Provider resolution is not satisfiable",
+                code = "TSH-PROVIDER-006", severity = TshDiagnosticSeverity.ERROR,
+                stage = TshDiagnosticStage.PROVIDER, message = "Provider resolution is not satisfiable",
                 objectId = descriptor.id
             )) })
         }
         val visibleDiagnostics = if (options.enableDiagnostics) resolution.diagnostics else
             resolution.diagnostics.filter { it.severity == TshDiagnosticSeverity.ERROR }
-        return TshResult.Success(resolution, visibleDiagnostics)
+        TshResult.Success(resolution, visibleDiagnostics)
     }
 
-    fun requireInitialized(): TshResult<TshEngine> =
-        if (state == TshEngineState.INITIALIZED) {
-            TshResult.Success(this)
-        } else {
-            TshResult.Failure(
-                listOf(
-                    TshDiagnostic(
-                        code = "TSH-ENGINE-002",
-                        severity = TshDiagnosticSeverity.ERROR,
-                        stage = TshDiagnosticStage.ENGINE,
-                        message = "TSH engine must be initialized before this operation"
-                    )
-                )
-            )
-        }
+    fun requireInitialized(): TshResult<TshEngine> = synchronized(lifecycleLock) {
+        if (state == TshEngineState.INITIALIZED) TshResult.Success(this)
+        else engineFailure("TSH-ENGINE-002", "TSH engine must be initialized before this operation")
+    }
 
-    override fun close() {
-        val previous = stateRef.getAndSet(TshEngineState.CLOSED)
-        if (previous != TshEngineState.CLOSED) {
+    private fun engineFailure(code: String, message: String) = TshResult.Failure(listOf(
+        TshDiagnostic(
+            code = code, severity = TshDiagnosticSeverity.ERROR,
+            stage = TshDiagnosticStage.ENGINE, message = message
+        )
+    ))
+
+    override fun close() = synchronized(lifecycleLock) {
+        if (stateRef.get() != TshEngineState.CLOSED) {
+            stateRef.set(TshEngineState.CLOSED)
             // Retire queries first: each compiled query may retain a Grammar Language lease.
             // Then retire Trees, Parsers and Languages owned by the resource coordinator.
             attachments.close()
