@@ -159,7 +159,7 @@ interface TshTextAccessProvider {
                 return failure("TSH-TEXT-007", "Snapshot chunk contains malformed UTF-16")
             }
             TshResult.Success(TshTextChunk(snapshot.documentId, snapshot.version, startUtf16, end, text))
-        } catch (error: Throwable) {
+        } catch (error: Exception) {
             TshResult.Failure(listOf(TshDiagnostic(
                 code = "TSH-TEXT-003", severity = TshDiagnosticSeverity.ERROR,
                 stage = TshDiagnosticStage.BINDING, message = "Snapshot chunk read failed",
