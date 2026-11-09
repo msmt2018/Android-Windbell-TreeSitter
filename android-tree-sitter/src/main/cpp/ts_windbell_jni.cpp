@@ -10,6 +10,7 @@
 #include <string>
 #include <cstdint>
 #include <cstring>
+#include <algorithm>
 #include <utility>
 #include <limits>
 
@@ -170,15 +171,12 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlight(
     }
 
     if (spans.size() > static_cast<size_t>(std::numeric_limits<jsize>::max() / 3)) {
-        throw_npe(env, "Highlight result exceeds Java array capacity");
+        throw_illegal_args(env, "Highlight result exceeds Java array capacity");
         return nullptr;
     }
     const jsize out_size = static_cast<jsize>(spans.size() * 3);
     jintArray result = env->NewIntArray(out_size);
-    if (!result) {
-        throw_npe(env, "Out of memory allocating spans int array");
-        return nullptr;
-    }
+    if (!result) return nullptr;
 
     // Flatten in bounded batches: do not allocate another N*3 native array beside spans and
     // the destination Java array for large documents.
@@ -237,15 +235,12 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeComputeFolds(
     }
 
     if (folds.size() > static_cast<size_t>(std::numeric_limits<jsize>::max() / 3)) {
-        throw_npe(env, "Fold result exceeds Java array capacity");
+        throw_illegal_args(env, "Fold result exceeds Java array capacity");
         return nullptr;
     }
     const jsize out_size = static_cast<jsize>(folds.size() * 3);
     jintArray result = env->NewIntArray(out_size);
-    if (!result) {
-        throw_npe(env, "Out of memory allocating folds int array");
-        return nullptr;
-    }
+    if (!result) return nullptr;
 
     constexpr size_t kBatchFolds = 1024;
     jint batch[kBatchFolds * 3];
