@@ -16,8 +16,8 @@ class TshTextAccessBindingTest {
         override fun close() { closed = true }
     }
 
-    private class Provider(private val host: Any) : TshTextAccessProvider {
-        override val id = "text-provider-${System.identityHashCode(host)}"
+    private class Provider(private val host: Any? = null) : TshTextAccessProvider {
+        override val id = "text-provider-${System.identityHashCode(this)}"
         override val threading = TshTextAccessThreading.ANY_THREAD
         override val supportsChangeSubscriptions = true
         override val supportsDisposalNotifications = true
@@ -26,7 +26,7 @@ class TshTextAccessBindingTest {
         var changeSubscription: Subscription? = null
         var disposalSubscription: Subscription? = null
 
-        override fun supports(document: Any) = document === host
+        override fun supports(document: Any) = host == null || document === host
         override fun snapshot(document: Any) = TshResult.Success(Snapshot())
 
         override fun subscribe(
@@ -75,6 +75,33 @@ class TshTextAccessBindingTest {
     }
 
     @Test
+    fun sharedProviderRegistrationRemainsUntilTheLastDocumentBindingCloses() {
+        val engine = TshEngine.create()
+        engine.initialize()
+        val provider = Provider()
+        val firstDocument = Any()
+        val secondDocument = Any()
+        val firstScope = TshOwnerScope("first-doc")
+        val secondScope = TshOwnerScope("second-doc")
+        val first = (TshTextAccessBinding.attach(
+            engine, provider, firstDocument, firstScope
+        ) as TshResult.Success<TshTextAccessBinding>).value
+        val second = (TshTextAccessBinding.attach(
+            engine, provider, secondDocument, secondScope
+        ) as TshResult.Success<TshTextAccessBinding>).value
+
+        first.close()
+        assertTrue(engine.providers.all().any { it === provider })
+        assertTrue(second.acquireSnapshot() is TshResult.Success)
+
+        second.close()
+        assertFalse(engine.providers.all().any { it === provider })
+        firstScope.close()
+        secondScope.close()
+        engine.close()
+    }
+
+    @Test
     fun externallyRegisteredTextProviderRemainsRegisteredAfterBindingClose() {
         val engine = TshEngine.create()
         engine.initialize()
@@ -83,7 +110,7 @@ class TshTextAccessBindingTest {
         engine.providers.registerUnique(provider)
         val scope = TshOwnerScope("external-text-provider")
         val binding = (TshTextAccessBinding.attach(
-            engine, provider, document, scope, registerProvider = false
+            engine, provider, document, scope
         ) as TshResult.Success<TshTextAccessBinding>).value
 
         binding.close()
