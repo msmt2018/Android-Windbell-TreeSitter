@@ -121,6 +121,12 @@ data class TshMatchSet(
         require(documentVersion >= 0L)
         require(matches.all { it.documentId == documentId && it.documentVersion == documentVersion })
         require(matches.map { it.id }.distinct().size == matches.size)
+        require(matches.none { it.source == TshMatchSource.TREE_SITTER_ATS } || treeSitterRevision != null) {
+            "Tree-sitter matches require a Tree-sitter pipeline revision"
+        }
+        require(matches.none { it.source == TshMatchSource.REGEX } || regexRevision != null) {
+            "Regex matches require a Regex pipeline revision"
+        }
         require(treeSitterRevision == null || treeSitterRevision.isNotBlank())
         require(regexRevision == null || regexRevision.isNotBlank())
         require(configRevision == null || configRevision.isNotBlank())
@@ -165,6 +171,12 @@ object TshMatchMerger {
         diagnostics: List<TshDiagnostic> = emptyList()
     ): TshResult<TshMatchSet> {
         if (documentVersion < 0L) return failure("TSH-MATCH-001", "Document version must be non-negative")
+        if (input.any { it.source == TshMatchSource.TREE_SITTER_ATS } && treeSitterRevision == null) {
+            return failure("TSH-MATCH-003", "Tree-sitter revision is required when Tree-sitter matches are supplied")
+        }
+        if (input.any { it.source == TshMatchSource.REGEX } && regexRevision == null) {
+            return failure("TSH-MATCH-004", "Regex revision is required when Regex matches are supplied")
+        }
         val outputDiagnostics = diagnostics.toMutableList()
         val accepted = input.filter { match ->
             val expectedPipelineRevision = when (match.source) {
@@ -173,7 +185,7 @@ object TshMatchMerger {
             }
             val valid = match.documentId == documentId &&
                 match.documentVersion == documentVersion &&
-                (expectedPipelineRevision == null || match.pipelineRevision == expectedPipelineRevision)
+                (expectedPipelineRevision != null && match.pipelineRevision == expectedPipelineRevision)
             if (!valid) outputDiagnostics += TshDiagnostic(
                 code = "TSH-MATCH-002",
                 severity = TshDiagnosticSeverity.WARNING,
