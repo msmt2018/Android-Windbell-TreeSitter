@@ -44,6 +44,48 @@ class TshAttachmentTest {
     }
 
     @Test
+    fun multipleScopedAttachmentsShareOneHostObjectUntilTheLastDetach() {
+        val engine = TshEngine.create()
+        engine.initialize()
+        val host = HostEditor()
+        val firstScope = TshOwnerScope("editor-role")
+        val secondScope = TshOwnerScope("renderer-role")
+        val request = TshAttachmentRequest(host, "editor")
+
+        val first = (engine.attach(request, firstScope) as TshResult.Success).value
+        val second = (engine.attach(request, secondScope) as TshResult.Success).value
+        assertEquals(first.handle.objectId, second.handle.objectId)
+        assertEquals(1, engine.objects.size())
+
+        assertTrue(engine.detach(first.handle))
+        assertNotNull(engine.objects.find(host))
+        assertTrue(engine.detach(second.handle))
+        assertNull(engine.objects.find(host))
+        firstScope.close()
+        secondScope.close()
+        engine.close()
+    }
+
+    @Test
+    fun externallyRegisteredHostObjectRemainsRegisteredAfterAttachmentDetach() {
+        val engine = TshEngine.create()
+        engine.initialize()
+        val host = HostEditor()
+        val original = engine.objects.register(host, "editor")
+        val scope = TshOwnerScope("external-owner")
+        val attached = (engine.attach(
+            TshAttachmentRequest(host, "editor"), scope
+        ) as TshResult.Success).value
+
+        engine.detach(attached.handle)
+
+        assertEquals(original.id, engine.objects.find(host)?.id)
+        assertEquals(1, engine.objects.size())
+        scope.close()
+        engine.close()
+    }
+
+    @Test
     fun strictAttachRejectsAndRollsBackMissingRequiredCapabilities() {
         val engine = TshEngine.create()
         engine.initialize()
