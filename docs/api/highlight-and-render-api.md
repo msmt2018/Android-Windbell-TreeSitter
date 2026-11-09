@@ -1,5 +1,7 @@
 # Highlight、Attribute、Theme 与 Render API 规范
 
+> 本文仅作端到端总览；Attribute/语义高亮以 [attribute-semantic-highlight-api.md](attribute-semantic-highlight-api.md) 为准，Theme/Font/Color 以 [theme-style-font-color-api.md](theme-style-font-color-api.md) 为准，RenderPlan/Receipt 以 [theme-style-render-contract-api.md](theme-style-render-contract-api.md) 为准，后端 Conformance 以 [render-backend-conformance-api.md](render-backend-conformance-api.md) 为准。
+
 ## 端到端数据流
 
 Document Snapshot -> Tree-sitter/ATS Query + Regex Pipeline -> TshMatch -> Scope Resolution -> Attribute Cascade -> TshResolvedStyle -> TshRenderPlan -> RenderProvider -> Editor Draw/Decoration。
