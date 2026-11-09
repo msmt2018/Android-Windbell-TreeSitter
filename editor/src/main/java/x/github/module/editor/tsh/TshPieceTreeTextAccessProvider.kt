@@ -8,7 +8,6 @@ import com.zerostudio.idea.treesitter.tsh.api.TshDiagnosticSeverity
 import com.zerostudio.idea.treesitter.tsh.api.TshDiagnosticStage
 import com.zerostudio.idea.treesitter.tsh.api.TshObjectDescriptor
 import com.zerostudio.idea.treesitter.tsh.api.TshResult
-import com.zerostudio.idea.treesitter.tsh.api.TshSharedTextSnapshotLease
 import com.zerostudio.idea.treesitter.tsh.api.TshTextAccessProvider
 import com.zerostudio.idea.treesitter.tsh.api.TshTextAccessThreading
 import com.zerostudio.idea.treesitter.tsh.api.TshTextSnapshot
