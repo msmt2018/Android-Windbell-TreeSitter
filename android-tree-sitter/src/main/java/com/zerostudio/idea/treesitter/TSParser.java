@@ -23,6 +23,7 @@ import com.zerostudio.idea.treesitter.string.UTF16StringFactory;
 import com.zerostudio.idea.treesitter.util.TSObjectFactoryProvider;
 import dalvik.annotation.optimization.CriticalNative;
 import dalvik.annotation.optimization.FastNative;
+import java.util.Objects;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.ReentrantLock;
@@ -194,6 +195,47 @@ public class TSParser extends TSNativeObject {
       final var strPointer = source.getNativeObject();
       final var oldTreePointer = oldTree != null ? oldTree.getNativeObject() : 0;
       final var tree = Native.parse(this.getNativeObject(), oldTreePointer, strPointer);
+      return createTree(tree);
+    } finally {
+      unsetParsingFlag();
+      parseCondition.signalAll();
+      parseLock.unlock();
+    }
+  }
+
+  /**
+   * Parses a host-provided random-access input without materializing the complete source String.
+   * The input must remain bound to one immutable document snapshot until this call returns.
+   */
+  public TSTree parseInput(TSInput input) {
+    return parseInput(null, input, 64 * 1024);
+  }
+
+  /**
+   * Parses a host-provided random-access input, optionally incrementally from an edited old tree.
+   *
+   * @param oldTree previously parsed and edited tree, or null for a full parse
+   * @param input bounded UTF-16LE input callback
+   * @param chunkSizeBytes callback buffer size; must be even and between 2 and 1 MiB
+   */
+  public TSTree parseInput(TSTree oldTree, TSInput input, int chunkSizeBytes) {
+    Objects.requireNonNull(input, "input");
+    if (chunkSizeBytes < 2 || chunkSizeBytes > 1024 * 1024 || (chunkSizeBytes & 1) != 0) {
+      throw new IllegalArgumentException("chunkSizeBytes must be even and between 2 and 1 MiB");
+    }
+    checkAccess();
+    if (parseLock.isHeldByCurrentThread()) {
+      throw new IllegalStateException("Reentrancy detected");
+    }
+    throwIfParseNotCancelled();
+    parseLock.lock();
+    setCancellationRequested(false);
+    setParsingFlag();
+    try {
+      final long oldTreePointer = oldTree != null ? oldTree.getNativeObject() : 0;
+      final long tree = Native.parseInput(
+          getNativeObject(), oldTreePointer, input, chunkSizeBytes
+      );
       return createTree(tree);
     } finally {
       unsetParsingFlag();
@@ -404,6 +446,9 @@ public class TSParser extends TSNativeObject {
 
     @FastNative
     static native long parse(long parser, long treePointer, long strPointer);
+
+    // Regular JNI: this operation calls the host TSInput.read callback for bounded chunks.
+    static native long parseInput(long parser, long treePointer, TSInput input, int chunkSizeBytes);
 
     @FastNative
     static native boolean requestCancellation(long parser);
