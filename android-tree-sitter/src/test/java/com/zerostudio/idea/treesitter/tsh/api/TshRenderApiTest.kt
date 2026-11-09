@@ -64,6 +64,25 @@ class TshRenderApiTest {
     }
 
     @Test
+    fun appliedReceiptDoesNotClaimThatPixelsWereDrawn() {
+        val provider = object : TshRenderProvider {
+            override val id = "span-provider"
+            override val apiVersion = 1
+            override val capabilities = TshCapabilitySet.of(TshCapability("render.color", 1))
+            override fun submit(plan: TshRenderPlan, acknowledger: TshRenderAcknowledger) =
+                TshResult.Success(TshRenderReceipt(
+                    plan.id, id, plan.revisions, TshRenderReceiptStatus.APPLIED,
+                    plan.instructions.size
+                ))
+        }
+        val coordinator = TshRenderCoordinator(provider)
+        coordinator.updateCurrentRevisions(revisions())
+        val receipt = (coordinator.submit(plan()) as TshResult.Success).value
+        assertTrue(receipt.confirmsHostMutation)
+        assertFalse(receipt.confirmsActualDraw)
+    }
+
+    @Test
     fun rejectsStalePlanBeforeProviderSubmission() {
         val coordinator = TshRenderCoordinator(ImmediateProvider())
         coordinator.updateCurrentRevisions(revisions(2))
