@@ -9,19 +9,19 @@
 本轮先处理上一轮静态审计发现的全部确定问题，再补齐缺失的接入契约，最后进入真实宿主绑定。未完成项不得从地图删除或用文档描述伪装完成。
 
 - [x] 公共 API 总规范首版、ATS 状态矛盾修正和证据等级定义；领域唯一权威来源映射仍需逐文档落实。
-- [ ] Attach/Detach、OwnerScope、完整 Attachment Report；[x] Provider Resolution/Capability API 版本范围与能力版本协商源码及测试源码。
+- [x] Attach/Detach、OwnerScope、Attachment Report、Engine attach/inspect/refresh/detach 首版源码与测试源码；[x] Provider Resolution/API/Capability 版本协商源码与测试源码；[ ] 动态 Provider 事件和并发验证。
 - [x] Snapshot Lease/chunk/range/变更订阅扩展点及 Edit 顺序校验源码；[ ] 宿主固定版本 Lease、真实变更/销毁订阅与线程验证。
-- [ ] Offset/Range 统一 Long，UTF-8/UTF-16/非法 surrogate 与 grapheme 算法边界。
+- [x] 公共 SourcePosition/ByteRange 改为 Long（Int 构造兼容），Native Int narrowing 检查；[x] UTF-8/UTF-16/不成对 surrogate 策略修复；[ ] Piece Tree 索引转换与完整 UAX #29 Grapheme Provider。
 - [x] Schema nullable/default/Map key/Measure unit/unknown-property 静默丢弃问题源码修复及测试源码；[ ] 内建 Schema Catalog、ReferenceResolver、SemanticAnalyzer、Lowering 和 Runtime Consumer。
-- [ ] ATS 状态矛盾、Query compiler 命名/预算/严格节点验证和取消边界修复。
+- [x] ATS 实现状态矛盾修复、Tree-sitter 通用 QueryCompiler 与 ATS 专用 TshAtsCompiler 分离；[ ] maxSteps 真实预算、strictNodeValidation Grammar Schema、Native 可中断取消。
 - [x] Oniguruma Regex pattern 的标准 UTF-8 → UTF-16LE 解码修复源码；[ ] 窗口边界/Lease/预算/增量语义及 Native 测试。
-- [ ] Match/Scope/Style/RenderPlan/Receipt 闭环及宿主 Span 所有权修复。
+- [x] 旧 Spannable 路径只清理 TSH-owned Span，byte range 奇数/越界校验；[ ] Match/Scope/Style/RenderPlan/Receipt 完整闭环和真实控件绘制。
 - [x] Engine 初始化前置条件、strictProviderValidation/enableDiagnostics 消费、Provider supports 异常隔离源码；[ ] close/attach/detach 并发竞态和测试。
-- [ ] 完整测试矩阵：Kotlin/JVM、Native/JNI、并发、超大文件、真实 Android Renderer。
+- [x] JNI 大文本避免额外完整 UTF-16 vector 复制、结果批量 marshaling；C++ Span 容量预留有界化、重叠检查从 O(m*n) 改为 prefix index；[ ] 完整测试矩阵：Kotlin/JVM、Native/JNI、并发、超大文件、真实 Android Renderer。
 
 ## 证据状态说明
 
-本轮新增/修复源码与测试源码均为 SOURCE_PARTIAL；当前未运行 Gradle、JUnit、CMake/NDK、JNI 或 Android 设备测试。`TshCoordinateConverter` 的 grapheme 行为依赖运行时 BreakIterator，不宣称完整 UAX #29。Snapshot 默认 Lease 不会自动 pin 可变宿主缓冲区。Provider Resolution 已有源码但尚未构成 Attach/Detach 闭环。
+本轮新增/修复源码与测试源码均为 SOURCE_PARTIAL；当前未运行 Gradle、JUnit、CMake/NDK、JNI 或 Android 设备测试。大文本 JNI 已减少一次完整 Native 文本副本，但 GetStringChars 仍由 JVM 决定是否 pin/copy；尚未实现 Piece Tree/Rope 到 Tree-sitter 的流式 Input callback，不能声称真正 zero-copy parser。`TshCoordinateConverter` 的 grapheme 行为依赖运行时 BreakIterator，不宣称完整 UAX #29。Snapshot 默认 Lease 不会自动 pin 可变宿主缓冲区。Provider Resolution 已有源码但尚未构成 Attach/Detach 闭环。
 
 ## 架构不变量
 
