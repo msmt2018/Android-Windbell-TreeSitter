@@ -59,7 +59,7 @@
 - [ ] 既有 C++ TshCompiler 尚未接入统一 Schema/Runtime Consumer 契约。
 - [ ] Runtime Consumer 目前逐属性 best-effort，不提供跨 Consumer 原子事务。
 
-- [x] 新增 `TshTreeSitterEditCompiler`：基于 before-version Snapshot 的有界分块行索引，将多 Edit 编译为 UTF-16LE TSInputEdit，并按降序输出以便逐项安全应用；覆盖版本/范围/surrogate/Int byte offset/CRLF 检查（SOURCE_PARTIAL，测试源码未运行）。
+- [x] 新增 `TshTreeSitterEditCompiler`：基于 before-version Snapshot 的有界分块单次扫描，仅索引编辑端点坐标，将多 Edit 编译为 UTF-16LE TSInputEdit，并按降序输出以便逐项安全应用；覆盖版本/范围/surrogate/Int byte offset/CRLF 检查（SOURCE_PARTIAL，测试源码未运行）。
 \n### Tree-sitter / ATS Query
 
 - [x] Tree-sitter Native Query Compiler/Executor Adapter、Query Registry、Query/Tree/Language Lease 有源码。
