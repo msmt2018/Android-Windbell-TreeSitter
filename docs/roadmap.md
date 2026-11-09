@@ -150,3 +150,14 @@
 - Android 设备：未验证。
 - 超大文件：已减少 JNI/Span 中的若干额外内存和 O(m*n) 扫描，但未证明 200–300 MB 文件端到端稳定高亮与真实绘制。
 - Draft PR #2：保持 Draft；未合并、未改变 PR 状态。
+
+### 2026-11-10 CI 回归修复记录（SOURCE_PARTIAL）
+
+- [x] 修复 PieceTreeSnapshot getNearestChunk() 默认 Int.MAX_VALUE 请求导致的 Int 溢出；修复覆盖 PieceTreeBase 与 Snapshot 并发读取失败的共同根因。
+- [x] 修复 CoordinateConverter expression-body return 和 Long 结果适配器泛型约束。
+- [x] 对齐 TextAccessProvider disposal callback 参数。
+- [x] 修复 ParserOwner 两处 Native metadata Success 结果解包。
+- [x] Query predicate 检查改用仓库真实 TSQuery.predicatesFor(UInt) 契约，仅要求外部 handler 声明自定义 predicate，不误拦截内置 predicate。
+- [x] 修复 RenderCoordinator close 诊断构造与 Warning severity。
+- [x] CI 固定 Node.js 20；debug test job 与 release job 一样安装全部 grammar npm dependencies。
+- [ ] 等待最新 feature-branch Actions 完成；需要依据最新 commit 的完整日志修复剩余编译/测试/Grammar 生成问题，不能引用旧 commit 的结果。
