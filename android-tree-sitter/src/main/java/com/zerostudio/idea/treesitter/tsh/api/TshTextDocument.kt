@@ -104,6 +104,10 @@ interface TshTextAccessProvider {
     val threading: TshTextAccessThreading get() = TshTextAccessThreading.UNKNOWN
     /** Conservative default: providers must opt in before TSH performs concurrent snapshot reads. */
     val supportsConcurrentReads: Boolean get() = false
+    /** Providers with UI_THREAD_ONLY or UNKNOWN policies must override this explicitly. */
+    fun isAccessAllowedOnCurrentThread(): Boolean =
+        threading == TshTextAccessThreading.ANY_THREAD ||
+            threading == TshTextAccessThreading.SERIALIZED
     fun supports(document: Any): Boolean
     fun snapshot(document: Any): TshResult<TshTextSnapshot>
 
