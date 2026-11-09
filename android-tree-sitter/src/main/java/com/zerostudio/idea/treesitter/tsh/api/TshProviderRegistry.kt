@@ -55,12 +55,14 @@ class TshProviderRegistry {
         providers.remove(id) != null
     }
 
-    /** Compatibility helper. A faulty provider is excluded rather than crashing discovery. */
+    /**
+     * Legacy compatibility helper. Use resolveFor() for structured diagnostics and version checks.
+     * Provider exceptions intentionally propagate here rather than being silently treated as false.
+     */
+    @Deprecated("Use resolveFor() to receive structured provider diagnostics")
     fun findFor(instance: Any, descriptor: TshObjectDescriptor): List<TshProvider> {
         val snapshot = synchronized(lock) { providers.values.toList() }
-        return snapshot.filter { provider ->
-            try { provider.supports(instance, descriptor) } catch (_: Throwable) { false }
-        }
+        return snapshot.filter { it.supports(instance, descriptor) }
     }
 
     /**
