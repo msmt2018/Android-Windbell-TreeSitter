@@ -31,7 +31,7 @@ Span 后端只能移除 TSH 自己标记/拥有的 Span；不得清空目标 Spa
 
 ## 6. 一致性与回执
 
-Renderer ack 应说明 planId、applied document/style/layout generation、visible range、dropped instruction count 和 diagnostics。未 ack 的计划不得宣称已绘制。过期计划应拒绝或丢弃。
+Renderer ack 应说明 planId、applied document/style/layout generation、visible range、dropped instruction count 和 diagnostics。`APPLIED/PARTIALLY_APPLIED` 仅表示宿主显示对象已变更；`DRAWN/PARTIAL` 才能表示后端确认实际执行绘制。Span mutation + invalidate 不等同于像素已绘制。未 ack 的计划不得宣称已绘制。过期计划应拒绝或丢弃。
 
 ## 7. Conformance 测试
 
