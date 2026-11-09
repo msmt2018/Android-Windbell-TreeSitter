@@ -151,10 +151,17 @@ class TshPieceTreeTextAccessProviderTest {
         assertTrue(result is TshResult.Success)
         val edits = (result as TshResult.Success).value.edits
         assertEquals(listOf(1L, 7L), edits.map { it.startUtf16 })
+        assertEquals(listOf(0, 1), edits.map { it.startLine })
+        assertEquals(listOf(1L, 2L), edits.map { it.startColumnUtf16 })
         assertEquals(listOf(13L, 40_000L), edits.map { it.replacementLengthUtf16 })
         assertTrue(edits.all { it.replacement.isEmpty() })
         assertEquals(listOf(1, 0), edits.map { it.replacementLineFeedCount })
         assertEquals(listOf(11L, 40_000L), edits.map { it.replacementTrailingUtf16Length })
+
+        val fallback = editorChangesToTshChange(
+            "piece-tree-doc", 10L, 11L, changes, useEditorLineCoordinates = false
+        ) as TshResult.Success
+        assertTrue(fallback.value.edits.all { it.startLine == null && it.oldEndLine == null })
     }
 
     @Test
