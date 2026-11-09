@@ -53,52 +53,6 @@ class TshTreeSitterParserOwner private constructor(
         documentId, documentVersion, treeRevision
     ) { parser -> parser.parseString(source) }
 
-    /**
-     * Parses one pinned host snapshot through Tree-sitter's bounded TSInput callback.
-     *
-     * The method retains an independent lease before entering Native code and releases that
-     * retained handle after parseInput returns. The caller's lease remains independently owned.
-     */
-    fun parseSnapshot(
-        provider: TshTextAccessProvider,
-        snapshotLease: TshTextSnapshotLease,
-        treeRevision: Long,
-        chunkSizeBytes: Int = 64 * 1024
-    ): TshResult<TshOwnedSyntaxTree> {
-        if (snapshotLease.isClosed) return failure(
-            "TSH-PARSER-OWNER-023",
-            "Cannot parse a closed TextSnapshot lease",
-            TshDiagnosticStage.LIFECYCLE
-        )
-        if (chunkSizeBytes < 2 || chunkSizeBytes > 1024 * 1024 || (chunkSizeBytes and 1) != 0) {
-            return failure(
-                "TSH-PARSER-OWNER-024",
-                "Tree-sitter input chunk size must be even and between 2 bytes and 1 MiB",
-                TshDiagnosticStage.PARSE
-            )
-        }
-        val retained = when (val result = snapshotLease.retain()) {
-            is TshResult.Success -> result.value
-            is TshResult.Failure -> return TshResult.Failure(result.diagnostics)
-        }
-        try {
-            val snapshot = retained.snapshot
-            if (retained.isClosed) return failure(
-                "TSH-PARSER-OWNER-025",
-                "Retained TextSnapshot lease was closed before parsing",
-                TshDiagnosticStage.LIFECYCLE
-            )
-            val input = TshSnapshotTreeSitterInput(provider, retained)
-            return parseWithInput(
-                snapshot.documentId,
-                snapshot.version,
-                treeRevision
-            ) { parser -> parser.parseInput(null, input, chunkSizeBytes) }
-        } finally {
-            retained.close()
-        }
-    }
-
     private fun parseWithInput(
         documentId: String,
         documentVersion: Long,
@@ -343,6 +297,31 @@ class TshTreeSitterParserOwner private constructor(
         oldTree: TshOwnedSyntaxTree? = null,
         chunkSizeBytes: Int = 64 * 1024
     ): TshResult<TshOwnedSyntaxTree> {
+        if (snapshotLease.isClosed) return failure(
+            "TSH-PARSER-OWNER-023",
+            "Cannot parse from a closed TextSnapshot lease",
+            TshDiagnosticStage.LIFECYCLE
+        )
+        val retainedLease = when (val retained = snapshotLease.retain()) {
+            is TshResult.Success -> retained.value
+            is TshResult.Failure -> return TshResult.Failure(retained.diagnostics)
+        }
+        return try {
+            parseRetainedSnapshot(
+                retainedLease, textProvider, treeRevision, oldTree, chunkSizeBytes
+            )
+        } finally {
+            retainedLease.close()
+        }
+    }
+
+    private fun parseRetainedSnapshot(
+        snapshotLease: TshTextSnapshotLease,
+        textProvider: TshTextAccessProvider,
+        treeRevision: Long,
+        oldTree: TshOwnedSyntaxTree?,
+        chunkSizeBytes: Int
+    ): TshResult<TshOwnedSyntaxTree> {
         if (snapshotLease.isClosed) {
             return failure(
                 "TSH-PARSER-OWNER-013",
@@ -465,18 +444,18 @@ class TshTreeSitterParserOwner private constructor(
                 inputEncoding = TshTreeSitterInputEncoding.UTF16_LE
             )
             return TshResult.Success(TshOwnedSyntaxTree(syntaxSnapshot, registration))
-        } catch (error: Exception) {
-            return failure(
-                "TSH-PARSER-OWNER-017",
-                "Tree-sitter streaming parse or publication failed: ${error.message}",
-                TshDiagnosticStage.PARSE,
-                parser.descriptor.id,
-                error
-            )
         } catch (error: LinkageError) {
             return failure(
                 "TSH-PARSER-OWNER-024",
                 "Tree-sitter Native linkage failed during streaming parse: ${error.message}",
+                TshDiagnosticStage.PARSE,
+                parser.descriptor.id,
+                error
+            )
+        } catch (error: Exception) {
+            return failure(
+                "TSH-PARSER-OWNER-017",
+                "Tree-sitter streaming parse or publication failed: ${error.message}",
                 TshDiagnosticStage.PARSE,
                 parser.descriptor.id,
                 error
