@@ -110,3 +110,18 @@ editor 模块新增 `TshPieceTreeEditorBinding.attach(view, documentId, language
 - `TshPieceTreeEditorBinding.close()` 必须由宿主在文档永久关闭时调用。EditorView 的 buffer replacement 与文件身份变更尚未自动驱动 binding 重建；发生替换时宿主应结束旧 binding 并以新 documentId 重新 attach。
 
 本轮增加的转换测试覆盖大型 TextSlice 的长度/端点元数据路径和 Provider change/disposal subscription。仍需运行 editor/android-tree-sitter 的 Gradle/JUnit 测试，并补齐 EditorView 真实批量编辑、撤销/重做、buffer replacement 和关闭竞态集成测试。
+
+
+## Per-document incremental parse session (SOURCE_PARTIAL)
+
+editor 模块新增 `TshPieceTreeIncrementalSession.attach(view, documentId, languageId, parserOwner, ...)`：
+
+- 初次 attach 后获取初始 PieceTree Snapshot，并在单线程 worker 上执行首次 parse。
+- 后续 EditorView 完整编辑批次按顺序进入同一 worker；每个任务持有独立 before/after Snapshot Lease。
+- 若当前树版本与 change.beforeVersion 匹配，执行 `TshTreeSitterIncrementalUpdate.apply`；若版本不匹配或 Native Edit 尚未应用，则以 after Snapshot 做 full parse。
+- 若 Native Edit 已完成但 parse 失败，树保留 `EDITED_PENDING_PARSE`，session 重试 parse，不会重复应用同一批 Edit；重试失败时仍保留待解析状态。
+- 新树成功发布后回收旧树。Session 关闭时先阻止新任务，再在 worker 队列尾部回收当前树；当前同步 Native parse 不会被 Thread.interrupt 强行中断。
+- `onTreeUpdated` / `onFailure` 在 worker 或编辑回调线程执行，宿主需要自行切回 UI 线程更新界面。所有传入的 Snapshot Lease 由 Session 接管并在 finally 释放。
+- 外部替换同一 EditorView 的 PieceTree buffer 后，宿主在 replacement 完成回调的编辑线程调用 `resync()`；切换到不同 documentId 时必须关闭旧 Session 并重新 attach。
+
+该 Session 将真实 EditorView edit callback 接到 Snapshot → Edit Compiler → Native Batch Edit → Incremental Parse 的串行任务链。当前尚未运行 Gradle/JUnit/Native 测试；还需补充快速连续编辑、初次 parse 与编辑竞态、失败注入、close 与 Native parse 并发、buffer replacement/resync 集成测试。
