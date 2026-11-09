@@ -1,6 +1,7 @@
 package com.zerostudio.idea.treesitter.tsh.api
 
 import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.CompletableFuture
 
 /** Host-owned lifecycle scope. Closing a scope runs registered detach actions exactly once. */
 class TshOwnerScope(val id: String = "tsh-owner-${NEXT_ID.incrementAndGet()}") : AutoCloseable {
@@ -9,6 +10,7 @@ class TshOwnerScope(val id: String = "tsh-owner-${NEXT_ID.incrementAndGet()}") :
     private val actions = LinkedHashMap<Long, () -> Unit>()
     @Volatile private var closed = false
     @Volatile private var closeFailures: List<TshDiagnostic> = emptyList()
+    private var closeCompletion: CompletableFuture<List<TshDiagnostic>>? = null
 
     init { require(id.isNotBlank()) { "OwnerScope id must not be blank" } }
 
@@ -29,27 +31,36 @@ class TshOwnerScope(val id: String = "tsh-owner-${NEXT_ID.incrementAndGet()}") :
     fun closeDiagnostics(): List<TshDiagnostic> = closeFailures
 
     fun closeWithReport(): List<TshDiagnostic> {
-        val pending = synchronized(lock) {
-            if (closed) return closeFailures
-            closed = true
-            actions.values.toList().also { actions.clear() }
-        }
-        val failures = ArrayList<TshDiagnostic>()
-        pending.forEach { action ->
-            try {
-                action()
-            } catch (error: Throwable) {
-                failures += TshDiagnostic(
-                    code = "TSH-OWNER-001",
-                    severity = TshDiagnosticSeverity.ERROR,
-                    stage = TshDiagnosticStage.LIFECYCLE,
-                    message = "OwnerScope cleanup action failed",
-                    cause = error
-                )
+        val (completion, pending) = synchronized(lock) {
+            val existing = closeCompletion
+            if (existing != null) {
+                existing to null
+            } else {
+                closed = true
+                val created = CompletableFuture<List<TshDiagnostic>>()
+                closeCompletion = created
+                created to actions.values.toList().also { actions.clear() }
             }
         }
-        closeFailures = failures.toList()
-        return closeFailures
+        if (pending != null) {
+            val failures = ArrayList<TshDiagnostic>()
+            pending.forEach { action ->
+                try {
+                    action()
+                } catch (error: Throwable) {
+                    failures += TshDiagnostic(
+                        code = "TSH-OWNER-001",
+                        severity = TshDiagnosticSeverity.ERROR,
+                        stage = TshDiagnosticStage.LIFECYCLE,
+                        message = "OwnerScope cleanup action failed",
+                        cause = error
+                    )
+                }
+            }
+            closeFailures = failures.toList()
+            completion.complete(closeFailures)
+        }
+        return completion.join()
     }
 
     override fun close() {
