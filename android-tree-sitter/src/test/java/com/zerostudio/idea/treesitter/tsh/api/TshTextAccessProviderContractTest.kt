@@ -30,6 +30,8 @@ class TshTextAccessProviderContractTest {
         assertEquals("cde", chunkValue.text.toString())
         assertEquals(7L, chunkValue.documentVersion)
         lease.close()
+        assertTrue(lease.isClosed)
+        assertTrue(provider.readChunk(lease, 0L, 2) is TshResult.Failure)
     }
 
     @Test
