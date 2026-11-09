@@ -74,4 +74,25 @@ class TshTreeSitterEditCompilerTest {
         assertEquals(0, edit.startPoint.column)
         assertEquals(4, edit.newEndByte - edit.startByte)
     }
+    @Test
+    fun rejectsEditOutsideBeforeSnapshot() {
+        val result = TshTreeSitterEditCompiler.compile(
+            snapshot("abc"),
+            TshTextChange("doc", 4L, 5L, listOf(TshTextEdit(2L, 4L, "x")))
+        )
+        assertTrue(result is TshResult.Failure)
+        assertEquals("TSH-EDIT-COMPILE-004",
+            (result as TshResult.Failure).diagnostics.single().code)
+    }
+
+    @Test
+    fun acceptsEmptyChangeSetWithoutCreatingNativeEdits() {
+        val result = TshTreeSitterEditCompiler.compile(
+            snapshot("abc"),
+            TshTextChange("doc", 4L, 5L, emptyList())
+        )
+        assertTrue(result is TshResult.Success)
+        assertTrue((result as TshResult.Success<List<TSInputEdit>>).value.isEmpty())
+    }
+
 }
