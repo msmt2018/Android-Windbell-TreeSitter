@@ -72,3 +72,17 @@ Tree-sitter 分块输入已经具备首版源码契约。项目现有 PieceTreeT
 editor 模块新增 `TshPieceTreeDocument` 与 `TshPieceTreeTextAccessProvider`，并依赖 `android-tree-sitter` 的公共 TSH API。宿主提供 `snapshotFactory`，在其现有读锁/编辑串行化机制内调用 `PieceTreeTextBuffer.createSnapshot()`。适配器把 `PieceTreeSnapshot.versionId` 映射为 TSH document version，`length` 映射为 UTF-16 长度，范围读取使用 `PieceTreeSnapshot.substring(start, end)`；不会调用 `PieceTreeTextBuffer.toString()` 或构造全文 String。
 
 PieceTreeSnapshot 的创建成本为 O(piece count) 并复制当前仍在 change buffer 的有效文本；原始不可变 chunks 通过引用保留。快照创建后可跨线程读取，并在 live buffer 后续编辑、compact 或 EOL 变化时保持原版本内容。其当前底层长度和偏移 API 仍为 Int，因此适配器显式拒绝超过 Int offset 能力的范围；不能将该限制描述为已经支持超过 2 Gi UTF-16 code units 的单个 PieceTreeSnapshot。
+
+
+## Tree-sitter multi-edit compiler (SOURCE_PARTIAL)
+
+新增 `TshTreeSitterEditCompiler`，将一个 `TshTextChange` 编译为现有 Tree-sitter `TSInputEdit` 序列：
+
+- 强制校验 documentId 与 beforeVersion 必须匹配提供的不可变 Snapshot；不允许把其他文档/版本的编辑应用到旧树。
+- 所有偏移均以 UTF-16 code unit 表示，转换为 Tree-sitter UTF-16LE byte offset 时使用 64-bit 中间计算，并在 Native Int 边界显式拒绝溢出。
+- 通过有界 32K UTF-16 分块构建行起点索引，不创建全文 String；索引同时检查 Snapshot 的 UTF-16 surrogate 完整性。
+- 编辑范围不得越界或切开 surrogate pair；起点/旧终点/新终点分别转换为 Tree-sitter row/byte-column。
+- 输入编辑按原始文档坐标升序描述，编译结果反向输出为降序。按此顺序逐个调用现有 `TshTreeSitterParserOwner.editTree`，较高偏移的编辑不会改变较低偏移编辑的坐标。
+- CRLF 中的 CR 计入当前 Tree-sitter byte column，LF 才推进 row；替换文本中的换行也按同一规则计算。
+
+当前新增单元测试源码覆盖多 Edit 降序、版本错配、surrogate 边界与 CRLF/UTF-16LE byte column。尚未运行 Gradle/JUnit，也尚未把真实 EditorDocument 的 change/dispose 事件接入该编译器；因此仍为 SOURCE_PARTIAL。
