@@ -52,10 +52,10 @@ object TshTreeSitterEditCompiler {
                     val column = if (edit.replacementLineFeedCount == 0) {
                         Math.addExact(
                             startPoint.column,
-                            Math.multiplyExact(edit.replacementLengthUtf16, 2L).toInt()
+                            Math.toIntExact(Math.multiplyExact(edit.replacementLengthUtf16, 2L))
                         )
                     } else {
-                        Math.multiplyExact(edit.replacementTrailingUtf16Length!!, 2L).toInt()
+                        Math.toIntExact(Math.multiplyExact(edit.replacementTrailingUtf16Length!!, 2L))
                     }
                     TSPoint.create(row, column)
                 } else {
