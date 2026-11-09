@@ -106,7 +106,7 @@ class TshAndroidSpannableBinding private constructor(
                 )
             } catch (error: LinkageError) {
                 failures += closeDiagnostic(
-                    "TSH-ANDROID-BINDING-016",
+                    "TSH-ANDROID-BINDING-019",
                     "Android Binding cleanup unregister failed with a linkage error",
                     error
                 )
@@ -114,24 +114,6 @@ class TshAndroidSpannableBinding private constructor(
         }
         cleanupRegistration = null
 
-        detachSubscription?.let { registration ->
-            try {
-                registration.close()
-            } catch (error: Exception) {
-                failures += closeDiagnostic(
-                    "TSH-ANDROID-BINDING-017",
-                    "Cannot remove attachment detach subscription: ${error.message}",
-                    error
-                )
-            } catch (error: LinkageError) {
-                failures += closeDiagnostic(
-                    "TSH-ANDROID-BINDING-018",
-                    "Attachment detach subscription failed with a linkage error",
-                    error
-                )
-            }
-        }
-        detachSubscription = null
         closeDiagnostics = failures.toList()
     }
 
