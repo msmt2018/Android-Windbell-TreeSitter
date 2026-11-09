@@ -117,8 +117,8 @@ editor 模块新增 `TshPieceTreeEditorBinding.attach(view, documentId, language
 editor 模块新增 `TshPieceTreeIncrementalSession.attach(view, documentId, languageId, parserOwner, ...)`：
 
 - 初次 attach 后获取初始 PieceTree Snapshot，并在单线程 worker 上执行首次 parse。
-- 后续 EditorView 完整编辑批次按顺序进入同一 worker；每个任务持有独立 before/after Snapshot Lease。
-- 若当前树版本与 change.beforeVersion 匹配，执行 `TshTreeSitterIncrementalUpdate.apply`；若版本不匹配或 Native Edit 尚未应用，则以 after Snapshot 做 full parse。
+- 后续 EditorView 完整编辑批次由单一 drain worker 串行处理；pending 队列最多保留一个批次。worker 落后时，中间 pending 批次的 Lease 会立即释放，只保留最新 after Snapshot 并强制 full parse，避免大文件快照在无界任务队列中累积。
+- 若当前树版本与 change.beforeVersion 匹配且该批次未被 coalesce，执行 `TshTreeSitterIncrementalUpdate.apply`；若版本不匹配、pending 批次被 coalesce 或 Native Edit 尚未应用，则以 after Snapshot 做 full parse。
 - 若 Native Edit 已完成但 parse 失败，树保留 `EDITED_PENDING_PARSE`，session 重试 parse，不会重复应用同一批 Edit；重试失败时仍保留待解析状态。
 - 新树成功发布后回收旧树。Session 关闭时先阻止新任务，再在 worker 队列尾部回收当前树；当前同步 Native parse 不会被 Thread.interrupt 强行中断。
 - `onTreeUpdated` / `onFailure` 在 worker 或编辑回调线程执行，宿主需要自行切回 UI 线程更新界面。所有传入的 Snapshot Lease 由 Session 接管并在 finally 释放。
