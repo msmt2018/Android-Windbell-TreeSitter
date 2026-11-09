@@ -6,10 +6,11 @@ import com.zerostudio.idea.treesitter.TSTree
 
 /** A syntax tree registered with the Engine resource coordinator and ready for query execution. */
 class TshOwnedSyntaxTree(
-    @Volatile var snapshot: TshSyntaxTreeSnapshot,
-        private set,
+    snapshot: TshSyntaxTreeSnapshot,
     val registration: TshNativeResourceRegistry.Registration<TSTree>
 ) {
+    @Volatile var snapshot: TshSyntaxTreeSnapshot = snapshot
+        private set
     @Volatile internal var lastEditedDocumentVersion: Long? = null
 
     internal fun updateSnapshot(value: TshSyntaxTreeSnapshot) {
