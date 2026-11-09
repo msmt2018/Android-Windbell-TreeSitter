@@ -286,8 +286,8 @@ class TshAndroidSpannableRenderer(
                 "Unsupported decoration attributes: ${unknownDecorations.sorted().joinToString()}"
             )
         }
-        val bold = (style.fontWeight ?: 0) >= 600 || "bold" in decorations
-        val italic = style.italic == true || "italic" in decorations
+        val bold = style.fontWeight?.let { it >= 600 } ?: ("bold" in decorations)
+        val italic = style.italic ?: ("italic" in decorations)
         if (family != null || style.fontWeight != null || style.italic != null || bold || italic) {
             var typefaceStyle = Typeface.NORMAL
             if (bold) typefaceStyle = typefaceStyle or Typeface.BOLD
@@ -319,8 +319,8 @@ class TshAndroidSpannableRenderer(
                 spannable.setSpan(TshAndroidTextSizeSpan(id, planId, sizePx), start, end, flags)
             }
         }
-        val underline = style.underline == true || "underline" in decorations
-        val strike = style.strikeThrough == true || "strike" in decorations || "strikethrough" in decorations
+        val underline = style.underline ?: ("underline" in decorations)
+        val strike = style.strikeThrough ?: ("strike" in decorations || "strikethrough" in decorations)
         if (underline || strike) {
             spannable.setSpan(TshAndroidDecorationSpan(id, planId, underline, strike), start, end, flags)
         }
