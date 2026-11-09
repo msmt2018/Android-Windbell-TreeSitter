@@ -304,6 +304,15 @@ class PieceTreeSnapshotTest {
     }
 
     @Test
+    fun nearestChunkBoundsIntMaxRequestWithoutOverflow() {
+        val snapshot = RandomEditing.build("hello\nworld", Random(1)).createSnapshot()
+        assertEquals("hello\nworld", snapshot.getNearestChunk(0, Int.MAX_VALUE))
+        assertEquals("lo\nworld", snapshot.getNearestChunk(3, Int.MAX_VALUE))
+        assertEquals("llo", snapshot.getNearestChunk(2, 3))
+        assertEquals("", snapshot.getNearestChunk(snapshot.length, Int.MAX_VALUE))
+    }
+
+    @Test
     fun invalidArgumentsThrow() {
         val snapshot = RandomEditing.build("hello\nworld", Random(1)).createSnapshot()
         assertFailsWith<IndexOutOfBoundsException> { snapshot[-1] }
