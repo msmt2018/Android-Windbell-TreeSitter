@@ -60,7 +60,7 @@
 - [ ] Runtime Consumer 目前逐属性 best-effort，不提供跨 Consumer 原子事务。
 
 - [x] 新增 `TshTreeSitterEditCompiler`：基于 before-version Snapshot 的有界分块单次扫描，仅索引编辑端点坐标，将多 Edit 编译为 UTF-16LE TSInputEdit，并按降序输出以便逐项安全应用；覆盖版本/范围/surrogate/Int byte offset/CRLF 检查（SOURCE_PARTIAL，测试源码未运行）。
-\n- [x] 新增 `TshTreeSitterIncrementalUpdate`：接通 before/after Snapshot → Edit Compiler → 原子 Native Batch Edit → Incremental Parse → 新树发布/旧树回收；编辑后旧树标记 `EDITED_PENDING_PARSE`，QueryExecutor 在 Native Lease 前后拒绝访问，替代树标记 READY（SOURCE_PARTIAL，未运行 Native/JUnit）。
+- [x] 新增 `TshTreeSitterIncrementalUpdate`：接通 before/after Snapshot → Edit Compiler → 原子 Native Batch Edit → Incremental Parse → 新树发布/旧树回收；编辑后旧树标记 `EDITED_PENDING_PARSE`，QueryExecutor 在 Native Lease 前后拒绝访问，替代树标记 READY（SOURCE_PARTIAL，未运行 Native/JUnit）。
 
 ### Tree-sitter / ATS Query
 
