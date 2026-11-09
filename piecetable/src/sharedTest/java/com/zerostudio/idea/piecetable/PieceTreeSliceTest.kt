@@ -216,7 +216,7 @@ class PieceTreeSliceTest {
 
     @Test
     fun referenceSliceCanBeScannedInChunksWithoutFlattening() {
-        val text = ("abcdefghij\\n".repeat(20_000))
+        val text = ("abcdefghij\n".repeat(20_000))
         val buffer = TestSupport.buildBuffer(text)
         buffer.sliceTextThreshold = 0
         val result = buffer.applyEditsWithSliceUndo(
@@ -231,10 +231,10 @@ class PieceTreeSliceTest {
         var lineFeeds = 0
         slice.forEachChunk { chunk ->
             length += chunk.length
-            for (character in chunk) if (character == '\\n') lineFeeds++
+            for (character in chunk) if (character == '\n') lineFeeds++
         }
         assertEquals(text.length, length)
-        assertEquals(text.count { it == '\\n' }, lineFeeds)
+        assertEquals(text.count { it == '\n' }, lineFeeds)
     }
 
     @Test
