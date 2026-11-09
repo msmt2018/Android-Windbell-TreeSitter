@@ -1,5 +1,7 @@
 package com.zerostudio.idea.treesitter.tsh.api
 
+import com.zerostudio.idea.treesitter.TSInputEdit
+
 /**
  * Executes the complete host-snapshot -> edit compiler -> Native tree edit -> incremental parse
  * chain for one already-committed document change.
@@ -48,11 +50,10 @@ object TshTreeSitterIncrementalUpdate {
             )
         }
 
-        val edits = when (val compiled = TshTreeSitterEditCompiler.compile(before, change)) {
-            is TshResult.Success -> compiled
-            is TshResult.Failure -> return compiled
-        }
-        val nativeEdits = (edits as TshResult.Success).value
+        val compiledResult = TshTreeSitterEditCompiler.compile(before, change)
+        if (compiledResult is TshResult.Failure) return compiledResult
+        val compiled = compiledResult as TshResult.Success<List<TSInputEdit>>
+        val nativeEdits = compiled.value
         val applied = parserOwner.editTreeBatch(
             oldTree,
             nativeEdits,
@@ -73,7 +74,12 @@ object TshTreeSitterIncrementalUpdate {
         val replacementTree = (parsed as TshResult.Success).value
         // parse() has released its old-tree read lease before returning, so retirement is safe.
         parserOwner.retireTree(oldTree)
-        return TshResult.Success(replacementTree, edits.diagnostics + applied.diagnostics + parsed.diagnostics)
+        val appliedSuccess = applied as TshResult.Success<Unit>
+        val parsedSuccess = parsed as TshResult.Success<TshOwnedSyntaxTree>
+        return TshResult.Success(
+            replacementTree,
+            compiled.diagnostics + appliedSuccess.diagnostics + parsedSuccess.diagnostics
+        )
     }
 
     private fun failure(code: String, message: String) = TshResult.Failure(listOf(
