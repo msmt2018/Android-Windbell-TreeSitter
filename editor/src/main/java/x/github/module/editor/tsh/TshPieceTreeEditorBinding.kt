@@ -129,13 +129,9 @@ class TshPieceTreeEditorBinding private constructor(
 
     init {
         view.addEditCallback(callback)
-        when (val acquired = provider.acquireSnapshot(document)) {
-            is TshResult.Success -> {
-                lastVersion = acquired.value.snapshot.version
-                acquired.value.close()
-            }
-            is TshResult.Failure -> onInvalidated(acquired)
-        }
+        // Version metadata is cheap to read; do not create a throwaway O(piece-count) Snapshot
+        // merely to initialize the final-version value used by dispose().
+        lastVersion = view.getTextBuffer().getVersionId().toLong()
     }
 
     /** The host calls this on the EditorView edit/main thread when the document is permanently closed. */
