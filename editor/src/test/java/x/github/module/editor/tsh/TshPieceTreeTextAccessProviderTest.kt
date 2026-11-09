@@ -1,6 +1,10 @@
 package x.github.module.editor.tsh
 
 import com.zerostudio.idea.piecetable.PieceTreeTextBufferBuilder
+import com.zerostudio.idea.treesitter.tsh.api.TshCapability
+import com.zerostudio.idea.treesitter.tsh.api.TshCapabilitySet
+import com.zerostudio.idea.treesitter.tsh.api.TshObjectRegistry
+import com.zerostudio.idea.treesitter.tsh.api.TshProviderRegistry
 import com.zerostudio.idea.treesitter.tsh.api.TshResult
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -52,6 +56,26 @@ class TshPieceTreeTextAccessProviderTest {
         val result = TshPieceTreeTextAccessProvider().snapshot(Any())
         assertTrue(result is TshResult.Failure)
         assertEquals("TSH-PIECETREE-001", (result as TshResult.Failure).diagnostics.single().code)
+    }
+
+
+    @Test
+    fun providerParticipatesInNormalTshCapabilityNegotiation() {
+        val (_, document) = document("hello")
+        val provider = TshPieceTreeTextAccessProvider()
+        val objects = TshObjectRegistry()
+        val providers = TshProviderRegistry()
+        providers.register(provider)
+        val descriptor = objects.register(document, "editor-document")
+
+        val resolution = providers.resolveFor(
+            document,
+            descriptor,
+            required = TshCapabilitySet.of(TshCapability("text.snapshot", 1))
+        )
+
+        assertTrue(resolution.isSatisfiable)
+        assertTrue(resolution.selectedProviders.any { it === provider })
     }
 
     @Test
