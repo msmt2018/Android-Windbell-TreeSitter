@@ -41,7 +41,9 @@ data class TshRenderRevisions(
     val configRevision: String,
     val themeRevision: String,
     val viewportRevision: String,
-    val rendererRevision: String
+    val rendererRevision: String,
+    val treeSitterRevision: String? = null,
+    val regexRevision: String? = null
 ) {
     init {
         require(documentVersion >= 0L)
@@ -49,6 +51,8 @@ data class TshRenderRevisions(
         require(themeRevision.isNotBlank())
         require(viewportRevision.isNotBlank())
         require(rendererRevision.isNotBlank())
+        require(treeSitterRevision == null || treeSitterRevision.isNotBlank())
+        require(regexRevision == null || regexRevision.isNotBlank())
     }
 }
 
