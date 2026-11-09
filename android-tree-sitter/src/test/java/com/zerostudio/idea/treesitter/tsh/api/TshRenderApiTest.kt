@@ -83,6 +83,23 @@ class TshRenderApiTest {
     }
 
     @Test
+    fun coordinatorBoundsAsynchronousPendingPlans() {
+        val provider = QueuedProvider()
+        val coordinator = TshRenderCoordinator(provider, maxPendingPlans = 1)
+        coordinator.updateCurrentRevisions(revisions())
+        assertTrue(coordinator.submit(plan("queued-1")) is TshResult.Success)
+        val overflow = coordinator.submit(plan("queued-2"))
+        assertTrue(overflow is TshResult.Failure)
+        assertTrue(overflow.diagnostics().any { it.code == "TSH-RENDER-022" })
+        assertEquals(setOf(TshRenderPlanId("queued-1")), coordinator.pendingPlanIds())
+        val final = provider.acknowledger.acknowledge(TshRenderReceipt(
+            TshRenderPlanId("queued-1"), provider.id, revisions(),
+            TshRenderReceiptStatus.DRAWN, 1
+        ))
+        assertTrue(final is TshResult.Success)
+    }
+
+    @Test
     fun appliedReceiptDoesNotClaimThatPixelsWereDrawn() {
         val provider = object : TshRenderProvider {
             override val id = "span-provider"
