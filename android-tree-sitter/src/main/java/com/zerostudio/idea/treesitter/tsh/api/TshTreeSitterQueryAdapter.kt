@@ -270,9 +270,24 @@ class TshTreeSitterQueryExecutor(
             return failure("TSH-QUERY-EXEC-018", "Cannot inspect query predicates: ${error.message}", cause = error)
         }
         if (hasPredicates && query.options.enablePredicates) {
-            val declared = predicateHandlers.flatMap { handler ->
-                runCatching { handler.supportedPredicates.toList() }.getOrDefault(emptyList())
-            }.map { it.removePrefix("#") }.toSet()
+            val declared = LinkedHashSet<String>()
+            for (handler in predicateHandlers) {
+                try {
+                    handler.supportedPredicates.forEach { declared += it.removePrefix("#") }
+                } catch (error: Exception) {
+                    return failure(
+                        "TSH-QUERY-EXEC-029",
+                        "Cannot inspect predicate declarations from handler ${handler.javaClass.name}: ${error.message}",
+                        cause = error
+                    )
+                } catch (error: LinkageError) {
+                    return failure(
+                        "TSH-QUERY-EXEC-030",
+                        "Predicate handler declarations failed with a linkage error: ${error.message}",
+                        cause = error
+                    )
+                }
+            }
             val required = buildSet {
                 for (pattern in 0 until nativeQuery.patternCount) {
                     val steps = nativeQuery.predicatesForPattern(pattern)
