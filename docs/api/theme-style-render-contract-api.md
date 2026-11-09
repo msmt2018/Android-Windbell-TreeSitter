@@ -43,7 +43,7 @@ ColorValue 包含 colorSpace、components、alpha。解析器支持十六进制�
 
 Receipt 状态为：
 
-| 状态 | 含义 | appliedInstructionCount |
+| 状态 | 含义 | appliedInstructionCount / deferredInstructionCount / droppedInstructionCount |
 |---|---|---|
 | QUEUED | 已排队，尚未确认宿主更新或绘制 | 必须为 0 |
 | APPLIED | 所有指令已写入宿主显示对象；不代表已执行 View/Canvas draw | 必须等于 Plan 指令数 |
