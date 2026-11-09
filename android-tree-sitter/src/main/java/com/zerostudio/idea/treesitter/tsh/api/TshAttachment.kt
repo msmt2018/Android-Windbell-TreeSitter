@@ -48,7 +48,12 @@ data class TshAttachmentRequest(
     val optionalCapabilities: TshCapabilitySet = TshCapabilitySet.EMPTY,
     val providerApiRange: TshProviderApiRange = TshProviderApiRange()
 ) {
-    init { require(objectType.isNotBlank()) { "Attachment objectType must not be blank" } }
+    init {
+        require(objectType.isNotBlank()) { "Attachment objectType must not be blank" }
+        require(requiredCapabilities.all().none { required -> optionalCapabilities.contains(required.id) }) {
+            "A capability cannot be both required and optional"
+        }
+    }
 }
 
 @JvmInline
@@ -125,9 +130,16 @@ class TshAttachmentManager(
             detach(handle)
             return failure("TSH-ATTACH-004", "OwnerScope closed while attachment was being registered")
         }
-        synchronized(lock) {
-            entries[id]?.scopeRegistration = registration
+        val closeRegistration = synchronized(lock) {
+            val entry = entries[id]
+            if (entry == null || entry.report.status == TshAttachmentStatus.DETACHED || closed) {
+                true
+            } else {
+                entry.scopeRegistration = registration
+                false
+            }
         }
+        if (closeRegistration) runCatching { registration.close() }
         val current = inspect(handle) ?: report.copy(status = TshAttachmentStatus.DETACHED)
         return TshResult.Success(current, current.diagnostics)
     }
