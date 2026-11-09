@@ -69,25 +69,34 @@ data class TshRenderPlan(
     }
 }
 
-enum class TshRenderReceiptStatus { QUEUED, DRAWN, PARTIAL, REJECTED, FAILED }
+enum class TshRenderReceiptStatus { QUEUED, DRAWN, PARTIAL, APPLIED, PARTIALLY_APPLIED, REJECTED, FAILED }
 
 data class TshRenderReceipt(
     val planId: TshRenderPlanId,
     val providerId: String,
     val revisions: TshRenderRevisions,
     val status: TshRenderReceiptStatus,
-    val drawnInstructionCount: Int,
+    val appliedInstructionCount: Int,
     val diagnostics: List<TshDiagnostic> = emptyList()
 ) {
     init {
         require(providerId.isNotBlank())
-        require(drawnInstructionCount >= 0)
+        require(appliedInstructionCount >= 0)
     }
 
-    /** True when the receipt confirms at least one instruction reached the host drawing backend. */
+    /** Compatibility accessor; for APPLIED statuses this is not a pixel-draw count. */
+    @Deprecated("Use appliedInstructionCount; host mutation does not prove pixels were drawn")
+    val drawnInstructionCount: Int get() = appliedInstructionCount
+
+    /** True only when the host confirms an actual drawing operation, not just Span mutation. */
     val confirmsActualDraw: Boolean
         get() = (status == TshRenderReceiptStatus.DRAWN || status == TshRenderReceiptStatus.PARTIAL) &&
-            drawnInstructionCount > 0
+            appliedInstructionCount > 0
+
+    /** True when the host display object was updated, even if a later View draw has not occurred. */
+    val confirmsHostMutation: Boolean
+        get() = (status == TshRenderReceiptStatus.APPLIED ||
+            status == TshRenderReceiptStatus.PARTIALLY_APPLIED) && appliedInstructionCount > 0
 }
 
 interface TshRenderAcknowledger {
@@ -213,7 +222,7 @@ class TshRenderCoordinator(
                     "TSH-RENDER-014", "Renderer reported ${receipt.status}"
                 )) })
             }
-            TshRenderReceiptStatus.PARTIAL -> TshResult.Success(
+            TshRenderReceiptStatus.PARTIAL, TshRenderReceiptStatus.PARTIALLY_APPLIED -> TshResult.Success(
                 receipt,
                 receipt.diagnostics + if (receipt.diagnostics.none { it.severity == TshDiagnosticSeverity.WARNING }) {
                     listOf(TshDiagnostic(
@@ -246,15 +255,21 @@ class TshRenderCoordinator(
         if (receipt.planId != plan.id) return diagnostic("TSH-RENDER-008", "Receipt plan id does not match submitted plan")
         if (receipt.providerId != provider.id) return diagnostic("TSH-RENDER-009", "Receipt provider id does not match renderer")
         if (receipt.revisions != plan.revisions) return diagnostic("TSH-RENDER-010", "Receipt revisions do not match submitted plan")
-        if (receipt.drawnInstructionCount > plan.instructions.size) {
+        if (receipt.appliedInstructionCount > plan.instructions.size) {
             return diagnostic("TSH-RENDER-011", "Receipt reports more drawn instructions than the plan contains")
         }
-        if (receipt.status == TshRenderReceiptStatus.QUEUED && receipt.drawnInstructionCount != 0) {
+        if (receipt.status == TshRenderReceiptStatus.QUEUED && receipt.appliedInstructionCount != 0) {
             return diagnostic("TSH-RENDER-020", "QUEUED receipt cannot claim instructions were drawn")
         }
-        if (receipt.status == TshRenderReceiptStatus.DRAWN &&
-            receipt.drawnInstructionCount != plan.instructions.size) {
-            return diagnostic("TSH-RENDER-012", "DRAWN receipt must confirm every instruction")
+        if ((receipt.status == TshRenderReceiptStatus.DRAWN ||
+                receipt.status == TshRenderReceiptStatus.APPLIED) &&
+            receipt.appliedInstructionCount != plan.instructions.size) {
+            return diagnostic("TSH-RENDER-012", "DRAWN/APPLIED receipt must confirm every instruction")
+        }
+        if (receipt.status == TshRenderReceiptStatus.PARTIAL &&
+            (receipt.appliedInstructionCount == 0 ||
+                receipt.appliedInstructionCount >= plan.instructions.size)) {
+            return diagnostic("TSH-RENDER-018", "PARTIAL draw receipt must report at least one but fewer than all instructions")
         }
         // PARTIAL may mean only some style attributes were applied even when every range was touched.
         if ((receipt.status == TshRenderReceiptStatus.REJECTED ||
