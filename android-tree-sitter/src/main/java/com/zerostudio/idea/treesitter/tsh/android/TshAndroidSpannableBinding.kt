@@ -42,6 +42,12 @@ class TshAndroidSpannableBinding private constructor(
             requiredCapabilities: TshCapabilitySet,
             optionalCapabilities: TshCapabilitySet
         ): TshResult<TshAndroidSpannableBinding> {
+            val overlap = requiredCapabilities.all().map { it.id }
+                .intersect(optionalCapabilities.all().map { it.id }.toSet())
+            if (overlap.isNotEmpty()) return failure(
+                "TSH-ANDROID-BINDING-003",
+                "Capabilities cannot be both required and optional: ${overlap.sorted().joinToString()}"
+            )
             try {
                 engine.providers.registerUnique(renderer)
             } catch (error: Exception) {
