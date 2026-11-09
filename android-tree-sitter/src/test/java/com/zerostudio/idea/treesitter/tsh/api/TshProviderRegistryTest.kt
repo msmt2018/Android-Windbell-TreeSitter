@@ -73,6 +73,21 @@ class TshProviderRegistryTest {
     }
 
     @Test
+    fun reportsNoCompatibleProviderAsItsOwnDegradationLevel() {
+        val registry = TshProviderRegistry()
+        registry.register(Provider(
+            "unrelated",
+            capabilities = TshCapabilitySet.of(TshCapability("render.color"))
+        ) { _, _ -> false })
+        val result = registry.resolveFor(
+            Any(), descriptor(),
+            required = TshCapabilitySet.of(TshCapability("text.snapshot"))
+        )
+        assertFalse(result.isSatisfiable)
+        assertEquals(TshDegradationLevel.NO_COMPATIBLE_PROVIDER, result.degradationLevel)
+    }
+
+    @Test
     fun isolatesSupportsExceptionsAndReportsThem() {
         val registry = TshProviderRegistry()
         registry.register(Provider("broken", capabilities = TshCapabilitySet.of(TshCapability("text.read"))) {
