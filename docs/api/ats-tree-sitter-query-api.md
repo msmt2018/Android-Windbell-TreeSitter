@@ -17,12 +17,13 @@ GrammarProvider → TshParserSession → TshSyntaxTreeSnapshot → TshAtsCompile
 - `TshGrammarDescriptor`：languageId、grammarVersion、ABI、fingerprint、capabilities。
 - `TshByteRange`：Native Tree-sitter byte offset 半开范围；实际字节编码由 `TshSyntaxTreeSnapshot.inputEncoding` 指明，不得默认把所有 Native byte offset 当作 UTF-8。
 - `TshAtsSource` / `TshQuerySourceLanguage`：区分 ATS 与原生 Tree-sitter Query 输入。
-- `TshQueryCompileOptions`：谓词开关、严格节点验证、模式数量上限。
+- `TshQueryCompileOptions`：谓词开关、严格节点验证开关、模式数量上限。当前 strictNodeValidation 尚无可用的完整节点/字段元数据校验实现，不应将其视为已生效；需要在 Grammar Schema Provider 接入后实现。
 - `TshCompiledQuery`：queryId/revision、Grammar 绑定、source hash、compiler version、options、可选 native object id。
 - `TshSyntaxTreeSnapshot`：document/version/tree revision、Grammar、root byte range、Native tree object ID 和源文本编码（UTF8/UTF16_LE/UTF16_BE）。
 - `TshCapture` / `TshQueryResult`：捕获元数据、文档/树/查询版本、执行步数及捕获 byte range 所属的源文本编码。
 - `TshQueryExecutionBudget` / `TshQueryCancellation`：执行预算与协作式取消契约。
-- `TshAtsCompiler` / `TshQueryExecutor`：编译和执行接口。
+- `TshQueryCompiler` / `TshQueryExecutor`：通用 Tree-sitter 查询编译和执行接口。
+- `TshAtsCompiler`：ATS 前端专用扩展契约，ATS 编译器必须 Lower 到同一 Tree-sitter Query 执行管线。当前 Native S-expression Adapter 不再错误实现 ATS 接口。
 - `TshCompiledQueryRegistry`：编译查询注册、替换、查找和 Grammar 兼容检查。
 - `TshEngine.createTreeSitterQueryCompiler/Executor` 与 `openTreeSitterParser`：使用 Engine 统一拥有的对象索引、CompiledQuery catalog、Native Query Lease Store 和 Native Resource Registry；生产装配优先使用 Engine 工厂，不要为同一 Engine 创建彼此独立的 Lease Store。
 
