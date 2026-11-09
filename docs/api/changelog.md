@@ -14,7 +14,7 @@
 - 新增 OwnerScope 自动 detach 和 AttachmentManager 的并发竞态保护；Provider refresh 保留原始 required/optional/API range 条件。
 - Query Execution Budget 显式标记 unsupported：strictNodeValidation 默认关闭，显式开启时报 unsupported；maxSteps 默认 null，显式请求时报 unsupported；stepsUsed 改为可空，Cursor 同时设置 pending match limit 和总 Match 数限制。
 - Text chunk 读取拒绝切开 UTF-16 surrogate pair，TextEdit replacement 拒绝不成对 surrogate。
-- TshTextAccessProvider 现在也是 TshProvider，默认发布 text.snapshot/text.chunk，并可按宿主声明发布 change-subscription/disposal-notification；Provider Registry 可直接协商文本接入能力。
+- 新增 TshTextAccessBinding：为宿主 Document 管理 TextAccessProvider 注册（可选择外部共享注册）、Attachment、Snapshot Lease 获取、Change/Disposal subscription；OwnerScope/Engine detach 或文档销毁会关闭绑定。TshTextAccessProvider 现在也是 TshProvider，默认发布 text.snapshot/text.chunk，并可按宿主声明发布 change-subscription/disposal-notification。
 - Engine 生命周期操作与 close() 由同一锁线性化；Engine 关闭时永久关闭 Object/Provider/CompiledQuery registries，阻止通过公开 Registry 属性在 shutdown 后重新发布对象、Provider 或 Query；新增并发/关闭测试源码。
 - 坐标转换拒绝将非 String CharSequence 隐式 toString() flatten，避免把 Piece Tree/Rope 等宿主缓冲区意外复制成全文 String；新增测试源码。
 - Native Resource/Query Lease 与 OwnerScope cleanup 在 JNI LinkageError 后仍继续释放依赖，并保留结构化诊断；新增测试源码。
