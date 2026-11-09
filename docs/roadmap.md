@@ -66,6 +66,7 @@
 - [ ] Grammar Node Schema Provider / strictNodeValidation 尚未实现。
 - [ ] Tree-sitter 真实 step budget、Native 可中断取消、增量 Edit/changed-range 尚未实现。
 - [x] TSParser.parseInput(TSInput) / JNI callback / TshSnapshotTreeSitterInput / ParserOwner Snapshot chunk parse 源码与 adapter 测试源码。
+- [x] OwnedSyntaxTree exclusive edit lease、snapshot/registry metadata revision 同步和 QueryExecutor stale snapshot rejection 源码。
 - [ ] 真实宿主 Piece Tree/Rope Provider、增量多 Edit→TSInputEdit 转换和 Native parse integration test。
 - [ ] 旧宿主所有 Tree/Language/Parser owner 尚未全部迁移到统一 Resource Registry。
 
