@@ -45,7 +45,14 @@ class TshTextAccessBinding private constructor(
         if (closed.get()) return failure(
             "TSH-TEXT-BINDING-001", "TextAccessBinding is closed"
         )
-        if (!provider.supportsChangeSubscriptions) return failure(
+        val supportsChanges = try {
+            provider.supportsChangeSubscriptions
+        } catch (error: Exception) {
+            return failure("TSH-TEXT-BINDING-039", "Cannot inspect TextAccessProvider change capability: ${error.message}", error)
+        } catch (error: LinkageError) {
+            return failure("TSH-TEXT-BINDING-040", "TextAccessProvider change capability lookup failed with a linkage error", error)
+        }
+        if (!supportsChanges) return failure(
             "TSH-TEXT-BINDING-002", "TextAccessProvider does not advertise change subscriptions"
         )
         val result = try {
@@ -188,8 +195,15 @@ class TshTextAccessBinding private constructor(
             optionalCapabilities: TshCapabilitySet? = null,
             registerProvider: Boolean = true
         ): TshResult<TshTextAccessBinding> {
+            val providerCapabilities = try {
+                provider.capabilities
+            } catch (error: Exception) {
+                return failure("TSH-TEXT-BINDING-041", "Cannot inspect TextAccessProvider capabilities: ${error.message}", error)
+            } catch (error: LinkageError) {
+                return failure("TSH-TEXT-BINDING-042", "TextAccessProvider capability lookup failed with a linkage error", error)
+            }
             val optional = optionalCapabilities ?: TshCapabilitySet.from(
-                provider.capabilities.all().filterNot { requiredCapabilities.contains(it.id) }
+                providerCapabilities.all().filterNot { requiredCapabilities.contains(it.id) }
             )
             val overlap = requiredCapabilities.all().map { it.id }
                 .intersect(optional.all().map { it.id }.toSet())
@@ -269,7 +283,16 @@ class TshTextAccessBinding private constructor(
                 "TSH-TEXT-BINDING-010", "Attachment detached while TextAccessBinding was being installed"
             )
 
-            if (provider.supportsDisposalNotifications) {
+            val supportsDisposal = try {
+                provider.supportsDisposalNotifications
+            } catch (error: Exception) {
+                binding.close()
+                return failure("TSH-TEXT-BINDING-043", "Cannot inspect document disposal capability: ${error.message}", error)
+            } catch (error: LinkageError) {
+                binding.close()
+                return failure("TSH-TEXT-BINDING-044", "Document disposal capability lookup failed with a linkage error", error)
+            }
+            if (supportsDisposal) {
                 val disposal = try {
                     provider.subscribeDisposed(document) { binding.close() }
                 } catch (error: Exception) {
