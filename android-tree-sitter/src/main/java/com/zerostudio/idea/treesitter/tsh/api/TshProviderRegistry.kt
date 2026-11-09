@@ -162,9 +162,10 @@ class TshProviderRegistry {
         )
 
         val level = when {
-            compatible.isEmpty() -> TshDegradationLevel.NO_COMPATIBLE_PROVIDER
-            missingRequired.isNotEmpty() || incompatible.any { it in requested } -> TshDegradationLevel.REQUIRED_CAPABILITIES_MISSING
+            missingRequired.isNotEmpty() -> TshDegradationLevel.REQUIRED_CAPABILITIES_MISSING
             missingOptional.isNotEmpty() -> TshDegradationLevel.OPTIONAL_CAPABILITIES_MISSING
+            requested.isEmpty() && optionalRequested.isEmpty() -> TshDegradationLevel.NONE
+            compatible.isEmpty() -> TshDegradationLevel.NO_COMPATIBLE_PROVIDER
             else -> TshDegradationLevel.NONE
         }
         return TshProviderResolution(
