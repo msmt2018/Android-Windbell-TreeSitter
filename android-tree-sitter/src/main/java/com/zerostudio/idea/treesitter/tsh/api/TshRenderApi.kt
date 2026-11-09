@@ -143,12 +143,14 @@ class TshRenderCoordinator(
     }
 
     fun submit(plan: TshRenderPlan): TshResult<TshRenderReceipt> {
+        // Snapshot caller-owned collections before storing or handing the plan to third-party code.
+        val stablePlan = snapshotPlan(plan)
         val current = synchronized(lock) { currentRevisions }
             ?: return failure("TSH-RENDER-001", "Current render revisions have not been installed")
-        if (plan.revisions != current) {
+        if (stablePlan.revisions != current) {
             return failure("TSH-RENDER-002", "RenderPlan revisions are stale")
         }
-        val missing = plan.requiredCapabilities.all().filterNot { required ->
+        val missing = stablePlan.requiredCapabilities.all().filterNot { required ->
             provider.capabilities.satisfies(required)
         }
         if (missing.isNotEmpty()) {
@@ -158,30 +160,30 @@ class TshRenderCoordinator(
             )
         }
         synchronized(lock) {
-            if (currentRevisions != plan.revisions) {
+            if (currentRevisions != stablePlan.revisions) {
                 return failure("TSH-RENDER-002", "RenderPlan became stale before submission")
             }
-            if (pending.containsKey(plan.id)) {
+            if (pending.containsKey(stablePlan.id)) {
                 return failure("TSH-RENDER-004", "RenderPlan id is already pending")
             }
-            pending[plan.id] = plan
+            pending[stablePlan.id] = plan
         }
 
         val submitted = try {
-            provider.submit(plan, this)
+            provider.submit(stablePlan, this)
         } catch (error: Exception) {
-            synchronized(lock) { pending.remove(plan.id) }
+            synchronized(lock) { pending.remove(stablePlan.id) }
             return failure("TSH-RENDER-005", "Renderer provider threw during submission", error)
         }
         return when (submitted) {
             is TshResult.Failure -> {
-                synchronized(lock) { pending.remove(plan.id) }
+                synchronized(lock) { pending.remove(stablePlan.id) }
                 submitted
             }
             is TshResult.Success -> {
                 val receipt = submitted.value
-                validateReceipt(plan, receipt)?.let { problem ->
-                    synchronized(lock) { pending.remove(plan.id) }
+                validateReceipt(stablePlan, receipt)?.let { problem ->
+                    synchronized(lock) { pending.remove(stablePlan.id) }
                     return TshResult.Failure(listOf(problem))
                 }
                 if (receipt.status == TshRenderReceiptStatus.QUEUED) {
@@ -250,6 +252,18 @@ class TshRenderCoordinator(
     }
 
     fun pendingPlanIds(): Set<TshRenderPlanId> = synchronized(lock) { pending.keys.toSet() }
+
+    private fun snapshotPlan(plan: TshRenderPlan): TshRenderPlan = plan.copy(
+        instructions = plan.instructions.map { instruction ->
+            instruction.copy(
+                style = instruction.style.copy(
+                    fontFamilies = instruction.style.fontFamilies.toList(),
+                    decorations = instruction.style.decorations.toSet()
+                ),
+                sourceMatchIds = instruction.sourceMatchIds.toSet()
+            )
+        }.toList()
+    )
 
     private fun validateReceipt(plan: TshRenderPlan, receipt: TshRenderReceipt): TshDiagnostic? {
         if (receipt.planId != plan.id) return diagnostic("TSH-RENDER-008", "Receipt plan id does not match submitted plan")
