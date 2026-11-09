@@ -25,7 +25,8 @@ class TshAndroidSpannableRendererTest {
     ) : TshAndroidSpannableRenderTarget {
         var failInvalidation = false
         var visibleRange: TshAndroidVisibleRange? = null
-        override fun visibleRangeUtf16(documentId: String) = visibleRange
+        override fun visibleRangeUtf16(documentId: String) =
+            visibleRange ?: TshAndroidVisibleRange(0L, text.length.toLong())
         override fun isOnRenderThread() = true
         override fun currentRevisions(documentId: String) = revisions
         override fun resolveSpannable(documentId: String) = text
