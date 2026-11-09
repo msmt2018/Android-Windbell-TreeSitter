@@ -6,9 +6,19 @@
 #include "WindbellTshCore.h"
 #include <algorithm>
 #include <cstring>
+#include <memory>
 #include "ts__log.h"
 
 namespace windbell::tsh {
+
+namespace {
+struct OnigRegionDeleter {
+    void operator()(OnigRegion* region) const {
+        if (region) onig_region_free(region, 1);
+    }
+};
+using ScopedOnigRegion = std::unique_ptr<OnigRegion, OnigRegionDeleter>;
+}
 
 TshGrammar::~TshGrammar() {
     for (auto& rule : regex_rules) {
@@ -56,8 +66,9 @@ void WindbellEngine::matchBlockRecursive(
     const UChar* range_end,
     std::vector<HighlightSpan>& out_spans
 ) {
-    OnigRegion* start_region = onig_region_new();
-    OnigRegion* end_region = onig_region_new();
+    ScopedOnigRegion start_region(onig_region_new());
+    ScopedOnigRegion end_region(onig_region_new());
+    if (!start_region || !end_region) return;
     const UChar* curr = range_start;
 
     while (curr < range_end) {
@@ -67,7 +78,7 @@ void WindbellEngine::matchBlockRecursive(
             text_end,
             curr,
             range_end,
-            start_region,
+            start_region.get(),
             ONIG_OPTION_NONE
         );
         if (hit_start < 0) break;
@@ -81,7 +92,7 @@ void WindbellEngine::matchBlockRecursive(
             text_end,
             content_start,
             text_end,
-            end_region,
+            end_region.get(),
             ONIG_OPTION_NONE
         );
 
@@ -103,7 +114,8 @@ void WindbellEngine::matchBlockRecursive(
 
                 for (const auto& nested : rule.nested_rules) {
                     if (nested.type == RegexRuleType::MATCH && nested.onig_start) {
-                        OnigRegion* inner_region = onig_region_new();
+                        ScopedOnigRegion inner_region(onig_region_new());
+                        if (!inner_region) continue;
                         const UChar* inner_curr = inner_start;
                         while (inner_curr < inner_end) {
                             int inner_hit = onig_search(
@@ -112,7 +124,7 @@ void WindbellEngine::matchBlockRecursive(
                                 text_end,
                                 inner_curr,
                                 inner_end,
-                                inner_region,
+                                inner_region.get(),
                                 ONIG_OPTION_NONE
                             );
                             if (inner_hit < 0) break;
@@ -130,7 +142,6 @@ void WindbellEngine::matchBlockRecursive(
                             inner_curr = (inner_region->end[0] <= inner_region->beg[0]) ?
                                 inner_curr + sizeof(uint16_t) : text_start + inner_region->end[0];
                         }
-                        onig_region_free(inner_region, 1);
                     }
                 }
             }
@@ -143,8 +154,6 @@ void WindbellEngine::matchBlockRecursive(
         }
     }
 
-    onig_region_free(start_region, 1);
-    onig_region_free(end_region, 1);
 }
 
 std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
@@ -175,7 +184,8 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
 
         if (!rule.onig_start) continue;
 
-        OnigRegion* region = onig_region_new();
+        ScopedOnigRegion region(onig_region_new());
+        if (!region) continue;
         const UChar* current = text_start;
 
         while (current < text_end) {
@@ -185,7 +195,7 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                 text_end,
                 current,
                 text_end,
-                region,
+                region.get(),
                 ONIG_OPTION_NONE
             );
             if (hit_pos >= 0) {
@@ -223,7 +233,6 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                 break;
             }
         }
-        onig_region_free(region, 1);
     }
 
     std::vector<HighlightSpan> macro_spans;
