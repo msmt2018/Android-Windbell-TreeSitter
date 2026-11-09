@@ -92,6 +92,7 @@
 - [x] Coordinator 校验 document/config/theme/viewport/renderer revisions 和 Provider capabilities。
 - [x] 异步 QUEUED/Ack、过期回执拒绝、PARTIAL/FAILED/REJECTED 诊断和 Provider cancel 扩展点。
 - [x] Provider 必须在实际 Draw 前检查 Acknowledger.isCurrent，完成后 Ack。
+- [x] Render Receipt 的 DRAWN/PARTIAL 实际绘制确认语义一致；QUEUED 不允许声称已有绘制数量，并补充回归测试源码。
 - [x] 旧 Spannable 路径只清理 TSH-owned Span，不再删除宿主 CharacterStyle；非法/奇数/越界 UTF-16LE byte range 被拒绝。
 - [x] ScopeSelector/StyleRule/StyleResolver 到 RenderPlan 的首版 Resolver；[ ] Attribute semantic pipeline、DSL selector parser 和完整 Resolver。
 - [ ] Android View/Canvas/Spannable/Compose 具体 Renderer Provider 尚未实现。
@@ -124,7 +125,7 @@
 
 ## 当前证据结论
 
-- 源码：上述切片已提交到 feat/tsh-unified-api-foundation。
+- 源码：上述切片已提交到 feat/tsh-unified-api-foundation；新增 Render Receipt 状态语义修复及回归测试源码。
 - 构建：未验证。
 - 单元测试：新增测试源码，未运行。
 - Native/JNI：未构建/运行验证。
