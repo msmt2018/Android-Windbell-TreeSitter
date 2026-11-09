@@ -40,7 +40,9 @@ class TshPieceTreeEditorBinding private constructor(
         ) {
             releasePendingBefore()
             if (closed.get()) return
-            beforeCoordinatesSupported = view.getTextBuffer().isEOLNormalized()
+            beforeCoordinatesSupported = runCatching {
+                view.getTextBuffer().isEOLNormalized()
+            }.getOrDefault(false)
             when (val acquired = provider.acquireSnapshot(document)) {
                 is TshResult.Success -> {
                     beforeLease = acquired.value
