@@ -135,3 +135,10 @@
 - Fixed PieceTreeSnapshot.getNearestChunk default-range overflow: start + Int.MAX_VALUE could wrap negative and corrupt snapshot reads. The requested length is now bounded by the remaining source-piece length before computing the end offset.
 - Pinned CI grammar tooling to Node.js 20 and made the test job install all grammar package dependencies, matching the release job.
 - GitHub Actions run #552 exposed the failures above. Corrective commits are on feat/tsh-unified-api-foundation; the new workflow run must complete before build/test status can be upgraded. No test has been marked verified from source inspection alone.
+
+### Follow-up: bound the mutable PieceTree read path too
+
+- Applied the same overflow-safe chunk-length calculation to PieceTreeBase.getNearestChunk(); the previous fix covered immutable snapshots, but the live PieceTree path had the equivalent targetOffset + Int.MAX_VALUE overflow.
+- Extended the regression test to assert both live-buffer and immutable-snapshot reads with Int.MAX_VALUE and bounded lengths.
+- Added workflow-level concurrency cancellation for superseded branch/PR runs, removed the per-job cancellation action, and aligned Debug grammar npm fallback with Release.
+- These changes are source-level corrections only; the new run remains the authority for validation status.
