@@ -201,8 +201,17 @@ class TshAndroidSpannableRenderer(
         var visibleInstructionCount = 0
         var fullyApplied = 0
         for (instruction in plan.instructions) {
-            if (!acknowledger.isCurrent(plan.id, plan.revisions) ||
-                target.currentRevisions(documentId) != plan.revisions) {
+            val currentDuringMutation = try {
+                acknowledger.isCurrent(plan.id, plan.revisions) &&
+                    target.currentRevisions(documentId) == plan.revisions
+            } catch (error: Exception) {
+                removeNewOwnedSpans(spannable, previousSpans)
+                return failure("TSH-ANDROID-RENDER-019", "Host revision check failed during Span mutation: ${error.message}")
+            } catch (error: LinkageError) {
+                removeNewOwnedSpans(spannable, previousSpans)
+                return failure("TSH-ANDROID-RENDER-020", "Host revision check failed with a linkage error during Span mutation")
+            }
+            if (!currentDuringMutation) {
                 removeNewOwnedSpans(spannable, previousSpans)
                 return failure("TSH-ANDROID-RENDER-004", "RenderPlan became stale during Spannable mutation")
             }
@@ -249,6 +258,9 @@ class TshAndroidSpannableRenderer(
             } catch (error: Exception) {
                 removeNewOwnedSpans(spannable, previousSpans)
                 return failure("TSH-ANDROID-RENDER-010", "Applying a Spannable style failed: ${error.message}")
+            } catch (error: LinkageError) {
+                removeNewOwnedSpans(spannable, previousSpans)
+                return failure("TSH-ANDROID-RENDER-021", "Applying a Spannable style failed with a linkage error")
             }
             val after = spannable.getSpans(start.toInt(), end.toInt(), CharacterStyle::class.java)
                 .count { it is TshAndroidOwnedSpan && it.ownerId == id && it.planId == plan.id.value }
@@ -269,15 +281,24 @@ class TshAndroidSpannableRenderer(
             }
         }
 
-        if (!acknowledger.isCurrent(plan.id, plan.revisions) ||
-            target.currentRevisions(documentId) != plan.revisions) {
+        val currentBeforeCommit = try {
+            acknowledger.isCurrent(plan.id, plan.revisions) &&
+                target.currentRevisions(documentId) == plan.revisions
+        } catch (error: Exception) {
+            removeNewOwnedSpans(spannable, previousSpans)
+            return failure("TSH-ANDROID-RENDER-022", "Host revision check failed before Span commit: ${error.message}")
+        } catch (error: LinkageError) {
+            removeNewOwnedSpans(spannable, previousSpans)
+            return failure("TSH-ANDROID-RENDER-023", "Host revision check failed with a linkage error before Span commit")
+        }
+        if (!currentBeforeCommit) {
             removeNewOwnedSpans(spannable, previousSpans)
             return failure("TSH-ANDROID-RENDER-004", "RenderPlan became stale before host invalidation")
         }
         // Commit atomically from the host object's point of view: only now remove the
         // previous TSH generation. If invalidation fails, restore it and discard the new one.
-        previousSpans.forEach { spannable.removeSpan(it.span) }
         try {
+            previousSpans.forEach { spannable.removeSpan(it.span) }
             target.invalidate(documentId)
         } catch (error: Exception) {
             removeNewOwnedSpans(spannable, previousSpans)
