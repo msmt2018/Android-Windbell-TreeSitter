@@ -95,7 +95,7 @@ class TshAndroidSpannableRendererTest {
         assertTrue(engine.providers.all().none { it.id == renderer.id })
         assertTrue(binding.closeDiagnostics.isEmpty())
         binding.close()
-        assertTrue(binding.closeDiagnostics().isEmpty())
+        assertTrue(binding.closeDiagnostics.isEmpty())
         engine.close()
     }
 
@@ -115,7 +115,7 @@ class TshAndroidSpannableRendererTest {
 
         assertTrue(binding.isClosed)
         assertTrue(engine.providers.all().none { it.id == renderer.id })
-        assertTrue(binding.closeDiagnostics().isEmpty())
+        assertTrue(binding.closeDiagnostics.isEmpty())
         scope.close()
         engine.close()
     }
