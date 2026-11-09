@@ -3,6 +3,8 @@ package com.zerostudio.idea.treesitter.tsh.api
 import com.zerostudio.idea.treesitter.TSLanguage
 import com.zerostudio.idea.treesitter.TSParser
 import com.zerostudio.idea.treesitter.TSTree
+import java.util.concurrent.locks.ReentrantLock
+import kotlin.concurrent.withLock
 
 /** A syntax tree registered with the Engine resource coordinator and ready for query execution. */
 class TshOwnedSyntaxTree(
@@ -38,6 +40,8 @@ class TshTreeSitterParserOwner private constructor(
     private val grammar: TshGrammarDescriptor,
     private val parser: TshNativeResourceRegistry.Registration<TSParser>
 ) : AutoCloseable {
+    /** TSParser is mutable Native state and cannot parse two documents concurrently. */
+    private val parseLock = ReentrantLock()
 
     /**
      * Parses a document and transfers the resulting tree plus a Language dependency lease to the
@@ -88,7 +92,7 @@ class TshTreeSitterParserOwner private constructor(
         var tree: TSTree? = null
         var languageLeaseTransferred = false
         try {
-            val parsedTree = parse(parserLease.resource)
+            val parsedTree = parseLock.withLock { parse(parserLease.resource) }
                 ?: return failure(
                     "TSH-PARSER-OWNER-004",
                     "Tree-sitter parser returned no syntax tree",
@@ -542,9 +546,9 @@ class TshTreeSitterParserOwner private constructor(
         var languageLeaseTransferred = false
         try {
             val input = TshSnapshotTreeSitterInput(textProvider, snapshotLease)
-            val parsedTree = parserLease.resource.parseInput(
-                oldTreeLease?.resource, input, chunkSizeBytes
-            ) ?: return failure(
+            val parsedTree = parseLock.withLock {
+                parserLease.resource.parseInput(oldTreeLease?.resource, input, chunkSizeBytes)
+            } ?: return failure(
                 "TSH-PARSER-OWNER-004",
                 "Tree-sitter streaming parser returned no syntax tree",
                 TshDiagnosticStage.PARSE,
