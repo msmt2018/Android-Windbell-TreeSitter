@@ -35,6 +35,12 @@ class TshTreeSitterQueryCompiler(
         grammar: TshGrammarDescriptor,
         options: TshQueryCompileOptions
     ): TshResult<TshCompiledQuery> {
+        if (options.strictNodeValidation) {
+            return failure(
+                "TSH-QUERY-COMPILE-005",
+                "strictNodeValidation requires a Grammar Node Schema Provider, which is not installed"
+            )
+        }
         if (source.language != TshQuerySourceLanguage.TREE_SITTER) {
             return failure(
                 "TSH-ATS-COMPILER-001",
@@ -201,6 +207,12 @@ class TshTreeSitterQueryExecutor(
         budget: TshQueryExecutionBudget,
         cancellation: TshQueryCancellation
     ): TshResult<TshQueryResult> {
+        if (budget.maxSteps != null) {
+            return failure(
+                "TSH-QUERY-EXEC-021",
+                "maxSteps cannot be enforced by the current TSQueryCursor API; omit maxSteps or use a future step-budget capable adapter"
+            )
+        }
         if (!query.isCompatibleWith(tree.grammar)) {
             return failure("TSH-QUERY-EXEC-001", "Compiled query grammar does not match syntax tree grammar")
         }
@@ -300,6 +312,7 @@ class TshTreeSitterQueryExecutor(
             // Tree-sitter's match limit bounds pending in-progress matches, not total results.
             // Enforce maxMatches while draining the cursor instead.
             cursor.setByteRange(effectiveRange.startByte.toInt(), effectiveRange.endByte.toInt())
+            cursor.setMatchLimit(budget.maxMatches)
             cursor.setPredicateEvaluationEnabled(query.options.enablePredicates)
             if (query.options.enablePredicates) {
                 predicateHandlers.forEach(cursor::addPredicateHandler)
@@ -348,8 +361,8 @@ class TshTreeSitterQueryExecutor(
                     treeRevision = tree.treeRevision,
                     grammarFingerprint = tree.grammar.fingerprint,
                     captures = captures.toList(),
-                    // TSQueryCursor does not expose VM step counts; zero means "not reported".
-                    stepsUsed = 0L,
+                    // Null means the native cursor does not expose VM step counts.
+                    stepsUsed = null,
                     isComplete = complete,
                     inputEncoding = tree.inputEncoding
                 ),
@@ -359,11 +372,7 @@ class TshTreeSitterQueryExecutor(
                         "Query result is partial because the total match budget was reached or Tree-sitter dropped pending matches",
                         TshDiagnosticSeverity.WARNING
                     ))
-                    add(diagnostic(
-                        "TSH-QUERY-EXEC-017",
-                        "The current TSQueryCursor API does not expose VM step counts; maxSteps is not enforced and stepsUsed is reported as 0",
-                        TshDiagnosticSeverity.INFO
-                    ))
+                    // Step budgets are rejected before entering Native execution; no false stepsUsed value is reported.
                 }
             )
         } catch (error: Throwable) {
