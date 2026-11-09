@@ -5,9 +5,7 @@ import java.util.Locale
 
 /**
  * Correctness-first converter for in-memory text.
- *
- * This implementation is intentionally not the large-document path: Piece Tree/Rope
- * providers must implement indexed conversion and must not flatten the document.
+ * Piece Tree/Rope providers must implement indexed conversion and must not flatten documents.
  * Unpaired UTF-16 surrogates are rejected consistently in both directions.
  */
 object TshCoordinateConverter {
@@ -19,7 +17,7 @@ object TshCoordinateConverter {
         to: TshCoordinateSystem
     ): TshResult<Int> = convertInternal(text, offset.toLong(), from, to).mapInt()
 
-    /** Long-offset overload for document-sized coordinates; the Int overload remains ABI-compatible. */
+    /** Long-offset API; UTF-8 byte offsets may exceed Int even when JVM String length does not. */
     @JvmStatic
     fun convertLong(
         text: CharSequence,
@@ -35,55 +33,52 @@ object TshCoordinateConverter {
         to: TshCoordinateSystem
     ): TshResult<Long> {
         if (offset < 0L) return failure("TSH-COORD-001", "Offset must be non-negative")
-        if (offset > Int.MAX_VALUE.toLong()) {
-            return failure("TSH-COORD-005", "In-memory converter cannot index beyond Int.MAX_VALUE; use a long-indexed TextAccessProvider")
-        }
-        val value = text.toString()
+        val value = text as? String ?: text.toString()
         if (!hasValidSurrogates(value)) {
             return failure("TSH-COORD-006", "Text contains an unpaired UTF-16 surrogate")
         }
-        val sourceOffset = offset.toInt()
         if (from == TshCoordinateSystem.SCREEN_PIXEL || from == TshCoordinateSystem.LINE_COLUMN ||
             to == TshCoordinateSystem.SCREEN_PIXEL || to == TshCoordinateSystem.LINE_COLUMN) {
             return failure("TSH-COORD-002", "Screen and line/column conversion requires a layout-aware provider")
         }
         if (from == to) {
-            if (!isValidBoundary(value, sourceOffset, from)) {
+            if (toUtf16(value, offset, from) == null) {
                 return failure("TSH-COORD-003", "Offset is outside the text or splits an encoded character")
             }
             return TshResult.Success(offset)
         }
-        val utf16Offset = toUtf16(value, sourceOffset, from)
+        val utf16Offset = toUtf16(value, offset, from)
             ?: return failure("TSH-COORD-003", "Source offset is invalid or not on a character boundary")
         val converted = fromUtf16(value, utf16Offset, to)
             ?: return failure("TSH-COORD-004", "Target offset cannot represent this character boundary")
-        return TshResult.Success(converted.toLong())
+        return TshResult.Success(converted)
     }
 
-    private fun toUtf16(value: String, offset: Int, system: TshCoordinateSystem): Int? = when (system) {
+    private fun toUtf16(value: String, offset: Long, system: TshCoordinateSystem): Int? = when (system) {
         TshCoordinateSystem.UTF16_CODE_UNIT ->
-            offset.takeIf { it <= value.length && isUtf16Boundary(value, it) }
+            if (offset <= value.length.toLong()) offset.toInt()
+                .takeIf { isUtf16Boundary(value, it) } else null
         TshCoordinateSystem.UNICODE_CODE_POINT -> {
             val count = value.codePointCount(0, value.length)
-            if (offset > count) null else value.offsetByCodePoints(0, offset)
+            if (offset > count.toLong()) null else value.offsetByCodePoints(0, offset.toInt())
         }
         TshCoordinateSystem.UTF8_BYTE -> {
             var utf16 = 0
             var bytes = 0L
             while (utf16 < value.length) {
-                if (bytes == offset.toLong()) return utf16
-                val cp = value.codePointAt(utf16)
-                bytes += utf8Length(cp)
-                utf16 += Character.charCount(cp)
+                if (bytes == offset) return utf16
+                val codePoint = value.codePointAt(utf16)
+                bytes += utf8Length(codePoint)
+                utf16 += Character.charCount(codePoint)
                 if (bytes > offset) return null
             }
-            if (bytes == offset.toLong()) utf16 else null
+            if (bytes == offset) utf16 else null
         }
         TshCoordinateSystem.GRAPHEME_CLUSTER -> {
             val iterator = BreakIterator.getCharacterInstance(Locale.ROOT)
             iterator.setText(value)
             var boundary = iterator.first()
-            var index = 0
+            var index = 0L
             while (index < offset) {
                 boundary = iterator.next()
                 if (boundary == BreakIterator.DONE) return null
@@ -94,18 +89,18 @@ object TshCoordinateConverter {
         TshCoordinateSystem.LINE_COLUMN, TshCoordinateSystem.SCREEN_PIXEL -> null
     }
 
-    private fun fromUtf16(value: String, utf16Offset: Int, system: TshCoordinateSystem): Int? {
+    private fun fromUtf16(value: String, utf16Offset: Int, system: TshCoordinateSystem): Long? {
         if (!isUtf16Boundary(value, utf16Offset)) return null
         return when (system) {
-            TshCoordinateSystem.UTF16_CODE_UNIT -> utf16Offset
-            TshCoordinateSystem.UNICODE_CODE_POINT -> value.codePointCount(0, utf16Offset)
+            TshCoordinateSystem.UTF16_CODE_UNIT -> utf16Offset.toLong()
+            TshCoordinateSystem.UNICODE_CODE_POINT -> value.codePointCount(0, utf16Offset).toLong()
             TshCoordinateSystem.UTF8_BYTE -> {
-                var bytes = 0
+                var bytes = 0L
                 var index = 0
                 while (index < utf16Offset) {
-                    val cp = value.codePointAt(index)
-                    bytes += utf8Length(cp)
-                    index += Character.charCount(cp)
+                    val codePoint = value.codePointAt(index)
+                    bytes += utf8Length(codePoint)
+                    index += Character.charCount(codePoint)
                 }
                 bytes
             }
@@ -113,7 +108,7 @@ object TshCoordinateConverter {
                 val iterator = BreakIterator.getCharacterInstance(Locale.ROOT)
                 iterator.setText(value)
                 var boundary = iterator.first()
-                var clusters = 0
+                var clusters = 0L
                 while (boundary < utf16Offset) {
                     boundary = iterator.next()
                     if (boundary == BreakIterator.DONE) return null
@@ -124,9 +119,6 @@ object TshCoordinateConverter {
             TshCoordinateSystem.LINE_COLUMN, TshCoordinateSystem.SCREEN_PIXEL -> null
         }
     }
-
-    private fun isValidBoundary(value: String, offset: Int, system: TshCoordinateSystem): Boolean =
-        toUtf16(value, offset, system) != null
 
     private fun isUtf16Boundary(value: String, offset: Int): Boolean =
         offset in 0..value.length &&
@@ -160,8 +152,9 @@ object TshCoordinateConverter {
     private fun <T> TshResult<T>.mapInt(): TshResult<Int> = when (this) {
         is TshResult.Success -> {
             val converted = value
-            if (converted > Int.MAX_VALUE.toLong()) failure("TSH-COORD-005", "Converted offset exceeds Int.MAX_VALUE")
-            else TshResult.Success(converted.toInt(), diagnostics)
+            if (converted > Int.MAX_VALUE.toLong()) failure(
+                "TSH-COORD-005", "Converted offset exceeds Int.MAX_VALUE; use convertLong()"
+            ) else TshResult.Success(converted.toInt(), diagnostics)
         }
         is TshResult.Failure -> this
     }
