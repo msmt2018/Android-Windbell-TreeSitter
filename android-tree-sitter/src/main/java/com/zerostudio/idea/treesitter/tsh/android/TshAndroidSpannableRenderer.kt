@@ -1,6 +1,7 @@
 package com.zerostudio.idea.treesitter.tsh.android
 
 import android.graphics.Typeface
+import android.os.Build
 import android.text.Spannable
 import android.text.Spanned
 import android.text.TextPaint
@@ -67,15 +68,26 @@ private class TshAndroidTypefaceSpan(
     override val ownerId: String,
     override val planId: String,
     private val family: String?,
+    private val weight: Int?,
     private val style: Int
 ) : MetricAffectingSpan(), TshAndroidOwnedSpan {
+    private fun resolve(base: Typeface): Typeface {
+        if (Build.VERSION.SDK_INT >= 28) {
+            val baseTypeface = family?.let { Typeface.create(it, Typeface.NORMAL) } ?: base
+            return Typeface.create(
+                baseTypeface,
+                weight ?: baseTypeface.weight,
+                (style and Typeface.ITALIC) != 0
+            )
+        }
+        return family?.let { Typeface.create(it, style) } ?: Typeface.create(base, style)
+    }
+
     override fun updateDrawState(textPaint: TextPaint) {
-        textPaint.typeface = family?.let { Typeface.create(it, style) }
-            ?: Typeface.create(textPaint.typeface, style)
+        textPaint.typeface = resolve(textPaint.typeface)
     }
     override fun updateMeasureState(textPaint: TextPaint) {
-        textPaint.typeface = family?.let { Typeface.create(it, style) }
-            ?: Typeface.create(textPaint.typeface, style)
+        textPaint.typeface = resolve(textPaint.typeface)
     }
 }
 
@@ -173,6 +185,13 @@ class TshAndroidSpannableRenderer(
             }
             val start = instruction.range.start.offset
             val end = instruction.range.end.offset
+            if (instruction.zIndex !in 0..255) {
+                diagnostics += warning(
+                    "TSH-ANDROID-RENDER-012",
+                    "Android Spannable supports zIndex values from 0 to 255; this instruction was skipped"
+                )
+                continue
+            }
             if (start < 0L || end <= start || end > spannable.length.toLong() ||
                 start > Int.MAX_VALUE.toLong()) {
                 diagnostics += warning(
@@ -185,7 +204,7 @@ class TshAndroidSpannableRenderer(
             val diagnosticsBefore = diagnostics.size
             val before = spannable.getSpans(start.toInt(), end.toInt(), CharacterStyle::class.java)
                 .count { it is TshAndroidOwnedSpan && it.ownerId == id && it.planId == plan.id.value }
-            val spanPriority = instruction.zIndex.coerceIn(0, 255) shl Spanned.SPAN_PRIORITY_SHIFT
+            val spanPriority = instruction.zIndex shl Spanned.SPAN_PRIORITY_SHIFT
             val spanFlags = Spannable.SPAN_EXCLUSIVE_EXCLUSIVE or spanPriority
             try {
                 applyStyle(spannable, start.toInt(), end.toInt(), plan.id.value, style, spanFlags, diagnostics)
@@ -253,6 +272,12 @@ class TshAndroidSpannableRenderer(
         }
         val decorations = style.decorations
         val family = style.fontFamilies.firstOrNull()
+        if (style.fontFamilies.size > 1) {
+            diagnostics += warning(
+                "TSH-ANDROID-RENDER-013",
+                "This backend currently applies only the first font family; host fallback resolution is not available"
+            )
+        }
         val supportedDecorations = setOf("bold", "italic", "underline", "strike", "strikethrough")
         val unknownDecorations = decorations - supportedDecorations
         if (unknownDecorations.isNotEmpty()) {
@@ -267,8 +292,19 @@ class TshAndroidSpannableRenderer(
             var typefaceStyle = Typeface.NORMAL
             if (bold) typefaceStyle = typefaceStyle or Typeface.BOLD
             if (italic) typefaceStyle = typefaceStyle or Typeface.ITALIC
+            if (Build.VERSION.SDK_INT < 28 && style.fontWeight != null &&
+                style.fontWeight != 400 && style.fontWeight != 700) {
+                diagnostics += warning(
+                    "TSH-ANDROID-RENDER-014",
+                    "This Android API level approximates custom font weights to normal/bold"
+                )
+            }
             spannable.setSpan(
-                TshAndroidTypefaceSpan(id, planId, family, typefaceStyle),
+                TshAndroidTypefaceSpan(
+                    id, planId, family,
+                    style.fontWeight ?: if (bold) 700 else null,
+                    typefaceStyle
+                ),
                 start, end, flags
             )
         }
