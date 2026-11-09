@@ -107,7 +107,7 @@ editor 模块新增 `TshPieceTreeEditorBinding.attach(view, documentId, language
 - 多编辑从 EditorDocument 的 bottom-up applied 顺序恢复为 TSH before-version 升序；Tree-sitter compiler 再反向生成 Native 降序 Edit。相同 offset 的多个纯插入保留稳定顺序；重叠替换仍拒绝。
 - `TshPieceTreeDocument` / Provider 增加 change subscription 与 disposal notification；Provider capability 显式声明 `text.change-subscription` 和 `text.disposal-notification`。
 - `onTransaction(change, beforeLease, afterLease)` 是后台调度边界。消费者接管两个 Lease 后必须在 parse/retry 结束时关闭；不得在 EditorView 回调中同步执行大文件 Native parse。
-- `TshPieceTreeEditorBinding.close()` 必须由宿主在文档永久关闭时调用。EditorView 的 buffer replacement 与文件身份变更尚未自动驱动 binding 重建；发生替换时宿主应结束旧 binding 并以新 documentId 重新 attach。
+- `TshPieceTreeEditorBinding.close()` 必须由宿主在文档永久关闭时、EditorView 主线程调用。EditorView 的 buffer replacement 与文件身份变更尚未自动驱动 binding 重建；发生同一文档的 buffer replacement 时宿主应在替换完成回调调用 Session.resync()，切换 documentId 时结束旧 Session 并重新 attach。
 
 本轮增加的转换测试覆盖大型 TextSlice 的长度/端点元数据路径和 Provider change/disposal subscription。仍需运行 editor/android-tree-sitter 的 Gradle/JUnit 测试，并补齐 EditorView 真实批量编辑、撤销/重做、buffer replacement 和关闭竞态集成测试。
 
@@ -122,6 +122,6 @@ editor 模块新增 `TshPieceTreeIncrementalSession.attach(view, documentId, lan
 - 若 Native Edit 已完成但 parse 失败，树保留 `EDITED_PENDING_PARSE`，session 重试 parse，不会重复应用同一批 Edit；重试失败时仍保留待解析状态。
 - 新树成功发布后回收旧树。Session 关闭时先阻止新任务，再在 worker 队列尾部回收当前树；当前同步 Native parse 不会被 Thread.interrupt 强行中断。
 - `onTreeUpdated` / `onFailure` 在 worker 或编辑回调线程执行，宿主需要自行切回 UI 线程更新界面。所有传入的 Snapshot Lease 由 Session 接管并在 finally 释放。
-- 外部替换同一 EditorView 的 PieceTree buffer 后，宿主在 replacement 完成回调的编辑线程调用 `resync()`；切换到不同 documentId 时必须关闭旧 Session 并重新 attach。
+- Binding 无法表示的编辑批次会触发 invalidation，Session 在 EditorView 主线程从当前 Snapshot 自动 resync；外部替换同一 EditorView 的 PieceTree buffer 后，宿主仍需在 replacement 完成回调调用 `resync()`；切换到不同 documentId 时必须在主线程关闭旧 Session 并重新 attach。
 
 该 Session 将真实 EditorView edit callback 接到 Snapshot → Edit Compiler → Native Batch Edit → Incremental Parse 的串行任务链。当前尚未运行 Gradle/JUnit/Native 测试；还需补充快速连续编辑、初次 parse 与编辑竞态、失败注入、close 与 Native parse 并发、buffer replacement/resync 集成测试。
