@@ -96,12 +96,24 @@ interface TshRenderProvider {
 
     /** QUEUED may be acknowledged asynchronously; final statuses are returned after drawing. */
     fun submit(plan: TshRenderPlan, acknowledger: TshRenderAcknowledger): TshResult<TshRenderReceipt>
+
+    fun cancel(planId: TshRenderPlanId): TshResult<Unit> = TshResult.Failure(listOf(TshDiagnostic(
+        code = "TSH-RENDER-013",
+        severity = TshDiagnosticSeverity.ERROR,
+        stage = TshDiagnosticStage.RENDER,
+        message = "Renderer provider does not support cancellation"
+    )))
 }
 
 /** Version-safe render submission coordinator. It never draws; it validates revisions and receipts. */
 class TshRenderCoordinator(
     private val provider: TshRenderProvider
 ) {
+    init {
+        require(provider.id.isNotBlank())
+        require(provider.apiVersion > 0)
+    }
+
     private val lock = Any()
     private val pending = LinkedHashMap<TshRenderPlanId, TshRenderPlan>()
     private var currentRevisions: TshRenderRevisions? = null
@@ -176,11 +188,39 @@ class TshRenderCoordinator(
         if (receipt.status != TshRenderReceiptStatus.QUEUED) {
             synchronized(lock) { pending.remove(receipt.planId) }
         }
-        return TshResult.Success(receipt, receipt.diagnostics)
+        when (receipt.status) {
+            TshRenderReceiptStatus.REJECTED, TshRenderReceiptStatus.FAILED -> {
+                val errors = receipt.diagnostics.filter { it.severity == TshDiagnosticSeverity.ERROR }
+                TshResult.Failure(errors.ifEmpty { listOf(diagnostic(
+                    "TSH-RENDER-014", "Renderer reported ${receipt.status}"
+                )) })
+            }
+            TshRenderReceiptStatus.PARTIAL -> TshResult.Success(
+                receipt,
+                receipt.diagnostics + if (receipt.diagnostics.none { it.severity == TshDiagnosticSeverity.WARNING }) {
+                    listOf(TshDiagnostic(
+                        "TSH-RENDER-015", TshDiagnosticSeverity.WARNING,
+                        TshDiagnosticStage.RENDER, "Renderer completed only part of the RenderPlan"
+                    ))
+                } else emptyList()
+            )
+            else -> TshResult.Success(receipt, receipt.diagnostics)
+        }
     }
 
-    fun cancelPending(planId: TshRenderPlanId): Boolean =
-        synchronized(lock) { pending.remove(planId) != null }
+    fun cancelPending(planId: TshRenderPlanId): TshResult<Unit> {
+        val plan = synchronized(lock) { pending[planId] }
+            ?: return failure("TSH-RENDER-016", "RenderPlan is not pending")
+        val result = try {
+            provider.cancel(planId)
+        } catch (error: Exception) {
+            return failure("TSH-RENDER-017", "Renderer cancellation failed", error)
+        }
+        if (result is TshResult.Success) {
+            synchronized(lock) { pending.remove(planId) }
+        }
+        return result
+    }
 
     fun pendingPlanIds(): Set<TshRenderPlanId> = synchronized(lock) { pending.keys.toSet() }
 
@@ -194,6 +234,14 @@ class TshRenderCoordinator(
         if (receipt.status == TshRenderReceiptStatus.DRAWN &&
             receipt.drawnInstructionCount != plan.instructions.size) {
             return diagnostic("TSH-RENDER-012", "DRAWN receipt must confirm every instruction")
+        }
+        if (receipt.status == TshRenderReceiptStatus.PARTIAL &&
+            receipt.drawnInstructionCount >= plan.instructions.size) {
+            return diagnostic("TSH-RENDER-018", "PARTIAL receipt must report fewer than all instructions")
+        }
+        if ((receipt.status == TshRenderReceiptStatus.REJECTED ||
+                receipt.status == TshRenderReceiptStatus.FAILED) && receipt.drawnInstructionCount != 0) {
+            return diagnostic("TSH-RENDER-019", "Rejected/failed receipt cannot report drawn instructions")
         }
         return null
     }
