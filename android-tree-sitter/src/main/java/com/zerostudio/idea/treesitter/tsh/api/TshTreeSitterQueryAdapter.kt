@@ -240,6 +240,24 @@ class TshTreeSitterQueryExecutor(
             treeLeases.acquire(TshNativeResourceLeaseStore.Handle(tree.nativeObjectId, treeHandle))
         } ?: return failure("TSH-QUERY-EXEC-007", "Native syntax tree is retired, closed, or not registered")
         try {
+        val treeDescriptor = objects.descriptor(tree.nativeObjectId)
+            ?: return failure("TSH-QUERY-EXEC-022", "Syntax tree descriptor is no longer registered")
+        val metadata = treeDescriptor.metadata
+        if (metadata["documentId"] != null && metadata["documentId"] != tree.documentId) {
+            return failure("TSH-QUERY-EXEC-023", "Syntax tree document identity is stale")
+        }
+        if (metadata["documentVersion"] != null &&
+            metadata["documentVersion"] != tree.documentVersion.toString()) {
+            return failure("TSH-QUERY-EXEC-024", "Syntax tree document version is stale; refresh the OwnedSyntaxTree snapshot")
+        }
+        if (metadata["treeRevision"] != null &&
+            metadata["treeRevision"] != tree.treeRevision.toString()) {
+            return failure("TSH-QUERY-EXEC-025", "Syntax tree revision is stale; refresh the OwnedSyntaxTree snapshot")
+        }
+        if (metadata["grammarFingerprint"] != null &&
+            metadata["grammarFingerprint"] != tree.grammar.fingerprint) {
+            return failure("TSH-QUERY-EXEC-026", "Syntax tree Grammar metadata does not match the supplied snapshot")
+        }
         val nativeTree = treeLease.resource
 
         if (!nativeQuery.canAccess()) return failure("TSH-QUERY-EXEC-006", "Native query has been closed")
