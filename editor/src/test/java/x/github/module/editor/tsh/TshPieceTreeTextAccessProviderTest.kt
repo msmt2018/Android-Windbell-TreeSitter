@@ -133,28 +133,28 @@ class TshPieceTreeTextAccessProviderTest {
                 deletedTextLength = 2,
                 finalLineNumber = 2,
                 finalColumn = 40_003,
-                content = null
+                content = com.zerostudio.idea.piecetable.TextSlice.of("x".repeat(40_000))
             ),
             x.github.module.editor.model.EditorDocument.AppliedChange(
                 range = com.zerostudio.idea.piecetable.common.Range(1, 2, 1, 2),
                 rangeOffset = 1,
                 insertedLinesCnt = 1,
-                insertedTextLength = 30_000,
+                insertedTextLength = 13,
                 deletedLinesCnt = 0,
                 deletedTextLength = 0,
                 finalLineNumber = 2,
                 finalColumn = 12,
-                content = null
+                content = com.zerostudio.idea.piecetable.TextSlice.of("a\\nbbbbbbbbbbb")
             )
         )
         val result = editorChangesToTshChange("piece-tree-doc", 10L, 11L, changes)
         assertTrue(result is TshResult.Success)
         val edits = (result as TshResult.Success).value.edits
         assertEquals(listOf(1L, 7L), edits.map { it.startUtf16 })
-        assertEquals(listOf(30_000L, 40_000L), edits.map { it.replacementLengthUtf16 })
+        assertEquals(listOf(13L, 40_000L), edits.map { it.replacementLengthUtf16 })
         assertTrue(edits.all { it.replacement.isEmpty() })
-        assertEquals(1, edits[0].newEndPointRow)
-        assertEquals(22, edits[0].newEndPointColumnBytes)
+        assertEquals(listOf(1, 0), edits.map { it.replacementLineFeedCount })
+        assertEquals(listOf(11L, 40_000L), edits.map { it.replacementTrailingUtf16Length })
     }
 
     @Test
