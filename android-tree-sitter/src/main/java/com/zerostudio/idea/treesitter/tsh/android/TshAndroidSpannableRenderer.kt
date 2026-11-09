@@ -34,6 +34,13 @@ private interface TshAndroidOwnedSpan {
     val planId: String
 }
 
+private data class TshAndroidSpanSnapshot(
+    val span: Any,
+    val start: Int,
+    val end: Int,
+    val flags: Int
+)
+
 private class TshAndroidForegroundSpan(
     override val ownerId: String,
     override val planId: String,
@@ -130,7 +137,8 @@ class TshAndroidSpannableRenderer(
         val spannable = target.resolveSpannable(documentId)
             ?: return failure("TSH-ANDROID-RENDER-003", "Host did not provide a Spannable for the document")
         val diagnostics = ArrayList<TshDiagnostic>()
-        removeOwnedSpans(spannable)
+        // Keep the last committed TSH spans until the replacement plan is fully applied.
+        val previousSpans = captureOwnedSpans(spannable)
 
         var appliedInstructionCount = 0
         var fullyApplied = 0
@@ -173,10 +181,15 @@ class TshAndroidSpannableRenderer(
             removePlanSpans(spannable, plan.id.value)
             return failure("TSH-ANDROID-RENDER-004", "RenderPlan became stale before host invalidation")
         }
+        // Commit atomically from the host object's point of view: only now remove the
+        // previous TSH generation. If invalidation fails, restore it and discard the new one.
+        previousSpans.forEach { spannable.removeSpan(it.span) }
         try {
             target.invalidate(documentId)
         } catch (error: Exception) {
             removePlanSpans(spannable, plan.id.value)
+            restoreSpans(spannable, previousSpans)
+            runCatching { target.invalidate(documentId) }
             return failure("TSH-ANDROID-RENDER-009", "Host invalidation failed: ${error.message}")
         }
         val status = if (fullyApplied == plan.instructions.size) {
@@ -244,11 +257,30 @@ class TshAndroidSpannableRenderer(
         }
     }
 
-    private fun removeOwnedSpans(spannable: Spannable) {
+    private fun captureOwnedSpans(spannable: Spannable): List<TshAndroidSpanSnapshot> =
         spannable.getSpans(0, spannable.length, CharacterStyle::class.java)
             .filterIsInstance<TshAndroidOwnedSpan>()
             .filter { it.ownerId == id }
-            .forEach { spannable.removeSpan(it as Any) }
+            .map { span ->
+                val value = span as Any
+                TshAndroidSpanSnapshot(
+                    value,
+                    spannable.getSpanStart(value),
+                    spannable.getSpanEnd(value),
+                    spannable.getSpanFlags(value)
+                )
+            }
+
+    private fun restoreSpans(
+        spannable: Spannable,
+        snapshots: List<TshAndroidSpanSnapshot>
+    ) {
+        snapshots.forEach { snapshot ->
+            if (snapshot.start >= 0 && snapshot.end > snapshot.start &&
+                snapshot.end <= spannable.length) {
+                spannable.setSpan(snapshot.span, snapshot.start, snapshot.end, snapshot.flags)
+            }
+        }
     }
 
     private fun removePlanSpans(spannable: Spannable, planId: String) {
