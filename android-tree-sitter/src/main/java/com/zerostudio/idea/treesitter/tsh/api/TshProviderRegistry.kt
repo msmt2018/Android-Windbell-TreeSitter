@@ -131,6 +131,17 @@ class TshProviderRegistry {
                     cause = error
                 )
                 false
+            } catch (error: LinkageError) {
+                rejected += TshProviderRejection(provider.id, "supports() failed with linkage error: ${error.message.orEmpty()}")
+                diagnostics += TshDiagnostic(
+                    code = "TSH-PROVIDER-007",
+                    severity = TshDiagnosticSeverity.WARNING,
+                    stage = TshDiagnosticStage.PROVIDER,
+                    message = "Provider '${provider.id}' failed supports() with a linkage error and was excluded",
+                    objectId = descriptor.id,
+                    cause = error
+                )
+                false
             }
             if (supported) compatible += provider
             else if (rejected.none { it.providerId == provider.id }) {
