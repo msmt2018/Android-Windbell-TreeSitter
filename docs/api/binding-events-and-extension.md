@@ -22,7 +22,7 @@ Registry 解决“这个实例是谁”；Provider 解决“这个实例能做�
 ## Binding 约束
 
 - Binding 必须有明确 source、target、role 和 owner Session。
-- 同一对象可存在多个不同 role 的 binding；相同 role 是否允许多个绑定由 role schema 决定。
+- 同一对象可存在多个不同 role 的 binding；相同 role 是否允许多个绑定由 role schema 决定。AttachmentManager 必须对共享对象使用引用计数；最后一个 TSH attachment detach 后才可释放 TSH 创建的对象注册，不能注销宿主预先拥有的注册。
 - 双向绑定必须定义冲突策略和循环更新防护。
 - binding close 必须幂等。
 - 对象 unregister 或 Session close 时，相关 binding 自动失效。
