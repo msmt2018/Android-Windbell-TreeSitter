@@ -53,7 +53,7 @@ TextReader 提供 read(range)、readChunk(offset, maxUnits)、iterateChunks(rang
 
 `TshSnapshotTreeSitterInput` 不仅信任 Provider 的默认实现：即使宿主覆盖 `readChunk`，也会再次校验 documentId/version/start/end、最大长度、非空进展、UTF-16 well-formedness，以及块首尾是否切开 surrogate pair。Provider 违反契约时解析失败并报告输入异常，不会将损坏字节交给 Tree-sitter。
 
-Snapshot Lease 必须在整个同步 parseInput 调用期间保持打开。调用方不得在解析期间并发 close；若发生关闭，后续回调会失败而不会继续读取。当前 Lease 接口尚未提供跨调用 retain/fork，因此异步调度层必须由宿主负责把 Lease 生命周期覆盖到任务结束。
+Snapshot Lease 必须覆盖同步 parseInput 调用。ParserOwner 的 Snapshot parse overload 会在 Native 调用前 retain 独立任务 Lease，并在 parse 完成后释放；调用方可独立关闭原句柄。异步调度层若在任务尚未开始时就需要独立持有快照，仍必须在提交任务前 retain，并将该任务句柄的所有权交给任务。
 
 Tree-sitter 分块输入已经具备首版源码契约。项目现有 PieceTreeTextBuffer 的宿主适配器已加入 editor 模块：通过宿主提供的 snapshotFactory 创建 PieceTreeSnapshot，并按范围读取，不调用 PieceTreeTextBuffer.toString()。PieceTreeSnapshot 保留原始文本块引用、复制仍在变化的输入缓冲区内容，且可在后续编辑期间独立读取。当前仍缺少真实 EditorDocument 锁/调度接线、变更与销毁事件订阅、坐标索引 Provider、Native 构建和设备级大文件验证。
 
