@@ -190,7 +190,14 @@ class TshTreeSitterEditCompilerTest {
                 oldEndColumnUtf16 = 2L
             ))
         )
-        val result = TshTreeSitterEditCompiler.compile(snapshot("abc"), change)
+        val indexedSnapshot = object : TshTextSnapshot {
+            override val documentId = "doc"
+            override val version = 4L
+            override val lengthUtf16 = 3L
+            override fun readUtf16(start: Long, end: Long): CharSequence =
+                error("Indexed host coordinates must avoid a full Snapshot scan")
+        }
+        val result = TshTreeSitterEditCompiler.compile(indexedSnapshot, change)
         assertTrue(result is TshResult.Success)
         val edit = (result as TshResult.Success<List<TSInputEdit>>).value.single()
         assertEquals(0, edit.startPoint.row)
