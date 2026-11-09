@@ -97,7 +97,7 @@
 - [x] 异步 QUEUED/Ack、过期回执拒绝、PARTIAL/FAILED/REJECTED 诊断和 Provider cancel 扩展点。
 - [x] Provider 必须在实际 Draw 前检查 Acknowledger.isCurrent，完成后 Ack。
 - [x] Render Receipt 区分 APPLIED/PARTIALLY_APPLIED 宿主对象变更与 DRAWN/PARTIAL 实际绘制；Span renderer 不再把 invalidate 冒充真实 Draw。
-- [x] Android Spannable Renderer 使用 generation staging/rollback；替换失败保留旧 TSH Span 和宿主 Span，新增 Robolectric 回归测试源码。
+- [x] Android Spannable Renderer 使用 generation staging/rollback；host adapter 回调、Span snapshot/inspection、invalidation 失败均返回诊断并尽力恢复旧 TSH Span 和宿主 Span，新增 Robolectric 回归测试源码。
 - [x] QUEUED 不允许声称已有应用/绘制数量，真实 PARTIAL draw 必须报告有效部分数量；Receipt 必须完整核算 applied/deferred/dropped，viewport 外指令 deferred。
 - [x] RenderCoordinator 限制 pending plan 数量，防止异步 Provider 不回执时无界积累；Provider LinkageError 转为结构化诊断并清理 pending。
 - [x] 旧 Spannable 路径只清理 TSH-owned Span，不再删除宿主 CharacterStyle；非法/奇数/越界 UTF-16LE byte range 被拒绝。
