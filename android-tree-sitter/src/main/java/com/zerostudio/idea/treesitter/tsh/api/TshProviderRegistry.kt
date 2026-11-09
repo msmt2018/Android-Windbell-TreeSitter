@@ -107,7 +107,7 @@ class TshProviderRegistry {
             }
             val supported = try {
                 provider.supports(instance, descriptor)
-            } catch (error: Throwable) {
+            } catch (error: Exception) {
                 rejected += TshProviderRejection(provider.id, "supports() threw ${error.javaClass.simpleName}: ${error.message.orEmpty()}")
                 diagnostics += TshDiagnostic(
                     code = "TSH-PROVIDER-001",
