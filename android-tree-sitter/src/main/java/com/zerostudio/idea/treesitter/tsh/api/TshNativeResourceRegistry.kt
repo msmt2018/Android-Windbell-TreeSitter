@@ -65,6 +65,58 @@ class TshNativeResourceRegistry(
         leases.acquire(handle)
     }
 
+    /** Acquires an exclusive mutation lease; it fails while any read/query lease is active. */
+    fun <T : TSNativeObject> acquireExclusive(
+        handle: TshNativeResourceLeaseStore.Handle<T>
+    ): TshNativeResourceLeaseStore.ExclusiveLease<T>? = synchronized(lock) {
+        if (closed || handle.objectId !in ownedIds) return@synchronized null
+        val resource = objects.find(handle.objectId) ?: return@synchronized null
+        if (resource !== handle.resource) return@synchronized null
+        leases.acquireExclusive(handle)
+    }
+
+    /** Updates metadata while preserving the same resource identity and ownership lease. */
+    fun <T : TSNativeObject> updateMetadata(
+        handle: TshNativeResourceLeaseStore.Handle<T>,
+        metadata: Map<String, String>
+    ): TshResult<TshObjectDescriptor> = synchronized(lock) {
+        if (closed || handle.objectId !in ownedIds) {
+            return@synchronized TshResult.Failure(listOf(TshDiagnostic(
+                "TSH-NATIVE-RESOURCE-006", TshDiagnosticSeverity.ERROR,
+                TshDiagnosticStage.LIFECYCLE,
+                "Cannot update metadata for a retired or unowned Native resource",
+                objectId = handle.objectId
+            )))
+        }
+        val resource = objects.find(handle.objectId)
+        if (resource !== handle.resource || !handle.resource.canAccess()) {
+            return@synchronized TshResult.Failure(listOf(TshDiagnostic(
+                "TSH-NATIVE-RESOURCE-007", TshDiagnosticSeverity.ERROR,
+                TshDiagnosticStage.LIFECYCLE,
+                "Native resource identity or access state changed",
+                objectId = handle.objectId
+            )))
+        }
+        val current = objects.descriptor(handle.objectId)
+            ?: return@synchronized TshResult.Failure(listOf(TshDiagnostic(
+                "TSH-NATIVE-RESOURCE-008", TshDiagnosticSeverity.ERROR,
+                TshDiagnosticStage.LIFECYCLE,
+                "Native resource descriptor is missing",
+                objectId = handle.objectId
+            )))
+        try {
+            TshResult.Success(objects.register(handle.resource, current.type, current.capabilities, metadata))
+        } catch (error: Exception) {
+            TshResult.Failure(listOf(TshDiagnostic(
+                "TSH-NATIVE-RESOURCE-009", TshDiagnosticSeverity.ERROR,
+                TshDiagnosticStage.LIFECYCLE,
+                "Cannot update Native resource metadata: ${error.message}",
+                objectId = handle.objectId,
+                cause = error
+            )))
+        }
+    }
+
     /**
      * Atomically blocks future acquisitions and removes the public index, then retires outside
      * the coordinator lock so resource close callbacks cannot execute under that lock.
