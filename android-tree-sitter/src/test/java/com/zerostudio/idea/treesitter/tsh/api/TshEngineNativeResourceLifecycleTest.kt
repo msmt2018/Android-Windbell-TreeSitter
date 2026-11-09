@@ -5,6 +5,8 @@ import com.zerostudio.idea.treesitter.TSQuery
 import com.zerostudio.idea.treesitter.TSTree
 import org.junit.Assert.*
 import org.junit.Test
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 
 class TshEngineNativeResourceLifecycleTest {
     private class FakeLanguage : TSLanguage("fake", 1L)
@@ -21,6 +23,43 @@ class TshEngineNativeResourceLifecycleTest {
         override fun close() {
             closeCalls++
         }
+    }
+
+    @Test
+    fun engineCloseWaitsForAnInFlightProviderResolution() {
+        val engine = TshEngine.create()
+        engine.initialize()
+        val host = Any()
+        val descriptor = engine.objects.register(host, "editor")
+        val entered = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val closeFinished = CountDownLatch(1)
+        engine.providers.register(object : TshProvider {
+            override val id = "blocking-provider"
+            override val apiVersion = 1
+            override val capabilities = TshCapabilitySet.EMPTY
+            override fun supports(instance: Any, descriptor: TshObjectDescriptor): Boolean {
+                entered.countDown()
+                check(release.await(5, TimeUnit.SECONDS))
+                return instance === host
+            }
+        })
+        val resolveThread = Thread {
+            engine.resolveProviders(host, descriptor)
+        }
+        val closeThread = Thread {
+            engine.close()
+            closeFinished.countDown()
+        }
+        resolveThread.start()
+        assertTrue(entered.await(5, TimeUnit.SECONDS))
+        closeThread.start()
+        assertFalse("close must wait for the in-flight operation", closeFinished.await(50, TimeUnit.MILLISECONDS))
+        release.countDown()
+        resolveThread.join(5000)
+        closeThread.join(5000)
+        assertEquals(TshEngineState.CLOSED, engine.state)
+        assertEquals(0L, closeFinished.count)
     }
 
     @Test
