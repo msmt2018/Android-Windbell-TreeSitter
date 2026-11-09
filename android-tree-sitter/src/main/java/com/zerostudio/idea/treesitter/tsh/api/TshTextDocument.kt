@@ -17,7 +17,137 @@ interface TshTextSnapshotLease : AutoCloseable {
     val snapshot: TshTextSnapshot
     /** Providers must expose the closed state so TSH can reject use-after-close. */
     val isClosed: Boolean
+
+    /**
+     * Creates an independent lease for the same immutable snapshot.
+     *
+     * Implementations backed by mutable host storage must override this and retain the exact
+     * persistent root/version. The compatibility default is explicitly unsupported: returning
+     * the same lease would let one task close another task's resource.
+     */
+    fun retain(): TshResult<TshTextSnapshotLease> = TshResult.Failure(listOf(TshDiagnostic(
+        code = "TSH-TEXT-LEASE-001",
+        severity = TshDiagnosticSeverity.ERROR,
+        stage = TshDiagnosticStage.LIFECYCLE,
+        message = "This Snapshot Lease does not support independent retention"
+    )))
+
     override fun close()
+}
+
+/**
+ * Reference-counted lease implementation for immutable snapshots or persistent host roots.
+ *
+ * Each returned handle closes independently. [onFinalRelease] runs exactly once after the last
+ * handle closes, outside the state monitor. The callback must release only the pinned snapshot
+ * root/resource; it must never close the host document itself.
+ */
+class TshSharedTextSnapshotLease private constructor(
+    private val state: SharedState,
+    private val handleClosed: java.util.concurrent.atomic.AtomicBoolean
+) : TshTextSnapshotLease {
+    private class SharedState(
+        val snapshot: TshTextSnapshot,
+        val onFinalRelease: () -> Unit
+    ) {
+        var references: Int = 1
+        var released: Boolean = false
+        var releaseDiagnostics: List<TshDiagnostic> = emptyList()
+    }
+
+    override val snapshot: TshTextSnapshot
+        get() {
+            check(!isClosed) { "Snapshot Lease is closed" }
+            return state.snapshot
+        }
+
+    override val isClosed: Boolean get() = handleClosed.get()
+
+    /** Diagnostics produced by the final host-root release, visible on every retained handle. */
+    val finalReleaseDiagnostics: List<TshDiagnostic>
+        get() = synchronized(state) { state.releaseDiagnostics }
+
+    override fun retain(): TshResult<TshTextSnapshotLease> {
+        if (handleClosed.get()) return failure(
+            "TSH-TEXT-LEASE-002", "Cannot retain a closed Snapshot Lease"
+        )
+        synchronized(state) {
+            if (handleClosed.get() || state.released || state.references <= 0) {
+                return failure("TSH-TEXT-LEASE-003", "Snapshot root has already been released")
+            }
+            if (state.references == Int.MAX_VALUE) {
+                return failure("TSH-TEXT-LEASE-004", "Snapshot Lease reference count overflow")
+            }
+            state.references++
+            return TshResult.Success(TshSharedTextSnapshotLease(
+                state,
+                java.util.concurrent.atomic.AtomicBoolean(false)
+            ))
+        }
+    }
+
+    override fun close() {
+        if (!handleClosed.compareAndSet(false, true)) return
+        val release = synchronized(state) {
+            if (state.references <= 0) return
+            state.references--
+            if (state.references == 0 && !state.released) {
+                state.released = true
+                true
+            } else false
+        }
+        if (!release) return
+        try {
+            state.onFinalRelease()
+        } catch (error: Exception) {
+            synchronized(state) {
+                state.releaseDiagnostics = listOf(TshDiagnostic(
+                    code = "TSH-TEXT-LEASE-005",
+                    severity = TshDiagnosticSeverity.WARNING,
+                    stage = TshDiagnosticStage.LIFECYCLE,
+                    message = "Final Snapshot root release failed: ${error.message}",
+                    cause = error
+                ))
+            }
+        } catch (error: LinkageError) {
+            synchronized(state) {
+                state.releaseDiagnostics = listOf(TshDiagnostic(
+                    code = "TSH-TEXT-LEASE-006",
+                    severity = TshDiagnosticSeverity.WARNING,
+                    stage = TshDiagnosticStage.LIFECYCLE,
+                    message = "Final Snapshot root release failed with a linkage error",
+                    cause = error
+                ))
+            }
+        }
+    }
+
+    companion object {
+        /** The initial returned handle owns one reference. */
+        fun acquire(snapshot: TshTextSnapshot, onFinalRelease: () -> Unit = {}): TshSharedTextSnapshotLease {
+            require(snapshot.documentId.isNotBlank()) { "Snapshot documentId must not be blank" }
+            require(snapshot.version >= 0L) { "Snapshot version must be non-negative" }
+            require(snapshot.lengthUtf16 >= 0L) { "Snapshot length must be non-negative" }
+            return TshSharedTextSnapshotLease(
+                SharedState(snapshot, onFinalRelease),
+                java.util.concurrent.atomic.AtomicBoolean(false)
+            )
+        }
+
+        private fun failure(code: String, message: String) = TshResult.Failure(listOf(TshDiagnostic(
+            code = code,
+            severity = TshDiagnosticSeverity.ERROR,
+            stage = TshDiagnosticStage.LIFECYCLE,
+            message = message
+        )))
+    }
+
+    private fun failure(code: String, message: String) = TshResult.Failure(listOf(TshDiagnostic(
+        code = code,
+        severity = TshDiagnosticSeverity.ERROR,
+        stage = TshDiagnosticStage.LIFECYCLE,
+        message = message
+    )))
 }
 
 /** Host-owned document abstraction; storage may be String, Rope, Piece Tree or stream. */
@@ -132,12 +262,10 @@ interface TshTextAccessProvider : TshProvider {
             return failure("TSH-TEXT-010", "TextAccessProvider snapshot access is not allowed on the current thread")
         }
         return when (val result = withReadAccess { snapshot(document) }) {
-            is TshResult.Success -> TshResult.Success(object : TshTextSnapshotLease {
-                override val snapshot: TshTextSnapshot = result.value
-                @Volatile private var closed = false
-                override val isClosed: Boolean get() = closed
-                override fun close() { closed = true }
-            }, result.diagnostics)
+            is TshResult.Success -> TshResult.Success(
+                TshSharedTextSnapshotLease.acquire(result.value),
+                result.diagnostics
+            )
             is TshResult.Failure -> result
         }
     }
