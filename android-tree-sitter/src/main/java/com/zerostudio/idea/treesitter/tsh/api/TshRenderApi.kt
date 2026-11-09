@@ -145,12 +145,18 @@ class TshRenderCoordinator(
     private val lock = Any()
     private val pending = LinkedHashMap<TshRenderPlanId, TshRenderPlan>()
     private var currentRevisions: TshRenderRevisions? = null
+    private var closed = false
 
     fun updateCurrentRevisions(revisions: TshRenderRevisions) {
-        synchronized(lock) { currentRevisions = revisions }
+        synchronized(lock) {
+            if (!closed) currentRevisions = revisions
+        }
     }
 
     fun submit(plan: TshRenderPlan): TshResult<TshRenderReceipt> {
+        if (synchronized(lock) { closed }) {
+            return failure("TSH-RENDER-026", "RenderCoordinator is closed")
+        }
         // Snapshot caller-owned collections before storing or handing the plan to third-party code.
         val stablePlan = try {
             snapshotPlan(plan)
@@ -172,6 +178,7 @@ class TshRenderCoordinator(
             )
         }
         synchronized(lock) {
+            if (closed) return failure("TSH-RENDER-026", "RenderCoordinator is closed")
             if (currentRevisions != stablePlan.revisions) {
                 return failure("TSH-RENDER-002", "RenderPlan became stale before submission")
             }
@@ -218,12 +225,15 @@ class TshRenderCoordinator(
 
     override fun isCurrent(planId: TshRenderPlanId, revisions: TshRenderRevisions): Boolean =
         synchronized(lock) {
-            pending.containsKey(planId) && currentRevisions == revisions &&
+            !closed && pending.containsKey(planId) && currentRevisions == revisions &&
                 pending[planId]?.revisions == revisions
         }
 
     /** Called by the renderer after asynchronous drawing completes. */
     override fun acknowledge(receipt: TshRenderReceipt): TshResult<TshRenderReceipt> {
+        if (synchronized(lock) { closed }) {
+            return failure("TSH-RENDER-026", "RenderCoordinator is closed; late receipts are rejected")
+        }
         val plan = synchronized(lock) { pending[receipt.planId] }
             ?: return failure("TSH-RENDER-006", "Receipt refers to an unknown or already completed RenderPlan")
         validateReceipt(plan, receipt)?.let { problem ->
@@ -259,6 +269,7 @@ class TshRenderCoordinator(
     }
 
     fun cancelPending(planId: TshRenderPlanId): TshResult<Unit> {
+        if (synchronized(lock) { closed }) return failure("TSH-RENDER-026", "RenderCoordinator is closed")
         val plan = synchronized(lock) { pending[planId] }
             ?: return failure("TSH-RENDER-016", "RenderPlan is not pending")
         val result = try {
@@ -275,6 +286,41 @@ class TshRenderCoordinator(
     }
 
     fun pendingPlanIds(): Set<TshRenderPlanId> = synchronized(lock) { pending.keys.toSet() }
+
+    /**
+     * Stops accepting work, invalidates all pending acknowledgements and best-effort cancels
+     * provider work. Providers must still check isCurrent immediately before committing.
+     */
+    fun close(): TshResult<Unit> {
+        val ids = synchronized(lock) {
+            if (closed) return@synchronized emptyList()
+            closed = true
+            pending.keys.toList().also { pending.clear() }
+        }
+        val diagnostics = ArrayList<TshDiagnostic>()
+        ids.forEach { id ->
+            try {
+                when (val result = provider.cancel(id)) {
+                    is TshResult.Failure -> diagnostics += result.diagnostics.map { it.copy(
+                        severity = TshDiagnosticSeverity.WARNING,
+                        message = "Pending render cancellation was not confirmed: ${it.message}"
+                    ) }
+                    is TshResult.Success -> diagnostics += result.diagnostics
+                }
+            } catch (error: Exception) {
+                diagnostics += diagnostic(
+                    "TSH-RENDER-027", "Pending render cancellation failed during close: ${error.message}",
+                    TshDiagnosticSeverity.WARNING
+                )
+            } catch (error: LinkageError) {
+                diagnostics += diagnostic(
+                    "TSH-RENDER-028", "Pending render cancellation failed with a linkage error during close",
+                    TshDiagnosticSeverity.WARNING
+                )
+            }
+        }
+        return TshResult.Success(Unit, diagnostics)
+    }
 
     private fun snapshotPlan(plan: TshRenderPlan): TshRenderPlan = plan.copy(
         instructions = Collections.unmodifiableList(plan.instructions.map { instruction ->
