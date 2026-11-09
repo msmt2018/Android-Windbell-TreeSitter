@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Added
+- 新增 TSParser.parseInput(TSInput) 的 Java/JNI 回调链与 TshSnapshotTreeSitterInput，ParserOwner 可直接从固定版本 TextSnapshot 分块解析，避免全文 String/连续 Native buffer；新增 Native resource StampedLock read/exclusive Lease，TSTree.edit 与 Query read 互斥。
 - 新增首版 TshRenderPlan/ResolvedStyle/Renderer Provider/Receipt/Coordinator，支持多维 revision 检查、Capability 校验、异步回执、stale draw 拒绝、partial/failed 诊断和取消契约。
 - 新增首版统一 TshMatch/TshMatchSet/TshScopePath/TshMatchMerger，汇合 Tree-sitter/ATS 与 Regex 两种来源，保留 provenance、pipeline revision、canonical UTF-16 range，支持去重、稳定排序和 stale 过滤。
 - 新增 DSL Runtime Consumer Registry/Dispatcher，确保 Schema 校验通过不再被误认为运行时已生效；报告每个属性的 applied/unapplied 状态。
