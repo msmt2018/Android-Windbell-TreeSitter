@@ -57,9 +57,47 @@ class MyEditorProvider : TshProvider {
 }
 ```
 
-注册 Provider 后可用 providers.findFor(editorView, editorDescriptor) 查询匹配项。Provider discovery 只负责能力匹配，不会自动 attach 或绘制。
+Provider discovery 只负责能力匹配，不会自动 attach 或绘制。生产接入应使用 OwnerScope 管理 attach/detach，而不是在 Activity 生命周期之外长期持有 View。
 
-## 4. 坐标转换
+## 4. Android Spannable Renderer 绑定
+
+Android 模块提供首个可用 RenderProvider。宿主无需继承 TSH 类型，只需实现一个薄适配器；必须提供有界 viewport，防止在 200–300 MB 文档上为全文创建大量 Span。
+
+```kotlin
+val target = object : TshAndroidSpannableRenderTarget {
+    override val hostObject: Any = editorView
+    override fun isOnRenderThread() =
+        Looper.myLooper() == Looper.getMainLooper()
+    override fun currentRevisions(documentId: String) = editorRevisions(documentId)
+    override fun resolveSpannable(documentId: String): Spannable? =
+        editorText(documentId) as? Spannable
+    override fun visibleRangeUtf16(documentId: String) =
+        TshAndroidVisibleRange(firstVisibleUtf16(), lastVisibleUtf16Exclusive())
+    override fun resolveTextSizePx(value: TshDslValue.MeasureValue): Float? =
+        hostResolveTextSize(value)
+    override fun invalidate(documentId: String) = editorView.invalidate()
+}
+
+val ownerScope = TshOwnerScope("editor-view")
+val renderer = TshAndroidSpannableRenderer(target)
+val binding = (renderer.attachTo(
+    engine,
+    ownerScope,
+    requiredCapabilities = TshCapabilitySet.of(TshCapability("render.foreground"))
+) as TshResult.Success<TshAndroidSpannableBinding>).value
+
+val renderCoordinator = TshRenderCoordinator(binding.renderer)
+// On each host document/theme/viewport revision change, install the exact current revisions.
+renderCoordinator.updateCurrentRevisions(currentRenderRevisions)
+renderCoordinator.submit(renderPlan)
+
+// Editor/View is detached or destroyed:
+ownerScope.close() // detaches the host and unregisters only TSH's Provider
+```
+
+visibleRangeUtf16 是必需契约；返回 null 或缺失 viewport 时拒绝 Span 渲染。Span 更新回执为 APPLIED/PARTIALLY_APPLIED，不代表 Android 已完成真实像素绘制。真实 Draw 必须由宿主 View 绘制/像素测试确认。宿主原有 Span 不会被 TSH 清除。
+
+## 5. 坐标转换
 
 ```kotlin
 val result = TshCoordinateConverter.convert(
@@ -72,15 +110,15 @@ val result = TshCoordinateConverter.convert(
 
 转换失败时返回结构化诊断。SCREEN_PIXEL 与 LINE_COLUMN 必须由 Layout-aware Provider 处理，不能通过文本长度猜测。
 
-## 5. 关闭资源
+## 6. 关闭资源
 
 ```kotlin
 engine.objects.unregister(editorDescriptor.id)
 engine.close()
 ```
 
-宿主应在编辑器销毁时解除注册。Engine close 会清空 Provider 和 Object Registry。不要让 Activity 销毁前仍有异步任务持有其 View。
+宿主应优先关闭 OwnerScope/Binding；Engine close 会永久关闭 Provider、Object、CompiledQuery 等 Registry。不要让 Activity 销毁前仍有异步任务持有其 View。
 
-## 6. 当前可用范围
+## 7. 当前可用范围
 
-已提交的基础 API 包括 Engine 状态、对象注册、Capability、Provider Registry、诊断/结果、文本快照契约和内存文本坐标转换。Session、自动适配、Layout、RenderPlan、Renderer attach、TSH Language Service 和完整 ATS/Regex 服务门面仍是后续开发目标。
+已提交的基础 API 包括 Engine 状态、对象注册、Capability、Provider Registry、诊断/结果、文本快照契约和内存文本坐标转换。Session、自动适配、Layout/Canvas/Compose Renderer、完整 TSH Language Service 和 ATS/Regex 服务门面仍是后续开发目标。Android Spannable Renderer 已有源码接入，但当前仅 SOURCE_PARTIAL，尚未构建和运行测试。
