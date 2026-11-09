@@ -29,7 +29,7 @@ val engine = TshEngine.create()
 val initialized = engine.initialize()
 ```
 
-引擎当前提供 `objects` 和 `providers` 两个注册中心。该首个切片尚未接管原有 Native 解析和高亮服务；既有 `WindbellTshEngine` 仍是当前执行入口。不得把新门面初始化误认为 Native 子系统已经初始化。
+引擎当前提供 `objects`、`providers` 和 `attachments` 管理器。`attach/inspectAttachment/refreshAttachment/detach` 提供首版宿主接入闭环；`TshOwnerScope.close()` 会自动 detach，TSH 只注销自己的对象索引，不关闭宿主对象。该首个切片尚未接管原有 Native 解析和高亮服务；既有 `WindbellTshEngine` 仍是当前执行入口。不得把新门面初始化误认为 Native 子系统已经初始化。
 
 状态：CREATED -> INITIALIZED -> CLOSED。关闭后不能重新初始化；关闭会清理注册表。
 
@@ -53,7 +53,7 @@ engine.objects.unregister(descriptor.id)
 
 ## Provider
 
-Provider 必须声明稳定 ID、API 版本、能力集合，并对给定实例和描述符明确回答是否支持。注册中心已有优先级、API 版本范围、Capability 最低版本、确定性选择、缺失能力报告和 supports 异常隔离源码；Engine 可按 strictProviderValidation 将必需能力缺失作为失败或返回降级报告。Attach/Detach、OwnerScope 和完整 Attachment Report 尚未实现。
+Provider 必须声明稳定 ID、API 版本、能力集合，并对给定实例和描述符明确回答是否支持。注册中心已有优先级、API 版本范围、Capability 最低版本、确定性选择、缺失能力报告和 supports 异常隔离源码；Engine 可按 strictProviderValidation 将必需能力缺失作为失败或返回降级报告。Attach/Detach、OwnerScope 和 Attachment Report 已有首版源码及测试源码；仍待构建/并发验证、动态 Provider 自动刷新通知和与真实 Editor/Text/Renderer Provider 的端到端绑定。
 
 ## 诊断与结果
 
@@ -64,8 +64,8 @@ Provider 必须声明稳定 ID、API 版本、能力集合，并对给定实例�
 ## 当前限制与下一步
 
 1. 将错误码目录独立文档化，并增加诊断收集器/报告。
-2. 增加 TextDocument、TextBuffer、CoordinateConverter 和版本化编辑事件。
-3. 增加 Provider 能力版本协商、优先级和注册冲突诊断。
+2. 增加宿主 Piece Tree/Rope 固定版本 Snapshot Lease、真实变更/销毁订阅和索引化坐标 Provider。
+3. 将 Attach/Detach 与 Editor/Document/Text/Renderer 的真实 Provider 实现绑定，并完成并发生命周期测试。
 4. 为旧 `WindbellTshEngine` 增加兼容 Facade，逐步将配置/高亮能力迁入服务。
 5. 为 Piece Tree/Rope 实现无需全量 flatten 的坐标索引与快照 Provider。
 6. 在可用构建环境运行 `android-tree-sitter` 单元测试并修正编译问题。
