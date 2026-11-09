@@ -50,6 +50,26 @@ class TshAndroidSpannableRendererTest {
     )
 
     @Test
+    fun rendererCanBeDiscoveredAsAnEngineHostProvider() {
+        val revisions = TshRenderRevisions(
+            TshDocumentId("doc"), 1L, "config", "theme", "viewport", "renderer"
+        )
+        val target = Target(SpannableStringBuilder("code"), revisions)
+        val renderer = TshAndroidSpannableRenderer(target)
+        val objects = TshObjectRegistry()
+        val providers = TshProviderRegistry()
+        providers.register(renderer)
+        val descriptor = objects.register(target.hostObject, "editor")
+        val resolution = providers.resolveFor(
+            target.hostObject,
+            descriptor,
+            required = TshCapabilitySet.of(TshCapability("render.foreground", 1))
+        )
+        assertTrue(resolution.isSatisfiable)
+        assertTrue(resolution.selectedProviders.any { it === renderer })
+    }
+
+    @Test
     fun decorationSpanResetsUnspecifiedDecorationFlags() {
         val revisions = TshRenderRevisions(
             TshDocumentId("doc"), 1L, "config", "theme", "viewport", "renderer"
