@@ -317,7 +317,7 @@ class TshTextAccessBinding private constructor(
 
             if (supportsDisposal) {
                 val disposal = try {
-                    provider.subscribeDisposed(document) { binding.close() }
+                    provider.subscribeDisposed(document) { _, _ -> binding.close() }
                 } catch (error: Exception) {
                     binding.close()
                     return failure("TSH-TEXT-BINDING-037", "Document disposal subscription failed: ${error.message}", error)
