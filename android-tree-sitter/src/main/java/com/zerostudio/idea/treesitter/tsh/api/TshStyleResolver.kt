@@ -101,17 +101,27 @@ object TshStyleResolver {
         )
     }
 
-    private fun merge(base: TshResolvedStyle, overlay: TshResolvedStyle) = TshResolvedStyle(
-        foregroundArgb = overlay.foregroundArgb ?: base.foregroundArgb,
-        backgroundArgb = overlay.backgroundArgb ?: base.backgroundArgb,
-        fontFamilies = overlay.fontFamilies.ifEmpty { base.fontFamilies },
-        fontSize = overlay.fontSize ?: base.fontSize,
-        fontWeight = overlay.fontWeight ?: base.fontWeight,
-        italic = overlay.italic ?: base.italic,
-        underline = overlay.underline ?: base.underline,
-        strikeThrough = overlay.strikeThrough ?: base.strikeThrough,
-        decorations = base.decorations + overlay.decorations
-    )
+    private fun merge(base: TshResolvedStyle, overlay: TshResolvedStyle): TshResolvedStyle {
+        val decorations = (base.decorations + overlay.decorations).toMutableSet()
+        if (overlay.fontWeight != null) decorations.remove("bold")
+        if (overlay.italic != null) decorations.remove("italic")
+        if (overlay.underline != null) decorations.remove("underline")
+        if (overlay.strikeThrough != null) {
+            decorations.remove("strike")
+            decorations.remove("strikethrough")
+        }
+        return TshResolvedStyle(
+            foregroundArgb = overlay.foregroundArgb ?: base.foregroundArgb,
+            backgroundArgb = overlay.backgroundArgb ?: base.backgroundArgb,
+            fontFamilies = overlay.fontFamilies.ifEmpty { base.fontFamilies },
+            fontSize = overlay.fontSize ?: base.fontSize,
+            fontWeight = overlay.fontWeight ?: base.fontWeight,
+            italic = overlay.italic ?: base.italic,
+            underline = overlay.underline ?: base.underline,
+            strikeThrough = overlay.strikeThrough ?: base.strikeThrough,
+            decorations = decorations
+        )
+    }
 
     private fun failure(code: String, message: String) = TshResult.Failure(listOf(TshDiagnostic(
         code = code,
