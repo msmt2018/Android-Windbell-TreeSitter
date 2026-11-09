@@ -215,10 +215,15 @@ class TshAndroidSpannableRenderer(
         try {
             target.invalidate(documentId)
         } catch (error: Exception) {
-            removePlanSpans(spannable, plan.id.value)
+            removeNewOwnedSpans(spannable, previousSpans)
             restoreSpans(spannable, previousSpans)
             runCatching { target.invalidate(documentId) }
             return failure("TSH-ANDROID-RENDER-009", "Host invalidation failed: ${error.message}")
+        } catch (error: LinkageError) {
+            removeNewOwnedSpans(spannable, previousSpans)
+            restoreSpans(spannable, previousSpans)
+            runCatching { target.invalidate(documentId) }
+            return failure("TSH-ANDROID-RENDER-011", "Host invalidation failed with a linkage error: ${error.message}")
         }
         val status = if (fullyApplied == plan.instructions.size) {
             TshRenderReceiptStatus.APPLIED
