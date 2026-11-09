@@ -1,5 +1,7 @@
 package com.zerostudio.idea.treesitter.tsh.api
 
+import java.math.BigDecimal
+
 sealed class TshDslType {
     object AnyType : TshDslType()
     object BooleanType : TshDslType()
@@ -229,11 +231,13 @@ class TshSchemaRegistry {
         val rangeComparable = value !is TshDslValue.MeasureValue ||
             property.rangeUnit == null || value.unit == property.rangeUnit
         if (numeric != null && rangeComparable) {
-            if (property.minimum != null && numeric < property.minimum) errors += diagnostic(
+            val minimum = property.minimum?.let(BigDecimal::valueOf)
+            val maximum = property.maximum?.let(BigDecimal::valueOf)
+            if (minimum != null && numeric < minimum) errors += diagnostic(
                 "TSH-SCHEMA-009", TshDiagnosticSeverity.ERROR,
                 "Property '$name' is below minimum ${property.minimum}${property.rangeUnit ?: ""}"
             )
-            if (property.maximum != null && numeric > property.maximum) errors += diagnostic(
+            if (maximum != null && numeric > maximum) errors += diagnostic(
                 "TSH-SCHEMA-010", TshDiagnosticSeverity.ERROR,
                 "Property '$name' exceeds maximum ${property.maximum}${property.rangeUnit ?: ""}"
             )
@@ -274,10 +278,14 @@ class TshSchemaRegistry {
         is TshDslType.UnionType -> type.alternatives.any { matches(value, it) }
     }
 
-    private fun numericValue(value: TshDslValue): Double? = when (value) {
-        is TshDslValue.IntegerValue -> value.value.toDouble()
-        is TshDslValue.DecimalValue -> value.value
-        is TshDslValue.MeasureValue -> value.value
+    /**
+     * Preserve Long integer precision when checking schema bounds. Converting every numeric
+     * value to Double incorrectly accepts/rejects values around the 2^53 precision boundary.
+     */
+    private fun numericValue(value: TshDslValue): BigDecimal? = when (value) {
+        is TshDslValue.IntegerValue -> BigDecimal.valueOf(value.value)
+        is TshDslValue.DecimalValue -> BigDecimal.valueOf(value.value)
+        is TshDslValue.MeasureValue -> BigDecimal.valueOf(value.value)
         else -> null
     }
 
