@@ -55,6 +55,14 @@ class TshOwnerScope(val id: String = "tsh-owner-${NEXT_ID.incrementAndGet()}") :
                         message = "OwnerScope cleanup action failed",
                         cause = error
                     )
+                } catch (error: LinkageError) {
+                    failures += TshDiagnostic(
+                        code = "TSH-OWNER-002",
+                        severity = TshDiagnosticSeverity.ERROR,
+                        stage = TshDiagnosticStage.LIFECYCLE,
+                        message = "OwnerScope cleanup action failed with a linkage error",
+                        cause = error
+                    )
                 }
             }
             closeFailures = failures.toList()
@@ -243,6 +251,15 @@ class TshAttachmentManager(
                     severity = TshDiagnosticSeverity.WARNING,
                     stage = TshDiagnosticStage.LIFECYCLE,
                     message = "OwnerScope cleanup registration could not be removed",
+                    objectId = handle.objectId,
+                    cause = error
+                )
+            } catch (error: LinkageError) {
+                diagnostics += TshDiagnostic(
+                    code = "TSH-ATTACH-010",
+                    severity = TshDiagnosticSeverity.WARNING,
+                    stage = TshDiagnosticStage.LIFECYCLE,
+                    message = "OwnerScope cleanup registration failed with a linkage error",
                     objectId = handle.objectId,
                     cause = error
                 )
