@@ -65,4 +65,4 @@ Snapshot Lease 必须在整个同步 parseInput 调用期间保持打开。调�
 
 默认 Provider 的 Snapshot 契约要求快照本身不可变，因此默认 `acquireSnapshot` 使用可续租的共享 Lease。可变 Piece Tree/Rope Provider 必须在创建共享 Lease 时 pin 住持久化根或版本资源，并在最终释放回调中 unpin；不得只包装一个仍指向可变当前根的对象。
 
-`TshTreeSitterParserOwner.parseSnapshot` 会先 retain 一份独立 Lease，再执行 `TSParser.parseInput`，并在 Native parse 返回后释放自己的句柄。调用方可以独立关闭原始句柄；但若任务尚未开始，调度层必须先 retain 并把该任务句柄交给任务，不能把已关闭句柄排队。
+`TshTreeSitterParserOwner.parse(snapshotLease, textProvider, treeRevision, oldTree, chunkSizeBytes)` 会先 retain 一份独立 Lease，再执行 `TSParser.parseInput`，并可传入已按同版本编辑过的旧语法树执行增量解析，并在 Native parse 返回后释放自己的句柄。调用方可以独立关闭原始句柄；但若任务尚未开始，调度层必须先 retain 并把该任务句柄交给任务，不能把已关闭句柄排队。
