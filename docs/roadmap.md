@@ -8,16 +8,20 @@
 
 本轮先处理上一轮静态审计发现的全部确定问题，再补齐缺失的接入契约，最后进入真实宿主绑定。未完成项不得从地图删除或用文档描述伪装完成。
 
-- [ ] 公共 API 总规范、领域唯一权威文档与证据等级统一。
-- [ ] Attach/Detach、OwnerScope、Provider Resolution/Capability 版本协商。
-- [ ] Text Snapshot Lease、chunk/range、变更订阅、文档销毁和线程契约。
+- [x] 公共 API 总规范首版、ATS 状态矛盾修正和证据等级定义；领域唯一权威来源映射仍需逐文档落实。
+- [ ] Attach/Detach、OwnerScope、完整 Attachment Report；[x] Provider Resolution/Capability API 版本范围与能力版本协商源码及测试源码。
+- [x] Snapshot Lease/chunk/range/变更订阅扩展点及 Edit 顺序校验源码；[ ] 宿主固定版本 Lease、真实变更/销毁订阅与线程验证。
 - [ ] Offset/Range 统一 Long，UTF-8/UTF-16/非法 surrogate 与 grapheme 算法边界。
-- [ ] Schema nullable/default/Map key/Measure unit/unknown-property/Runtime Consumer 修复。
+- [x] Schema nullable/default/Map key/Measure unit/unknown-property 静默丢弃问题源码修复及测试源码；[ ] 内建 Schema Catalog、ReferenceResolver、SemanticAnalyzer、Lowering 和 Runtime Consumer。
 - [ ] ATS 状态矛盾、Query compiler 命名/预算/严格节点验证和取消边界修复。
-- [ ] Regex UTF-8 pattern 转换、窗口边界/Lease/预算与增量语义修复。
+- [x] Oniguruma Regex pattern 的标准 UTF-8 → UTF-16LE 解码修复源码；[ ] 窗口边界/Lease/预算/增量语义及 Native 测试。
 - [ ] Match/Scope/Style/RenderPlan/Receipt 闭环及宿主 Span 所有权修复。
-- [ ] Engine options、初始化前置条件、Provider 异常隔离和关闭竞态修复。
+- [x] Engine 初始化前置条件、strictProviderValidation/enableDiagnostics 消费、Provider supports 异常隔离源码；[ ] close/attach/detach 并发竞态和测试。
 - [ ] 完整测试矩阵：Kotlin/JVM、Native/JNI、并发、超大文件、真实 Android Renderer。
+
+## 证据状态说明
+
+本轮新增/修复源码与测试源码均为 SOURCE_PARTIAL；当前未运行 Gradle、JUnit、CMake/NDK、JNI 或 Android 设备测试。`TshCoordinateConverter` 的 grapheme 行为依赖运行时 BreakIterator，不宣称完整 UAX #29。Snapshot 默认 Lease 不会自动 pin 可变宿主缓冲区。Provider Resolution 已有源码但尚未构成 Attach/Detach 闭环。
 
 ## 架构不变量
 
