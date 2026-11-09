@@ -59,7 +59,8 @@
 - [ ] 既有 C++ TshCompiler 尚未接入统一 Schema/Runtime Consumer 契约。
 - [ ] Runtime Consumer 目前逐属性 best-effort，不提供跨 Consumer 原子事务。
 
-### Tree-sitter / ATS Query
+- [x] 新增 `TshTreeSitterEditCompiler`：基于 before-version Snapshot 的有界分块行索引，将多 Edit 编译为 UTF-16LE TSInputEdit，并按降序输出以便逐项安全应用；覆盖版本/范围/surrogate/Int byte offset/CRLF 检查（SOURCE_PARTIAL，测试源码未运行）。
+\n### Tree-sitter / ATS Query
 
 - [x] Tree-sitter Native Query Compiler/Executor Adapter、Query Registry、Query/Tree/Language Lease 有源码。
 - [x] TshQueryCompiler 与 ATS 专用 TshAtsCompiler 契约分离；Native S-expression Adapter 不再冒充 ATS Compiler。
@@ -75,7 +76,7 @@
 - [x] TshTextAccessProvider 纳入 Engine Provider Registry；ProviderRegistry.acquireScoped 引用计数共享 Provider 生命周期；新增 TshTextAccessBinding 管理 Document Attachment、Snapshot Lease 获取、Change/Disposal subscriptions 与生命周期。text.snapshot/text.chunk 与可选 change/disposal notification 通过 capability negotiation 暴露。
 - [x] OwnedSyntaxTree exclusive edit lease、snapshot/registry metadata revision 同步和 QueryExecutor stale snapshot rejection 源码。
 - [x] 项目 PieceTreeTextBuffer 的 Snapshot/Chunk Provider 源码与测试源码（SOURCE_PARTIAL）。
-- [ ] EditorDocument 实际读锁 snapshotFactory 接线、变更/销毁事件、多 Edit→TSInputEdit 转换和 Native parse integration test。
+- [ ] EditorDocument 实际 snapshotFactory 与编辑串行化入口接线、变更/销毁事件、编译结果与 editTree 的事务级接线及 Native parse integration test。
 - [ ] 旧宿主所有 Tree/Language/Parser owner 尚未全部迁移到统一 Resource Registry。
 
 ### 独立 Regex / Oniguruma
