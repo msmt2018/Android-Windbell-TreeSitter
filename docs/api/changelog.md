@@ -27,6 +27,7 @@
 - Android Spannable Renderer 缺失 viewport 时明确拒绝全文 Span 分配；Android Binding close/cleanup 失败通过 closeDiagnostics 暴露，不再静默吞掉；新增回归测试源码。
 - Attachment refresh 的 Provider 协商异常统一映射为结构化失败，不向宿主调用方泄漏未处理异常。
 - Android Spannable Renderer 的 host thread/revision/Spannable/viewport/Span snapshot/Span inspection 回调异常均转换为结构化诊断；事务提交失败时尽力回滚并报告回滚失败，避免把部分 Span 更新误报为成功。
+- Android Binding detach/Engine close 现在关闭 RenderCoordinator、拒绝迟到提交，并清除该 Renderer 自己拥有的 Span；后台关闭通过宿主 postToRenderThread 排队，不能清理时保留可见诊断。
 - 新增 TSH Public API 最高层设计规范：明确 Host Ownership First、No Framework Lock-in、Capability negotiation、零拷贝文本访问、Long 坐标、版本安全、双管线、Renderer-owned drawing 和证据等级。
 - 新增 TshOwnerScope/TshAttachmentManager/TshAttachmentReport 与 Engine attach/inspect/refresh/detach，支持宿主对象身份注册、Provider 能力协商、OwnerScope 自动 detach；detach 不销毁宿主对象。
 - Provider Registry 增加 API 版本范围、Capability 最低版本、优先级、稳定选择、冲突/缺失诊断与 supports 异常隔离；TshEngineOptions 的严格模式和诊断开关接入 Provider resolution。
