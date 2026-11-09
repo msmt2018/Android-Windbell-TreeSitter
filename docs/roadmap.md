@@ -27,6 +27,7 @@
 - [x] 新增 OwnerScope、AttachmentRequest/Handle/Report、AttachmentManager，以及 Engine attach/inspect/refresh/detach。
 - [x] OwnerScope 自动 detach；detach 只注销 TSH 自己的身份登记，不关闭宿主对象。
 - [x] Native resource/query raw object getter 收敛为 internal，阻止宿主绕过 Lease 直接 close。
+- [x] Engine lifecycle lock 线性化 initialize/attach/provider resolution/adapter creation/parser open 与 close；公开 Object/Provider/CompiledQuery registries 在 Engine close 后永久拒绝新注册。
 - [x] Native close/dependency close 错误进入结构化诊断；Engine 提供 shutdownDiagnostics；OwnerScope 提供 closeWithReport。
 
 ### Text Access 与坐标
@@ -35,7 +36,7 @@
 - [x] Text Provider 声明线程策略与 concurrent-read 能力；UNKNOWN 默认不作线程安全假设。
 - [x] TextEdit replacement 拒绝不成对 surrogate；TextChange Edit 列表要求 before-version 坐标、升序且不重叠。
 - [x] Chunk read 不允许切开 UTF-16 surrogate pair，读取关闭的 Snapshot Lease 会失败。
-- [x] 坐标转换拒绝不成对 UTF-16 surrogate；UTF-8 byte 累积使用 Long；String 输入避免不必要的 toString 复制。
+- [x] 坐标转换拒绝不成对 UTF-16 surrogate；UTF-8 byte 累积使用 Long；非 String CharSequence 明确拒绝隐式 flatten/toString 复制。
 - [ ] 真正固定可变 Piece Tree/Rope 版本的宿主 Snapshot Lease 尚未实现；默认 Lease 仅包装不可变 Snapshot。
 - [ ] Piece Tree/Rope 索引化 UTF-8/UTF-16/Code Point/Grapheme 转换尚未实现。
 - [ ] Grapheme 目前使用运行时 BreakIterator，不宣称完整 UAX #29。
@@ -99,8 +100,8 @@
 - [x] QUEUED 不允许声称已有应用/绘制数量，真实 PARTIAL draw 必须报告有效部分数量。
 - [x] 旧 Spannable 路径只清理 TSH-owned Span，不再删除宿主 CharacterStyle；非法/奇数/越界 UTF-16LE byte range 被拒绝。
 - [x] ScopeSelector/StyleRule/StyleResolver 到 RenderPlan 的首版 Resolver；[ ] Attribute semantic pipeline、DSL selector parser 和完整 Resolver。
-- [x] Android Spannable Renderer Provider 与 host Span ownership instrumented test 源码；[ ] Canvas/Compose/custom View Renderer Provider 尚未实现。
-- [ ] instrumented test 运行、真实 Draw 回执、像素/颜色可见性、字体/Decoration/主题切换设备验证尚未完成。
+- [x] Android Spannable Renderer Provider + OwnerScope-scoped host binding，Provider Registry 可按宿主对象身份发现；Render generation 事务回滚保留旧 TSH/宿主 Span；Robolectric test 源码覆盖 rollback、decoration、binding。 [ ] Canvas/Compose/custom View Renderer Provider 尚未实现。
+- [ ] Robolectric test 运行、真实 Draw 回执、像素/颜色可见性、字体/Decoration/主题切换设备验证尚未完成。
 - [ ] RenderPlan/Receipt 源码存在不代表应用层已能显示所有 .tsh 高亮颜色。
 
 ### JNI / 大文本 / Native 生命周期
