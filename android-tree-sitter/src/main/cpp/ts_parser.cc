@@ -18,6 +18,7 @@
 #include <atomic>
 #include <chrono>
 #include <iostream>
+#include <limits>
 
 #include "utf16str/UTF16String.h"
 #include "utils/ts_obj_utils.h"
@@ -117,6 +118,67 @@ struct TSParserInput {
   const char *bytes;
   uint32_t length;
 };
+
+/** Java-backed random-access input. The current byte array is pinned only until the next read. */
+struct TSParserJavaInput {
+  JNIEnv *env;
+  jobject source;
+  jmethodID readMethod;
+  jbyteArray buffer;
+  jbyte *currentBytes = nullptr;
+  jsize capacity;
+
+  ~TSParserJavaInput() {
+    if (currentBytes != nullptr) {
+      env->ReleaseByteArrayElements(buffer, currentBytes, JNI_ABORT);
+      currentBytes = nullptr;
+    }
+  }
+};
+
+static const char *TSParser_readJavaInput(
+    void *payload,
+    uint32_t byte_index,
+    TSPoint position,
+    uint32_t *bytes_read) {
+  auto *input = static_cast<TSParserJavaInput *>(payload);
+  if (input->currentBytes != nullptr) {
+    input->env->ReleaseByteArrayElements(input->buffer, input->currentBytes, JNI_ABORT);
+    input->currentBytes = nullptr;
+  }
+
+  const jint count = input->env->CallIntMethod(
+      input->source,
+      input->readMethod,
+      static_cast<jlong>(byte_index),
+      static_cast<jint>(position.row),
+      static_cast<jint>(position.column),
+      input->buffer
+  );
+  if (input->env->ExceptionCheck()) {
+    *bytes_read = 0;
+    return nullptr;
+  }
+  if (count < 0 || count > input->capacity || (count & 1) != 0) {
+    throw_illegal_args(input->env,
+        "TSInput.read must return an even byte count between zero and destination.length");
+    *bytes_read = 0;
+    return nullptr;
+  }
+  if (count == 0) {
+    *bytes_read = 0;
+    return nullptr;
+  }
+
+  input->currentBytes = input->env->GetByteArrayElements(input->buffer, nullptr);
+  if (input->currentBytes == nullptr) {
+    *bytes_read = 0;
+    return nullptr;
+  }
+  *bytes_read = static_cast<uint32_t>(count);
+  return reinterpret_cast<const char *>(input->currentBytes);
+}
+
 
 static const char *TSParser_readInput(
     void *payload,
@@ -292,6 +354,63 @@ static jlong TSParser_parse(JNIEnv *env,
   return (jlong) tree;
 }
 
+
+static jlong TSParser_parseInput(
+    JNIEnv *env,
+    jclass clazz,
+    jlong parser,
+    jlong tree_pointer,
+    jobject input_object,
+    jint chunk_size_bytes) {
+  req_nnp(env, parser, "parser");
+  req_nnp(env, input_object, "input");
+  if (chunk_size_bytes < 2 || chunk_size_bytes > 1024 * 1024 ||
+      (chunk_size_bytes & 1) != 0) {
+    throw_illegal_args(env, "chunkSizeBytes must be even and between 2 and 1 MiB");
+    return 0;
+  }
+
+  jclass input_class = env->GetObjectClass(input_object);
+  if (input_class == nullptr) return 0;
+  jmethodID read_method = env->GetMethodID(input_class, "read", "(JII[B)I");
+  if (read_method == nullptr) return 0;
+  jbyteArray buffer = env->NewByteArray(chunk_size_bytes);
+  if (buffer == nullptr) return 0;
+
+  auto *ts_parser_internal = reinterpret_cast<TSParserInternal *>(parser);
+  TSParser *ts_parser = ts_parser_internal->getParser(env);
+  if (ts_parser == nullptr || !ts_parser_internal->beginRound(env)) return 0;
+  TSTree *old_tree = tree_pointer == 0 ? nullptr : reinterpret_cast<TSTree *>(tree_pointer);
+
+  TSParserJavaInput payload{
+      env, input_object, read_method, buffer, nullptr, chunk_size_bytes
+  };
+  TSInput input{
+      &payload,
+      TSParser_readJavaInput,
+      TSInputEncodingUTF16LE,
+      nullptr,
+  };
+  TSParseOptions options{
+      ts_parser_internal,
+      TSParser_progressCallback,
+  };
+
+  TSTree *tree = nullptr;
+  try {
+    ts_parser_internal->markParseStart();
+    tree = ts_parser_parse_with_options(ts_parser, old_tree, input, options);
+  } catch (const std::bad_alloc &) {
+    throw_exception(env, "java/lang/OutOfMemoryError", "Tree-sitter streaming parse allocation failed");
+  } catch (const std::exception &error) {
+    throw_exception(env, "java/lang/RuntimeException", error.what());
+  } catch (...) {
+    throw_exception(env, "java/lang/RuntimeException", "Unknown Tree-sitter streaming parse failure");
+  }
+  ts_parser_internal->endRound();
+  return reinterpret_cast<jlong>(tree);
+}
+
 static jboolean
 TSParser_requestCancellation(
     JNIEnv *env,
@@ -317,6 +436,7 @@ void TSParser_Native__SetJniMethods(JNINativeMethod *methods, int count) {
   SET_JNI_METHOD(methods, TSParser_Native_setIncludedRanges, TSParser_setIncludedRanges);
   SET_JNI_METHOD(methods, TSParser_Native_getIncludedRanges, TSParser_getIncludedRanges);
   SET_JNI_METHOD(methods, TSParser_Native_parse, TSParser_parse);
+  SET_JNI_METHOD(methods, TSParser_Native_parseInput, TSParser_parseInput);
   SET_JNI_METHOD(methods, TSParser_Native_requestCancellation,
                  TSParser_requestCancellation);
 }
