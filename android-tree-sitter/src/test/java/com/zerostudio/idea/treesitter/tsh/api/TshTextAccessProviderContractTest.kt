@@ -26,8 +26,9 @@ class TshTextAccessProviderContractTest {
         val provider = Provider()
         val lease = (provider.acquireSnapshot(Any()) as TshResult.Success).value
         val chunk = provider.readChunk(lease, 2L, 3)
-        assertEquals("cde", (chunk as TshResult.Success).value.text.toString())
-        assertEquals(7L, chunk.value.documentVersion)
+        val chunkValue = (chunk as TshResult.Success).value
+        assertEquals("cde", chunkValue.text.toString())
+        assertEquals(7L, chunkValue.documentVersion)
         lease.close()
     }
 
