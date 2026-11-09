@@ -290,10 +290,24 @@ class TshAttachmentManager(
         val descriptor = objects.descriptor(handle.objectId)
             ?: return failure("TSH-ATTACH-007", "Host object descriptor was unregistered outside its attachment")
         val request = entrySnapshot.request
-        val resolution = providers.resolveFor(
-            instance, descriptor,
-            request.requiredCapabilities, request.optionalCapabilities, request.providerApiRange
-        )
+        val resolution = try {
+            providers.resolveFor(
+                instance, descriptor,
+                request.requiredCapabilities, request.optionalCapabilities, request.providerApiRange
+            )
+        } catch (error: Exception) {
+            return failure(
+                "TSH-ATTACH-016",
+                "Provider resolution failed while refreshing attachment: ${error.message}",
+                error
+            )
+        } catch (error: LinkageError) {
+            return failure(
+                "TSH-ATTACH-017",
+                "Provider resolution failed with a linkage error while refreshing attachment",
+                error
+            )
+        }
         val updated = report(
             handle, descriptor, resolution,
             current.attachedAtNanos, System.nanoTime()
