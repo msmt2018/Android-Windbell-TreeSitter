@@ -44,6 +44,21 @@ class TshNativeLeaseCloseDiagnosticsTest {
     }
 
     @Test
+    fun nativeResourceMetadataCanAdvanceWithoutChangingObjectIdentity() {
+        val objects = TshObjectRegistry()
+        val resources = TshNativeResourceRegistry(objects, TshNativeResourceLeaseStore())
+        val registration = resources.register(FailingNative(), "fake-native")
+        val updated = resources.updateMetadata(
+            registration.handle,
+            mapOf("documentId" to "doc", "documentVersion" to "12", "treeRevision" to "8")
+        ) as TshResult.Success
+        assertEquals(registration.descriptor.id, updated.value.id)
+        assertEquals("12", objects.descriptor(registration.descriptor.id)?.metadata?.get("documentVersion"))
+        assertTrue(resources.retire(registration.descriptor.id))
+        assertEquals("TSH-NATIVE-LEASE-001", resources.closeDiagnostics().single().code)
+    }
+
+    @Test
     fun ownerScopeReportsCleanupFailuresInsteadOfSilentlySwallowingThem() {
         val scope = TshOwnerScope("failing-scope")
         scope.registerCleanup { error("simulated cleanup failure") }
