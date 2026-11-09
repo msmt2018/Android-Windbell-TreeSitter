@@ -11,6 +11,27 @@
 
 > 当前 API Foundation、Attach/Detach、Provider Resolution、Text Snapshot/Chunk 和 Schema 修复均为 SOURCE_PARTIAL，尚未完成本轮 Gradle 编译/测试和设备端验证。其余领域文档定义目标契约，不代表对应实现已经存在。
 
+## 规范权威来源（Normative Source Map）
+
+每个 API 领域只有一个权威契约。其他文档可以提供概览、示例和迁移说明，但不得重复定义或覆盖权威文档中的字段、状态、错误语义和生命周期。
+
+| 领域 | 唯一权威文档 |
+|---|---|
+| 公共原则、宿主接入与所有权 | [public-api-design-principles-and-integration-contract.md](public-api-design-principles-and-integration-contract.md) |
+| Engine、对象身份与生命周期 | [core-foundation.md](core-foundation.md) |
+| TextDocument、Snapshot、Edit 与坐标 | [object-and-text-model.md](object-and-text-model.md) |
+| DSL 类型与 Schema 校验 | [dsl-type-system-and-schema-api.md](dsl-type-system-and-schema-api.md) |
+| DSL 语法、AST 与语义 | [tsh-dsl-syntax-and-semantic-contract.md](tsh-dsl-syntax-and-semantic-contract.md) |
+| ATS/Tree-sitter Query | [ats-tree-sitter-query-api.md](ats-tree-sitter-query-api.md) |
+| Regex 编译、窗口与跨窗口语义 | [regex-window-execution-api.md](regex-window-execution-api.md) |
+| Match/MatchSet/Scope 数据模型 | [unified-match-scope-api.md](unified-match-scope-api.md) |
+| Attribute 与语义高亮 | [attribute-semantic-highlight-api.md](attribute-semantic-highlight-api.md) |
+| Theme、Font、Color 与 Style 属性 | [theme-style-font-color-api.md](theme-style-font-color-api.md) |
+| RenderPlan、RenderProvider 与 Receipt | [theme-style-render-contract-api.md](theme-style-render-contract-api.md) |
+| 后端绘制能力、确认与 Conformance | [render-backend-conformance-api.md](render-backend-conformance-api.md) |
+| JNI/C++ ABI、Native handles 与生命周期 | [native-jni-cpp-completeness-api.md](native-jni-cpp-completeness-api.md) |
+| Binding、事件、Provider 与扩展 | [binding-events-and-extension.md](binding-events-and-extension.md) |
+
 ## API 领域规范
 
 | 文档 | 领域 | 主要内容 |
