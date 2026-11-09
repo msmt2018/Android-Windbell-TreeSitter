@@ -86,3 +86,12 @@ PieceTreeSnapshot 的创建成本为 O(piece count) 并复制当前仍在 change
 - CRLF 中的 CR 计入当前 Tree-sitter byte column，LF 才推进 row；替换文本中的换行也按同一规则计算。
 
 当前新增单元测试源码覆盖多 Edit 降序、版本错配、surrogate 边界与 CRLF/UTF-16LE byte column。尚未运行 Gradle/JUnit，也尚未把真实 EditorDocument 的 change/dispose 事件接入该编译器；因此仍为 SOURCE_PARTIAL。
+
+
+## Snapshot-to-incremental-parse orchestrator (SOURCE_PARTIAL)
+
+新增 `TshTreeSitterIncrementalUpdate.apply`，要求调用方提供同一文档的 before/after Snapshot Lease、版本化 `TshTextChange`、旧 OwnedSyntaxTree 和目标 treeRevision。入口依次校验两端快照身份/版本、编译 Edit、原子应用 Native Edit、以 after Snapshot 执行增量 parse；新树成功注册后才 retire 旧树。调用方仍拥有两份 Snapshot Lease，必须保持其在同步调用期间有效。
+
+编辑成功但增量 parse 失败时，旧树保留在 afterVersion 的 EDITED_PENDING_PARSE 状态，可供重试 parse，但不可执行 Query。ParserOwner 对单 Edit 与批量 Edit 都写入该状态；QueryExecutor 在获取 Native Query/Tree Lease 前预检该状态，并在获取 Tree Lease 后再次检查以封闭并发竞态。新 Snapshot parse 注册的替代树标记为 READY。空文本 Edit 允许只推进版本元数据，不触发 Native edit；这覆盖内容未变化但宿主版本推进的情况。
+
+该编排层已接通 Snapshot → Compiler → Batch Edit → Incremental Parse 的源码路径；真实 EditorDocument 事件如何在编辑前固定 before Snapshot、编辑后固定 after Snapshot，仍由宿主绑定层负责，尚未端到端验证。
