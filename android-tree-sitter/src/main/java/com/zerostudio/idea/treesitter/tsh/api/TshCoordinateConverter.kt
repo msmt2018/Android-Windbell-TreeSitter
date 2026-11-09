@@ -57,7 +57,8 @@ object TshCoordinateConverter {
         return TshResult.Success(converted)
     }
 
-    private fun toUtf16(value: String, offset: Long, system: TshCoordinateSystem): Int? = when (system) {
+    private fun toUtf16(value: String, offset: Long, system: TshCoordinateSystem): Int? {
+        return when (system) {
         TshCoordinateSystem.UTF16_CODE_UNIT ->
             if (offset <= value.length.toLong()) offset.toInt()
                 .takeIf { isUtf16Boundary(value, it) } else null
@@ -90,6 +91,7 @@ object TshCoordinateConverter {
             boundary
         }
         TshCoordinateSystem.LINE_COLUMN, TshCoordinateSystem.SCREEN_PIXEL -> null
+        }
     }
 
     private fun fromUtf16(value: String, utf16Offset: Int, system: TshCoordinateSystem): Long? {
