@@ -36,7 +36,7 @@ interface TshAndroidSpannableRenderTarget {
     fun isOnRenderThread(): Boolean
     fun currentRevisions(documentId: String): TshRenderRevisions?
     fun resolveSpannable(documentId: String): Spannable?
-    /** Return the host viewport in absolute UTF-16 code units; null means the whole Spannable. */
+    /** Return a bounded host viewport in absolute UTF-16 code units; null rejects rendering. */
     fun visibleRangeUtf16(documentId: String): TshAndroidVisibleRange?
     fun resolveTextSizePx(value: TshDslValue.MeasureValue): Float?
     fun invalidate(documentId: String)
