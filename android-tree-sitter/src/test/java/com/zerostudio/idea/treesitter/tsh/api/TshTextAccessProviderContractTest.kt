@@ -17,6 +17,7 @@ class TshTextAccessProviderContractTest {
 
     private class Provider : TshTextAccessProvider {
         override val id = "test"
+        override val threading = TshTextAccessThreading.ANY_THREAD
         override fun supports(document: Any) = true
         override fun snapshot(document: Any) = TshResult.Success(Snapshot())
     }
@@ -60,6 +61,7 @@ class TshTextAccessProviderContractTest {
 
     private class ProviderWithSnapshot(private val value: TshTextSnapshot) : TshTextAccessProvider {
         override val id = "unicode"
+        override val threading = TshTextAccessThreading.ANY_THREAD
         override fun supports(document: Any) = true
         override fun snapshot(document: Any) = TshResult.Success(value)
     }
