@@ -135,6 +135,14 @@ interface TshTextAccessProvider {
         lease: TshTextSnapshotLease,
         startUtf16: Long,
         maxUtf16Length: Int
+    ): TshResult<TshTextChunk> = withReadAccess {
+        readChunkInternal(lease, startUtf16, maxUtf16Length)
+    }
+
+    private fun readChunkInternal(
+        lease: TshTextSnapshotLease,
+        startUtf16: Long,
+        maxUtf16Length: Int
     ): TshResult<TshTextChunk> {
         if (!isAccessAllowedOnCurrentThread()) {
             return failure("TSH-TEXT-010", "TextAccessProvider chunk access is not allowed on the current thread")
@@ -189,6 +197,16 @@ interface TshTextAccessProvider {
             stage = TshDiagnosticStage.BINDING,
             message = "This TextAccessProvider does not support change subscriptions"
         )))
+
+    /** Document disposal is separate from its last text change and invalidates all active bindings. */
+    fun subscribeDisposed(
+        document: Any,
+        listener: TshTextDocumentDisposedListener
+    ): TshResult<TshTextSubscription> = TshResult.Failure(listOf(TshDiagnostic(
+        code = "TSH-TEXT-008", severity = TshDiagnosticSeverity.ERROR,
+        stage = TshDiagnosticStage.BINDING,
+        message = "This TextAccessProvider does not support document disposal notifications"
+    )))
 
     private fun failure(code: String, message: String) = TshResult.Failure(listOf(TshDiagnostic(
         code = code, severity = TshDiagnosticSeverity.ERROR,
