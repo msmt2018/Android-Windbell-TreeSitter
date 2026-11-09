@@ -93,7 +93,7 @@ renderCoordinator.submit(renderPlan)
 
 // Editor/View is detached or destroyed:
 val ownerDiagnostics = ownerScope.closeWithReport() // attachment cleanup
-val bindingDiagnostics = binding.closeDiagnostics() // renderer/provider cleanup
+val bindingDiagnostics = binding.closeDiagnostics // renderer/provider cleanup
 // Report both lists; neither operation closes the host editor object
 ```
 
