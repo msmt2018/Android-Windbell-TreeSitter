@@ -176,4 +176,27 @@ class TshTreeSitterEditCompilerTest {
         assertEquals(8, loneCrEdit.newEndPoint.column)
     }
 
+    @Test
+    fun usesHostBeforeVersionCoordinatesWithoutScanningSnapshot() {
+        val change = TshTextChange(
+            "doc", 4L, 5L,
+            listOf(TshTextEdit(
+                startUtf16 = 1L,
+                endUtf16 = 2L,
+                replacement = "x",
+                startLine = 0,
+                startColumnUtf16 = 1L,
+                oldEndLine = 0,
+                oldEndColumnUtf16 = 2L
+            ))
+        )
+        val result = TshTreeSitterEditCompiler.compile(snapshot("abc"), change)
+        assertTrue(result is TshResult.Success)
+        val edit = (result as TshResult.Success<List<TSInputEdit>>).value.single()
+        assertEquals(0, edit.startPoint.row)
+        assertEquals(2, edit.startPoint.column)
+        assertEquals(0, edit.oldEndPoint.row)
+        assertEquals(4, edit.oldEndPoint.column)
+    }
+
 }
