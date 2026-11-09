@@ -86,7 +86,7 @@ val binding = (renderer.attachTo(
     requiredCapabilities = TshCapabilitySet.of(TshCapability("render.foreground"))
 ) as TshResult.Success<TshAndroidSpannableBinding>).value
 
-val renderCoordinator = TshRenderCoordinator(binding.renderer)
+val renderCoordinator = binding.renderCoordinator
 // On each host document/theme/viewport revision change, install the exact current revisions.
 renderCoordinator.updateCurrentRevisions(currentRenderRevisions)
 renderCoordinator.submit(renderPlan)
