@@ -634,7 +634,8 @@ fun compactIfWorthIt() = lock.write {
 - **压缩需要手动触发**：已删除的文本和碎片化的 piece 只有 `compact()`（或 `setEOL()`）才会释放，
   缓冲区不会自动压缩，见[内存与压缩](#内存与压缩)。
 - **多行搜索会复制搜索区间涉及的所有行**（包括首尾两整行），在 CRLF 缓冲区上换算偏移时假设每个
-  换行都是 `\r\n`。
+  换行都是 `\r
+| `TextSlice.forEachChunk { }` | 逐块访问只读 CharSequence 视图，不把引用片段拼接成完整 String |\n`。
   `normalizeEOL = false` 且行尾混杂的缓冲区上，返回的区间可能有偏差。
 - **编辑可能劈开代理对**：区间校验不会把落在 emoji 两半之间的列挪开（VSCode 会）。
 - **`getValueLengthInRange` 忽略 `eol` 参数。**
