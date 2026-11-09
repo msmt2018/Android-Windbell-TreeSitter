@@ -197,6 +197,12 @@ data class TshTextEdit(
             require(replacementTrailingUtf16Length == replacementLengthUtf16) {
                 "A replacement without LF must have a trailing length equal to its total length"
             }
+        } else if (replacementLineFeedCount != null) {
+            require(
+                replacementLineFeedCount.toLong() + replacementTrailingUtf16Length!! <= replacementLengthUtf16
+            ) {
+                "Replacement LF count and trailing length exceed its total UTF-16 length"
+            }
         }
     }
 }
