@@ -95,4 +95,48 @@ class TshTreeSitterEditCompilerTest {
         assertTrue((result as TshResult.Success<List<TSInputEdit>>).value.isEmpty())
     }
 
+    @Test
+    fun compilesPieceTreeSliceMetadataWithoutMaterializingReplacementText() {
+        val change = TshTextChange(
+            documentId = "doc",
+            beforeVersion = 4L,
+            afterVersion = 5L,
+            edits = listOf(
+                TshTextEdit(
+                    startUtf16 = 1L,
+                    endUtf16 = 2L,
+                    replacement = "",
+                    replacementLengthUtf16 = 1L,
+                    newEndPointRow = 0,
+                    newEndPointColumnBytes = 4
+                )
+            )
+        )
+        val result = TshTreeSitterEditCompiler.compile(snapshot("abc"), change)
+        assertTrue(result is TshResult.Success)
+        val edit = (result as TshResult.Success<List<TSInputEdit>>).value.single()
+        assertEquals(2, edit.startByte)
+        assertEquals(4, edit.newEndByte)
+        assertEquals(0, edit.newEndPoint.row)
+        assertEquals(4, edit.newEndPoint.column)
+    }
+
+    @Test
+    fun allowsStableSameOffsetInsertionsAndCompilesThemInReverseOrder() {
+        val change = TshTextChange(
+            documentId = "doc",
+            beforeVersion = 4L,
+            afterVersion = 5L,
+            edits = listOf(
+                TshTextEdit(1L, 1L, "A"),
+                TshTextEdit(1L, 1L, "B")
+            )
+        )
+        val result = TshTreeSitterEditCompiler.compile(snapshot("abc"), change)
+        assertTrue(result is TshResult.Success)
+        val edits = (result as TshResult.Success<List<TSInputEdit>>).value
+        assertEquals(listOf(2, 2), edits.map { it.startByte })
+        assertEquals(listOf(4, 4), edits.map { it.newEndPoint.column })
+    }
+
 }
