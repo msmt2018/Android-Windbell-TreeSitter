@@ -340,7 +340,7 @@ class TshAndroidSpannableRenderer(
         }
 
         val currentBeforeCommit = try {
-            acknowledger.isCurrent(plan.id, plan.revisions) &&
+            !closed.get() && acknowledger.isCurrent(plan.id, plan.revisions) &&
                 target.currentRevisions(documentId) == plan.revisions
         } catch (error: Exception) {
             removeNewOwnedSpans(spannable, previousSpans)
@@ -362,7 +362,8 @@ class TshAndroidSpannableRenderer(
         } catch (error: Exception) {
             val rollbackFailure = runCatching {
                 removeNewOwnedSpans(spannable, previousSpans)
-                restoreSpans(spannable, previousSpans)
+                if (closed.get()) removeOwnedSpans(spannable)
+                else restoreSpans(spannable, previousSpans)
                 target.invalidate(documentId)
             }.exceptionOrNull()
             val detail = rollbackFailure?.let { "; rollback also failed: ${it.message}" }.orEmpty()
@@ -383,7 +384,7 @@ class TshAndroidSpannableRenderer(
             )
         }
         val currentAfterCommit = try {
-            acknowledger.isCurrent(plan.id, plan.revisions) &&
+            !closed.get() && acknowledger.isCurrent(plan.id, plan.revisions) &&
                 target.currentRevisions(documentId) == plan.revisions
         } catch (error: Exception) {
             false
