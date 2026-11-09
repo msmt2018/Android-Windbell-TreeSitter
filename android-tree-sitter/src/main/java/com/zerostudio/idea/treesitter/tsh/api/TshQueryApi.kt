@@ -45,7 +45,7 @@ data class TshAtsSource(
 
 data class TshQueryCompileOptions(
     val enablePredicates: Boolean = true,
-    val strictNodeValidation: Boolean = true,
+    val strictNodeValidation: Boolean = false,
     val maxPatternCount: Int = 10_000
 ) {
     init { require(maxPatternCount > 0) }
@@ -97,11 +97,11 @@ data class TshSyntaxTreeSnapshot(
 }
 
 data class TshQueryExecutionBudget(
-    val maxSteps: Long = 5_000_000,
+    val maxSteps: Long? = null,
     val maxMatches: Int = 100_000
 ) {
     init {
-        require(maxSteps > 0)
+        require(maxSteps == null || maxSteps > 0)
         require(maxMatches > 0)
     }
 }
@@ -137,7 +137,7 @@ data class TshQueryResult(
     val treeRevision: Long,
     val grammarFingerprint: String,
     val captures: List<TshCapture>,
-    val stepsUsed: Long,
+    val stepsUsed: Long?,
     val isComplete: Boolean = true,
     /** Byte ranges in captures use this tree source encoding. */
     val inputEncoding: TshTreeSitterInputEncoding = TshTreeSitterInputEncoding.UTF8
@@ -148,7 +148,7 @@ data class TshQueryResult(
         require(documentId.isNotBlank())
         require(documentVersion >= 0)
         require(treeRevision >= 0)
-        require(stepsUsed >= 0)
+        require(stepsUsed == null || stepsUsed >= 0L)
     }
 
     fun isCurrentFor(tree: TshSyntaxTreeSnapshot): Boolean =
