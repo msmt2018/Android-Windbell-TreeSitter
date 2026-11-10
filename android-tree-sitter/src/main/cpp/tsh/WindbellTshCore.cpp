@@ -1136,8 +1136,7 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
             const uint64_t required_units = static_cast<uint64_t>(total_bytes) / sizeof(UChar);
             if (required_units <= static_cast<uint64_t>(state_window.max_size())) {
                 try { state_window.resize(static_cast<size_t>(required_units)); }
-                catch (const std::bad_alloc&) { state_window.clear(); }
-                catch (const std::length_error&) { state_window.clear(); }
+                catch (...) { state_window.clear(); }
             }
             if (state_window.size() == total_bytes / sizeof(UChar) &&
                 windbell::largefile::copyTextRange(*text_source, 0, total_bytes, state_window.data())) {
