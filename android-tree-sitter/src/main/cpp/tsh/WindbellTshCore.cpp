@@ -416,17 +416,11 @@ static bool tshEvaluateNativePredicates(const NativeQueryProgram& program,
     const TSQueryMatch& match, const UChar* utf16_source,
     const windbell::largefile::TextSource* text_source, uint32_t source_bytes) {
     const TSQuery* query = program.query;
-    uint32_t step_count = 0;
-    const TSQueryPredicateStep* steps =
-        ts_query_predicates_for_pattern(query, match.pattern_index, &step_count);
-    if (!steps || step_count == 0) return true;
-    uint32_t cursor = 0;
+    if (match.pattern_index >= program.predicates_by_pattern.size()) return false;
+    const auto& predicates = program.predicates_by_pattern[match.pattern_index];
+    if (predicates.empty()) return true;
     uint32_t predicate_index = 0;
-    while (cursor < step_count) {
-        std::vector<TSQueryPredicateStep> predicate;
-        while (cursor < step_count && steps[cursor].type != TSQueryPredicateStepTypeDone)
-            predicate.push_back(steps[cursor++]);
-        if (cursor < step_count) ++cursor;
+    for (const auto& predicate : predicates) {
         if (predicate.empty() || predicate[0].type != TSQueryPredicateStepTypeString) return false;
 
         uint32_t op_length = 0;
