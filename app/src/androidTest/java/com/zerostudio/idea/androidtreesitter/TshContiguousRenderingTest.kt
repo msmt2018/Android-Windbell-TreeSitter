@@ -68,7 +68,7 @@ class TshContiguousRenderingTest {
             }
 
             val deadline = SystemClock.uptimeMillis() + 10_000L
-            while (!highlighter.isStyleReady(0, 0, 0, source.length) &&
+            while (!highlighter.isStyleReady(1, 0, 0, source.length) &&
                 SystemClock.uptimeMillis() < deadline) {
                 SystemClock.sleep(20L)
             }
@@ -78,7 +78,7 @@ class TshContiguousRenderingTest {
             val nameEnd = nameStart + "ContiguousRenderProbe".length
             var styledColor: Int? = null
             InstrumentationRegistry.getInstrumentation().runOnMainSync {
-                val styled = highlighter.styleLine(source, 0, 0, 0, source.length)
+                val styled = highlighter.styleLine(source, 1, 0, 0, source.length)
                 assertNotNull("Editor LineStyler must return an Android Spanned result", styled)
                 val colorSpan = styled!!.getSpans(nameStart, nameEnd, ForegroundColorSpan::class.java)
                     .firstOrNull {
