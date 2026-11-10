@@ -28,7 +28,7 @@
 // Cargo.toml --> [workspace.package] --> version = "x.xx.x"
 #define TS_VERSION_NUM   "0.28.0"
 //Manually maintain the current git commit hash value during pull
-#define TS_GIT_HASH      "ad067fd"
+#define TS_GIT_HASH "62816e1c0d0a"
 
 #if defined(__ANDROID__)
 static jint JNI_VERSION = JNI_VERSION_1_6;

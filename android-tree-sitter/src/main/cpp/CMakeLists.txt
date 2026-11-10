@@ -15,51 +15,149 @@
 #  along with android-tree-sitter.  If not, see <https://www.gnu.org/licenses/>.
 #
 
-cmake_minimum_required(VERSION 3.22.1)
+#
+#  Windbell Treesitter Highlighting Configuration Core (Windbell-TSH)
+#
 
-# Project name
+cmake_minimum_required(VERSION 3.22.1)
 project("android-tree-sitter")
 
 set(PROJECT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../../..)
 
-# Include common configuration
+# 引入项目通用配置
 include(${CMAKE_CURRENT_SOURCE_DIR}/../../../../cmake/common-config.cmake)
 
-# android-tree-sitter uses some internal APIs
-# headers for those are located in the tree-sitter sources
+# Tree-sitter 核心头文件路径
 include_directories("${TS_DIR}/lib/src")
+include_directories("${TS_DIR}/lib/include")
 
-# Set visibility to hidden by default
-SET(CMAKE_CXX_FLAGS "-fvisibility=hidden")
+# ==============================================================================
+# Oniguruma (鬼车) 路径配置：位于当前 cpp/oniguruma 目录
+# ==============================================================================
+set(ONIG_DIR "${CMAKE_CURRENT_SOURCE_DIR}/oniguruma")
+set(ONIG_SRC_DIR "${ONIG_DIR}/src")
 
-# add android-tree-sitter library
+# project-sora/oniguruma's regenc.h includes config.h directly. The upstream
+# CMake project generates it from config.h.cmake.in; this project compiles the
+# Oniguruma sources in its own target, so reproduce the required feature checks
+# and generate the same header into our binary directory.
+include(CheckIncludeFiles)
+include(CheckSymbolExists)
+include(CheckTypeSize)
+
+set(PACKAGE onig)
+set(PACKAGE_VERSION 6.9.10)
+set(VERSION ${PACKAGE_VERSION})
+set(USE_CRNL_AS_LINE_TERMINATOR 0)
+
+check_include_files(alloca.h HAVE_ALLOCA_H)
+check_include_files(stdint.h HAVE_STDINT_H)
+check_include_files(sys/times.h HAVE_SYS_TIMES_H)
+check_include_files(sys/time.h HAVE_SYS_TIME_H)
+check_include_files(time.h HAVE_TIME_H)
+check_include_files(sys/types.h HAVE_SYS_TYPES_H)
+check_include_files(unistd.h HAVE_UNISTD_H)
+check_include_files(inttypes.h HAVE_INTTYPES_H)
+check_type_size(int SIZEOF_INT)
+check_type_size(intptr_t SIZEOF_INTPTR_T)
+check_type_size(long SIZEOF_LONG)
+check_type_size("long long" SIZEOF_LONG_LONG)
+check_type_size("void*" SIZEOF_VOIDP)
+if(HAVE_TIME_H)
+    check_type_size(time_t SIZEOF_TIME_T)
+    check_symbol_exists(clock_gettime time.h HAVE_CLOCK_GETTIME)
+endif()
+if(HAVE_ALLOCA_H)
+    check_symbol_exists(alloca "alloca.h" HAVE_ALLOCA)
+else()
+    check_symbol_exists(alloca "stdlib.h;malloc.h" HAVE_ALLOCA)
+endif()
+
+set(ONIG_CONFIG_DIR "${CMAKE_CURRENT_BINARY_DIR}/oniguruma_config")
+file(MAKE_DIRECTORY "${ONIG_CONFIG_DIR}")
+configure_file(
+    "${ONIG_SRC_DIR}/config.h.cmake.in"
+    "${ONIG_CONFIG_DIR}/config.h"
+)
+
+# Search generated configuration before the vendored Oniguruma source tree.
+include_directories(BEFORE "${ONIG_CONFIG_DIR}")
+include_directories("${ONIG_SRC_DIR}")
+
+# 引入 Windbell-TSH 自身头文件
+include_directories("${CMAKE_CURRENT_SOURCE_DIR}")
+include_directories("${CMAKE_CURRENT_SOURCE_DIR}/tsh")
+
+# 编译参数调优：保证 C++20，隐藏缺省符号，开启 -O3 优化并定义 HAVE_CONFIG_H
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O3 -fvisibility=hidden -DHAVE_CONFIG_H")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 -fvisibility=hidden -DHAVE_CONFIG_H")
+
+# ==============================================================================
+# 构建主库 android-tree-sitter
+# ==============================================================================
 add_library(android-tree-sitter SHARED
+    # Tree-sitter 核心内核
+    "${TS_DIR}/lib/src/lib.c"
 
-        # tree-sitter-sources
-        "${TS_DIR}/lib/src/lib.c"
+    # Oniguruma 完整核心与编码表实现 (完全闭合依赖符号，避免 NDK 静态断言失败)
+    "${ONIG_SRC_DIR}/regerror.c"
+    "${ONIG_SRC_DIR}/regparse.c"
+    "${ONIG_SRC_DIR}/regext.c"
+    "${ONIG_SRC_DIR}/regcomp.c"
+    "${ONIG_SRC_DIR}/regexec.c"
+    "${ONIG_SRC_DIR}/reggnu.c"
+    "${ONIG_SRC_DIR}/regenc.c"
+    "${ONIG_SRC_DIR}/regsyntax.c"
+    "${ONIG_SRC_DIR}/regtrav.c"
+    "${ONIG_SRC_DIR}/regversion.c"
+    "${ONIG_SRC_DIR}/st.c"
+    "${ONIG_SRC_DIR}/onig_init.c"
+    "${ONIG_SRC_DIR}/unicode.c"
+    "${ONIG_SRC_DIR}/ascii.c"
+    "${ONIG_SRC_DIR}/utf8.c"
+    "${ONIG_SRC_DIR}/utf16_le.c"
+    "${ONIG_SRC_DIR}/utf16_be.c"
+    "${ONIG_SRC_DIR}/utf32_le.c"
+    "${ONIG_SRC_DIR}/utf32_be.c"
+    "${ONIG_SRC_DIR}/sjis.c"
+    "${ONIG_SRC_DIR}/sjis_prop.c"
+    "${ONIG_SRC_DIR}/euc_jp.c"
+    "${ONIG_SRC_DIR}/euc_jp_prop.c"
+    "${ONIG_SRC_DIR}/unicode_unfold_key.c"
+    "${ONIG_SRC_DIR}/unicode_fold1_key.c"
+    "${ONIG_SRC_DIR}/unicode_fold2_key.c"
+    "${ONIG_SRC_DIR}/unicode_fold3_key.c"
 
-        # android-tree-sitter sources
-        main.cc
-        ts.cc
-        ts_cursor.cc
-        ts_language.cc
-        ts_lookahead_iterator.cc
-        ts_node.cc
-        ts_parser.cc
-        ts_query.cc
-        ts_query_cursor.cc
-        ts_tree.cc
-        utf16str/JavaUTF16String.cpp
-        utf16str/JavaUTF16StringFactory.cpp
-        utf16str/UTF16String.cpp
-        utils/jni_string.cpp
-        utils/ts_exceptions.cpp
-        utils/ts_preconditions.cpp
-        utils/ts_obj_utils.cpp
-        )
+    # 原生 JNI 适配层
+    main.cc
+    ts.cc
+    ts_cursor.cc
+    ts_language.cc
+    ts_lookahead_iterator.cc
+    ts_node.cc
+    ts_parser.cc
+    ts_query.cc
+    ts_query_cursor.cc
+    ts_tree.cc
+    utf16str/JavaUTF16String.cpp
+    utf16str/JavaUTF16StringFactory.cpp
+    utf16str/UTF16String.cpp
+    utils/jni_string.cpp
+    utils/ts_exceptions.cpp
+    utils/ts_preconditions.cpp
+    utils/ts_obj_utils.cpp
+
+    # Windbell-TSH 核心实现
+    tsh/WindbellTshCompiler.cpp
+    tsh/WindbellTshCore.cpp
+    ts_windbell_jni.cpp
+)
 
 if (${CMAKE_SYSTEM_NAME} STREQUAL Android)
-    # Find the log library and link it to android-tree-sitter
     find_library(log log)
-    target_link_libraries(android-tree-sitter ${log})
+    target_link_libraries(android-tree-sitter PRIVATE ${log})
 endif()
