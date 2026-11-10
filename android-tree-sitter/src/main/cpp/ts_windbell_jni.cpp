@@ -13,6 +13,8 @@
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#include <new>
+#include <exception>
 #include <cstdlib>
 
 #include "tsh/WindbellTshCore.h"
@@ -274,6 +276,16 @@ static bool nativePointAt(
     return true;
 }
 
+
+static void throwNativeAllocationFailure(JNIEnv *env, const char *message) noexcept {
+    if (env && !env->ExceptionCheck()) {
+        throw_exception(env, "java/lang/OutOfMemoryError", message);
+    }
+}
+
+static void throwNativeHighlightFailure(JNIEnv *env, const char *message) noexcept {
+    if (env && !env->ExceptionCheck()) throw_illegal_state(env, message);
+}
 
 static jintArray encodeNativeHighlightResult(
     JNIEnv *env,
@@ -877,17 +889,29 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlight(
 
     std::vector<HighlightSpan> raw_candidates;
     uint32_t pipeline_match_counts[4] = {};
-    std::vector<HighlightSpan> spans = WindbellEngine::getInstance().highlightHybrid(
-        tree ? ts_tree_language(tree) : nullptr,
-        tree,
-        reinterpret_cast<const uint16_t*>(source_chars),
-        static_cast<uint32_t>(len),
-        ext_str,
-        diagnostics == JNI_TRUE ? &raw_candidates : nullptr,
-        diagnostics == JNI_TRUE ? pipeline_match_counts : nullptr,
-        static_cast<uint32_t>(range_start_byte),
-        static_cast<uint32_t>(range_end_byte)
-    );
+    std::vector<HighlightSpan> spans;
+    try {
+        spans = WindbellEngine::getInstance().highlightHybrid(
+            tree ? ts_tree_language(tree) : nullptr,
+            tree,
+            reinterpret_cast<const uint16_t*>(source_chars),
+            static_cast<uint32_t>(len),
+            ext_str,
+            diagnostics == JNI_TRUE ? &raw_candidates : nullptr,
+            diagnostics == JNI_TRUE ? pipeline_match_counts : nullptr,
+            static_cast<uint32_t>(range_start_byte),
+            static_cast<uint32_t>(range_end_byte)
+        );
+    } catch (const std::bad_alloc&) {
+        throwNativeAllocationFailure(env, "Native TSH capture processing exhausted memory");
+        return nullptr;
+    } catch (const std::exception& error) {
+        throwNativeHighlightFailure(env, error.what());
+        return nullptr;
+    } catch (...) {
+        throwNativeHighlightFailure(env, "Unknown native TSH capture processing failure");
+        return nullptr;
+    }
     if (diagnostics == JNI_TRUE) spans = std::move(raw_candidates);
 
     const jsize header_size = diagnostics == JNI_TRUE ? 4 : 0;
@@ -903,7 +927,7 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlight(
         static_cast<jsize>(spans.size() * kSpanFields);
     jintArray result = env->NewIntArray(out_size);
     if (!result) {
-        throw_npe(env, "Out of memory allocating spans int array");
+        // JNI has already raised OutOfMemoryError when allocation failed.
         return nullptr;
     }
 
@@ -1452,26 +1476,53 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
     }
     std::vector<HighlightSpan> candidates;
     uint32_t counts[4] = {};
-    auto spans = WindbellEngine::getInstance().highlightHybrid(
-        ts_tree_language(document->tree), document->tree, input,
-        document->length_chars, document->extension,
-        diagnostics == JNI_TRUE ? &candidates : nullptr,
-        diagnostics == JNI_TRUE ? counts : nullptr,
-        static_cast<uint32_t>(range_start_byte),
-        static_cast<uint32_t>(range_end_byte), document->source.get(),
-        &document->regex_state_checkpoints, document->source->version(),
-        document->partition_index.version());
-    if (diagnostics == JNI_TRUE) spans = std::move(candidates);
-    // Materialize the JNI result before transferring span ownership to the
-    // cache. This avoids a second full copy of potentially hundreds of
-    // thousands of HighlightSpan records on every cache miss.
-    jintArray encoded = encodeNativeHighlightResult(
-        env, spans, counts, diagnostics == JNI_TRUE);
+    std::vector<HighlightSpan> spans;
+    try {
+        spans = WindbellEngine::getInstance().highlightHybrid(
+            ts_tree_language(document->tree), document->tree, input,
+            document->length_chars, document->extension,
+            diagnostics == JNI_TRUE ? &candidates : nullptr,
+            diagnostics == JNI_TRUE ? counts : nullptr,
+            static_cast<uint32_t>(range_start_byte),
+            static_cast<uint32_t>(range_end_byte), document->source.get(),
+            &document->regex_state_checkpoints, document->source->version(),
+            document->partition_index.version());
+        if (diagnostics == JNI_TRUE) spans = std::move(candidates);
+    } catch (const std::bad_alloc&) {
+        throwNativeAllocationFailure(env, "Native TSH capture processing exhausted memory");
+        return nullptr;
+    } catch (const std::exception& error) {
+        throwNativeHighlightFailure(env, error.what());
+        return nullptr;
+    } catch (...) {
+        throwNativeHighlightFailure(env, "Unknown native TSH capture processing failure");
+        return nullptr;
+    }
+
+    // Encode before cache admission. Cache pressure must never invalidate a
+    // complete highlight result that has already been produced for the caller.
+    jintArray encoded = nullptr;
+    try {
+        encoded = encodeNativeHighlightResult(
+            env, spans, counts, diagnostics == JNI_TRUE);
+    } catch (const std::bad_alloc&) {
+        throwNativeAllocationFailure(env, "Unable to allocate JNI highlight result");
+        return nullptr;
+    } catch (const std::exception& error) {
+        throwNativeHighlightFailure(env, error.what());
+        return nullptr;
+    }
     if (!encoded || env->ExceptionCheck()) return nullptr;
+
     NativeHighlightCache::Value cache_value;
     cache_value.spans = std::move(spans);
     std::copy(std::begin(counts), std::end(counts), std::begin(cache_value.match_counts));
-    document->highlight_cache.put(cache_key, std::move(cache_value));
+    try {
+        document->highlight_cache.put(cache_key, std::move(cache_value));
+    } catch (...) {
+        // Cache admission is optional. Preserve the complete result even when
+        // cache bookkeeping cannot allocate under memory pressure.
+    }
     return encoded;
 }
 
