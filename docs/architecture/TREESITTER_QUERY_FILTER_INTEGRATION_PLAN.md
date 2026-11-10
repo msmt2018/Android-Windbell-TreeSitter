@@ -110,7 +110,10 @@ Port the reference Lua 5.1/LuaJIT matcher with strict input validation and impro
 
 - Added this integration plan and reviewed the reference filter against the current TSH execution path.
 - Cached each compiled TSH query pattern's predicate-step vectors in `NativeQueryProgram`. The compiler now records them once, and the per-match evaluator reuses immutable steps instead of rebuilding a temporary vector for every match. This is a hot-loop allocation reduction only; predicate coverage and capture-text materialization are not yet expanded.
-- GitHub Actions run `42761510543` was started for the current head and was still running at the time of this update. No build or test success is claimed until its jobs complete.
+- Equality and membership predicates now compare capture byte ranges directly. Contiguous UTF-16 input uses `memcmp`; a `TextSource` is read through a fixed 16 KiB scratch buffer. This removes the per-match full-capture temporary allocation for `#eq?`, `#not-eq?`, `#any-of?` and `#not-any-of?`. Source read/validation failures are kept distinct from ordinary mismatches so negative predicates cannot turn an I/O failure into an accepted match.
+- Added an Android/JVM-side native-document regression fixture with a 32 MiB Java block-comment capture and a short `#not-eq?` literal. It asserts that the clipped query result still produces the configured comment style. This test is committed but has not yet completed CI/device execution.
+- Regex predicates still materialize each captured node into contiguous storage for Oniguruma. This remains a known large-capture memory hotspot; the bounded-window Regex redesign must preserve anchor/lookaround semantics and cannot silently truncate the capture.
+- The earlier Actions run `42761510543` was cancelled when subsequent commits superseded it. Runs for the streamed-comparison fix and its regression test are queued/running; no build or test success is claimed until the latest head's jobs complete.
 
 ## Delivery sequence and acceptance gates
 
