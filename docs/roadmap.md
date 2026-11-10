@@ -45,7 +45,8 @@
 - [x] EditorView Binding 在编辑线程的 before/after transaction 边界创建 PieceTreeSnapshot，并通过 EditorDocument 替换事件在同一 documentId 下自动触发 Session.resync（SOURCE_PARTIAL；尚未完成并发/设备验证）。
 - [ ] 其他可变 Piece Tree/Rope 仍需由宿主提供读写互斥或 pin persistent root/unpin。
 - [x] 新增 `TshSparseCoordinateIndex`：绑定 documentId/version/length，独立 retain Snapshot Lease；调用方关闭原始 Lease 不影响索引，索引 `close()` 后释放自己的 Lease；构建按有界 chunk 读取，转换按实际 checkpoint stride 分块扫描，支持 UTF-8/UTF-16/Code Point 并拒绝字符编码中间偏移（SOURCE_PARTIAL，新增大 stride 与 Lease 生命周期测试，待 CI）。
-- [ ] 当前仍是 Snapshot 全量 O(n) 建索引，不具备 Piece Tree/Rope 节点累计长度索引或编辑增量复用；行列/CRLF 索引及完整 Grapheme（UAX #29）转换尚未实现。
+- [x] `PieceTreeSnapshot` 新增基于 Piece 起始偏移、源缓冲区 lineStarts 和 piece line-feed prefix 的 Tree-sitter 坐标查询；`TshTextSnapshot.lineColumnAtUtf16` 将宿主原生坐标索引暴露给 EditCompiler，端点定位不再从文档头扫描（SOURCE_PARTIAL，测试源码已补，待 CI）。
+- [ ] 该坐标索引是 Snapshot 固定的 Piece 元数据查找，不维护编辑间可复用的独立增量索引对象；Rope 通用 Provider、CR-only/异常换行快速索引、完整 Grapheme（UAX #29）转换仍未实现。
 - [ ] Grapheme 目前使用运行时 BreakIterator，不宣称完整 UAX #29。
 - [x] 项目 PieceTree Provider 的 change/disposal subscription 已由 EditorDocument edit callback、Binding.publishChange 与 Binding.close 接线；Buffer replacement 现通过独立生命周期事件通知 EditorView observers（SOURCE_PARTIAL）。
 - [ ] 文档永久关闭自动 dispose、文件身份切换自动关闭旧 Session/重新 attach，以及真实线程竞态验证尚未完成。
@@ -62,7 +63,7 @@
 - [ ] 既有 C++ TshCompiler 尚未接入统一 Schema/Runtime Consumer 契约。
 - [ ] Runtime Consumer 目前逐属性 best-effort，不提供跨 Consumer 原子事务。
 
-- [x] 新增 `TshTreeSitterEditCompiler`：基于 before-version Snapshot 的有界分块单次扫描，仅索引编辑端点坐标，将多 Edit 编译为 UTF-16LE TSInputEdit，并按降序输出以便逐项安全应用；覆盖版本/范围/surrogate/Int byte offset/CRLF 检查（SOURCE_PARTIAL，测试源码未运行）。
+- [x] 新增 `TshTreeSitterEditCompiler`：优先使用 Edit 自带 before-version 坐标，其次使用 Snapshot 原生坐标索引；仅无 Provider 索引时才执行有界分块全文扫描。将多 Edit 编译为 UTF-16LE TSInputEdit 并按降序输出（SOURCE_PARTIAL，测试源码已补，待 CI）。
 - [x] 新增 `TshTreeSitterIncrementalUpdate`：接通 before/after Snapshot → Edit Compiler → 原子 Native Batch Edit → Incremental Parse → 新树发布/旧树回收；编辑后旧树标记 `EDITED_PENDING_PARSE`，QueryExecutor 在 Native Lease 前后拒绝访问，替代树标记 READY（SOURCE_PARTIAL，未运行 Native/JUnit）。
 
 ### Tree-sitter / ATS Query
