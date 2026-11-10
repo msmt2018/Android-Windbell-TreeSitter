@@ -10,6 +10,24 @@ interface TshTextSnapshot {
     val lengthUtf16: Long
 
     fun readUtf16(start: Long, end: Long): CharSequence
+
+    /**
+     * Optional host-native coordinate lookup for this exact immutable snapshot.
+     *
+     * The returned row and UTF-16 column are zero-based and must follow Tree-sitter's LF row
+     * semantics. Return null when the host cannot guarantee those semantics or the offset is
+     * invalid (including an offset inside a surrogate pair). Implementations should use their
+     * persistent tree/rope indexes rather than scanning the document.
+     */
+    fun lineColumnAtUtf16(offset: Long): TshTextPosition? = null
+}
+
+/** Zero-based Tree-sitter row and UTF-16 code-unit column, independent of Native types. */
+data class TshTextPosition(val row: Int, val columnUtf16: Long) {
+    init {
+        require(row >= 0) { "row must be non-negative" }
+        require(columnUtf16 >= 0L) { "columnUtf16 must be non-negative" }
+    }
 }
 
 /** A stable reference to a snapshot. close() releases only the snapshot lease, never the host document. */
