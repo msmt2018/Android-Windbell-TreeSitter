@@ -1353,6 +1353,15 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                     // enormous syntax node just to evaluate a selector predicate.
                     if (text_source && ast_rule.text_regex &&
                         ast_rule.text_regex_bounded) {
+                        if (ast_rule.has_text_equals &&
+                            !tshSourceMatchesUtf8Literal(*text_source, text_start, text_end,
+                                ast_rule.text_equals, 0)) continue;
+                        if (ast_rule.has_text_prefix &&
+                            !tshSourceMatchesUtf8Literal(*text_source, text_start, text_end,
+                                ast_rule.text_prefix, 1)) continue;
+                        if (ast_rule.has_text_suffix &&
+                            !tshSourceMatchesUtf8Literal(*text_source, text_start, text_end,
+                                ast_rule.text_suffix, 2)) continue;
                         if (!tshSourceRegexMatchesBounded(
                                 *text_source, text_start, text_end,
                                 ast_rule.text_regex,
