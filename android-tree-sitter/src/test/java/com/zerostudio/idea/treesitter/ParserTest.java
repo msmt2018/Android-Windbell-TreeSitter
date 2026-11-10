@@ -323,11 +323,22 @@ public class ParserTest extends TreeSitterTest {
 
       try {
         parseFuture.get();
+        assertThat(parser.isCancellationRequested()).isTrue();
       } catch (InterruptedException | ExecutionException e) {
         throw new RuntimeException(e);
       } finally {
         executor.shutdownNow();
       }
+    }
+  }
+
+  @Test
+  public void testCancellationWaitApiReturnsFalseWhenParserIsIdle() {
+    try (TSParser parser = TSParser.create()) {
+      parser.setLanguage(TSLanguageJava.getInstance());
+      assertThat(parser.isParsing()).isFalse();
+      assertThat(parser.requestCancellationAndWaitIfParsing()).isFalse();
+      assertThat(parser.isCancellationRequested()).isFalse();
     }
   }
 
@@ -563,7 +574,7 @@ public class ParserTest extends TreeSitterTest {
 
         // request parse cancellation and wait till the parse returns
         final var start = System.currentTimeMillis();
-        parser.requestCancellationAndWait();
+        assertThat(parser.requestCancellationAndWaitIfParsing()).isTrue();
         System.err.println(
           "cancelAndWait() waited for " + (System.currentTimeMillis() - start) + "ms");
 
