@@ -11,6 +11,9 @@ interface TshTextSnapshot {
 
     fun readUtf16(start: Long, end: Long): CharSequence
 
+    /** True when [lineColumnAtUtf16] is backed by a version-stable native host index. */
+    val supportsLineColumnLookup: Boolean get() = false
+
     /**
      * Optional host-native coordinate lookup for this exact immutable snapshot.
      *
