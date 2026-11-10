@@ -39,6 +39,28 @@ class TreeSitterPartitionSchedulerTest {
         scheduler.close()
         parser.close()
     }
+
+    @Test fun partitionContextExpandsAcrossVeryLongLinesWhenNoNewlineIsFound() {
+        val source = Source("x".repeat(2_000))
+        val manager = DocumentPartitionManager(256, prefetchPartitions = 0)
+        val cache = PartitionAstCache(1024) { 1L }
+        val scheduler = TreeSitterPartitionScheduler(manager, cache, contextChars = 32)
+        val completed = CountDownLatch(1)
+        var captured: PartitionParseRequest? = null
+
+        val keys = scheduler.requestViewport(source, 400, 450, 1) { request ->
+            captured = request
+            completed.countDown()
+            null
+        }
+
+        assertTrue(keys.isNotEmpty())
+        assertTrue(completed.await(2, TimeUnit.SECONDS))
+        assertEquals(0L, captured?.contextStartUtf16)
+        assertEquals(source.length, captured?.contextEndUtf16)
+        scheduler.close()
+    }
+
     @Test fun windowedCallbackKeepsUtf16SurrogatePairsInsideChunkBoundaries() {
         val text = "aaaaa😀b"
         val callback = CharSequenceParseWindowCallback(text)
