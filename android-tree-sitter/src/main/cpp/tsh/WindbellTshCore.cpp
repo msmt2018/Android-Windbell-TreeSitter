@@ -468,24 +468,28 @@ static TshPredicateResult tshEvaluateNativePredicates(const NativeQueryProgram& 
         std::string op(op_text, op_length);
         if (!op.empty() && op.front() == '#') op.erase(op.begin());
 
-        // Equality and membership predicates operate directly on capture
-        // byte ranges. Only Regex predicates need a contiguous materialized
-        // capture because Oniguruma consumes a contiguous input pointer.
         const bool needs_regex_text = op == "match?" || op == "not-match?";
         std::vector<std::vector<UChar>> actual;
         if (needs_regex_text &&
             !tshPredicateCaptureTexts(match, predicate[1].value_id, utf16_source,
                 text_source, source_bytes, actual)) return TshPredicateResult::ERROR;
+
         std::vector<std::vector<UChar>> expected;
-        for (size_t i = 2; i < predicate.size(); ++i) {
-            if (predicate[i].type != TSQueryPredicateStepTypeString) return TshPredicateResult::REJECT;
-            uint32_t length = 0;
-            const char* value = ts_query_string_value_for_id(query, predicate[i].value_id, &length);
-            std::vector<UChar> converted;
-            if (!value || !tshUtf8ToUtf16(std::string(value, length), converted)) return TshPredicateResult::REJECT;
-            expected.push_back(std::move(converted));
+        try {
+            for (size_t i = 2; i < predicate.size(); ++i) {
+                if (predicate[i].type != TSQueryPredicateStepTypeString) return TshPredicateResult::REJECT;
+                uint32_t length = 0;
+                const char* value = ts_query_string_value_for_id(query, predicate[i].value_id, &length);
+                std::vector<UChar> converted;
+                if (!value || !tshUtf8ToUtf16(std::string(value, length), converted))
+                    return TshPredicateResult::REJECT;
+                expected.push_back(std::move(converted));
+            }
+        } catch (const std::bad_alloc&) {
+            return TshPredicateResult::ERROR;
         }
         if (expected.empty()) return TshPredicateResult::REJECT;
+
         bool accepted = false;
         if (op == "eq?" || op == "not-eq?") {
             if (expected.size() != 1) return TshPredicateResult::REJECT;
@@ -513,7 +517,7 @@ static TshPredicateResult tshEvaluateNativePredicates(const NativeQueryProgram& 
                 for (const auto& candidate : expected) {
                     const int comparison = tshPredicateCaptureEquals(match.captures[i].node,
                         candidate, utf16_source, text_source, source_bytes);
-                    if (comparison < 0) return TshPredicateResult::REJECT;
+                    if (comparison < 0) return TshPredicateResult::ERROR;
                     if (comparison == 1) {
                         found = true;
                         break;
@@ -534,11 +538,16 @@ static TshPredicateResult tshEvaluateNativePredicates(const NativeQueryProgram& 
                 }
             }
             if (!compiled || !compiled->regex) return TshPredicateResult::REJECT;
-            const auto matches_regex = [&](const std::vector<UChar>& value) {
-                if (value.empty()) return TshPredicateResult::REJECT;
+
+            bool regex_allocation_failed = false;
+            const auto matches_regex = [&](const std::vector<UChar>& value) -> bool {
+                static const UChar empty_input = 0;
                 OnigRegion* region = onig_region_new();
-                if (!region) return TshPredicateResult::REJECT;
-                const UChar* begin = value.data();
+                if (!region) {
+                    regex_allocation_failed = true;
+                    return false;
+                }
+                const UChar* begin = value.empty() ? &empty_input : value.data();
                 const UChar* end = begin + value.size();
                 const int result = onig_search(compiled->regex, begin, end, begin, end,
                     region, ONIG_OPTION_NONE);
@@ -552,6 +561,7 @@ static TshPredicateResult tshEvaluateNativePredicates(const NativeQueryProgram& 
             if (regex_allocation_failed) return TshPredicateResult::ERROR;
             accepted = compiled->negate ? all_not_match : all_match;
         } else return TshPredicateResult::REJECT;
+
         if (!accepted) return TshPredicateResult::REJECT;
         ++predicate_index;
     }
