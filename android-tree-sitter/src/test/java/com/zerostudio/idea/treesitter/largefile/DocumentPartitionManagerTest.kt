@@ -9,6 +9,16 @@ class DocumentPartitionManagerTest {
         override fun get(offset: Long): Char = text[offset.toInt()]
     }
 
+    @Test fun compactOffsetIndexSupportsEmptyCapacityGrowthAndMonotonicity() {
+        val index = CompactOffsetIndex(0)
+        index.add(0L)
+        repeat(600) { index.add((it + 1L) * 64L * 1024L) }
+        assertEquals(601, index.size)
+        assertEquals(0L, index[0])
+        assertEquals(600L * 64L * 1024L, index[600])
+        assertThrows(IllegalArgumentException::class.java) { index.add(1L) }
+    }
+
     @Test fun partitionsAreOrderedAndNeverSplitSurrogatePairs() {
         val text = ("a".repeat(250) + "😀" + "\n").repeat(8)
         val source = Source(text)
