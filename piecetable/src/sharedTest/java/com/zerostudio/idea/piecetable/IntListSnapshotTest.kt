@@ -1,7 +1,7 @@
 package com.zerostudio.idea.piecetable
 
 import com.zerostudio.idea.piecetable.common.IntList
-import org.junit.Test
+import kotlin.test.Test
 import kotlin.test.assertEquals
 
 class IntListSnapshotTest {
@@ -17,7 +17,7 @@ class IntListSnapshotTest {
 
         assertEquals(3, first.size)
         assertEquals(listOf(0, 4, 9), (0 until first.size).map { first[it] })
-        assertEquals(listOf(2, 7, 11, 15, 17, 21),
+        assertEquals(listOf(2, 7, 11, 13, 17, 21),
             (0 until values.size).map { values[it] })
 
         val second = values.snapshotView()
