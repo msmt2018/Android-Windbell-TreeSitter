@@ -67,6 +67,19 @@ object TshRegexMatchAdapter {
         var truncatedByAdapter = false
 
         for ((matchIndex, record) in result.matches.withIndex()) {
+            if (matches.size >= budget.maxMatches) {
+                truncatedByAdapter = true
+                break
+            }
+            val remainingBytes = budget.maxEstimatedBytes - estimatedBytes
+            val minimumRecordBytes = saturatedAdd(
+                256L,
+                saturatedMultiply(record.captureGroups.size.toLong(), 96L)
+            )
+            if (minimumRecordBytes > remainingBytes) {
+                truncatedByAdapter = true
+                break
+            }
             if (!isValidDocumentRange(record.range, result)) {
                 return failure(
                     "TSH-REGEX-MATCH-002",
