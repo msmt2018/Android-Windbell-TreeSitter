@@ -107,7 +107,7 @@ class PieceTreeSnapshot internal constructor(
         val sourceOffset = pieceCoordinateStarts[piece] + offset - pieceStarts[piece]
         val starts = pieceLineStarts[piece]
         var low = 0
-        var high = starts.lastIndex
+        var high = starts.size - 1
         while (low < high) {
             val mid = (low + high + 1) ushr 1
             if (starts[mid] <= sourceOffset) low = mid else high = mid - 1
