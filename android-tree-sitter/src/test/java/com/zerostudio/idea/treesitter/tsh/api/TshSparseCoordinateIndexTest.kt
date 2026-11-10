@@ -147,6 +147,34 @@ class TshSparseCoordinateIndexTest {
     }
 
     @Test
+    fun memoryBudgetReservationLivesExactlyAsLongAsTheIndex() {
+        val sourceLease = lease("abc")
+        val budget = TshMemoryBudget(TshMemoryBudgetOptions(256, 512))
+        val built = TshSparseCoordinateIndex.build(
+            sourceLease, chunkSizeUtf16 = 256, checkpointStrideUtf16 = 256,
+            memoryBudget = budget
+        )
+        assertTrue(built is TshResult.Success)
+        assertEquals(192L, budget.snapshot().reservedBytes)
+        (built as TshResult.Success).value.close()
+        assertEquals(0L, budget.snapshot().reservedBytes)
+        sourceLease.close()
+    }
+
+    @Test
+    fun refusesIndexBeforeCheckpointAllocationWhenBudgetIsInsufficient() {
+        val sourceLease = lease("abc")
+        val budget = TshMemoryBudget(TshMemoryBudgetOptions(128, 256))
+        val result = TshSparseCoordinateIndex.build(
+            sourceLease, chunkSizeUtf16 = 256, checkpointStrideUtf16 = 256,
+            memoryBudget = budget
+        )
+        assertTrue(result is TshResult.Failure)
+        assertEquals(0L, budget.snapshot().reservedBytes)
+        sourceLease.close()
+    }
+
+    @Test
     fun rejectsLayoutAndGraphemeCoordinatesWithoutSpecializedProvider() {
         val sourceLease = lease("abc")
         val index = (TshSparseCoordinateIndex.build(
