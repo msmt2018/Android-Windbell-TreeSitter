@@ -2682,7 +2682,8 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                                         program.query, predicate.front().value_id, &op_length);
                                     const std::string op = op_text
                                         ? std::string(op_text, op_length) : std::string();
-                                    const bool equality = op == "eq?" || op == "not-eq?";
+                                    const bool equality = op == "eq?" || op == "not-eq?" ||
+                                        op == "any-eq?" || op == "any-not-eq?";
                                     const bool membership = op == "any-of?" || op == "not-any-of?";
                                     const bool regex_match = op == "match?" || op == "not-match?";
                                     const bool supported = equality || membership || regex_match;
@@ -2690,8 +2691,15 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                                         predicate[1].type == TSQueryPredicateStepTypeCapture &&
                                         ((equality || regex_match) ? predicate.size() == 3 : true);
                                     for (size_t arg = 2; arg < predicate.size(); ++arg) {
-                                        valid = valid &&
-                                            predicate[arg].type == TSQueryPredicateStepTypeString;
+                                        const bool capture_comparison =
+                                            equality && predicate.size() == 3 &&
+                                            predicate[arg].type == TSQueryPredicateStepTypeCapture;
+                                        valid = valid && (capture_comparison ||
+                                            predicate[arg].type == TSQueryPredicateStepTypeString);
+                                    }
+                                    if (equality && predicate.size() == 3 &&
+                                        predicate[2].type == TSQueryPredicateStepTypeCapture) {
+                                        valid = true;
                                     }
                                     if (!supported || !valid) {
                                         g_tsh_last_error_detail = supported
