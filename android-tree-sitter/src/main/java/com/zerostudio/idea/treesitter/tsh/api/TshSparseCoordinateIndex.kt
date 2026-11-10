@@ -211,6 +211,7 @@ class TshSparseCoordinateIndex private constructor(
          * [lease] and may close it immediately after this method returns.
          */
         @JvmStatic
+        @JvmOverloads
         fun build(
             lease: TshTextSnapshotLease,
             chunkSizeUtf16: Int = DEFAULT_CHUNK_UTF16,
