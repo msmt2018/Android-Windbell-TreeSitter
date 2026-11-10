@@ -179,4 +179,26 @@ class TshRegexWindowLeaseTest {
         sourceLease.close()
     }
 
+
+    @Test
+    fun rejectsMatchOffsetsInsideSurrogatePairs() {
+        val sourceLease = lease(Snapshot("a😀b"))
+        val window = (TshRegexWindowLease.acquire(
+            sourceLease, 0L, 4,
+            TshRegexWindowConstraints(
+                coreWindowUtf16 = 256,
+                maxWindowUtf16 = 512,
+                maxMatchLengthUtf16 = 32
+            )
+        ) as TshResult.Success).value
+
+        assertTrue(window.isCodePointBoundary(1))
+        assertFalse(window.isCodePointBoundary(2))
+        assertNull(window.absoluteUtf16Offset(2))
+        assertFalse(window.ownsMatchStart(2L))
+        assertTrue(window.ownsMatchStart(3L))
+        window.close()
+        sourceLease.close()
+    }
+
 }
