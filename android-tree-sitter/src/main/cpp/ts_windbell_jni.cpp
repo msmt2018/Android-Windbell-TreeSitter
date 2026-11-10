@@ -277,6 +277,14 @@ static bool nativePointAt(
 }
 
 
+static bool nativeTreeCoversDocument(TSTree *tree, uint64_t byteLength) noexcept {
+    if (!tree || byteLength > UINT32_MAX) return false;
+    const TSNode root = ts_tree_root_node(tree);
+    return !ts_node_is_null(root) &&
+        ts_node_start_byte(root) == 0u &&
+        ts_node_end_byte(root) == static_cast<uint32_t>(byteLength);
+}
+
 static void throwNativeAllocationFailure(JNIEnv *env, const char *message) noexcept {
     if (env && !env->ExceptionCheck()) {
         throw_exception(env, "java/lang/OutOfMemoryError", message);
@@ -866,6 +874,12 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlight(
     env->ReleaseStringUTFChars(extension_jstr, ext);
 
     const jsize len = env->GetStringLength(text_jstr);
+    const uint64_t sourceByteLength = static_cast<uint64_t>(len) * sizeof(jchar);
+    if (tree && !nativeTreeCoversDocument(tree, sourceByteLength)) {
+        throw_illegal_args(env,
+            "TSH requires a complete full-document Tree-sitter AST; included-range fragments are not valid inputs");
+        return nullptr;
+    }
     if (len == 0) {
         return env->NewIntArray(0);
     }
@@ -1070,8 +1084,7 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeCreateDocument(
     TSInput input{&payload, nativeDocumentRead, TSInputEncodingUTF16LE, nullptr};
     document->tree = ts_parser_parse(document->parser, nullptr, input);
     if (!document->tree || payload.read_failed ||
-        ts_node_end_byte(ts_tree_root_node(document->tree)) !=
-            document->source->sizeBytes()) {
+        !nativeTreeCoversDocument(document->tree, document->source->sizeBytes())) {
         if (document->tree) {
             ts_tree_delete(document->tree);
             document->tree = nullptr;
@@ -1199,7 +1212,7 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeApplyDocumentEdi
     TSInput input{&payload, nativeDocumentRead, TSInputEncodingUTF16LE, nullptr};
     TSTree *next_tree = ts_parser_parse(document->parser, edited_tree, input);
     if (!next_tree || payload.read_failed ||
-        ts_node_end_byte(ts_tree_root_node(next_tree)) != next_source->sizeBytes()) {
+        !nativeTreeCoversDocument(next_tree, next_source->sizeBytes())) {
         if (next_tree) ts_tree_delete(next_tree);
         ts_tree_delete(edited_tree);
         ts_parser_reset(document->parser);
@@ -1358,6 +1371,11 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
         range_start_byte > range_end_byte) {
         throw_illegal_args(env,
             "Native TSH range must be ordered UTF-16LE byte offsets within the Tree-sitter 32-bit limit");
+        return nullptr;
+    }
+    if (!nativeTreeCoversDocument(document->tree, total_bytes)) {
+        throw_illegal_state(env,
+            "Native TSH document no longer owns a complete full-document Tree-sitter AST");
         return nullptr;
     }
     const auto grammar = WindbellEngine::getInstance().getGrammarByExtension(document->extension);
