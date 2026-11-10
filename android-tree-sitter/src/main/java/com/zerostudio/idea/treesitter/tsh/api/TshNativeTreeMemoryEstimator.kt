@@ -109,7 +109,7 @@ internal object TshParserInputMemoryReservations {
         }
     }
 
-    /** Reserves the reusable Java byte[] allocated by TSParser's streaming JNI entry point. */
+    /** Reserves the reusable Java byte[] plus a possible JNI GetByteArrayElements copy. */
     fun reserveChunkBuffer(
         budget: TshMemoryBudget?,
         documentId: String,
@@ -124,7 +124,7 @@ internal object TshParserInputMemoryReservations {
                 "Streaming parser input buffer size or document identity is invalid"
             )
         }
-        val estimate = chunkSizeBytes.toLong() + ESTIMATED_FIXED_OVERHEAD_BYTES
+        val estimate = chunkSizeBytes.toLong() * 2L + ESTIMATED_FIXED_OVERHEAD_BYTES
         return when (val result = budget.reserve(
             TshMemoryCategory.PARSER_INPUT,
             estimate,
