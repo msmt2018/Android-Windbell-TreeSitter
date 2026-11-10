@@ -104,4 +104,50 @@ class TshSnapshotTreeSitterInputTest {
         }
         lease.close()
     }
+
+    @Test
+    fun reservesTemporaryParserInputChunkAndReleasesAfterCallback() {
+        val provider = Provider()
+        val lease = (provider.acquireSnapshot(Any()) as TshResult.Success).value
+        val budget = TshMemoryBudget(TshMemoryBudgetOptions(128, 256))
+        val input = TshSnapshotTreeSitterInput(provider, lease, budget)
+        val buffer = ByteArray(4)
+
+        assertEquals(2, input.read(0L, 0, 0, buffer))
+        assertEquals(0L, budget.snapshot().reservedBytes)
+        assertEquals(68L, budget.snapshot().highWatermarkBytes)
+        assertEquals(0, budget.snapshot().reservations)
+        lease.close()
+    }
+
+    @Test
+    fun rejectsParserInputChunkBeforeProviderReadWhenBudgetIsInsufficient() {
+        val snapshot = Snapshot()
+        var reads = 0
+        val provider = object : TshTextAccessProvider {
+            override val id = "counting-provider"
+            override val threading = TshTextAccessThreading.ANY_THREAD
+            override fun supports(document: Any) = true
+            override fun snapshot(document: Any): TshResult<TshTextSnapshot> = TshResult.Success(snapshot)
+            override fun readChunk(
+                lease: TshTextSnapshotLease,
+                startUtf16: Long,
+                maxUtf16Length: Int
+            ): TshResult<TshTextChunk> {
+                reads++
+                return super.readChunk(lease, startUtf16, maxUtf16Length)
+            }
+        }
+        val lease = (provider.acquireSnapshot(Any()) as TshResult.Success).value
+        val budget = TshMemoryBudget(TshMemoryBudgetOptions(32, 64))
+        val input = TshSnapshotTreeSitterInput(provider, lease, budget)
+        val error = assertThrows(TshTextInputException::class.java) {
+            input.read(0L, 0, 0, ByteArray(4))
+        }
+        assertEquals(0, reads)
+        assertEquals(TshDiagnosticStage.MEMORY, error.diagnostics.single().stage)
+        assertEquals(0L, budget.snapshot().reservedBytes)
+        lease.close()
+    }
+
 }
