@@ -2,6 +2,7 @@
 
 #include "TextSource.h"
 
+#include <array>
 #include <cstdint>
 #include <memory>
 #include <vector>
@@ -48,6 +49,14 @@ private:
     enum class Buffer : uint8_t { Original, Added };
     struct SnapshotTag {};
     struct Node;
+    // Persistent chunk directory: snapshots copy one pointer per 256 chunks,
+    // not one shared_ptr per 64 KiB allocation. A shared tail block is copied
+    // only when a descendant appends into its directory.
+    struct AddedChunkBlock {
+        static constexpr size_t kFanout = 256;
+        std::array<std::shared_ptr<uint8_t>, kFanout> chunks{};
+        size_t count = 0;
+    };
 
     PieceTreeSource(std::shared_ptr<const TextSource> original,
                     uint64_t memoryLimitBytes, SnapshotTag) noexcept;
@@ -75,7 +84,8 @@ private:
 
     std::shared_ptr<const TextSource> original_;
     std::shared_ptr<Node> root_;
-    std::vector<std::shared_ptr<uint8_t>> added_chunks_;
+    std::vector<std::shared_ptr<AddedChunkBlock>> added_chunk_blocks_;
+    uint64_t added_chunk_count_ = 0;
     uint64_t added_size_ = 0;
     uint64_t added_allocated_ = 0;
     uint64_t memory_limit_bytes_;
