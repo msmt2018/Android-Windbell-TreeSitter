@@ -155,4 +155,28 @@ class TshRegexWindowLeaseTest {
         assertTrue(window.text.isNotEmpty())
         window.close()
     }
+
+    @Test
+    fun onlyFinalWindowOwnsZeroWidthMatchAtDocumentEnd() {
+        val snapshot = Snapshot("z".repeat(300))
+        val sourceLease = lease(snapshot)
+        val first = (TshRegexWindowLease.acquire(
+            sourceLease, 0L, 256,
+            TshRegexWindowConstraints(256, 512, 32)
+        ) as TshResult.Success).value
+        val last = (TshRegexWindowLease.acquire(
+            sourceLease, 256L, 256,
+            TshRegexWindowConstraints(256, 512, 32)
+        ) as TshResult.Success).value
+
+        assertTrue(first.isDocumentStart)
+        assertFalse(first.isDocumentEnd)
+        assertFalse(first.ownsMatchStart(256L))
+        assertTrue(last.isDocumentEnd)
+        assertTrue(last.ownsMatchStart(300L))
+        first.close()
+        last.close()
+        sourceLease.close()
+    }
+
 }
