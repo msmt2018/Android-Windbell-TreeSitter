@@ -5,10 +5,7 @@ import org.junit.jupiter.api.Test
 import java.util.concurrent.atomic.AtomicInteger
 
 class TshRegexWindowLeaseTest {
-    private class Snapshot(
-        private val content: String,
-        private val releaseCounter: AtomicInteger? = null
-    ) : TshTextSnapshot {
+    private class Snapshot(private val content: String) : TshTextSnapshot {
         override val documentId = "regex-window-doc"
         override val version = 12L
         override val lengthUtf16 = content.length.toLong()
