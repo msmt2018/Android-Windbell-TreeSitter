@@ -91,10 +91,13 @@ class TshSparseCoordinateIndex private constructor(
         var utf16 = checkpoint.utf16
         var utf8 = checkpoint.utf8
         var codePoints = checkpoint.codePoints
-        val targetUtf16: Long? = if (from == TshCoordinateSystem.UTF16_CODE_UNIT) target else null
         if (metric(checkpoint, from) == target) return metric(checkpoint, to)
-        val end = minOf(lengthUtf16, checkpoint.utf16 + MAX_SCAN_UTF16)
-        val text = source.readUtf16(checkpoint.utf16, end)
+        var end = minOf(lengthUtf16, checkpoint.utf16 + MAX_SCAN_UTF16)
+        var text = source.readUtf16(checkpoint.utf16, end)
+        if (text.isNotEmpty() && Character.isHighSurrogate(text.last()) && end < lengthUtf16) {
+            end++
+            text = source.readUtf16(checkpoint.utf16, end)
+        }
         var index = 0
         while (index < text.length) {
             val cp = Character.codePointAt(text, index)
