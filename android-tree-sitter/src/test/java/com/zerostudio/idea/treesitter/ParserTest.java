@@ -324,6 +324,10 @@ public class ParserTest extends TreeSitterTest {
       try {
         parseFuture.get();
         assertThat(parser.isCancellationRequested()).isTrue();
+        try (var recoveredTree = parser.parseString("class Recovered {}")) {
+          assertThat(recoveredTree).isNotNull();
+        }
+        assertThat(parser.isCancellationRequested()).isFalse();
       } catch (InterruptedException | ExecutionException e) {
         throw new RuntimeException(e);
       } finally {
