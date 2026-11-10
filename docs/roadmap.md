@@ -195,6 +195,7 @@
 
 - [x] `TshMatchMerger` 新增 `TshMatchMergeBudget`，默认最多保留 250,000 个候选 Match，默认估算工作集上限 64 MiB。
 - [x] 合并过程改为单次流式遍历，不再通过 filter/groupBy/map 多次复制全部输入集合；先校验版本/管线，再进行 ID 冲突检查和语义去重。
+- [x] MatchSet 构造时的 document/version/pipeline/ID 唯一性检查也改为单次遍历和单个 ID Set，去掉多轮 filter/map/distinct 临时集合。
 - [x] 估算包含 Match/Provenance、Capture 名称与文本、Scope Assignment/Path payload，以及哈希表和排序列表固定开销；达到限制返回 TRUNCATED 与 MEMORY warning。
 - [x] 限制合并诊断累计最多 4,096 条，避免 stale 输入造成诊断列表无限增长。
 - [ ] 上限只约束合并器新增的候选/工作集估算；输入 Collection 由上游提供且其既有内存不计入本次合并预算。该估算不是 JVM heap 精确测量，也不替代上游 Regex/Tree-sitter 执行限额。
