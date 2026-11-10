@@ -311,17 +311,29 @@ public class TSParser extends TSNativeObject {
    * false.
    */
   public void requestCancellationAndWait() {
-    if (requestCancellationAsync()) {
-      parseLock.lock();
-      try {
-        while (isParsing()) {
-          parseCondition.await();
-        }
-      } catch (InterruptedException e) {
-        throw new RuntimeException(e);
-      } finally {
-        parseLock.unlock();
+    requestCancellationAndWaitIfParsing();
+  }
+
+  /**
+   * Requests cancellation and waits for the active parse to leave its Native critical section.
+   *
+   * @return true only when a parse was active and the cancellation request was accepted.
+   */
+  public boolean requestCancellationAndWaitIfParsing() {
+    if (!requestCancellationAsync()) {
+      return false;
+    }
+    parseLock.lock();
+    try {
+      while (isParsing()) {
+        parseCondition.await();
       }
+      return true;
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+      throw new IllegalStateException("Interrupted while waiting for Tree-sitter parse cancellation", e);
+    } finally {
+      parseLock.unlock();
     }
   }
 
@@ -329,7 +341,8 @@ public class TSParser extends TSNativeObject {
     this.isCancellationRequested.set(isRequested);
   }
 
-  protected synchronized boolean isCancellationRequested() {
+  /** Returns whether the most recent parse stopped after an accepted cancellation request. */
+  public synchronized boolean isCancellationRequested() {
     return this.isCancellationRequested.get();
   }
 
