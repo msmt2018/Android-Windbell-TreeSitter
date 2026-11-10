@@ -54,8 +54,10 @@ class TshPieceTreeTextAccessProviderTest {
     @Test
     fun snapshotExposesPieceTreeIndexedCoordinatesWithoutReadingText() {
         val (buffer, document) = document("first\\n😀tail\\nend")
+        buffer.getPieceTree().insert(buffer.length, "typed\\n", eolNormalized = true)
         val provider = TshPieceTreeTextAccessProvider()
         val snapshot = (provider.snapshot(document) as TshResult.Success).value
+        val oldEndPosition = buffer.getPositionAt(buffer.length)
 
         assertEquals(
             com.zerostudio.idea.treesitter.tsh.api.TshTextPosition(1, 0L),
@@ -78,6 +80,13 @@ class TshPieceTreeTextAccessProviderTest {
         assertEquals(
             com.zerostudio.idea.treesitter.tsh.api.TshTextPosition(1, 0L),
             snapshot.lineColumnAtUtf16(6L)
+        )
+        assertEquals(
+            com.zerostudio.idea.treesitter.tsh.api.TshTextPosition(
+                oldEndPosition.lineNumber - 1,
+                (oldEndPosition.column - 1).toLong()
+            ),
+            snapshot.lineColumnAtUtf16(snapshot.lengthUtf16)
         )
     }
 
