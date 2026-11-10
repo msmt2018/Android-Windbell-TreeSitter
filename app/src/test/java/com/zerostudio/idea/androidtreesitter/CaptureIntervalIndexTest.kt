@@ -6,7 +6,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class CaptureIntervalIndexTest {
-    private fun span(start: Long, end: Long, id: Int = start.toInt()) =
+    private fun span(start: Int, end: Int, id: Int = start) =
         WindbellTshEngine.HighlightSpan(start, end, id, 0, 0, 0)
 
     @Test fun queryFindsOverlapsAndExcludesTouchingBoundaries() {
@@ -54,7 +54,7 @@ class CaptureIntervalIndexTest {
     @Test fun unsignedNativeOffsetsAboveSignedIntRangeRemainQueryable() {
         val startByte = 0x8000_0000L
         val endByte = startByte + 32L
-        val index = CaptureIntervalIndex(listOf(span(startByte, endByte, 77)))
+        val index = CaptureIntervalIndex(listOf(span(startByte.toInt(), endByte.toInt(), 77)))
         assertEquals(listOf(77), index.query(0x4000_0000, 0x4000_0008).map { it.styleId })
     }
 
