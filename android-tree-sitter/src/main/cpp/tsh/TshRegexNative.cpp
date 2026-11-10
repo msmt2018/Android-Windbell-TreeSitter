@@ -76,7 +76,7 @@ uint64_t TshRegexNativeRegistry::compile(
         error = "Active Regex handle limit (4096) has been reached";
         return 0;
     }
-    if (next_handle_ == 0 || next_handle_ == std::numeric_limits<uint64_t>::max()) {
+    if (next_handle_ == 0 || next_handle_ > static_cast<uint64_t>(std::numeric_limits<int64_t>::max())) {
         error = "Regex native handle space is exhausted";
         return 0;
     }
