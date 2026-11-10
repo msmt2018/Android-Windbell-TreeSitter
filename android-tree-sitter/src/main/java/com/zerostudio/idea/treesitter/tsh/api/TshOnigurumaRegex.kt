@@ -159,7 +159,7 @@ class TshOnigurumaRegex private constructor(
                     absoluteGroupEnd > window.documentLengthUtf16) {
                     return failure(
                         "TSH-REGEX-NATIVE-012",
-                        "Oniguruma capture group $groupIndex is outside the match or splits a Unicode code point"
+                        "Oniguruma capture group $groupIndex is outside the document window or splits a Unicode code point"
                     )
                 }
                 if (groupIndex > 0) {
