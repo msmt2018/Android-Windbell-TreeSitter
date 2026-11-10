@@ -1009,15 +1009,6 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                 position = static_cast<uint32_t>(nearest->byte_offset);
                 state_stack = nearest->state_stack;
                 next_checkpoint = ((static_cast<uint64_t>(position) / (64u * 1024u)) + 1u) * (64u * 1024u);
-                // An edit shifts old suffix checkpoints by its byte delta, so
-                // their offsets need not remain aligned to the fixed stride.
-                // Visit the nearest stale candidate exactly to test convergence.
-                for (const auto& checkpoint : *regex_state_checkpoints) {
-                    if (checkpoint.source_version != source_version &&
-                        checkpoint.byte_offset > position) {
-                        next_checkpoint = std::min(next_checkpoint, checkpoint.byte_offset);
-                    }
-                }
             } else {
                 // Keep stale checkpoints as convergence candidates while
                 // rescanning from the document start. save_regex_state_checkpoint()
@@ -1025,6 +1016,15 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                 // identical byte offset with an identical state stack. Clearing
                 // this set here would make that convergence path unreachable
                 // whenever the edit precedes the first reusable checkpoint.
+            }
+            // Probe the next stale checkpoint exactly, even when no current-
+            // version checkpoint was available. Otherwise an unaligned old
+            // checkpoint could be stepped over by the regular 64 KiB stride.
+            for (const auto& checkpoint : *regex_state_checkpoints) {
+                if (checkpoint.source_version != source_version &&
+                    checkpoint.byte_offset > position) {
+                    next_checkpoint = std::min(next_checkpoint, checkpoint.byte_offset);
+                }
             }
         }
         auto save_regex_state_checkpoint = [&]() {
