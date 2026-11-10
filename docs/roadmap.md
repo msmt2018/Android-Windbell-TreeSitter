@@ -63,7 +63,7 @@
 - [ ] 既有 C++ TshCompiler 尚未接入统一 Schema/Runtime Consumer 契约。
 - [ ] Runtime Consumer 目前逐属性 best-effort，不提供跨 Consumer 原子事务。
 
-- [x] 新增 `TshTreeSitterEditCompiler`：优先使用 Edit 自带 before-version 坐标，其次使用 Snapshot 原生坐标索引；仅无 Provider 索引时才执行有界分块全文扫描。将多 Edit 编译为 UTF-16LE TSInputEdit 并按降序输出（SOURCE_PARTIAL，测试源码已补，待 CI）。
+- [x] 新增 `TshTreeSitterEditCompiler`：优先使用 Edit 自带 before-version 坐标，其次使用 Snapshot 原生坐标索引；无索引时仅允许 ≤1 Mi UTF-16 的兼容性分块扫描，超限明确返回 `TSH-EDIT-COMPILE-009`，避免大文件小编辑触发 O(n) 全文扫描。将多 Edit 编译为 UTF-16LE TSInputEdit 并按降序输出（SOURCE_PARTIAL，新增超限拒绝测试，待 CI）。
 - [x] 新增 `TshTreeSitterIncrementalUpdate`：接通 before/after Snapshot → Edit Compiler → 原子 Native Batch Edit → Incremental Parse → 新树发布/旧树回收；编辑后旧树标记 `EDITED_PENDING_PARSE`，QueryExecutor 在 Native Lease 前后拒绝访问，替代树标记 READY（SOURCE_PARTIAL，未运行 Native/JUnit）。
 
 ### Tree-sitter / ATS Query
