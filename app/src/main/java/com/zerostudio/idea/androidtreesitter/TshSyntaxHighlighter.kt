@@ -478,7 +478,7 @@ class TshSyntaxHighlighter(
         for (partition in partitions) {
             val index = captureCache.get(CaptureCacheKey(active.cacheSessionId, partition.index))
             if (index == null) requestLargePartition(active, partition.start, partition.endExclusive)
-            else result += index.query(queryStartUtf16, queryEndUtf16)
+            else index.appendQuery(queryStartUtf16, queryEndUtf16, result)
         }
         return result
     }
