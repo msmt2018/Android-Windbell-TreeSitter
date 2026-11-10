@@ -44,6 +44,9 @@ class TshRegexWindowLeaseTest {
             sourceLease, 300L, 256, constraints()
         ) as TshResult.Success).value
 
+        assertEquals(2_000L, window.documentLengthUtf16)
+        assertFalse(window.isDocumentStart)
+        assertFalse(window.isDocumentEnd)
         assertEquals(292L, window.windowStartUtf16)
         assertEquals(591L, window.windowEndUtf16)
         assertEquals(299, window.lengthUtf16)
