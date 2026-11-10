@@ -998,3 +998,155 @@ Tree-sitter Parser 的分块读取机制不能直接套用到 Oniguruma。Regex 
 - 所有优化必须以匹配准确、跨块语义一致、无静默截断和可测量内存峰值为前提。
 
 **一句话：让 Tree-sitter/TSH 自己具备处理海量 Token、海量 Subtree、海量 Capture 和超大文档的底层能力；应用层只提供可定位的文本源和宿主生命周期，不替 Native 引擎承担它本应完成的工作。**
+
+---
+
+## 23. 架构可行性复核：必须明确的上游边界与实现前置条件
+
+> 本节是对本文原有设计的技术审查补充，不代表 Google 搜索结果或 Google AI Overview 的原文评价。Google 搜索页面当前无法被完整读取；本节结论来自本文内容、Tree-sitter 上游公开 API，以及项目提供的 Tree-sitter 核心源码快照。上游源码链接应在实施时固定到实际使用的 tag/commit，避免以可变的 `master` 代替版本证据。
+
+### 23.1 先区分四种不同的“Token”
+
+本文后续实现与 API 命名必须区分：
+
+1. **Lexer lookahead / lexical result**：Tree-sitter Lexer 在某个 Parser 状态下识别出的词法结果；它受当前状态、外部扫描器状态、列信息等影响。
+2. **Tree-sitter leaf Subtree**：Lexer 结果被 Parser 接受后形成的语法树叶节点。它不是一个独立、永久存在的完整 Token 数组。
+3. **Query Match / Capture**：Query Cursor 在语法树上执行查询产生的匹配与捕获结果，不等同于 Lexer Token。
+4. **TSH semantic token / render span**：TSH 规则将 Query/Regex 结果归一化后供主题、样式和 Renderer 使用的语义区间，也不是 Tree-sitter 内部 Token。
+
+因此，TokenPage、TokenSlab、TokenCachePage 等名称如果用于本项目新增结构，必须说明它们缓存的究竟是哪一类数据、由谁生产、何时失效、是否可重建。不能让读者误以为上游 Tree-sitter 已经提供了完整 Token Stream API。
+
+### 23.2 TSInput 分块读取不等于整棵语法树有界内存
+
+`TSInput.read` 解决的是 Parser 如何按 byte offset 取得输入片段，以及输入缓冲区如何被借用；它本身不承诺：
+
+- Parser 只保留当前窗口对应的语法节点；
+- 已解析的 Subtree 会在 Parser 前进后自动淘汰；
+- 完整 Tree 的内存占用与窗口大小无关；
+- Query Cursor 的所有 Match/Capture 自动分页；
+- 全文件解析可以在固定 100 MiB 工作集内完成。
+
+如果产品要求保留完整语法树，那么 Tree/Subtree 的长期驻留量仍然可能随语法节点数量增长。**窗口大小只能约束输入侧的一部分内存，不能单独证明整个 Native 工作集有界。**
+
+因此，内存设计应拆成两个不同的验收目标：
+
+- **输入侧有界**：ReadWindow、scratch buffer、JNI 临时副本和并发读取数受预算约束；
+- **解析结果侧可控**：Tree/Subtree、Parser stack、Query 临时状态和缓存分别统计。若完整 Tree 本身超过预算，必须返回明确的资源受限/未完成状态，或采用经过语义验证的产品降级模式；不能声称仅靠 TSInput 就能保持完整语义并固定占用 100 MiB。
+
+### 23.3 当前 Tree-sitter C API 存在 32-bit byte offset 边界
+
+当前公开的 `TSInput.read` 回调使用 `uint32_t byte_offset`，并通过 `uint32_t *bytes_read` 返回片段长度；`TSInputEdit`、`TSRange` 等公开结构也使用 32-bit byte 坐标。项目可以在 Host/TextSource/TSH 外层使用 64-bit 逻辑偏移，但不能把它直接传入当前上游 ABI 并假定 Tree-sitter 能解析任意大于 4 GiB 的单一文档。
+
+必须明确：
+
+- 200–300 MiB、200–500 MiB 目标远低于 4 GiB 的 byte-offset 上限，属于当前 API 可表达的尺寸范围；
+- “500 MiB 及更大”必须写明仍受 32-bit byte offset 限制；
+- 对单一文档超过该边界的支持，需要上游 ABI 扩展或维护一套经过完整验证的兼容性 fork，不能仅增加 NativeTextSource 的 `uint64_t` 字段；
+- 任何 64-bit 到 32-bit 的转换都必须做溢出检查，并在超界时明确拒绝或降级，绝不能截断；
+- UTF-8 byte offset、TSPoint row/column、UTF-16 code unit offset、Unicode code point offset 必须分开定义。Tree-sitter 的 byte 坐标不能直接当成 Android 编辑器 UTF-16 下标。
+
+### 23.4 上游 TokenCache 与 SubtreePool 的真实能力边界
+
+项目提供的核心源码快照中，Parser 的 `TokenCache` 结构由一个 token Subtree、一个 last external token Subtree 和一个 byte index 组成。它是 Parser 内部的局部单项缓存，不是多级 Token 数据库，也不是可供应用层分页消费的 Token Stream。<FileCite ref_id="turn39file1" />
+
+同一源码快照中的 `SubtreePool` 持有 `free_trees` 与 `tree_stack`；释放节点时，空闲节点会根据池容量和 `TS_MAX_TREE_POOL_SIZE` 条件决定回池或释放。这个限制约束的是可复用空闲节点的保留，不等于限制活动 Subtree 总量，更不等于对完整语法树施加了全局内存上限。<FileCite ref_id="turn39file3" /><FileCite ref_id="turn39file6" />
+
+据此，本文建议新增的 Token Page、分层 Cache、Pool 统计和 Memory Governor 必须明确标注为**本项目拟新增的机制**，不能描述为 Tree-sitter 上游已经具备的能力。
+
+### 23.5 内存预算与 OOM 可恢复性必须分开验收
+
+Tree-sitter 默认分配器的公开源码路径在分配失败时会打印错误并调用 `abort()`。因此，“设置 512 MiB 全局预算”并不自动意味着“达到预算时安全返回 EXHAUSTED”。<FileCite ref_id="turn39file7" />
+
+实施前必须完成以下审计：
+
+- 盘点 Tree-sitter、TSH、JNI、Query、Regex 全部分配入口；
+- 确认自定义 allocator 的失败返回是否能被每个调用点安全处理；
+- 检查 `malloc/calloc/realloc` 失败后是否存在未检查的空指针解引用、部分对象泄漏或状态损坏；
+- 将分配失败转化为可传播的错误状态前，验证 Parser、Tree、Pool、Query Cursor 和 Lease 的清理路径；
+- 对不能安全恢复的上游分配路径，必须明确采用进程级 OOM 风险隔离/任务拒绝等策略，不能只写“捕获 bad_alloc”或“自定义 allocator 即可”。
+
+全局预算应当在分配发生前做 admission control，并通过实际 allocator 计量核对；事后统计 RSS 不能代替预算控制。
+
+### 23.6 Included Ranges 不能被误用为完整文档的 Viewport Query 优化
+
+Tree-sitter 的 included ranges 允许 Parser 只解析文档中的一个或多个指定区间，同时让返回 Tree 的范围坐标对应原文档；它并不等价于“完整解析整份文档，只对 viewport 执行 Query”。上游 API 对 included ranges 的定义是改变 Parser 纳入解析的文本范围。<Cite refs={["turn416621search0","turn416621search1"]} />
+
+因此：
+
+- 对完整 Tree 做 Query range 限定，才是优先采用的 viewport 查询路径；
+- 不得为了滚动时快速高亮而把 viewport 文本作为独立文档重新解析，再将其结果伪装成完整文档语义；
+- included ranges 只能作为显式的部分解析能力使用，必须定义其语法上下文损失、边界状态、外部扫描器状态和结果完整性；
+- 对依赖前文状态的语法（例如多行字符串、注释、缩进、预处理指令、模板嵌套等），部分解析结果不能默认等价于完整文档解析；
+- 如果某个 Grammar/规则不能证明部分范围解析等价，就必须回退到完整 Parser 上下文或标记结果为 PARTIAL/CONTEXT_INCOMPLETE。
+
+### 23.7 Query 分页必须区分“结果分页”和“执行游标续跑”
+
+本文提出的 continuation 不应被简单实现为一个可随意序列化的整数偏移。Tree-sitter Query 的匹配可能依赖 cursor 内部的执行状态、Pattern 状态、待完成的匹配以及 Tree/Query 生命周期。
+
+建议协议明确分为：
+
+- **Live Cursor Session**：Native 持有真实 Query Cursor，分页期间继续从该 Cursor 拉取结果；
+- **Result Page Lease**：每页具有 page id、sequence、revision、数量、状态和明确的释放/确认规则；
+- **Continuation Handle**：只引用仍然存活的 Cursor Session，不承诺可跨进程、跨版本或跨 Tree 序列化恢复；
+- **Restart Token（可选）**：若需要重启后恢复，必须定义稳定排序、去重键、重新执行成本和并发编辑语义，不能假设简单 start offset 足以恢复全部 Query 状态。
+
+Tree/Query/document revision 不一致时，Cursor Session 必须失效并返回 STALE，而不是继续混合旧结果。
+
+### 23.8 “有界工作集”应有可验证的分项公式
+
+建议将总预算写成可测量的约束，而不只是一个 100 MiB / 512 MiB 目标值：
+
+[
+M_{native} =
+M_{input} + M_{parser} + M_{tree} + M_{query} +
+M_{regex} + M_{cache} + M_{jni} + M_{reserve}
+]
+
+其中每一项都必须定义统计口径、所有者、峰值采样方式和释放时点。至少区分：
+
+- 活动对象字节数；
+- 可复用空闲池字节数；
+- 可淘汰缓存字节数；
+- 正在被 Lease 引用、暂时不可回收的字节数；
+- 分配器保留但应用对象已释放的 RSS/arena 空间；
+- JVM 侧副本与 Native 侧副本。
+
+100 MiB 应继续作为常规目标预算，512 MiB 作为本项目配置的硬上限；但验收报告必须说明该上限覆盖哪些分配域。若第三方/上游分配域未纳入计量，不能宣称整个进程的 TSH Native 工作集已被硬性限制在该值以内。
+
+### 23.9 必须增加的专项验收用例
+
+| 用例 | 验证目标 | 必须记录 |
+|---|---|---|
+| 同一文档、不同 ReadWindow 大小 | 分块边界不改变解析语义 | Tree 结构摘要、错误节点、Query 结果 |
+| 随机 UTF-8 边界切分 | 不在多字节字符中错误截断/解码 | byte offset、point、解码结果 |
+| CRLF / 超长行 / EOF 边界 | 行列坐标和 EOF 语义稳定 | row/column、最后一个窗口长度 |
+| 外部 Scanner 跨窗口 | scanner state 连续，不重复或漏识别 | 序列化状态、Token/Leaf 范围 |
+| 200–500 MiB 高 Token 密度 | 结果数量增长时无溢出、无静默丢失 | Token/Leaf/Match 数、峰值字节 |
+| 完整 Tree 超预算 | 资源受限时不返回伪 COMPLETE | 错误码、任务状态、清理结果 |
+| allocator 故障注入 | OOM 路径不崩溃、不泄漏或明确标注不可恢复 | 故障点、清理路径、进程状态 |
+| included ranges 对照完整解析 | 明确部分解析的语义差异 | AST/Query 差异、PARTIAL 标志 |
+| Cursor 分页期间编辑/关闭 Tree | 旧页不会混入新 revision | generation、STALE、Lease 释放 |
+| 32-bit byte offset 边界 | 超界前拒绝，不截断 | 输入偏移、错误状态 |
+
+所有性能数字都必须来自实际构建和运行；设计目标、理论估算、Host 测试、Android 设备测试应分别标注。
+
+### 23.10 本文结论需要收紧的表述
+
+为避免过度承诺，建议全篇采用以下口径：
+
+- “支持 200–500 MiB 及更大文件”改为“以 200–500 MiB 为目标验证区间；单一 Parser 文档仍受当前 Tree-sitter 32-bit byte-offset ABI 约束，超出边界需要 ABI 扩展或专门方案”。
+- “内存硬上限 512 MiB”改为“本项目纳入 Memory Governor 的 Native 分配域硬上限 512 MiB；只有完成所有分配域接管与故障路径审计后，才可称为端到端硬上限”。
+- “分块输入支持大文本”改为“分块输入避免输入侧全文连续副本；完整 Tree/Subtree 和 Query 工作集仍需独立预算与降级机制”。
+- “Token Page”必须标注为 TSH/Native 扩展，不是上游 Tree-sitter 现成 Token Stream。
+- “viewport 查询”必须优先复用完整 Tree 的 Query range；included ranges 不可替代完整语法上下文。
+- “分页 continuation”必须明确是存活 Cursor 的句柄，而不是天然可序列化、可跨 revision 恢复的游标位置。
+
+### 23.11 本节参考资料
+
+1. Tree-sitter C API：TSInput、TSInputEdit、TSRange、Parser 与 included ranges：  
+   https://github.com/tree-sitter/tree-sitter/blob/master/lib/include/tree_sitter/api.h
+2. Tree-sitter Basic Parsing：TSInput.read 的回调参数、缓冲区借用与 EOF 契约：  
+   https://tree-sitter.github.io/tree-sitter/using-parsers/2-basic-parsing.html
+3. Tree-sitter Parser API：included ranges 只解析指定范围但保留原文档坐标的契约：  
+   https://docs.rs/tree-sitter/latest/tree_sitter/struct.Parser.html
+4. 项目上传的 Tree-sitter 核心源码快照：Parser TokenCache、SubtreePool、默认 allocator 路径（以本项目实际集成版本为准）。
