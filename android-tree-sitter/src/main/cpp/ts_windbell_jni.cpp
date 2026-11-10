@@ -453,6 +453,8 @@ Java_com_zerostudio_idea_treesitter_tsh_api_TshOnigurumaNative_nativeCompile(
         );
         if (handle == 0) {
             LOGE("WindbellTSH", "Regex compile failed: %s", error.c_str());
+            throw_exception(env, "java/lang/IllegalArgumentException",
+                error.empty() ? "Oniguruma rejected the Regex pattern" : error.c_str());
         }
         return static_cast<jlong>(handle);
     } catch (const std::bad_alloc&) {
