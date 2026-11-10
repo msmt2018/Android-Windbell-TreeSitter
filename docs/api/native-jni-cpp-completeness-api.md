@@ -52,6 +52,14 @@ Handle table 保存 kind、generation、owner runtime、refcount/lease 和 close
 - `GetByteArrayElements` 失败且 JNI 没有 pending exception 时显式抛出 `OutOfMemoryError`，不得把内存分配失败误判为 EOF。JNI 测试覆盖 read callback 异常传播及奇数 byte count 拒绝。
 - Tree-sitter parser/tree 内部 allocator 的实际占用仍不由这组输入缓冲区 reservation 覆盖；Native Tree 只能使用宿主估算器进行 admission accounting。
 
+## 4.2 Tree-sitter core allocator 的预算边界
+
+Tree-sitter core 的 `ts_set_allocator()` 是库级全局分配器切换点，不是 Parser/Tree 级 allocator。切换后仍存活的对象必须由兼容旧分配状态的新 allocator 释放，因此不能在每次 parse 前后临时替换 allocator 来做 per-parser 预算。
+
+默认 allocator 在 malloc/calloc/realloc 失败时会 abort；仅让自定义 allocator 在超过预算时返回 null，不能构成安全的可恢复 OOM 路径，因为 core 的每条分配调用链并未统一暴露可恢复错误状态。
+
+因此当前 TSH 不通过 allocator hook 声称对 Tree-sitter Native heap 实施硬上限。若后续要做真实 Native 内存遥测，必须采用进程级常驻 allocator 包装、逐块记录 size/allocator provenance，并验证 realloc/free、跨线程释放、所有 Tree/Query/Language 对象的完整生命周期；即使遥测准确，也要单独设计可恢复的 Native allocation failure 协议，才能谈硬拒绝。
+
 ## 5. 注解与生成同步
 
 公开 JNI API、native method declaration、JNI registration table、C header、Kotlin external declaration 必须来自同一 manifest 或可校验生成流程。CI 检查：
