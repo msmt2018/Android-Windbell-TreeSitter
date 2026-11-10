@@ -745,8 +745,9 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
             while (core_start < range_end_byte) {
                 const uint64_t core_end = std::min<uint64_t>(
                     range_end_byte, core_start + kRegexCoreWindowBytes);
-                const uint64_t window_end = std::min<uint64_t>(
-                    total_bytes, core_end + overlap);
+                const uint64_t remaining_after_core = total_bytes - core_end;
+                const uint64_t window_end = overlap >= remaining_after_core
+                    ? total_bytes : core_end + overlap;
                 const uint64_t window_bytes = window_end - core_start;
                 if (window_bytes == 0 || (window_bytes & 1u) != 0 ||
                     window_bytes > static_cast<uint64_t>(std::numeric_limits<size_t>::max()) /
