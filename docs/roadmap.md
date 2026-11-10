@@ -184,5 +184,6 @@
 - [x] 新增 MEMORY 诊断阶段；无效、超预算、关闭后分配均返回结构化诊断。
 - [x] Query 执行预算新增 maxCaptures 与 maxResultBytes，避免只限制 match 数却让单个 match 包含大量 capture 时无界累积；超过限制返回 partial result 与 warning。
 - [ ] Query capture 字节数目前是明确的保留结果估算（字符串 UTF-16 长度 + 每项固定开销），不是 JVM heap 精确测量；尚未与 QueryResult 生命周期 reservation 绑定。
-- [ ] Parser/Native Tree、Regex Window、RenderPlan、CoordinateIndex 尚未全部接入统一 reservation；Tree-sitter 内部 Native 分配不可由此账本精确计量。
+- [x] Sparse CoordinateIndex 可选接入 reservation：按 checkpoint 数量预估，在分配 checkpoint 列表前申请，随 Index.close() 释放；估算不等于 JVM heap 精确值。
+- [ ] Parser/Native Tree、Regex Window、RenderPlan 尚未全部接入统一 reservation；Tree-sitter 内部 Native 分配不可由此账本精确计量。
 - [ ] 本轮新增 JUnit 测试源码待 CI 执行；未声称构建或设备压力测试通过。
