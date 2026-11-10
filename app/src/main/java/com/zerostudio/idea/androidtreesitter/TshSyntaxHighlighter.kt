@@ -296,13 +296,26 @@ class TshSyntaxHighlighter(
         if (excludedScopes.isEmpty()) return false
         val active = largeSession
         val spans = if (active != null) {
-            if (offset < 0 || offset.toLong() >= active.lengthChars.get()) {
-                emptyList()
-            } else {
-                val partitionIndex = (offset.toLong() / PARTITION_CHARS).toInt()
-                captureCache.get(CaptureCacheKey(active.cacheSessionId, partitionIndex))?.query(offset, offset + 1).orEmpty()
+            if (active.pendingEditEpoch.get() != active.appliedEditEpoch.get()) {
+                // Never answer scope queries from a pre-edit token snapshot.
+                return true
             }
+            if (offset < 0 || offset.toLong() >= active.lengthChars.get() || offset == Int.MAX_VALUE) {
+                return false
+            }
+            val partitionIndex = (offset.toLong() / PARTITION_CHARS).toInt()
+            val cached = captureCache.get(CaptureCacheKey(active.cacheSessionId, partitionIndex))
+            if (cached == null) {
+                // Unknown lexical scope is handled conservatively: request the
+                // token partition and avoid inserting brackets/pairs into a
+                // comment/string until the authoritative capture data arrives.
+                requestLargePartition(active, partitionIndex)
+                return true
+            }
+            cached.query(offset, offset + 1)
         } else {
+            if (parsing) return true
+            if (offset < 0 || offset == Int.MAX_VALUE) return false
             captureIndex.query(offset, offset + 1)
         }
         return spans.any { span ->
