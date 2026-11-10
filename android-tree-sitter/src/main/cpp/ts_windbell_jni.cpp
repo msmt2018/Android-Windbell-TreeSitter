@@ -1412,16 +1412,38 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
             return nullptr;
         }
     }
-    // Regex and Regex-backed query predicates require whole-context access
-    // for anchors/lookarounds/backreferences. If the edited Piece Tree is not
-    // already contiguous, create one immutable, version-keyed mmap snapshot.
-    const bool source_requires_contiguous_regex = grammar &&
-        (!grammar->regex_rules.empty() || !grammar->regex_states.empty() ||
+    // Only context-dependent Regex requires a whole-document mmap snapshot.
+    // Finite-width Regex continues through its bounded TextSource window path.
+    const auto has_context_rule = [](const auto &self, const CompiledRegexRule &rule) -> bool {
+        if (rule.execution_capability == RegexExecutionCapability::DOCUMENT_CONTEXT_REQUIRED)
+            return true;
+        return std::any_of(rule.nested_rules.begin(), rule.nested_rules.end(),
+            [&](const CompiledRegexRule &nested) { return self(self, nested); });
+    };
+    const bool has_regex_state = !grammar->regex_states.empty();
+    const bool source_has_regex = grammar &&
+        (!grammar->regex_rules.empty() || has_regex_state ||
          std::any_of(grammar->native_queries.begin(), grammar->native_queries.end(),
             [](const NativeQueryProgram &query) { return !query.predicate_regexes.empty(); }) ||
          std::any_of(grammar->ast_selector_rules.begin(), grammar->ast_selector_rules.end(),
             [](const AstSelectorRule &rule) { return rule.has_text_regex; }));
-    const bool source_native_ast_only = grammar && !source_requires_contiguous_regex;
+    const bool source_requires_contiguous_regex = grammar &&
+        std::any_of(grammar->regex_rules.begin(), grammar->regex_rules.end(),
+            [&](const CompiledRegexRule &rule) { return has_context_rule(has_context_rule, rule); }) ||
+        (grammar && has_regex_state && !grammar->regex_state_graph_bounded) ||
+        (grammar && std::any_of(grammar->native_queries.begin(), grammar->native_queries.end(),
+            [](const NativeQueryProgram &query) {
+                return std::any_of(query.predicate_regexes.begin(), query.predicate_regexes.end(),
+                    [](const NativeQueryProgram::PredicateRegex &predicate) {
+                        return predicate.execution_capability ==
+                            RegexExecutionCapability::DOCUMENT_CONTEXT_REQUIRED;
+                    });
+            })) ||
+        (grammar && std::any_of(grammar->ast_selector_rules.begin(), grammar->ast_selector_rules.end(),
+            [](const AstSelectorRule &rule) {
+                return rule.has_text_regex && !rule.text_regex_bounded;
+            }));
+    const bool source_native_ast_only = grammar && !source_has_regex;
     const windbell::largefile::TextSource *highlight_source = document->source.get();
     if (source_requires_contiguous_regex) {
         const char *contiguous_data = nullptr;
