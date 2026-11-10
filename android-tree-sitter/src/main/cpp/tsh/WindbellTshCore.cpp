@@ -613,7 +613,6 @@ static TshPredicateResult tshEvaluateNativePredicates(const NativeQueryProgram& 
             bool has_right = false;
             bool all_left_satisfied = true;
             bool any_pair_satisfied = false;
-            bool any_pair_different = false;
             for (uint32_t i = 0; i < match.capture_count; ++i) {
                 if (match.captures[i].index != predicate[1].value_id) continue;
                 has_left = true;
@@ -631,7 +630,6 @@ static TshPredicateResult tshEvaluateNativePredicates(const NativeQueryProgram& 
                         left_satisfied = true;
                         any_pair_satisfied = true;
                     }
-                    if (comparison == 0) any_pair_different = true;
                 }
                 if (!compared_any) all_left_satisfied = false;
                 else all_left_satisfied = all_left_satisfied && left_satisfied;
@@ -639,7 +637,6 @@ static TshPredicateResult tshEvaluateNativePredicates(const NativeQueryProgram& 
             if (!has_left) accepted = !positive;
             else if (!has_right) accepted = !positive;
             else accepted = any ? any_pair_satisfied : all_left_satisfied;
-            (void)any_pair_different;
         } else if (equality_predicate) {
             if (expected.size() != 1) return TshPredicateResult::REJECT;
             const bool any = op == "any-eq?" || op == "any-not-eq?";
