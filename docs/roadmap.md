@@ -212,7 +212,8 @@
 - [x] 基于 Tree-sitter `TSParseOptions.progress_callback` 新增 Java `TSParser.ProgressCallback` 与 TSH `TshParseProgressCallback`；快照流式解析可观察 UTF-16 进度、hasError，并由回调返回 true 协作取消；回调异常映射为结构化诊断。
 - [x] String parse 与 Snapshot streaming parse 的 null-tree 路径区分已接受的 Native cancellation、达到已配置 timeout 的“可能超时”以及其他无树失败。
 - [ ] Tree-sitter Native API 对 timeout/cancel 只返回 null，没有精确 stop-reason；timeout 分类使用实际 parse 耗时与配置阈值推断，诊断明确标注“likely”，不伪称 Native 精确原因。
-- [ ] TSH Owner 的真实并发 parse/cancel、timeout、progress callback、close 竞态需在 CI/设备验证；当前新增底层 ParserTest 源码尚未通过最新 CI。
+- [x] 底层 ParserTest 增加进度回调主动停止、回调异常从 JNI 安全回退、reset 后恢复解析测试。
+- [ ] TSH Owner 的真实并发 parse/cancel、timeout、progress callback、close 竞态仍需 CI/设备验证；新增底层 ParserTest 源码尚未通过最新 CI。
 
 
 ### 2026-11-10：Regex 有界窗口 Lease（SOURCE_PARTIAL）
