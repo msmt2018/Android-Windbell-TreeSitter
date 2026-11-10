@@ -337,6 +337,10 @@ static bool tshSourceRegexMatchesBounded(
 ) {
     if (!regex || start_byte > end_byte || (start_byte & 1u) ||
         (end_byte & 1u) || maximum_match_bytes == 0) return false;
+    static const UChar empty_input = 0;
+    if (start_byte == end_byte) {
+        return tshPredicateRegexMatchesContiguous(regex, &empty_input, &empty_input);
+    }
     constexpr uint64_t kCoreWindowBytes = 256u * 1024u;
     const uint64_t overlap = maximum_match_bytes >= 2u
         ? maximum_match_bytes - 2u : 0u;
@@ -452,8 +456,10 @@ static int tshPredicateCaptureEquals(const TSNode& node,
 static int tshPredicateRegexMatchesContiguous(
     regex_t* regex, const UChar* begin, const UChar* end
 ) {
-    if (!regex || !begin || !end || end < begin) return -1;
+    if (!regex) return -1;
     static const UChar empty_input = 0;
+    if (!begin && !end) begin = end = &empty_input;
+    else if (!begin || !end || end < begin) return -1;
     if (begin == end) begin = end = &empty_input;
     OnigRegion* region = onig_region_new();
     if (!region) return -1;
