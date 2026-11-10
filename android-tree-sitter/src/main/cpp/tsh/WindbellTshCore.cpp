@@ -1097,7 +1097,10 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
             // is raised to the API maximum, and the exceeded flag is checked
             // after iteration before any partial highlight result can escape.
             ts_query_cursor_set_match_limit(cursor, UINT32_MAX);
-            ts_query_cursor_set_byte_range(cursor, range_start_byte, range_end_byte);
+            if (!ts_query_cursor_set_byte_range(
+                    cursor, range_start_byte, range_end_byte)) {
+                continue;
+            }
 #if defined(TSH_TREE_SITTER_HAS_QUERY_CURSOR_OPTIONS)
             TSQueryCursorOptions query_options{};
             ts_query_cursor_exec_with_options(
@@ -1107,9 +1110,9 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
 #endif
 
             TSQueryMatch match;
-            uint32_t match_order = 0;
+            uint64_t match_order = 0;
             while (ts_query_cursor_next_match(cursor, &match)) {
-                const uint32_t current_order = match_order++;
+                const uint64_t current_order = match_order++;
                 auto pattern_metadata = native_query.pattern_metadata.find(match.pattern_index);
                 if (pattern_metadata != native_query.pattern_metadata.end() &&
                     !pattern_metadata->second.enabled) {
@@ -1117,7 +1120,10 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                 }
                 if (!tshEvaluateNativePredicates(native_query, match, text_start, total_bytes))
                     continue;
-                if (diagnostic_match_counts) ++diagnostic_match_counts[3];
+                if (diagnostic_match_counts &&
+                    diagnostic_match_counts[3] != UINT32_MAX) {
+                    ++diagnostic_match_counts[3];
+                }
                 const int32_t pattern_priority =
                     pattern_metadata != native_query.pattern_metadata.end() &&
                     pattern_metadata->second.has_priority
@@ -1139,7 +1145,11 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                     span.style_id = style_binding->second;
                     span.flags = 0;
                     span.priority = pattern_priority;
-                    span.declaration_order = native_query.declaration_order + pattern_order + current_order + capture_index;
+                    const uint64_t declaration_order =
+                        static_cast<uint64_t>(native_query.declaration_order) +
+                        pattern_order + current_order + capture_index;
+                    span.declaration_order = static_cast<uint32_t>(
+                        std::min<uint64_t>(declaration_order, UINT32_MAX));
                     macro_spans.push_back(span);
                 }
             }
