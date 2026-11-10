@@ -511,6 +511,7 @@ internal class PieceTreeBase {
         val sourceStarts = IntList()
         val pieceStarts = IntList()
         val pieceBufferIndices = IntList()
+        val pieceCoordinateStarts = IntList()
         val pieceStartLineIndices = IntList()
         val pieceStartColumnValues = IntList()
         val pieceLineFeedPrefixes = IntList()
@@ -523,6 +524,7 @@ internal class PieceTreeBase {
                 val start = this.offsetInBuffer(piece.bufferIndex, piece.start)
                 pieceStarts.add(length)
                 pieceBufferIndices.add(piece.bufferIndex)
+                pieceCoordinateStarts.add(start)
                 pieceStartLineIndices.add(piece.start.line)
                 pieceStartColumnValues.add(piece.start.column)
                 pieceLineFeedPrefixes.add(lineFeedPrefix)
@@ -542,42 +544,24 @@ internal class PieceTreeBase {
         pieceStarts.add(length)
 
         val typedText: CharSequence = typed.toString()
-        val typedLineStarts = createLineStartsFast(typedText)
         val starts = sourceStarts.toIntArray()
+        val coordinateStarts = pieceCoordinateStarts.toIntArray()
         val buffers = pieceBufferIndices.toIntArray()
-        val lineStartsCache = arrayOfNulls<IntList>(this._buffers.size)
-        lineStartsCache[0] = typedLineStarts
-        val pieceLineStarts = Array(sources.size) { index ->
-            val bufferIndex = buffers[index]
-            lineStartsCache[bufferIndex] ?: this._buffers[bufferIndex].lineStarts.also {
-                lineStartsCache[bufferIndex] = it
-            }
+        val lineStartsCache = arrayOfNulls<IntListSnapshot>(this._buffers.size)
+        for (bufferIndex in this._buffers.indices) {
+            lineStartsCache[bufferIndex] = this._buffers[bufferIndex].lineStarts.snapshotView()
         }
-        val pieceStartLines = IntArray(sources.size)
-        val pieceStartColumns = IntArray(sources.size)
-        for (index in sources.indices) {
-            if (buffers[index] == 0) {
-                val startsForBuffer = pieceLineStarts[index]
-                var low = 0
-                var high = startsForBuffer.lastIndex
-                while (low < high) {
-                    val mid = (low + high + 1) ushr 1
-                    if (startsForBuffer[mid] <= starts[index]) low = mid else high = mid - 1
-                }
-                pieceStartLines[index] = low
-                pieceStartColumns[index] = starts[index] - startsForBuffer[low]
-            } else {
-                pieceStartLines[index] = pieceStartLineIndices[index]
-                pieceStartColumns[index] = pieceStartColumnValues[index]
-            }
+        val pieceLineStarts = Array(sources.size) { index ->
+            lineStartsCache[buffers[index]]!!
         }
         return PieceTreeSnapshot(
             Array(sources.size) { sources[it] ?: typedText },
             starts,
             pieceStarts.toIntArray(),
+            coordinateStarts,
             pieceLineStarts,
-            pieceStartLines,
-            pieceStartColumns,
+            pieceStartLineIndices.toIntArray(),
+            pieceStartColumnValues.toIntArray(),
             pieceLineFeedPrefixes.toIntArray(),
             supportsTreeSitterLineCoordinates,
             this._versionId,
