@@ -119,6 +119,7 @@ struct TSParserProgressContext {
 };
 
 static bool TSParser_progressCallback(TSParseState *state) {
+  if (state == nullptr) return true;
   auto *context = static_cast<TSParserProgressContext *>(state->payload);
   if (context == nullptr || context->parser == nullptr || context->parser->shouldStop()) {
     return true;
