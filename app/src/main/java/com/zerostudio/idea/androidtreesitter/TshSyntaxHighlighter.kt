@@ -138,10 +138,24 @@ class TshSyntaxHighlighter(
     }
 
     override fun onTextChanged(change: EditorDocument.AppliedChange) {
+        // Small documents are reparsed from the current snapshot at edit-finish.
+        // Do not allocate/encode an inserted UTF-16LE copy that will be discarded.
+        // Large-file initialization is the only no-session case that must queue edits.
+        val needsNativeTransaction = synchronized(nativeEditLock) {
+            largeSession != null ||
+                (parsing && (host?.buffer?.length ?: 0) >= LARGE_DOCUMENT_THRESHOLD_CHARS)
+        }
+        if (!needsNativeTransaction) return
+
         // EditorDocument reports changes bottom-up in pre-edit coordinates. Preserve
         // that order: nativeApplyDocumentEdit consumes exactly the same transaction
         // sequence and copies only the inserted slice, never the unchanged document.
         val inserted = change.insertedText()
+        if (inserted.length > Int.MAX_VALUE / 2) {
+            Log.e(TAG, "Inserted text is too large for a single JNI edit transaction")
+            host?.buffer?.let(::scheduleParse)
+            return
+        }
         val bytes = ByteArray(inserted.length * 2)
         for (index in inserted.indices) {
             val unit = inserted[index].code
@@ -149,8 +163,9 @@ class TshSyntaxHighlighter(
             bytes[index * 2 + 1] = (unit ushr 8).toByte()
         }
         synchronized(nativeEditLock) {
-            // Read the active session under the same lock used when initialization
-            // publishes it and drains queued edits; this closes the null-to-active race.
+            // Session publication and edit draining use this same lock. If a large
+            // session became active while the inserted slice was encoded, queueing
+            // here still makes onEditFinished apply it to that newly-published tree.
             largeSession?.pendingEditEpoch?.incrementAndGet()
             pendingNativeEdits += NativeEdit(
                 startByte = change.rangeOffset.toLong() * 2L,
