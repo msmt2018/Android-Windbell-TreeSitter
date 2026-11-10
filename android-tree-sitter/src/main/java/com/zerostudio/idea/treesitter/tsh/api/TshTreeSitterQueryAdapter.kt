@@ -6,6 +6,7 @@ import com.zerostudio.idea.treesitter.TSQueryCursor
 import com.zerostudio.idea.treesitter.TSQueryError
 import com.zerostudio.idea.treesitter.TSTree
 import com.zerostudio.idea.treesitter.predicate.TSPredicateHandler
+import com.zerostudio.idea.treesitter.predicate.SetDirectiveHandler
 import java.security.MessageDigest
 
 /** Resolves a registered, lease-managed language handle for a grammar descriptor. */
@@ -273,6 +274,16 @@ class TshTreeSitterQueryExecutor(
             return failure("TSH-QUERY-EXEC-026", "Syntax tree Grammar metadata does not match the supplied snapshot")
         }
         val nativeTree = treeLease.resource
+        // #set! is a directive: it annotates a match and must not filter it out.
+        // Install the standard handler unless the caller supplied one explicitly.
+        val effectivePredicateHandlers = buildList {
+            addAll(predicateHandlers)
+            if (none { handler ->
+                    handler.supportedPredicates.any { it.removePrefix("#") == SetDirectiveHandler.DIRECTIVE }
+                }) {
+                add(SetDirectiveHandler())
+            }
+        }
 
         if (!nativeQuery.canAccess()) return failure("TSH-QUERY-EXEC-006", "Native query has been closed")
 
@@ -283,7 +294,7 @@ class TshTreeSitterQueryExecutor(
         val hasPredicates = predicateNames.isNotEmpty()
         if (hasPredicates && query.options.enablePredicates) {
             val declared = LinkedHashSet<String>()
-            for (handler in predicateHandlers) {
+            for (handler in effectivePredicateHandlers) {
                 try {
                     handler.supportedPredicates.forEach { declared += it.removePrefix("#") }
                 } catch (error: Exception) {
@@ -300,11 +311,10 @@ class TshTreeSitterQueryExecutor(
                     )
                 }
             }
-            val builtInPredicates = setOf(
-                "eq?", "not-eq?", "any-eq?", "any-not-eq?",
-                "match?", "not-match?", "any-match?", "any-not-match?",
-                "any-of?", "not-any-of?", "is?", "is-not?", "set!"
-            )
+            // Only directives with an actual built-in handler are exempt from the
+            // provider requirement. Native Tree-sitter does not evaluate these predicates
+            // for this binding; claiming otherwise silently returns incorrect matches.
+            val builtInPredicates = setOf(SetDirectiveHandler.DIRECTIVE)
             val required = predicateNames - builtInPredicates
             val missing = required - declared
             if (missing.isNotEmpty()) {
@@ -349,7 +359,7 @@ class TshTreeSitterQueryExecutor(
             cursor.setMatchLimit(budget.maxMatches)
             cursor.setPredicateEvaluationEnabled(query.options.enablePredicates)
             if (query.options.enablePredicates) {
-                predicateHandlers.forEach(cursor::addPredicateHandler)
+                effectivePredicateHandlers.forEach(cursor::addPredicateHandler)
             }
             cursor.exec(nativeQuery, root)
 
