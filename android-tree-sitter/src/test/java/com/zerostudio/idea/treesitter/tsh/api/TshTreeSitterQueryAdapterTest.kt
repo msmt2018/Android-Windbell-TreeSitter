@@ -116,4 +116,24 @@ class TshTreeSitterQueryAdapterTest {
         assertTrue(result is TshResult.Failure)
         assertEquals("TSH-QUERY-EXEC-003", (result as TshResult.Failure).diagnostics.first().code)
     }
+    @Test fun predicateScannerIgnoresStringLiteralsAndLineComments() {
+        val source = """
+            ((identifier) @name
+              (#custom-check? @name "literal #not-a-predicate; still a string")
+              (#set! "injection.language" "kotlin"))
+            ; (#comment-only? @name)
+            ((identifier) @other (#eq? @other "value"))
+        """.trimIndent()
+
+        assertEquals(
+            setOf("custom-check?", "set!", "eq?"),
+            extractTreeSitterPredicateNames(source)
+        )
+    }
+
+    @Test fun predicateScannerHandlesEscapedQuotesAndBackslashes() {
+        val source = """(#custom? @name "escaped \\" #still-in-string") ; #ignored?"""
+        assertEquals(setOf("custom?"), extractTreeSitterPredicateNames(source))
+    }
+
 }
