@@ -478,7 +478,12 @@ static int tshPredicateRegexMatchesTextSourceBounded(
 ) {
     if (!regex || start_byte > end_byte || (start_byte & 1u) ||
         (end_byte & 1u) || end_byte > source.sizeBytes() ||
-        maximum_match_bytes == 0) return -1;
+        maximum_match_bytes == 0 || maximum_match_bytes > 8u * 1024u * 1024u)
+        return -1;
+    if (start_byte == end_byte) {
+        static const UChar empty_input = 0;
+        return tshPredicateRegexMatchesContiguous(regex, &empty_input, &empty_input);
+    }
     constexpr uint64_t kCoreWindowBytes = 256u * 1024u;
     const uint64_t overlap = maximum_match_bytes >= 2u
         ? maximum_match_bytes - 2u : 0u;
