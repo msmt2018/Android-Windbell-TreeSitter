@@ -361,7 +361,23 @@ class TshTreeSitterQueryExecutor(
             if (query.options.enablePredicates) {
                 effectivePredicateHandlers.forEach(cursor::addPredicateHandler)
             }
-            cursor.exec(nativeQuery, root)
+            try {
+                cursor.exec(nativeQuery, root, TSQueryCursor.ProgressCallback { _ ->
+                    cancellation.isCancelled()
+                })
+            } catch (error: UnsupportedOperationException) {
+                return failure(
+                    "TSH-QUERY-EXEC-033",
+                    "Native Tree-sitter build does not expose the 0.28 query progress callback; cooperative in-query cancellation is unavailable",
+                    cause = error
+                )
+            } catch (error: Throwable) {
+                return failure(
+                    "TSH-QUERY-EXEC-034",
+                    "Cannot start Tree-sitter query execution: ${error.message}",
+                    cause = error
+                )
+            }
 
             val captures = ArrayList<TshCapture>(minOf(budget.maxCaptures, 16_384))
             var matchesSeen = 0
@@ -416,6 +432,13 @@ class TshTreeSitterQueryExecutor(
                     estimatedResultBytes += estimatedCaptureBytes
                 }
                 if (truncated) break
+            }
+
+            if (cancellation.isCancelled()) {
+                return failure(
+                    "TSH-QUERY-EXEC-012",
+                    "Query cancelled during native Tree-sitter execution"
+                )
             }
 
             val exceeded = cursor.didExceedMatchLimit()
