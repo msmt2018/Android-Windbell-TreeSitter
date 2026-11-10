@@ -58,7 +58,7 @@ class TshTreeSitterParserOwner private constructor(
         treeRevision: Long,
         source: String
     ): TshResult<TshOwnedSyntaxTree> = parseWithInput(
-        documentId, documentVersion, treeRevision
+        documentId, documentVersion, treeRevision, source.length.toLong()
     ) { parser -> parser.parseString(source) }
 
     /**
@@ -321,6 +321,7 @@ class TshTreeSitterParserOwner private constructor(
         documentId: String,
         documentVersion: Long,
         treeRevision: Long,
+        sourceLengthUtf16: Long,
         parse: (TSParser) -> TSTree?
     ): TshResult<TshOwnedSyntaxTree> {
         if (documentId.isBlank() || documentVersion < 0 || treeRevision < 0) {
@@ -354,7 +355,7 @@ class TshTreeSitterParserOwner private constructor(
         var dependenciesTransferred = false
         try {
             when (val reserved = reserveTreeMemory(
-                documentId, documentVersion, treeRevision, source.length.toLong(), incremental = false
+                documentId, documentVersion, treeRevision, sourceLengthUtf16, incremental = false
             )) {
                 is TshResult.Success -> treeMemoryReservation = reserved.value
                 is TshResult.Failure -> return reserved
