@@ -43,10 +43,16 @@ object TshTreeSitterEditCompiler {
             val points = if (scanEndpoints.isEmpty()) {
                 emptyMap()
             } else {
-                val indexed = scanEndpoints.distinct().associateWith {
-                    before.lineColumnAtUtf16(it)
-                }
-                if (indexed.values.all { it != null }) {
+                if (before.supportsLineColumnLookup) {
+                    val indexed = scanEndpoints.distinct().associateWith {
+                        before.lineColumnAtUtf16(it)
+                    }
+                    if (indexed.values.any { it == null }) {
+                        return failure(
+                            "TSH-EDIT-COMPILE-005",
+                            "Host coordinate index rejected an edit endpoint or surrogate boundary"
+                        )
+                    }
                     indexed.mapValues { (_, position) ->
                         val resolved = requireNotNull(position)
                         pointFromUtf16Coordinates(resolved.row, resolved.columnUtf16)
