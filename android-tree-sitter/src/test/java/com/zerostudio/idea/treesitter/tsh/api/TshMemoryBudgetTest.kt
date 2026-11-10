@@ -70,6 +70,37 @@ class TshMemoryBudgetTest {
         assertTrue(budget.snapshot().highWatermarkBytes <= budget.limitBytes)
     }
 
+    @Test fun reservationCountIsBoundedIndependentlyFromReservedBytes() {
+        val budget = TshMemoryBudget(
+            TshMemoryBudgetOptions(targetBytes = 10, hardLimitBytes = 20, maxReservations = 2)
+        )
+        val first = (budget.reserve(TshMemoryCategory.OTHER, 1) as TshResult.Success).value
+        val second = (budget.reserve(TshMemoryCategory.OTHER, 1) as TshResult.Success).value
+
+        val rejected = budget.reserve(TshMemoryCategory.OTHER, 1)
+        assertTrue(rejected is TshResult.Failure)
+        assertEquals("TSH-MEMORY-010", (rejected as TshResult.Failure).diagnostics.single().code)
+        assertEquals(2, budget.snapshot().reservations)
+        assertEquals(2, budget.snapshot().maxReservations)
+
+        first.close()
+        val replacement = budget.reserve(TshMemoryCategory.OTHER, 1)
+        assertTrue(replacement is TshResult.Success)
+        second.close()
+        (replacement as TshResult.Success).value.close()
+        assertEquals(0, budget.snapshot().reservations)
+    }
+
+    @Test fun reservationCountOptionCannotExceedAbsoluteSafetyLimit() {
+        assertThrows(IllegalArgumentException::class.java) {
+            TshMemoryBudgetOptions(
+                targetBytes = 10,
+                hardLimitBytes = 20,
+                maxReservations = TshMemoryBudgetOptions.ABSOLUTE_MAX_RESERVATIONS + 1
+            )
+        }
+    }
+
     @Test fun validatesAbsoluteHardCapAndTargetOrdering() {
         assertThrows(IllegalArgumentException::class.java) {
             TshMemoryBudgetOptions(600L * TshMemoryBudgetOptions.MIB, 600L * TshMemoryBudgetOptions.MIB)
