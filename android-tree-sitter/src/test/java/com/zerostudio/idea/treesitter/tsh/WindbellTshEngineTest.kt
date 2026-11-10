@@ -319,7 +319,7 @@ class WindbellTshLinkageTest {
                 id: "scheme-test"
                 name: "Scheme Test"
                 extensions: [".scheme", ".sch"]
-                aliases: ["Scheme", "Test Scheme", "Line\\nBreak", "Rocket \uD83D\uDE80"]
+                aliases: ["Scheme", "Test Scheme", "Line\nBreak", "Rocket \uD83D\uDE80"]
                 mimeTypes: ["text/x-scheme-test"]
                 firstLine: /^#!.*scheme-test/
             }
