@@ -92,9 +92,9 @@
 
 - [x] 修复 UTF-8 Regex pattern 被逐字节复制为 UTF-16 的问题，改为严格 UTF-8 解码和 UTF-16LE 编码。
 - [x] OnigRegion 使用 RAII 管理，避免分支异常/早退时泄漏。
-- [ ] Regex WindowLease、连续 Native buffer、Piece Tree chunk provider 尚未实现。
-- [ ] 有界 overlap、无界模式整段回退/拒绝语义尚未实现。
-- [ ] Regex 增量 dirty range、预算、超时、取消与 Native 测试尚未实现。
+- [x] Regex WindowLease/Sequence 已提供有界 UTF-16 连续窗口资源、core 唯一归属、surrogate-safe 边界和 REGEX_WINDOW admission；尚未接入 Oniguruma Native Executor。
+- [ ] Regex Native buffer/Oniguruma Executor、有限模式静态能力声明、锚点/lookaround 正确性及跨窗口等价尚未实现。
+- [ ] BLOCK 规则跨窗口状态机、Regex 增量 dirty range、Native timeout/cancellation 与 Oniguruma 测试尚未实现。
 
 ### 统一 Match / Scope / Selector
 
@@ -102,7 +102,8 @@
 - [x] Match 具有 canonical UTF-16 range、source provenance、pipeline revision、document version。
 - [x] MatchMerger 支持两来源汇合、去重、稳定排序、stale Match 排除和 partial 状态。
 - [x] 新增 `TshTreeSitterMatchAdapter`：校验 query/tree/document/grammar revisions，将 UTF-8 byte 或 UTF-16LE/BE byte range 正确映射为 canonical UTF-16 Match；保留 UTF-8 rawRange、capture/pattern/node provenance、确定性 Match ID/排序，并传播 TRUNCATED 状态（源码与 JUnit 测试已提交，待 CI 验证）。
-- [ ] Regex 执行结果尚未接入 TshMatch；ATS 前端完成后复用 Tree-sitter 结果适配路径。
+- [x] 新增 `TshRegexMatchAdapter`：把独立 Regex result 的绝对 UTF-16 范围与捕获组映射为 REGEX `TshMatchSet`，校验文档版本/范围/捕获嵌套，保留 Regex provenance、TRUNCATED/diagnostics，并在适配阶段限制 Match count 与 estimated-byte 工作集（源码与 JUnit 测试已提交，待 CI）。
+- [ ] Regex Oniguruma Executor 尚未产出 `TshRegexResult`；窗口本身未执行正则，不能将 Match adapter 标记为 Regex 执行完成。ATS 前端完成后复用 Tree-sitter 结果适配路径。
 - [x] 首版 ScopeSelector AST、exact/suffix path 匹配、StyleRule priority/specificity merge、MatchSet→RenderPlan resolver 源码与测试源码。
 - [ ] Scope parser/stack/assignment pipeline、DSL Selector parser/compiler/specificity 与高级冲突策略尚未完成。
 - [ ] 完整重叠/包含/交叉冲突策略与跨管线一致性测试尚未完成。
@@ -140,9 +141,9 @@
 
 1. 完成剩余宿主生命周期接线：文件身份变化时自动关闭旧 Session 并重新 attach，文档永久关闭时自动 dispose；补齐 UTF-8/UTF-16/CodePoint 索引 Provider。
 2. 为 EditorView Binding/IncrementalSession 补充真实批量编辑/撤销/重做 Native parse integration test、快速连续输入、初次 parse 竞态、自动 buffer replacement/resync 和关闭竞态验证。
-3. 实现 Regex WindowLease 和跨窗口正确性语义；无界模式必须有明确回退/拒绝策略。
+3. 将 Regex WindowLease/Sequence 接入独立 Oniguruma Executor；先定义可证明的有限匹配/lookaround 声明与锚点策略，再完成跨窗口等价、BLOCK 状态机和无界模式明确拒绝/回退。
 4. 实现 ATS 前端并 Lower 到唯一 Tree-sitter Query 执行管线。
-5. 将 Tree-sitter/ATS 与 Regex 输出真正适配到统一 TshMatch。
+5. 已完成 Tree-sitter QueryResult 与 Regex Result → TshMatch 适配器源码；继续完成 Regex Executor 输出接线、Scope Assignment 与端到端验证。
 6. 实现 Scope/Selector/Attribute/Style Resolver，将 Match 生成 RenderPlan。
 7. 实现 Android 宿主 Renderer Provider，严格管理 TSH-owned draw state，并用真实控件回执验证颜色可见。
 8. 完成 Engine/Provider/OwnerScope/Native Lease 并发、关闭、替换和失败清理测试。
