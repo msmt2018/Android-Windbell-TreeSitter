@@ -248,8 +248,8 @@ public class TSParser extends TSNativeObject {
    * synchronous call. The parser retains no references after it returns.
    *
    * <p>This avoids an additional full-document input copy, but Tree-sitter still
-   * constructs a syntax tree for the included ranges. Use included ranges and
-   * bounded query work when parsing very large documents.
+   * constructs a syntax tree for the supplied input. For the editor's complete ATS
+   * symbol tree, parse the full source and bound query/render work separately.
    *
    * @param buffers UTF-16LE direct buffers in document order.
    * @return parsed tree, or null if parsing failed or was cancelled.
@@ -272,8 +272,9 @@ public class TSParser extends TSNativeObject {
   /**
    * Parses segmented UTF-16LE input while retaining only the supplied Tree-sitter
    * included ranges in the resulting syntax tree. Ranges use absolute document
-   * byte offsets and UTF-16LE TSPoint coordinates. Sufficient syntactic context
-   * around partition boundaries remains the caller's responsibility.
+   * byte offsets and UTF-16LE TSPoint coordinates. A non-empty included-range set
+   * creates a partial syntax tree, not a complete document AST. Never publish that
+   * tree as the editor's ATS symbol tree or pass it to the TSH full-document path.
    *
    * <p>The included ranges are reset to the full-document default after parsing,
    * including when parsing fails, so a later ordinary parse is not accidentally
