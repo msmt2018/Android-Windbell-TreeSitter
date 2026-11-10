@@ -6,8 +6,6 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
-#include <list>
-#include <iterator>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -93,13 +91,13 @@ public:
     const Value *find(const Key &key) noexcept {
         auto found = entries_.find(key);
         if (found == entries_.end()) return nullptr;
-        lru_.splice(lru_.begin(), lru_, found->second.position);
+        touch(&found->second);
         return &found->second.value;
     }
 
     void put(Key key, Value value) {
         constexpr size_t kEntryOverhead =
-            sizeof(Value) + sizeof(Key) + 6u * sizeof(void *);
+            sizeof(Value) + sizeof(Key) + 5u * sizeof(void *);
         if (value.spans.capacity() >
             (static_cast<size_t>(-1) - kEntryOverhead) / sizeof(HighlightSpan)) return;
         const size_t bytes =
@@ -110,29 +108,23 @@ public:
         if (shared_budget_ && !shared_budget_->tryAcquire(bytes)) return;
 
         try {
-            lru_.push_front(key);
-            try {
-                const auto inserted = entries_.emplace(
-                    key, Entry{std::move(value), lru_.begin(), bytes});
-                if (!inserted.second) {
-                    lru_.pop_front();
-                    if (shared_budget_) shared_budget_->release(bytes);
-                    return;
-                }
-            } catch (...) {
-                lru_.pop_front();
+            const auto inserted = entries_.emplace(
+                key, Entry{std::move(value), nullptr, nullptr, nullptr, bytes});
+            if (!inserted.second) {
                 if (shared_budget_) shared_budget_->release(bytes);
                 return;
             }
+            inserted.first->second.key = &inserted.first->first;
+            linkFront(&inserted.first->second);
         } catch (...) {
             if (shared_budget_) shared_budget_->release(bytes);
             return;
         }
         used_bytes_ += bytes;
-        while (used_bytes_ > budget_bytes_ && !lru_.empty()) {
-            auto victim = entries_.find(lru_.back());
+        while (used_bytes_ > budget_bytes_ && tail_ != nullptr) {
+            const auto victim = entries_.find(*tail_->key);
             if (victim == entries_.end()) {
-                lru_.pop_back();
+                unlink(tail_);
                 continue;
             }
             erase(victim);
@@ -168,7 +160,8 @@ public:
     void clear() noexcept {
         if (shared_budget_ && used_bytes_ != 0) shared_budget_->release(used_bytes_);
         entries_.clear();
-        lru_.clear();
+        head_ = nullptr;
+        tail_ = nullptr;
         used_bytes_ = 0;
     }
 
@@ -196,24 +189,51 @@ private:
 
     struct Entry {
         Value value;
-        std::list<Key>::iterator position;
+        const Key *key = nullptr;
+        Entry *previous = nullptr;
+        Entry *next = nullptr;
         size_t bytes = 0;
     };
 
     using Iterator = typename std::unordered_map<Key, Entry, KeyHash>::iterator;
 
+    void unlink(Entry *entry) noexcept {
+        if (entry->previous) entry->previous->next = entry->next;
+        else head_ = entry->next;
+        if (entry->next) entry->next->previous = entry->previous;
+        else tail_ = entry->previous;
+        entry->previous = nullptr;
+        entry->next = nullptr;
+    }
+
+    void linkFront(Entry *entry) noexcept {
+        entry->previous = nullptr;
+        entry->next = head_;
+        if (head_) head_->previous = entry;
+        else tail_ = entry;
+        head_ = entry;
+    }
+
+    void touch(Entry *entry) noexcept {
+        if (entry == head_) return;
+        unlink(entry);
+        linkFront(entry);
+    }
+
     void erase(Iterator it) noexcept {
-        const size_t released = std::min(used_bytes_, it->second.bytes);
+        Entry *entry = &it->second;
+        const size_t released = std::min(used_bytes_, entry->bytes);
         used_bytes_ -= released;
         if (shared_budget_) shared_budget_->release(released);
-        lru_.erase(it->second.position);
+        unlink(entry);
         entries_.erase(it);
     }
 
     size_t budget_bytes_;
     size_t used_bytes_ = 0;
     std::shared_ptr<SharedNativeMemoryBudget> shared_budget_;
-    std::list<Key> lru_;
+    Entry *head_ = nullptr;
+    Entry *tail_ = nullptr;
     std::unordered_map<Key, Entry, KeyHash> entries_;
 };
 
