@@ -501,11 +501,11 @@ static int tshPredicateContainsText(
     if (start_byte > end_byte || end_byte > source_bytes ||
         (start_byte & 1u) || (end_byte & 1u)) return -1;
     if (needle.empty()) return 1;
-    const uint64_t text_units = (static_cast<uint64_t>(end_byte) - start_byte) / sizeof(UChar);
-    if (needle.size() > text_units) return 0;
+    const uint64_t text_bytes = static_cast<uint64_t>(end_byte) - start_byte;
+    if (needle.size() > text_bytes) return 0;
 
-    // KMP keeps memory proportional to the predicate literal, not to the
-    // captured node. TextSource is consumed in fixed-size UTF-16 chunks.
+    // Oniguruma UChar is an octet. Match the UTF-16LE byte sequence while
+    // accepting matches only at UTF-16 code-unit boundaries.
     std::vector<size_t> prefix;
     try {
         prefix.resize(needle.size());
@@ -520,32 +520,33 @@ static int tshPredicateContainsText(
     }
 
     constexpr uint32_t kChunkBytes = 16u * 1024u;
-    std::array<UChar, kChunkBytes / sizeof(UChar)> chunk{};
-    uint64_t consumed_units = 0;
+    std::array<UChar, kChunkBytes> chunk{};
+    uint64_t consumed_bytes = 0;
     size_t matched = 0;
-    while (consumed_units < text_units) {
+    while (consumed_bytes < text_bytes) {
         const uint32_t amount_bytes = static_cast<uint32_t>(
-            std::min<uint64_t>(kChunkBytes,
-                (text_units - consumed_units) * sizeof(UChar)));
+            std::min<uint64_t>(kChunkBytes, text_bytes - consumed_bytes));
         UChar* input = chunk.data();
         if (text_source) {
             if (!windbell::largefile::copyTextRange(*text_source,
-                    static_cast<uint64_t>(start_byte) + consumed_units * sizeof(UChar),
+                    static_cast<uint64_t>(start_byte) + consumed_bytes,
                     amount_bytes, input)) return -1;
         } else if (utf16_source) {
-            std::memcpy(input, utf16_source + start_byte / sizeof(UChar) + consumed_units,
-                amount_bytes);
+            std::memcpy(input, utf16_source + start_byte + consumed_bytes, amount_bytes);
         } else {
             return -1;
         }
-        const size_t units = amount_bytes / sizeof(UChar);
-        for (size_t i = 0; i < units; ++i) {
+        for (uint32_t i = 0; i < amount_bytes; ++i) {
             while (matched > 0 && input[i] != needle[matched])
                 matched = prefix[matched - 1];
             if (input[i] == needle[matched]) ++matched;
-            if (matched == needle.size()) return 1;
+            if (matched == needle.size()) {
+                const uint64_t match_start = consumed_bytes + i + 1u - needle.size();
+                if ((match_start & 1u) == 0) return 1;
+                matched = prefix[matched - 1];
+            }
         }
-        consumed_units += units;
+        consumed_bytes += amount_bytes;
     }
     return 0;
 }
