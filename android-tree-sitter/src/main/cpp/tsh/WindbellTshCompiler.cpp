@@ -2098,6 +2098,19 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                                                 } else {
                                                     case_pattern = escapeOnigurumaLiteral(case_key.text);
                                                 }
+                                                uint64_t case_maximum_width = 0;
+                                                if (analyzeBoundedRegexWidth(case_pattern, &case_maximum_width) &&
+                                                    case_maximum_width <=
+                                                        std::numeric_limits<uint64_t>::max() / sizeof(uint16_t)) {
+                                                    case_entry.execution_capability =
+                                                        RegexExecutionCapability::BOUNDED_WINDOW;
+                                                    case_entry.maximum_match_bytes =
+                                                        case_maximum_width * sizeof(uint16_t);
+                                                    if (case_entry.maximum_match_bytes == 0) {
+                                                        case_entry.execution_capability =
+                                                            RegexExecutionCapability::DOCUMENT_CONTEXT_REQUIRED;
+                                                    }
+                                                }
                                                 case_entry.matcher = compileOnigurumaUtf16(case_pattern, options);
                                                 if (!case_entry.matcher) return nullptr;
                                             }
@@ -2160,6 +2173,24 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                                             rule.maximum_match_bytes = maximum_width * sizeof(uint16_t);
                                         else
                                             rule.execution_capability = RegexExecutionCapability::DOCUMENT_CONTEXT_REQUIRED;
+                                    }
+                                    // A state rule is window-safe only when both its
+                                    // primary matcher and every non-default case matcher
+                                    // have a proven finite width. A bounded primary
+                                    // pattern alone is not sufficient: case regexes can
+                                    // contain anchors, lookarounds or unbounded repeats.
+                                    for (const auto& case_entry : rule.cases) {
+                                        if (case_entry.matcher &&
+                                            case_entry.execution_capability !=
+                                                RegexExecutionCapability::BOUNDED_WINDOW) {
+                                            rule.execution_capability =
+                                                RegexExecutionCapability::DOCUMENT_CONTEXT_REQUIRED;
+                                            rule.maximum_match_bytes = 0;
+                                            break;
+                                        }
+                                        rule.maximum_match_bytes = std::max(
+                                            rule.maximum_match_bytes,
+                                            case_entry.maximum_match_bytes);
                                     }
                                     rule.pattern = compileOnigurumaUtf16(expanded_pattern, options);
                                     if (!rule.pattern) return nullptr;
