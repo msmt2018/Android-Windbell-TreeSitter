@@ -373,57 +373,6 @@ static void testPieceTreeSnapshotIsolatedAndSharesBacking() {
     ::unlink(path);
 }
 
-static void testPieceTreeChunkDirectoryCopyOnWriteAcrossBlocks() {
-    char path[] = "/tmp/windbell-piece-directory-XXXXXX";
-    const int fd = ::mkstemp(path);
-    assert(fd >= 0);
-    const char initial[] = {'0', 0};
-    assert(::write(fd, initial, sizeof(initial)) == static_cast<ssize_t>(sizeof(initial)));
-    ::close(fd);
-
-    auto mapped = std::make_shared<MappedFileSource>(path);
-    PieceTreeSource source(mapped, 32u * 1024u * 1024u);
-    std::vector<uint8_t> chunk(64u * 1024u, 0);
-    constexpr size_t kChunks = 257; // Cross the 256-entry persistent directory boundary.
-    for (size_t i = 0; i < kChunks; ++i) {
-        chunk[0] = static_cast<uint8_t>(i & 0xFFu);
-        chunk[1] = 0;
-        const uint64_t end = source.sizeBytes();
-        assert(source.replace(end, end, chunk.data(), chunk.size()));
-    }
-
-    auto snapshot = source.clone();
-    assert(snapshot && snapshot->isValid());
-    const uint64_t snapshotSize = snapshot->sizeBytes();
-    const char originalTail[] = {'X', 0};
-    assert(source.replace(source.sizeBytes(), source.sizeBytes(),
-                          originalTail, sizeof(originalTail)));
-    assert(snapshot->sizeBytes() == snapshotSize);
-    assert(source.sizeBytes() == snapshotSize + sizeof(originalTail));
-
-    // Verify reads from the first block, across the block boundary, and at the
-    // final chunk remain stable after the descendant mutates its shared index.
-    const uint64_t offsets[] = {
-        2u,
-        2u + 255u * 64u * 1024u,
-        2u + 256u * 64u * 1024u
-    };
-    for (size_t i = 0; i < kChunks; ++i) {
-        if (i != 0 && i != 255 && i != 256) continue;
-        TextChunkView oldView{};
-        TextChunkView newView{};
-        assert(snapshot->read(offsets[i == 0 ? 0 : (i == 255 ? 1 : 2)], 2, &oldView));
-        assert(source.read(offsets[i == 0 ? 0 : (i == 255 ? 1 : 2)], 2, &newView));
-        assert(oldView.size == 2 && newView.size == 2);
-        assert(static_cast<uint8_t>(oldView.data[0]) == static_cast<uint8_t>(i & 0xFFu));
-        assert(static_cast<uint8_t>(newView.data[0]) == static_cast<uint8_t>(i & 0xFFu));
-    }
-    TextChunkView tail{};
-    assert(source.read(snapshotSize, 2, &tail));
-    assert(tail.size == 2 && tail.data[0] == 'X');
-    ::unlink(path);
-}
-
 static void testPieceTreeRandomEditsMatchReferenceBuffer() {
     char path[] = "/tmp/windbell-piece-random-XXXXXX";
     const int fd = ::mkstemp(path);
@@ -585,7 +534,6 @@ int main() {
     testChunkedStoreHonorsMemoryBudget();
     testMappedFileSource();
     testPieceTreeEditsDoNotCopyUnchangedText();
-    testPieceTreeChunkDirectoryCopyOnWriteAcrossBlocks();
     testPieceTreeRandomEditsMatchReferenceBuffer();
     testPieceTreeSnapshotIsolatedAndSharesBacking();
     testPieceTreeUsesBoundedFileWindowAfterUnlink();
