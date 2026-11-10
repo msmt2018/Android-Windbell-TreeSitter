@@ -258,3 +258,12 @@
 - [x] Streaming parse 在 Native 创建可复用 Java byte[] 前预留 chunkSizeBytes×2+overhead，保守覆盖 byte[] 与可能的 JNI `GetByteArrayElements` copy；整个 parse 生命周期持有该 reservation。
 - [x] 每次 TSInput.read 回调另行预留 provider 返回的 UTF-16 chunk payload，回调结束即释放。
 - [ ] 以上均为可控输入缓冲 admission estimate，不覆盖 Tree-sitter 内部 parser stack、lookahead buffer 或其他 Native allocations。
+
+### 2026-11-10：JNI Streaming Input 缓冲区生命周期核算
+
+- [x] 核对实际生效的 `android-tree-sitter/src/main/cpp/ts_parser.cc`：每次解析复用一个 Java byte[]，JNI `GetByteArrayElements` 指针保持到下一次读取回调或解析结束。
+- [x] Parser Owner 使用 `reserveChunkBuffer` 在 Native parse 前预留 byte[] 与可能的 JNI copy 估算，并一直持有到整个 parse 返回；每次 provider UTF-16 临时 chunk 仍独立按回调计费。
+- [x] JNI 输入回调增加坐标有符号范围检查；`GetByteArrayElements` 返回空且无 pending exception 时显式抛出 OutOfMemoryError，避免把分配失败误当 EOF。
+- [x] 清理 TSInput 接口 Class local reference，并在 Native parse 前明确拒绝未设置 Language 的 Parser。
+- [x] 增加 ParserTest：小块多次读取、UTF-16LE 内容完整性及 Tree-sitter progress callback 实际回调。
+- [ ] 最新 JNI / JUnit 改动等待 CI 验证；Native allocator 内部的 Tree/Parser 实际分配仍不由此输入缓冲区预算覆盖。
