@@ -279,7 +279,7 @@ class TshTreeSitterQueryExecutor(
         val effectivePredicateHandlers = buildList {
             addAll(predicateHandlers)
             if (none { handler ->
-                    handler.supportedPredicates.any { it.removePrefix("#") == SetDirectiveHandler.DIRECTIVE }
+                    handler.getSupportedPredicates().any { it.removePrefix("#") == SetDirectiveHandler.DIRECTIVE }
                 }) {
                 add(SetDirectiveHandler())
             }
@@ -296,7 +296,7 @@ class TshTreeSitterQueryExecutor(
             val declared = LinkedHashSet<String>()
             for (handler in effectivePredicateHandlers) {
                 try {
-                    handler.supportedPredicates.forEach { declared += it.removePrefix("#") }
+                    handler.getSupportedPredicates().forEach { declared += it.removePrefix("#") }
                 } catch (error: Exception) {
                     return failure(
                         "TSH-QUERY-EXEC-029",
@@ -533,14 +533,14 @@ internal fun extractTreeSitterPredicateNames(source: String): Set<String> {
     while (index < source.length) {
         val character = source[index]
         if (inComment) {
-            if (character == '\\n') inComment = false
+            if (character == '\n') inComment = false
             index++
             continue
         }
         if (inString) {
             when {
                 escaped -> escaped = false
-                character == '\\\\' -> escaped = true
+                character == '\\' -> escaped = true
                 character == '"' -> inString = false
             }
             index++
