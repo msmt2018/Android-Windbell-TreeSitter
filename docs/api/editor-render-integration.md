@@ -50,7 +50,8 @@ editorView.setSyntaxHighlighter(null)
 - 任意文本编辑会立即使旧 RenderPlan 失效；编辑事务结束后 EditorView 会重新请求样式。新解析结果到达后再调用 `updateRenderPlan`。
 - 全文替换会清除旧计划；调用方应重新解析并发布新计划。
 - `updateRenderPlan` 会复制指令集合、样式集合和 sourceMatchIds，避免调用方后续修改可变集合影响绘制。
-- 指令按 UTF-16 半开区间索引。绘制每一行时只查询与当前绘制片段相交的指令，不会在每次 draw 中扫描整个 RenderPlan。
+- 指令按 UTF-16 半开区间索引。绘制每一行时只查询与当前行相交的指令，不会在每次 draw 中扫描整个 RenderPlan。
+- 行级 Span 投影使用最多 128 行、16,384 个 Span 的有界 LRU 缓存；缓存只保留 Span 描述，不持有行文本。
 - 行级 `Spanned` 是只读轻量视图，复用原始行 String，不复制整行文本。
 
 ## 当前支持范围
