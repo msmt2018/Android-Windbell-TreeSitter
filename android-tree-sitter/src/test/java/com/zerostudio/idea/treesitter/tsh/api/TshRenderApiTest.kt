@@ -261,4 +261,52 @@ class TshRenderApiTest {
         assertTrue(result.diagnostics().any { it.code == "TSH-RENDER-018" })
         assertTrue(coordinator.pendingPlanIds().isEmpty())
     }
+
+    @Test
+    fun pendingRenderPlanReservationIsReleasedAfterTerminalReceipt() {
+        val provider = QueuedProvider()
+        val budget = TshMemoryBudget(TshMemoryBudgetOptions(4_096, 8_192))
+        val coordinator = TshRenderCoordinator(provider, memoryBudget = budget)
+        coordinator.updateCurrentRevisions(revisions())
+        val queued = coordinator.submit(plan()) as TshResult.Success<TshRenderReceipt>
+        assertTrue(budget.snapshot().reservedBytes > 0L)
+        assertEquals(1, budget.snapshot().reservations)
+
+        val receipt = provider.acknowledger.acknowledge(TshRenderReceipt(
+            queued.value.planId, provider.id, queued.value.revisions,
+            TshRenderReceiptStatus.DRAWN, 1
+        ))
+        assertTrue(receipt is TshResult.Success)
+        assertEquals(0L, budget.snapshot().reservedBytes)
+        assertEquals(0, budget.snapshot().reservations)
+    }
+
+    @Test
+    fun pendingRenderPlanReservationIsReleasedWhenCoordinatorCloses() {
+        val provider = QueuedProvider()
+        val budget = TshMemoryBudget(TshMemoryBudgetOptions(4_096, 8_192))
+        val coordinator = TshRenderCoordinator(provider, memoryBudget = budget)
+        coordinator.updateCurrentRevisions(revisions())
+        assertTrue(coordinator.submit(plan()) is TshResult.Success)
+        assertTrue(budget.snapshot().reservedBytes > 0L)
+        coordinator.close()
+        assertEquals(0L, budget.snapshot().reservedBytes)
+    }
+
+    @Test
+    fun renderPlanIsRejectedBeforeProviderSubmissionWhenMemoryBudgetIsInsufficient() {
+        val provider = QueuedProvider()
+        val budget = TshMemoryBudget(TshMemoryBudgetOptions(128, 256))
+        val coordinator = TshRenderCoordinator(provider, memoryBudget = budget)
+        coordinator.updateCurrentRevisions(revisions())
+        val result = coordinator.submit(plan())
+        assertTrue(result is TshResult.Failure)
+        assertEquals(TshDiagnosticStage.MEMORY, result.diagnostics().single().stage)
+        assertTrue(provider::class.java.getDeclaredField("acknowledger").let {
+            runCatching { it.isAccessible = true; it.get(provider) }.getOrNull() == null
+        })
+        assertEquals(0L, budget.snapshot().reservedBytes)
+        assertTrue(coordinator.pendingPlanIds().isEmpty())
+    }
+
 }
