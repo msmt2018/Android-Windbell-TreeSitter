@@ -63,7 +63,7 @@ UTF16StringFactory_newStringBytes(
 
   const jsize array_length = env->GetArrayLength(bytes);
   if (env->ExceptionCheck()) return 0;
-  if (off < 0 || len < 0 || (len & 1) != 0 ||
+  if (off < 0 || len < 0 || (off & 1) != 0 || (len & 1) != 0 ||
       off > array_length || len > array_length - off) {
     throw_illegal_args(env,
         "UTF-16LE byte slice must be even-length and within the source array");
