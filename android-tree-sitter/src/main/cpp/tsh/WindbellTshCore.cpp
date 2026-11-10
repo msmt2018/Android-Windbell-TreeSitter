@@ -1788,7 +1788,12 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                         if (text_source) {
                             if (!windbell::largefile::copyTextRange(*text_source, text_start, text_end - text_start, node_text_window.data())) continue;
                             node_source = node_text_window.data();
-                        } else if (has_contiguous_text) node_source = text_start + text_start;
+                        } else if (has_contiguous_text) {
+                            const UChar *document_source = input_chars
+                                ? reinterpret_cast<const UChar*>(input_chars)
+                                : reinterpret_cast<const UChar*>(contiguous_source_data);
+                            node_source = document_source + text_start;
+                        }
                         else continue;
                     } else node_source = &kEmptyInput;
                     if (!tshUtf16SliceToUtf8(node_source, text_end - text_start, node_text_storage)) continue;
