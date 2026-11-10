@@ -15,6 +15,7 @@ import android.text.SpannableStringBuilder
 import java.io.File
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 
 class WindbellTshLinkageTest {
 
@@ -169,6 +170,62 @@ class WindbellTshLinkageTest {
                         values[base + 2] == commentStyle.toInt()
                 },
                 "The large block-comment capture must survive #not-eq? and produce a clipped style span"
+            )
+        } finally {
+            engine.closeNativeDocument(handle)
+        }
+    }
+
+    @Test
+    fun testNativeQueryPredicateSourceReadFailureIsNotSilentlyTreatedAsNoMatch() {
+        val engine = WindbellTshEngine.instance
+        val extension = "query-predicate-read-failure"
+        val dsl = """
+            tsh 2 {
+                language { id: "query-predicate-read-failure" extensions: [".qprf"] }
+                styles { type { scope: "entity.name.type" } }
+                treeSitter {
+                    queries: [
+                        {
+                            id: "exact-class-name"
+                            source: `(class_declaration name: (identifier) @type (#eq? @type "Demo"))`
+                        }
+                    ]
+                }
+            }
+        """.trimIndent()
+        assertTrue(engine.loadTshSource(extension, dsl, TSLanguageJava.getInstance()))
+
+        val bytes = "class Demo {}".toByteArray(Charsets.UTF_16LE)
+        val readsAllowed = AtomicBoolean(true)
+        val reader = NativeTextWindowReader { offset, requested ->
+            if (!readsAllowed.get()) {
+                ByteArray(0)
+            } else {
+                val start = offset.toInt()
+                val end = minOf(bytes.size, start + requested)
+                if (start >= end) ByteArray(0) else bytes.copyOfRange(start, end)
+            }
+        }
+        val handle = engine.createNativeDocument(
+            TSLanguageJava.getInstance(), extension, bytes.size.toLong(),
+            File(System.getProperty("java.io.tmpdir")), reader
+        )
+        try {
+            // Parsing has completed successfully. Fail subsequent TextSource reads
+            // so the equality predicate must report an execution error, not reject
+            // the query match and return an apparently complete empty result.
+            readsAllowed.set(false)
+            var failure: Throwable? = null
+            try {
+                engine.highlightNativeDocument(handle, 0L, bytes.size.toLong(), false)
+            } catch (error: Throwable) {
+                failure = error
+            }
+            assertNotNull(failure, "A failed capture read must escape as a highlight failure")
+            assertTrue(
+                failure is IllegalStateException,
+                "Expected an explicit native highlight failure, got: $failure"
             )
         } finally {
             engine.closeNativeDocument(handle)
