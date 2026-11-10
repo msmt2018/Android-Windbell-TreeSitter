@@ -556,7 +556,7 @@ class TshTreeSitterParserOwner private constructor(
             val input = TshSnapshotTreeSitterInput(textProvider, snapshotLease)
             val byteLength = Math.multiplyExact(snapshotLease.snapshot.lengthUtf16, 2L)
             val callback = TSParser.ParseWindowCallback { byteOffset, maxBytes ->
-                input.read(byteOffset, maxBytes)
+                input.read(byteOffset, minOf(maxBytes, chunkSizeBytes))
             }
             val parsedTree = parseLock.withLock {
                 parserLease.resource.parseWindowed(
