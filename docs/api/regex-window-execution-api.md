@@ -131,7 +131,7 @@ Piece Tree 跨 chunk、emoji/组合字符、超长行、窗口边缘匹配、loo
 ### 仍未完成 / 不能宣称已验证
 
 - 旧 `WindbellTshEngine.computeHighlights(tree, text, extension)` 仍将完整 String 传入 JNI `nativeHighlight`；新独立 Executor 尚未迁移现有 DSL Regex MATCH/BLOCK 规则，也未替换旧混合高亮入口。
-- `TshRegexWindowConstraints` 是调用方声明，不是 Regex 静态分析器证明。尚无对最大匹配跨度、lookaround、`\\G`、反向/全局状态及其他边界敏感构造的自动能力分析；不能声称任意 Oniguruma pattern 都跨窗口等价。
+- `TshRegexWindowConstraints` 是调用方声明，不是 Regex 静态分析器证明。尚无对最大匹配跨度、lookaround、反向/全局状态及其他边界敏感构造的自动能力分析；当前明确拒绝 `\\G` 与 `\\K`；不能声称任意 Oniguruma pattern 都跨窗口等价。
 - 捕获组目前以 `group_N` 数字名暴露，Oniguruma named-capture 名称枚举尚未接入。
 - BLOCK 规则跨窗口状态机、timeout/强制取消、灾难性回溯隔离、增量 dirty range、Native/NDK/JUnit 验证尚未完成。
 - 因此这只是独立 Regex Native Executor 的首个源码切片，不是生产级完整 Regex 管线，也不代表大文本高亮已完成窗口化迁移。
