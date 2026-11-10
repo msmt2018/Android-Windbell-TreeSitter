@@ -122,6 +122,7 @@ public class ParserTest extends TreeSitterTest {
           })) {
         assertThat(tree).isNotNull();
         assertThat(readCalls.get()).isGreaterThan(1);
+        assertThat(progressCalls.get()).isGreaterThan(0);
         assertThat(tree.getRootNode().getEndByte()).isEqualTo(source.length() * 2);
       }
     }
