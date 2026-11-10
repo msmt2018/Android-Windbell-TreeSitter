@@ -23,13 +23,17 @@
 
 package com.zerostudio.idea.piecetable
 
+import com.zerostudio.idea.piecetable.common.IntListSnapshot
+
 /**
  * The content of a document at one version, readable from any thread while the buffer keeps
  * being edited.
  *
  * Created with [PieceTreeTextBuffer.createSnapshot]. Creating one is a read of the buffer (same
  * rules as any other read: not at the same time as an edit of that buffer) and costs
- * O(number of pieces) plus a copy of the typed text that is still in the document. After that
+ * O(number of pieces + typed text length) plus a copy of the typed text that is still in the document.
+ * Line-start metadata uses immutable copy-on-write views, so snapshot creation does not duplicate
+ * the line-start arrays. After that
  * the snapshot never touches the buffer again: any number of threads may read it at any time,
  * also while the buffer is being edited, compacted or switched to another EOL, without a lock.
  *
@@ -37,9 +41,10 @@ package com.zerostudio.idea.piecetable
  * created, to (text, start offset, length). Pieces of the original chunks (the file as loaded,
  * text inserted in 64K+ blocks, the chunks compact() / setEOL() create) point at those chunks
  * directly, because a chunk is never written once the tree holds it. Pieces of the change
- * buffer, which keeps growing while the user types, were copied. Nothing is looked up through
- * the tree, its buffer list or its line starts later on, so no later edit can change what the
- * snapshot reads.
+ * buffer, which keeps growing while the user types, are copied. Nothing is looked up through the
+ * live tree or buffer list later on. Line-start metadata is retained through immutable
+ * copy-on-write views: a later mutation detaches the live IntList and leaves this snapshot's view
+ * unchanged.
  *
  * Memory: the snapshot keeps the original chunks it points at alive, also after compact() or
  * setEOL() replaced them in the buffer. Drop snapshots once they are processed; usually one or
@@ -57,8 +62,19 @@ class PieceTreeSnapshot internal constructor(
     // per piece, in document order: the text it lies in and where it starts in that text
     private val sources: Array<CharSequence>,
     private val sourceStarts: IntArray,
+    // Original backing-buffer offsets used only by the coordinate index (typed text is compacted).
+    private val pieceCoordinateStarts: IntArray,
     // document offset where each piece starts, plus the document length as the last element
     private val pieceStarts: IntArray,
+    /** Immutable line-start snapshots from each backing buffer; shared across pieces using it. */
+    private val pieceLineStarts: Array<IntListSnapshot>,
+    /** Source line and column at each piece start. */
+    private val pieceStartLineIndices: IntArray,
+    private val pieceStartColumns: IntArray,
+    /** Tree-sitter row prefix before each piece. */
+    private val pieceLineFeedPrefixes: IntArray,
+    /** False when the host cannot guarantee LF-only Tree-sitter row semantics. */
+    val supportsTreeSitterLineCoordinates: Boolean,
     /** [PieceTreeTextBuffer.getVersionId] at the time the snapshot was created. */
     val versionId: Int,
     /** Number of lines of the document, at least 1. */
@@ -70,6 +86,44 @@ class PieceTreeSnapshot internal constructor(
 ) : CharSequence {
 
     override val length: Int = pieceStarts[pieceStarts.size - 1]
+
+    /**
+     * Returns Tree-sitter's zero-based (row, UTF-16 column) for a document offset.
+     *
+     * The lookup is O(log(piece count) + log(lines in the source buffer)); it reuses the
+     * immutable line-start arrays belonging to the backing buffers and does not build a
+     * document-wide line-start table. Returns null when this snapshot cannot guarantee LF-only
+     * row semantics or when the offset splits a surrogate pair.
+     */
+    fun getTreeSitterPositionAt(offset: Int): Pair<Int, Int>? {
+        if (!supportsTreeSitterLineCoordinates || offset !in 0..length) return null
+        if (offset == 0 || length == 0) return 0 to 0
+        if (offset < length && Character.isHighSurrogate(get(offset - 1)) &&
+            Character.isLowSurrogate(get(offset))) return null
+        if (sources.isEmpty()) return 0 to 0
+
+        val piece = if (offset == length) sources.lastIndex else pieceAt(offset)
+        if (piece !in sources.indices) return null
+        val sourceOffset = pieceCoordinateStarts[piece] + offset - pieceStarts[piece]
+        val starts = pieceLineStarts[piece]
+        var low = 0
+        var high = starts.size - 1
+        while (low < high) {
+            val mid = (low + high + 1) ushr 1
+            if (starts[mid] <= sourceOffset) low = mid else high = mid - 1
+        }
+
+        val localLine = low
+        val lineDelta = localLine - pieceStartLineIndices[piece]
+        if (lineDelta < 0) return null
+        val row = Math.addExact(pieceLineFeedPrefixes[piece], lineDelta)
+        val column = if (localLine == pieceStartLineIndices[piece]) {
+            Math.addExact(pieceStartColumns[piece], offset - pieceStarts[piece])
+        } else {
+            sourceOffset - starts[localLine]
+        }
+        return row to column
+    }
 
     // the piece holding [offset], 0 <= offset < length
     private fun pieceAt(offset: Int): Int {
@@ -136,9 +190,11 @@ class PieceTreeSnapshot internal constructor(
         // only what is asked for is copied
         val start = this.sourceStarts[piece] + offset - this.pieceStarts[piece]
         val end = this.sourceStarts[piece] + this.pieceStarts[piece + 1] - this.pieceStarts[piece]
-        val requestedLength = Math.max(1, maxLength)
-        val safeEnd = start + Math.min(end - start, requestedLength)
-        return this.sources[piece].substring(start, safeEnd)
+        // Avoid start + Int.MAX_VALUE overflow for the default unbounded request.
+        // Bound the requested length by the remainder of this immutable source piece first.
+        val requestedLength = maxLength.coerceAtLeast(1)
+        val chunkLength = Math.min(end - start, requestedLength)
+        return this.sources[piece].substring(start, start + chunkLength)
     }
 
     /** Hands the whole content to [callback], one piece at a time, in order, without the BOM. */
