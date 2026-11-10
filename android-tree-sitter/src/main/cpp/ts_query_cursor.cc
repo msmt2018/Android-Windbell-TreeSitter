@@ -114,7 +114,12 @@ void throwIllegalState(JNIEnv *env, const char *message) {
 } // namespace
 
 static jlong TSQueryCursor_newCursor(JNIEnv *env, jclass self) {
-  return (jlong) ts_query_cursor_new();
+  TSQueryCursor *cursor = ts_query_cursor_new();
+  if (!cursor) {
+    throwOutOfMemory(env, "Unable to allocate Tree-sitter query cursor");
+    return 0;
+  }
+  return reinterpret_cast<jlong>(cursor);
 }
 
 static void TSQueryCursor_delete(JNIEnv *env, jclass self, jlong cursor) {
@@ -135,9 +140,11 @@ static void TSQueryCursor_exec(JNIEnv *env,
   // A regular exec resets Tree-sitter's retained options pointer.
   if (!releaseQueryProgressCallback(env, (TSQueryCursor *) cursor)) return;
 #endif
+  TSNode native_node = _unmarshalNode(env, node);
+  if (env->ExceptionCheck()) return;
   ts_query_cursor_exec((TSQueryCursor *) cursor,
                        (TSQuery *) query,
-                       _unmarshalNode(env, node));
+                       native_node);
 }
 
 static void TSQueryCursor_execWithOptions(JNIEnv *env,
@@ -257,9 +264,13 @@ static void TSQueryCursor_setPointRange(JNIEnv *env,
 #if defined(TSH_TREE_SITTER_HAS_QUERY_CURSOR_OPTIONS)
   if (rejectQueryCursorReentry(env, (TSQueryCursor *) cursor)) return;
 #endif
+  const TSPoint native_start = _unmarshalPoint(env, start);
+  if (env->ExceptionCheck()) return;
+  const TSPoint native_end = _unmarshalPoint(env, end);
+  if (env->ExceptionCheck()) return;
   ts_query_cursor_set_point_range((TSQueryCursor *) cursor,
-                                  _unmarshalPoint(env, start),
-                                  _unmarshalPoint(env, end));
+                                  native_start,
+                                  native_end);
 }
 
 static jobject TSQueryCursor_nextMatch(JNIEnv *env, jclass self, jlong cursor) {
