@@ -117,7 +117,10 @@ class WindbellTshLinkageTest {
         val dsl = """
             tsh 2 {
                 language { id: "large-query-predicate" extensions: [".large-query-predicate"] }
-                styles { comment { scope: "comment.block" } }
+                styles {
+                    comment { scope: "comment.block" }
+                    regexComment { scope: "comment.block.regex" }
+                }
                 treeSitter {
                     queries: [
                         {
@@ -128,7 +131,7 @@ class WindbellTshLinkageTest {
                         {
                             id: "large-comment-bounded-regex"
                             priority: 26
-                            source: `(block_comment) @comment (#match? @comment "z")`
+                            source: `(block_comment) @regexComment (#match? @regexComment "z")`
                         }
                     ]
                 }
@@ -149,6 +152,7 @@ class WindbellTshLinkageTest {
                 val value = when {
                     charIndex == 0L -> '/'
                     charIndex == 1L -> '*'
+                    charIndex == totalBytes / 2L - 3L -> 'z'
                     charIndex == totalBytes / 2L - 2L -> '*'
                     charIndex == totalBytes / 2L - 1L -> '/'
                     else -> 'a'
@@ -166,16 +170,16 @@ class WindbellTshLinkageTest {
             val encoded = engine.highlightNativeDocument(handle, start, totalBytes, false)
             assertNotNull(encoded)
             val values = encoded!!
-            val commentStyle = engine.getStyleCatalog(extension)
-                .first { it.name == "comment" }.styleId
+            val regexStyle = engine.getStyleCatalog(extension)
+                .first { it.name == "regexComment" }.styleId
             assertTrue(
                 (0 until values.size / 6).any { index ->
                     val base = index * 6
                     values[base] <= start.toInt() &&
                         values[base + 1] >= start.toInt() &&
-                        values[base + 2] == commentStyle.toInt()
+                        values[base + 2] == regexStyle.toInt()
                 },
-                "The large block-comment capture must survive both #not-eq? and bounded #match? and produce a clipped style span"
+                "The bounded #match? predicate must independently emit its regexComment style for a 32 MiB capture"
             )
         } finally {
             engine.closeNativeDocument(handle)
