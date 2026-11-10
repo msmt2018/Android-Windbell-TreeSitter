@@ -1,0 +1,153 @@
+# API 变更记录
+
+## Unreleased
+
+### Fixed
+- Tree-sitter QueryExecutor 不再依赖构建变体中可能缺失的 `TSQuery.predicatesFor(UInt)` 二进制 API；改为对已由 Native `TSQuery.create` 验证的 S-expression 源码做轻量谓词名称扫描，跳过字符串字面量与 `;` 行注释，并仅要求自定义 predicate handler；补充字符串转义/注释回归测试源码。
+
+
+### Added
+- editor 模块新增 `TshRenderPlanSyntaxHighlighter`，实现 TSH UTF-16 RenderPlan → EditorView `SyntaxHighlighter`/`LineStyler` → `StyledTextPainter` 的实际 Span 数据桥接；使用有界行区间查询索引、零文本复制的只读 `Spanned` 视图和文档版本门禁；将当前绘制器尚不支持的 font family/size/strike-through 明确报告为 warning。源码已提交，仍待 CI 与真实设备绘制验证。
+- `StyledTextPainter` 新增 `StrikethroughSpan` 绘制，RenderPlan highlighter 现在支持 foreground/background/bold/italic/underline/strike-through；font family 与 font size 仍显式报告 unsupported warning。
+- RenderPlan highlighter 新增有界 LRU 行 Span 投影缓存（最多 128 行/16,384 个 Span），缓存不持有行文本；每次 RenderPlan 发布使用独立 generation，避免相同 planId/version 的样式替换命中旧缓存。
+- 新增 `docs/api/editor-render-integration.md`，记录 RenderPlan → LineStyler → StyledTextPainter 的接线方式、版本门禁、支持属性和设备验证边界；新增 highlighter 版本门禁测试源码。
+- `TshRenderPlanSyntaxHighlighter` 的计划发布与 EditorView 编辑回调使用同一状态锁线性化；编辑期间拒绝安装计划，发布前二次核验 PieceTree 版本，避免后台解析结果与正在进行的编辑交错发布。
+- editor 模块新增 TshPieceTreeDocument/TshPieceTreeTextAccessProvider，直接适配仓库现有 PieceTreeTextBuffer/PieceTreeSnapshot；按 UTF-16 范围读取，不调用全文 toString；使用不可变快照持有原始 chunk 引用并保留旧版本读取能力；新增 PieceTree 适配测试源码，editor 模块接入 android-tree-sitter API 依赖。
+- TextAccessProvider 默认 Snapshot acquisition 增加 documentId/version/length 校验；Provider snapshot 获取异常与 LinkageError 转为结构化诊断，避免异常穿透绑定层；新增非法 Snapshot 与 final release failure 测试源码。
+- 新增可独立关闭的 TshTextSnapshotLease.retain() 与 TshSharedTextSnapshotLease 引用计数实现；默认不可变 Snapshot Lease 可续租，旧自定义 Lease 未实现续租时返回明确诊断；最后一个 Lease 释放时只执行一次 host snapshot release callback，并保留释放诊断。
+- TshTreeSitterParserOwner 的 Snapshot parse overload 现在独立 retain 输入快照并通过 TSParser.parseInput(TSInput) 分块解析；支持传入已编辑的旧语法树做增量解析，Native parse 结束后释放任务 Lease；新增 Lease 引用计数/独立关闭测试源码。
+- 强化 Tree-sitter Snapshot Input 回调边界：即使宿主覆盖 readChunk，也重新校验文档/版本/范围/最大长度/非空进展/UTF-16 合法性和 surrogate 边界，避免错误 Provider 将越界或损坏输入交给 Native；新增对应测试源码。
+- 新增 Native ResourceRegistry.acquireExclusive/updateMetadata，OwnedSyntaxTree edit 会独占树、同步更新 snapshot/registry metadata；QueryExecutor 对照 registry 拒绝旧 document/tree revision。
+- 新增 Android Spannable Renderer Provider + TshAndroidSpannableBinding：可通过 Engine Provider Registry 发现并在 OwnerScope 内 attach/detach 现有宿主对象；支持 TSH-owned Span 精确清理、宿主 Span 保留、颜色/背景/字体/装饰和 host font-size conversion；使用 generation staging/rollback 避免失败替换导致旧高亮丢失；增加 Robolectric rollback/decoration/binding test 源码。
+- 修正 RenderReceipt 语义：新增 APPLIED/PARTIALLY_APPLIED 区分宿主 Span/显示对象更新与真实 DRAWN/PARTIAL 像素绘制；新增 confirmsHostMutation 和 applied/deferred/dropped 完整计数，Android Spannable Renderer 强制宿主提供有界 viewport 后才分配 Span，不为离屏指令分配 Span，未提供 viewport 时拒绝全量渲染。
+- 新增 TSParser.parseInput(TSInput) 的 Java/JNI 回调链与 TshSnapshotTreeSitterInput，ParserOwner 可直接从固定版本 TextSnapshot 分块解析，避免全文 String/连续 Native buffer；新增 Native resource reader/exclusive mutation Lease（API 21 兼容的 monitor/counter 实现），TSTree.edit 与 Query read 互斥。
+- 新增首版 ScopeSelector AST/StyleRule/StyleResolver，按 exact/suffix path 选择规则、按 priority/specificity 合并属性，并将 MatchSet 解析为 RenderPlan。
+- 新增首版 TshRenderPlan/ResolvedStyle/Renderer Provider/Receipt/Coordinator，支持多维 revision 检查、Capability 校验、异步回执、stale draw 拒绝、partial/failed 诊断和取消契约。
+- 新增首版统一 TshMatch/TshMatchSet/TshScopePath/TshMatchMerger，汇合 Tree-sitter/ATS 与 Regex 两种来源，保留 provenance、pipeline revision、canonical UTF-16 range，支持去重、稳定排序和 stale 过滤。
+- 新增 DSL Runtime Consumer Registry/Dispatcher，确保 Schema 校验通过不再被误认为运行时已生效；报告每个属性的 applied/unapplied 状态。
+- 新增 OwnerScope 自动 detach 和 AttachmentManager 的并发竞态保护；Provider refresh 保留原始 required/optional/API range 条件。
+- Query Execution Budget 显式标记 unsupported：strictNodeValidation 默认关闭，显式开启时报 unsupported；maxSteps 默认 null，显式请求时报 unsupported；stepsUsed 改为可空，Cursor 同时设置 pending match limit 和总 Match 数限制。
+- Text chunk 读取拒绝切开 UTF-16 surrogate pair，TextEdit replacement 拒绝不成对 surrogate。
+- ProviderRegistry 新增 acquireScoped() 引用计数注册 Lease，允许多个 Document Binding 共享同一 Provider；最后一个 scoped lease 才释放 TSH 创建的注册，外部手动注册仍由宿主管理。
+- 新增 TshTextAccessBinding：为宿主 Document 管理 TextAccessProvider 注册（可选择外部共享注册）、Attachment、Snapshot Lease 获取、Change/Disposal subscription；OwnerScope/Engine detach 或文档销毁会关闭绑定。TshTextAccessProvider 现在也是 TshProvider，默认发布 text.snapshot/text.chunk，并可按宿主声明发布 change-subscription/disposal-notification。
+- Engine 生命周期操作与 close() 由同一锁线性化；Engine 关闭时永久关闭 Object/Provider/CompiledQuery registries，阻止通过公开 Registry 属性在 shutdown 后重新发布对象、Provider 或 Query；新增并发/关闭测试源码。
+- 坐标转换拒绝将非 String CharSequence 隐式 toString() flatten，避免把 Piece Tree/Rope 等宿主缓冲区意外复制成全文 String；新增测试源码。
+- Native Resource/Query Lease 与 OwnerScope cleanup 在 JNI LinkageError 后仍继续释放依赖，并保留结构化诊断；新增测试源码。
+- AttachmentManager 新增 detach lifecycle subscription；Android Binding 在显式 detach、OwnerScope close 或 Engine close 时关闭 RenderCoordinator、拒绝迟到回执并注销 Provider。
+- AttachmentManager 改为对共享 host instance 做 registration lease/refcount：同一 Editor 可被多个 OwnerScope/角色 attach；只有最后一个 TSH-owned attachment detach 才注销对象；宿主预先注册的对象在 TSH detach 后仍保留。
+- Engine.strictProviderValidation 现在一致作用于 attach/refresh/resolveProviders；严格 attach 缺少必需能力时会回滚 Attachment 和对象注册，lenient 模式仍可返回 INCOMPLETE 报告。
+- Tree-sitter Query Cursor close、PredicateHandler 声明读取和 Provider.supports LinkageError 不再静默吞掉；错误转为结构化诊断，Cursor cleanup failure 不会覆盖为假成功。
+- RenderCoordinator 新增最大 pending plan 数量与 backpressure，Provider submission/cancel 的 LinkageError 会清理 pending 状态并返回诊断。
+- OwnerScope close 具备重入保护，cleanup action 在自身回调中再次 close 不会 join 自己造成死锁；新增回归测试源码。
+- Android Spannable Renderer 缺失 viewport 时明确拒绝全文 Span 分配；Android Binding close/cleanup 失败通过 closeDiagnostics 暴露，不再静默吞掉；新增回归测试源码。
+- Attachment refresh 的 Provider 协商异常统一映射为结构化失败，不向宿主调用方泄漏未处理异常。
+- Android Spannable Renderer 的 host thread/revision/Spannable/viewport/Span snapshot/Span inspection 回调异常均转换为结构化诊断；事务提交失败时尽力回滚并报告回滚失败，避免把部分 Span 更新误报为成功。
+- Android Binding detach/Engine close 现在关闭 RenderCoordinator、拒绝迟到提交，并清除该 Renderer 自己拥有的 Span；后台关闭通过宿主 postToRenderThread 排队，不能清理时保留可见诊断。
+- 新增 TSH Public API 最高层设计规范：明确 Host Ownership First、No Framework Lock-in、Capability negotiation、零拷贝文本访问、Long 坐标、版本安全、双管线、Renderer-owned drawing 和证据等级。
+- 新增 TshOwnerScope/TshAttachmentManager/TshAttachmentReport 与 Engine attach/inspect/refresh/detach，支持宿主对象身份注册、Provider 能力协商、OwnerScope 自动 detach；detach 不销毁宿主对象。
+- Provider Registry 增加 API 版本范围、Capability 最低版本、优先级、稳定选择、冲突/缺失诊断与 supports 异常隔离；TshEngineOptions 的严格模式和诊断开关接入 Provider resolution。
+- Text Access 增加 Snapshot Lease、bounded chunk read、变更订阅扩展点和 Edit 顺序/重叠校验；默认 Snapshot Lease 仅包装不可变快照，不冒充对可变宿主缓冲区的 pin。
+- 公共 SourcePosition Offset 与 Tree-sitter ByteRange 改为 Long，并保留 Int 构造兼容；Native Cursor Int range narrowing 增加溢出检查。
+- 修复 Schema nullable/default/Measure range unit/Map key/Capability version/unknown-property retention；未知属性进入 unappliedProperties 并产生诊断。
+- 修复 Oniguruma 编译器将 UTF-8 pattern bytes 错误逐字节复制为 UTF-16 的问题，改为严格 UTF-8 解码及 UTF-16LE 编码。
+- 修复旧 Spannable 高亮路径清除所有 CharacterStyle 的行为：仅移除 TSH-owned spans，并拒绝奇数/非法/越界 UTF-16LE byte range。
+- Native Resource/Query Lease close 失败改为结构化诊断，可通过 Engine.shutdownDiagnostics 查询；OwnerScope cleanup 错误通过 closeWithReport 返回。
+- JNI 大文本路径移除额外完整 UTF-16 native vector 复制，改为受控 GetStringChars 生命周期；Highlight/Fold 结果按固定批次写入 Java 数组，避免额外 N*3 临时 native 数组。
+- 大文本高亮核心将按全文长度预留 Span 容量改为有界初始预留，并以 prefix-max-end 索引替代 AST/Regex span 的双重全量嵌套扫描。
+- 建立 TSH 统一 API 架构文档、对象/文本模型、编辑器集成、高亮渲染、TSH 语言、ATS/Regex、诊断和路线图规范。
+- 新增 TshEngine 生命周期门面、结构化结果/诊断、坐标与范围基础类型。
+- 新增实例身份对象注册表、能力描述符和 Provider 注册/发现契约。
+- 新增 TextDocument/TextSnapshot/TextEdit/TextChange 与 TextAccessProvider 契约。
+- 新增内存文本 UTF-8/UTF-16/Unicode Code Point/Grapheme 坐标转换器及测试源码。
+- 新增 Runtime/Session、Config/Language Service、Editor Adapter、Highlight/Render、Binding/Event/Extension、ATS/Regex/Match 和 Diagnostics/Observability 详细 API 规范。
+- 新增 Grammar/Parser/Query、增量 TextBuffer、JNI/Native Bridge、Cache/Performance、安全/Regex 防护、测试/兼容性、平台/线程契约文档。
+- 补充 .tsh 配置源、加载/编译/安装/替换/卸载、对象 Catalog 查询和配置事务契约。
+- 补充 .tsh DSL v1 顶层声明、类型系统、属性 Schema、表达式、引用和语义诊断契约。
+- 补充 Theme/Style/Font/Color/Decoration API，明确字体族、字重、字形、字号、字距、行高、OpenType 特性、可变字体轴与 fallback。
+- 补充 DSL 能力到 Parser/Resolver/Runtime/Render Backend 的覆盖矩阵，防止只定义语法而没有执行实现。
+- 从核心 API 索引移除通用编辑器功能文档；这些内容仅作为宿主集成边界参考。嵌入语言语法注入保留为 TSH 核心能力。
+- 新增 DSL typed value/declaration/document Kotlin 模型、Schema Registry、Config Artifact/Repository 和首批测试源码。
+- 新增 ATS/Tree-sitter Query API 首批 Kotlin 源码：Grammar descriptor、UTF-8 byte range、query source/options、compiled query、syntax tree snapshot、capture、execution budget、cancellation、versioned result 及 Compiler/Executor contracts。
+- 新增 CompiledQuery Registry，提供注册/替换/查询/Grammar fingerprint 兼容检查/注销。
+- 新增 ATS Query API 测试源码，覆盖半开 byte range、Grammar fingerprint、Registry 冲突与 stale result 识别。
+- 新增 `TshTreeSitterQueryCompiler`：复用 `TSQuery.create(TSLanguage, source)` 编译原生 Tree-sitter S-expression Query，绑定 Grammar fingerprint，映射 Native 编译错误和 byte offset，执行 pattern count 限制；ATS 输入明确拒绝，等待专用 ATS Parser/Compiler。
+- 新增 `TshTreeSitterQueryExecutor`：复用 `TSQueryCursor` 执行，支持 byte range、Capture name/type/range/node identity 转换、总 match 数预算、协作式取消检查、过期 Grammar/Query 检查，并在 `finally` 中关闭 Cursor。
+- 新增编译查询显式 `release(queryId)`；后续加入共享 `TshNativeQueryLeaseStore`，release/替换先退役 Query，活动执行持有 Lease，最后一个 Lease 释放后才关闭 Native Query。
+- 新增 Adapter 合约测试源码，覆盖 ATS 不误解析、Grammar 缺失、Grammar 不匹配、Native handle 缺失和 query revision 过期。
+- 修正既有 `TSQueryCursor` Predicate Handler 语义：`OK` 接受当前表达式、`ERR` 拒绝 match、`UNHANDLED` 交给后续 Handler；所有 Handler 均未处理时拒绝。新增 predicate 求值开关，TSH 按 `enablePredicates` 控制。
+- 修复 Predicate/Directive 分组：按 Tree-sitter 的 `Done` step 拆分每个表达式后逐个调用 Handler；同一 pattern 的多个表达式必须全部通过（AND），避免把多个表达式拼接后破坏 `SetDirectiveHandler(#set!)` 等按单表达式参数数量解析的 Handler。
+- Predicate Handler 改为按注册顺序确定性执行；TSH 预检逐个扫描每个 pattern 中的所有 predicate，而不只检查首个 predicate。
+- Query revision 发布、注销和 Executor 的“当前 revision 检查 + Lease acquire”统一通过 `TshCompiledQueryRegistry` 事务锁协调，避免并发替换期间 Registry 指向新 revision、Lease Store 却已退役该 revision的短暂不一致。
+- 新增 `TshNativeQueryLeaseStore` 与生命周期测试源码，覆盖 release 延迟关闭、同 ID 替换和批量退役；Executor 对 predicate 名称执行 Handler 声明覆盖预检。
+- 新增通用 `TshNativeResourceLeaseStore`：资源 Handle 实例校验、Lease 计数、retire/retireAll 后延迟 close；支持依赖 Lease，Native resource close 后逆序释放依赖；Tree Executor 接入 Tree Lease，Grammar Language Resolver 改为返回带 objectId 的 Language Handle，Compiler 将 Language Lease 作为 Query 依赖保持至 Query 完整退役；新增资源 Lease 测试源码。
+- 新增 `TshTreeSitterParserOwner`：Parser 持有 Language Lease，解析出的每棵 Tree 独立持有 Language Lease，允许 Tree 安全晚于 Parser/Grammar Provider 释放；Parser 和 Tree 均注册到 Engine 的协调 Resource Registry。
+- 修正 Tree-sitter byte range 契约：`TshByteRange` 表示 Native Tree-sitter byte offset，`TshSyntaxTreeSnapshot`/`TshQueryResult` 携带源文本编码；当前 Java `TSParser.parseString` 使用 UTF-16LE，ParserOwner 生成的 Snapshot 明确标记 `UTF16_LE`，避免把 UTF-16LE 字节偏移误当成 UTF-8。
+- 新增 `TshNativeResourceRegistry` 协调对象索引与 Native 资源所有权：统一注册、按 Native 类型及实例身份校验的 Lease 获取、先退役后注销对象索引、仅退役本协调器所有资源的作用域化 retireAll；新增注册/获取/退役/批量退役生命周期测试源码。
+- 修正 Native Resource Registry 锁边界：在协调锁内先撤销资源的公开获取资格并移除对象索引，之后在锁外调用 Lease Store retire，避免 Native close 回调在协调器锁内运行；新增永久 close 状态与对应测试源码。
+- `TshNativeQueryLeaseStore` 新增 `registerDeferred` / `retireDeferred`，允许 Query catalog 在事务锁内原子切换 revision/标记退役，并将旧 Query 与其 Language 依赖 Lease 的实际 close action 延后到锁外执行；新增 deferred close 测试源码。
+- `TshEngine` 新增自有 Native Resource Lease Store/Registry，并拥有 `TshCompiledQueryRegistry` / `TshNativeQueryLeaseStore`；新增 `createTreeSitterQueryCompiler/Executor` 和 `openTreeSitterParser` 工厂，将 Parser、Compiler、Executor 装配到同一个 Engine 资源协调体系；新增关闭后拒绝创建 Adapter/Parser 测试源码。`TshEngine.close()` 先关闭 Query Store、清理 Query catalog，再关闭 Native Resource Registry，确保 Query 依赖的 Language Lease 先释放；新增 Engine 生命周期测试源码。
+- `TshNativeQueryLeaseStore` 增加永久 `close()`：关闭后拒绝新 Query 注册，已有活动执行 Lease 释放后才关闭 Native Query 及其 Grammar 依赖；新增关闭后拒绝注册和活动 Lease 延迟关闭测试源码。
+- `TshNativeResourceLeaseStore.Lease.retain()` 支持从仍存活的 Lease 派生子 Lease；即使 Grammar 对外 Handle 已退役，仍由 Parser dependency lease 保活的 Language 可继续派生 Tree dependency lease，不允许从已退役 Store 重新 acquire；新增退役后 child retain 和并发 retain/release 测试源码。
+- `TshTreeSitterQueryCompiler` / `TshTreeSitterQueryExecutor` 新增可选协调 Registry 注入；启用后 Language/Tree Lease 获取经统一入口完成，旧 Store 直连构造仍保留作为兼容迁移路径，Lease Store 构造参数提供默认值以兼容既有短参数列表。宿主生产装配尚未全面迁移。
+
+### Planned
+- Piece Tree/Rope 索引化坐标映射与 Layout-aware 坐标 Provider。
+- Engine Session、任务调度、资源 Scope 和兼容迁移接线。
+- .tsh Lexer/Parser/AST/Schema/Language Service 实现及 C++ Compiler 兼容。
+- ATS Lexer/Parser/AST/Compiler 到现有 Tree-sitter Query 执行器的适配。
+- 旧宿主 Tree/Language/Parser Native owner 全面迁移到 Engine 所有的 `TshNativeResourceRegistry`（禁止绕过 Store 直接 close）、并发关闭/注册线性化验证、生产构造强制协调入口、增量查询与可中断取消/真实 step budget。新 ParserOwner 仅代表 API 源码，不代表旧宿主已迁移。
+- Regex 独立 WindowLease、Oniguruma 连续缓冲区和跨窗口等价策略。
+- Unified Match/Scope/Attribute/Highlight 与 Theme/RenderPlan 运行时实现。
+- Binding/EventBus/Provider 版本协商和诊断收集器。
+- 本地 Gradle 编译、自动化测试和真实编辑器渲染验证。
+
+### Status
+- 本轮新增的 Kotlin API 和测试仅代表源码已提交；没有运行 Gradle、JUnit、C++/JNI 构建或 Android 设备验证。Tree-sitter Adapter 调用了既有 Native API；Query/Tree/Language lease、Predicate 过滤和协调式 Resource Registry 源码及测试源码已提交；Resource Registry 锁边界、Engine.close 退役接线和 Query catalog 锁外 close action、ParserOwner、Engine 统一 Compiler/Executor/Parser 工厂、Query Store 永久 shutdown、退役后 child Lease 和 Query/TSH DSL/Grammar JNI UTF-8 修复也已加入源码/测试源码，但未做 Gradle/JUnit/C++ 或真实 Native 运行验证。
+- 现有仓库已检查到 `TSQuery`、`TSQueryCursor`、`TshCompiler`、`TshGrammar.dynamic_ts_query`；后续实现应复用这些既有能力并保持旧 JNI 入口兼容。
+
+
+## 2026-11-10 — Incremental Tree-sitter edit transaction (SOURCE_PARTIAL)
+
+- Added `TshTreeSitterEditCompiler` to compile a version-checked `TshTextChange` into descending UTF-16LE `TSInputEdit` values using bounded snapshot reads and endpoint-only coordinate storage.
+- Added `TshTreeSitterParserOwner.editTreeBatch`: one exclusive Native lease per batch, strict byte/point alignment and non-overlap validation, one-time metadata publication, and retirement of partially edited trees on failure.
+- Added `TshTreeSitterIncrementalUpdate.apply` to connect before/after Snapshot Leases, edit compilation, atomic Native edits, and incremental parsing. The old tree is retired only after the replacement tree is published.
+- Added the `EDITED_PENDING_PARSE` tree state. Query execution rejects such a tree before Native lease acquisition and rechecks after acquisition; replacement snapshot parses publish `READY` trees.
+- Added edit compiler boundary tests and a query preflight regression test. These test sources have not yet been run.
+- Automatic buffer-replacement/rebind, host permanent-close integration, Gradle/JUnit, Native/JNI and device validation remain outstanding.
+
+
+## 2026-11-10 — EditorView PieceTree transaction binding (SOURCE_PARTIAL)
+
+- Added `TshPieceTreeEditorBinding` to pin a before Snapshot Lease in `beforeTextChanged` and an after Snapshot Lease in `afterTextChanged`, once per complete EditorDocument edit batch.
+- Added `TextSlice.forEachChunk` to scan referenced undo/redo slices through read-only segment views without flattening them, and exposed `PieceTreeTextBuffer.isEOLNormalized()` for coordinate capability selection.
+- Converted bottom-up `AppliedChange` records to ascending before-version `TshTextChange` without calling `TextSlice.toText()`. Large undo/redo replacement content remains in PieceTree storage; only UTF-16 lengths, LF/tail metrics and (for normalized EOL) indexed before-version row/column coordinates cross the binding boundary.
+- Extended `TshTextEdit` with replacement UTF-16 length, LF/tail metrics and optional before-version UTF-16 row/column coordinates, retaining the String replacement API and keeping Native Tree-sitter points out of the generic text contract. Normalized PieceTree edits use host coordinates and avoid a full before-snapshot scan; non-normalized EOL falls back to bounded streaming scan.
+- Allowed stable same-offset insertion sequences while continuing to reject overlapping replacement ranges.
+- Added PieceTree provider change/disposal subscriptions and advertised both capabilities; added source tests for non-materializing change conversion and lifecycle notifications.
+- `onTransaction` transfers snapshot Lease ownership to the consumer, which must dispatch parsing off the EditorView edit thread and close both leases after completion.
+- Added `TshPieceTreeIncrementalSession`: one worker serializes initial parse, edit/parse transactions, pending-parse retry, full-parse fallback, and old-tree retirement; pending work is coalesced to one transaction/snapshot so rapid typing cannot retain an unbounded queue of large PieceTree snapshots; close queues final tree retirement after active Native work.
+- Added a ParserOwner-level Native parse lock so a shared `TSParser` is never used concurrently by multiple document sessions.
+- Added `resync()` for same-document PieceTree buffer replacement after the host replacement callback. Switching document identity still requires closing and reattaching.
+- Host must call `close()` on permanent document close. Automatic host lifecycle hook, Gradle/JUnit execution, Native/JNI validation and device tests remain outstanding.
+- Fixed the replacement-slice LF counter to recognize the actual Kotlin newline character; added regression coverage through the existing LF/tail metric assertions.
+- Restrict the editor-coordinate fast path to normalized LF/CRLF buffers; Tree-sitter row semantics are LF-based, so other EOL forms use bounded snapshot scanning.
+- Deliver tree/failure callbacks on the Android main thread and drop stale tree notifications; shut down the worker if session attachment fails.
+- Updated CI triggers for PRs targeting `main` and pushes to this feature branch. GitHub Actions run #552 is now executing both release assembly and debug tests; its result is pending.
+
+## 2026-11-10 — CI failure analysis and corrective fixes (SOURCE_PARTIAL)
+
+- Corrected TshCoordinateConverter expression-body control flow and retained the Long result type in its mapInt adapter.
+- Aligned TextAccessBinding disposal subscription with the provider's (reason, version) callback contract.
+- Unwrapped successful TshResult.Success<TshObjectDescriptor> metadata updates explicitly in both parser-owner edit paths.
+- Replaced query predicate-step assumptions with the actual TSQuery.predicatesFor(UInt) API; only custom predicates are checked against registered handlers, while built-in Tree-sitter predicates remain handled by the native query implementation.
+- Constructed renderer shutdown diagnostics locally with the correct warning severity and render stage.
+- Fixed PieceTreeSnapshot.getNearestChunk default-range overflow: start + Int.MAX_VALUE could wrap negative and corrupt snapshot reads. The requested length is now bounded by the remaining source-piece length before computing the end offset.
+- Pinned CI grammar tooling to Node.js 20 and made the test job install all grammar package dependencies, matching the release job.
+- GitHub Actions run #552 exposed the failures above. Corrective commits are on feat/tsh-unified-api-foundation; the new workflow run must complete before build/test status can be upgraded. No test has been marked verified from source inspection alone.
+
+### Follow-up: bound the mutable PieceTree read path too
+
+- Applied the same overflow-safe chunk-length calculation to PieceTreeBase.getNearestChunk(); the previous fix covered immutable snapshots, but the live PieceTree path had the equivalent targetOffset + Int.MAX_VALUE overflow.
+- Extended the regression test to assert both live-buffer and immutable-snapshot reads with Int.MAX_VALUE and bounded lengths.
+- Added workflow-level concurrency cancellation for superseded branch/PR runs, removed the per-job cancellation action, and aligned Debug grammar npm fallback with Release.
+- These changes are source-level corrections only; the new run remains the authority for validation status.
