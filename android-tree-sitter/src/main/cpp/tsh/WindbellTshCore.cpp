@@ -395,6 +395,7 @@ static bool tshPredicateCaptureTexts(const TSQueryMatch& match, uint32_t capture
     uint32_t source_bytes,
     std::vector<std::vector<UChar>>& texts) {
     texts.clear();
+    try {
     for (uint32_t i = 0; i < match.capture_count; ++i) {
         if (match.captures[i].index != capture_id) continue;
         const uint32_t start = ts_node_start_byte(match.captures[i].node);
@@ -416,6 +417,10 @@ static bool tshPredicateCaptureTexts(const TSQueryMatch& match, uint32_t capture
     // still evaluate successfully for an absent capture, matching Tree-sitter's
     // predicate semantics; the operator decides the empty-set result.
     return true;
+    } catch (const std::bad_alloc&) {
+        texts.clear();
+        return false;
+    }
 }
 
 static int tshPredicateCaptureEquals(const TSNode& node,
