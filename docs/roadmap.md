@@ -243,3 +243,10 @@
 - [x] 增加估算器校验、预算拒绝、reservation 生命周期及 Engine 关闭行为测试源码。
 - [ ] Native Tree 估算值仍由宿主提供，Tree-sitter 内部 allocator 尚未按 Parser/Tree 做精确归属；不可声称 Native RSS 已被硬限制。
 - [ ] 本轮新增 JUnit 测试待 CI 对最新 HEAD 执行验证。
+
+### 2026-11-10：String Parser 输入内存准入
+
+- [x] 旧版 `parse(String)` 路径在调用 `TSParser.parseString()` 前，按 UTF-16LE 长度加固定估算开销申请 `PARSER_INPUT` reservation。
+- [x] 预算不足时在创建 Native 连续输入副本之前拒绝解析；解析完成、失败或取消后在 `finally` 释放临时 reservation。
+- [x] 保留 Snapshot + TSInput 分块路径：其 reservation 仍按每次最大 callback chunk 申请并在 callback 返回前释放，不因文件总长度而申请全文副本预算。
+- [ ] 该 String 路径无法避免调用方已经持有的 JVM String；200–300 MiB 及更大的宿主文档应优先走 Snapshot/Piece Tree streaming API。
