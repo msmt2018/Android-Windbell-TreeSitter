@@ -6,7 +6,7 @@ enum class TshDiagnosticSeverity { ERROR, WARNING, INFO, HINT }
 enum class TshDiagnosticStage {
     ENGINE, CONFIG, LEX, PARSE, SCHEMA, SEMANTIC, COMPILE,
     SYNTAX, ATS, REGEX, COORDINATE, HIGHLIGHT, BINDING,
-    RENDER, JNI, LIFECYCLE, PROVIDER
+    RENDER, JNI, LIFECYCLE, PROVIDER, MEMORY
 }
 
 enum class TshCoordinateSystem {
