@@ -78,6 +78,13 @@ class TshRegexWindowSequenceTest {
 
         val emptyLease = TshSharedTextSnapshotLease.acquire(Snapshot(""))
         val emptySequence = (TshRegexWindowSequence.open(emptyLease, constraints()) as TshResult.Success<TshRegexWindowSequence>).value
+        val emptyWindow = (emptySequence.nextWindow() as TshResult.Success<TshRegexWindowLease?>).value
+        assertNotNull(emptyWindow)
+        assertEquals("", emptyWindow!!.text.toString())
+        assertTrue(emptyWindow.isDocumentStart)
+        assertTrue(emptyWindow.isDocumentEnd)
+        assertTrue(emptyWindow.ownsMatchStart(0L))
+        emptyWindow.close()
         assertEquals(null, (emptySequence.nextWindow() as TshResult.Success<TshRegexWindowLease?>).value)
         emptySequence.close()
         emptyLease.close()
