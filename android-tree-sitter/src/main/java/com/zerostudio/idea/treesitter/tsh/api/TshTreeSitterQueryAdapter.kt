@@ -353,8 +353,9 @@ class TshTreeSitterQueryExecutor(
             }
             cursor.exec(nativeQuery, root)
 
-            val captures = ArrayList<TshCapture>()
+            val captures = ArrayList<TshCapture>(minOf(budget.maxCaptures, 16_384))
             var matchesSeen = 0
+            var estimatedResultBytes = 0L
             var truncated = false
             while (true) {
                 if (cancellation.isCancelled()) {
@@ -367,6 +368,10 @@ class TshTreeSitterQueryExecutor(
                 }
                 matchesSeen++
                 for (captureIndex in match.captures.indices) {
+                    if (captures.size >= budget.maxCaptures) {
+                        truncated = true
+                        break
+                    }
                     val nativeCapture = match.getCapture(captureIndex)
                     val node = nativeCapture.node
                     if (!node.canAccess()) {
@@ -374,14 +379,25 @@ class TshTreeSitterQueryExecutor(
                     }
                     val captureName = nativeQuery.getCaptureNameForId(nativeCapture.index)
                         ?: return failure("TSH-QUERY-EXEC-014", "Native query returned an unknown capture id")
+                    val nodeType = node.type
+                    // Approximate retained UTF-16 strings plus per-capture object/list overhead.
+                    // The estimate is deliberately explicit and does not include Native objects.
+                    val estimatedCaptureBytes = 96L +
+                        2L * (captureName.length.toLong() + nodeType.length.toLong())
+                    if (estimatedCaptureBytes > budget.maxResultBytes - estimatedResultBytes) {
+                        truncated = true
+                        break
+                    }
                     captures += TshCapture(
                         name = captureName,
-                        nodeType = node.type,
+                        nodeType = nodeType,
                         byteRange = TshByteRange(node.startByte, node.endByte),
                         nodeId = node.nodeId,
                         patternIndex = match.patternIndex
                     )
+                    estimatedResultBytes += estimatedCaptureBytes
                 }
+                if (truncated) break
             }
 
             val exceeded = cursor.didExceedMatchLimit()
@@ -403,7 +419,7 @@ class TshTreeSitterQueryExecutor(
                 diagnostics = buildList {
                     if (!complete) add(diagnostic(
                         "TSH-QUERY-EXEC-015",
-                        "Query result is partial because the total match budget was reached or Tree-sitter dropped pending matches",
+                        "Query result is partial because a match, capture-count, or estimated result-memory budget was reached, or Tree-sitter dropped pending matches.",
                         TshDiagnosticSeverity.WARNING
                     ))
                     // Step budgets are rejected before entering Native execution; no false stepsUsed value is reported.
