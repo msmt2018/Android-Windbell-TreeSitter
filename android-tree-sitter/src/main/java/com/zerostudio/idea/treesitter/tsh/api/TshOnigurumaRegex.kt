@@ -61,6 +61,9 @@ class TshOnigurumaRegex private constructor(
         if (window.isClosed) return failure(
             "TSH-REGEX-NATIVE-002", "Regex window lease is closed"
         )
+        if (window.constraints != windowConstraints) return failure(
+            "TSH-REGEX-NATIVE-023", "Regex window constraints do not match the compiled Regex declaration"
+        )
         if (maxMatches !in 1..MAX_MATCHES_PER_WINDOW ||
             maxCaptureGroups !in 1..MAX_CAPTURE_GROUPS) {
             return failure(
