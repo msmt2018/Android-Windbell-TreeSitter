@@ -5,6 +5,7 @@ import android.text.Spanned
 import android.text.style.BackgroundColorSpan
 import android.text.style.ForegroundColorSpan
 import android.text.style.StyleSpan
+import android.text.style.StrikethroughSpan
 import android.text.style.UnderlineSpan
 import x.github.module.editor.highlight.SyntaxHighlighter
 import x.github.module.editor.model.EditorBuffer
@@ -264,9 +265,6 @@ class TshRenderPlanSyntaxHighlighter(
             val style = instruction.style
             if (style.fontFamilies.isNotEmpty()) unsupported += "fontFamilies"
             if (style.fontSize != null) unsupported += "fontSize"
-            if (style.strikeThrough != null || "strike" in style.decorations ||
-                "strikethrough" in style.decorations
-            ) unsupported += "strikeThrough"
         }
         return unsupported.map { feature ->
             TshDiagnostic(
@@ -303,6 +301,10 @@ class TshRenderPlanSyntaxHighlighter(
         }
         val underline = style.underline ?: ("underline" in style.decorations)
         if (underline) output += TshLineSpan(UnderlineSpan(), start, end, flags)
+        val strikeThrough = style.strikeThrough ?: (
+            "strike" in style.decorations || "strikethrough" in style.decorations
+        )
+        if (strikeThrough) output += TshLineSpan(StrikethroughSpan(), start, end, flags)
     }
 
     private fun failure(code: String, message: String, cause: Throwable? = null) =
