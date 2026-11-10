@@ -533,3 +533,398 @@ Span mutation + invalidate 只能证明宿主对象发生变化，不能证明�
 最终效果必须是：无论文件大小、语法复杂度、Capture 数量、Piece Tree 分区方式、视口位置、滚动速度或编辑频率如何变化，TSH 都能对当前文档版本给出**准确、完整、可追溯、可诊断、可绘制**的结果。
 
 当资源不足或执行被取消时，系统可以明确降级，但不能给出错误的完整性承诺；当 .tsh 声明了颜色和样式且规则确实命中时，必须能够追踪它们从配置、匹配、Style 到最终 Renderer 的全过程，并通过真实控件/像素验证。
+
+
+---
+
+## 17. 首次打开文件：首屏高亮颜色响应慢、首次绘制迟缓
+
+这是独立且必须验收的性能问题，不能被“最终能显示颜色”掩盖。用户首次打开文件时，可能经历文件已显示但长时间没有语法颜色、先显示默认文本后很久才出现高亮、部分颜色迟到、颜色分批跳变，或首屏等待整个文件解析完成。它们通常意味着首屏高亮关键路径被全文件工作、重复转换、同步 JNI 调用、过度物化或不合理调度阻塞。
+
+### 17.1 首次打开的可观察症状
+
+必须分别记录，不得笼统记为“打开慢”：
+
+1. **文本先显示、高亮迟到**：Editor 已经完成文本布局/显示，但首个有效高亮结果很晚才到。
+2. **首屏空白高亮**：首屏范围没有颜色，滚动或等待后才出现。
+3. **整文件解析阻塞首屏**：首屏必须等待整份 Tree、全量 Query、全量 Match/Capture 或全量 Span 完成。
+4. **颜色逐段跳变**：多个异步批次到达顺序不稳定，旧批次覆盖新批次，或不同阶段的颜色先后闪烁。
+5. **首次明显慢、第二次明显快**：可能存在缓存冷启动、Grammar/Query 编译、Native 初始化、页面分配、JIT、文件解码或索引预热成本；必须拆分测量，不能直接归因于 Parser。
+6. **文件越大首屏越慢**：说明首屏路径可能与全文长度或全量 Token/Capture 数量不必要地耦合。
+7. **高亮颜色先出现后消失**：可能是后续全量结果、旧 revision、默认样式或低优先级批次覆盖先前有效结果。
+8. **打开后短暂卡顿/掉帧**：可能是主线程执行解析、坐标转换、Span 全量替换、布局失效或大对象 GC。
+
+### 17.2 首次打开的关键路径拆解
+
+首次打开应拆成独立阶段并记录时间戳：
+
+| 阶段 | 计时起点/终点 | 必须记录 |
+|---|---|---|
+| T0 文档接入 | 用户打开 → snapshot 可读 | 文档长度、编码、revision、TextSource 建立耗时 |
+| T1 Native 初始化 | Native session 创建 | JNI handle、Parser、Memory Governor 初始化耗时 |
+| T2 Grammar 准备 | grammar 请求 → 可用 | grammar 加载/注册/初始化耗时、缓存命中 |
+| T3 Query 准备 | query 请求 → compiled | Query 编译耗时、Pattern/Capture 数量、缓存命中 |
+| T4 首屏输入读取 | 首个 TextSource read → 完成 | 读取窗口数、读取字节、等待时间、复制字节 |
+| T5 首次解析可用 | parse 开始 → 首个可查询 Tree/结果 | parse 字节进度、首个可用结果时间、解析状态 |
+| T6 首屏 Query | query 开始 → 首屏 Capture page | viewport/range、Match/Capture 数量、页数 |
+| T7 Style 解析 | MatchSet → ResolvedStyle | style 命中率、未解析数量、颜色解析耗时 |
+| T8 RenderPlan | style → plan | 指令数量、viewport、revision |
+| T9 Renderer Apply | plan → applied receipt | Span/对象更新数量、应用耗时 |
+| T10 实际首绘 | UI/render traversal → 首次像素可见 | Draw 确认时间、帧耗时、是否发生掉帧 |
+
+必须区分：
+- **TTF（Time to First Highlight）**：从打开请求到首屏第一个正确高亮像素可见；
+- **TTF-Complete（Time to First Viewport Complete）**：首屏视口内所有应有高亮均已完成；
+- **TTC（Time to Complete）**：整个文档的后台解析/索引/查询工作完成时间。
+
+不能用 TTC 代替 TTF，也不能用 RenderPlan 创建时间冒充 TTF。
+
+### 17.3 首屏优先、全局后台的调度原则
+
+首次打开采用“首屏优先、有限预取、后台补全”的调度模型：
+
+1. 先确定当前 viewport 和必要的上下文范围；
+2. 优先保证 Grammar/Query 可用，避免重复编译；
+3. 让 Parser 按需读取并推进到能够提供首屏结构信息的位置；
+4. Query 只优先生成首屏需要的 Match/Capture；
+5. StyleResolver 只解析当前首屏实际使用的 Scope/Style；
+6. Renderer 尽快提交首屏指令，并等待真实绘制确认；
+7. 首屏完成后，再调度相邻 viewport 预取和后台全局工作；
+8. 低优先级工作不得长期占用首屏需要的 Native 内存、锁、线程或缓冲区；
+9. 首屏任务被滚动/编辑取代时，及时取消或降级旧任务；
+10. 后台完整性状态必须与首屏局部可用状态分别表达。
+
+**重要限制：** 首屏优先不等于只解析 viewport 文本片段并把它当作独立语法文档。Query 需要的祖先、前置状态、兄弟或 predicate 上下文必须由完整 Parser 状态/Tree 提供。首屏调度可以限制结果范围，但不能破坏语法上下文。
+
+### 17.4 禁止的首次打开实现方式
+
+- 等待整份大文件完成所有 Query/Capture 后才提交首屏；
+- 打开时同时生成全文 String、全文 Native buffer、全量 Token List、全量 Capture List 和全量 Span；
+- 在 UI 主线程执行 Parser、Query、Regex、批量坐标转换或大规模 Span 构建；
+- 每次打开都重复加载/编译相同 Grammar 和 Query，却没有缓存命中指标；
+- 首屏 Query 与后台全量 Query 同时争用同一 Parser/Cursor/大锁；
+- 每个批次都清空整个 Editor 的 Span 再全量重建；
+- 用默认颜色先覆盖真实样式，再由迟到结果反复替换造成闪烁；
+- 首屏局部结果没有 revision 标识，后台旧任务可以覆盖当前结果；
+- 只测平均耗时，不记录冷启动、缓存冷/热、P95/P99 和真实首绘。
+
+### 17.5 首次打开性能指标
+
+每个 fixture 至少记录：
+
+- TTF、TTF-Complete、TTC；
+- 首屏 Query 的 Match/Capture 数量与完整性；
+- 首屏需要的 ReadWindow 次数和字节数；
+- 全文总字节数、行数、Token 密度；
+- Grammar/Query 冷/热缓存耗时；
+- Native/JVM 分配字节、复制字节、峰值工作集；
+- UI 主线程最长任务、掉帧数、首屏期间 GC 次数；
+- 首屏是否被后台任务阻塞；
+- 首绘时的 document/tree/query/style/renderer revision。
+
+按文件大小、语法、Token 密度、设备内存和缓存状态分组报告 P50/P95/P99。性能目标必须由目标设备基线确定并写入项目验收表；在未测量前不得虚构固定毫秒承诺。
+
+---
+
+## 18. 编辑器滚动时不渲染高亮：视口驱动的持续渲染契约
+
+“编辑器滚动时不渲染高亮颜色”不是单纯的滚动监听问题。它意味着滚动后新进入视口的范围没有获得当前版本的有效 Match/Style/RenderInstruction，或者 Renderer 没有在新布局/绘制周期应用它们。常见表现包括：初始屏幕有颜色，向下滚动后新文本全无颜色；滚动到某些 Piece Tree 分区后颜色消失；快速滚动时出现白块/默认色；回滚后颜色又出现；滚动停止很久才补色。
+
+### 18.1 滚动时必须持续成立的契约
+
+- 高亮结果是绑定 document revision 的语义结果；可视区域是动态变化的消费范围。
+- 每次 viewport 变化都必须触发一次有界、可合并、可取消的可视范围更新。
+- 新 viewport 的所有可见文本必须处于以下明确状态之一：已有有效结果、正在计算、等待 Parser 上下文、等待 Style、等待 Renderer、因预算而 deferred、失败/取消。
+- 不允许把“没有 Span”解释为“没有匹配”；也不允许把“缓存没有命中”解释为“无需高亮”。
+- 滚动进入新范围时，必须验证其结果 revision 与当前 document/tree/query/theme/layout/renderer generation 一致。
+- 视口外结果可以延迟，但不能把视口外 deferred 计入 DRAWN。
+- 滚动离开旧范围后，可以回收不再需要的视口对象，但不得误删宿主或其他模块创建的 Span。
+- 滚动只改变 viewport/layout，不应无故重建整份 Tree 或重新编译 Query。
+
+### 18.2 Viewport 变化的正确流水线
+
+1. Editor 发布新的可见行/范围，包含绝对 UTF-16 范围和 layout generation；
+2. 将范围转换为 Native/Query 所需坐标时，显式记录单位并检查边界；
+3. 合并短时间内连续的 viewport 更新，取消已过时的低优先级任务；
+4. 查询当前 revision 的 Match/Style 缓存；
+5. 对缓存缺失范围，在完整 Tree 上执行有界 Query；若 Tree 尚未解析到可用状态，则调度必要的 Parser 进度；
+6. 将 Match/Capture 归一化为绝对文档坐标；
+7. 解析当前 Theme/Style，并构建只覆盖新 viewport 的 RenderPlan；
+8. Renderer 在正确线程/绘制生命周期应用；
+9. 收到 APPLIED 仅表示对象更新；实际 Draw 后再确认 DRAWN；
+10. 检查 viewport generation，过期任务不得提交；
+11. 更新 viewport coverage ledger，记录哪些区间已完成、正在处理、deferred 或失败。
+
+### 18.3 视口覆盖账本（Viewport Coverage Ledger）
+
+建议维护可诊断的范围状态，而不是只有一个“highlighted”布尔值：
+
+| 状态 | 含义 | 是否可视为完成 |
+|---|---|---|
+| UNKNOWN | 尚未请求或状态未知 | 否 |
+| QUEUED | 已排队 | 否 |
+| PARSING | 等待/正在推进 Parser | 否 |
+| QUERYING | 正在执行 Query/Regex | 否 |
+| RESOLVING | 正在解析 Scope/Style | 否 |
+| READY | RenderPlan 已准备 | 否 |
+| APPLIED | Span/显示对象已更新 | 仅应用完成 |
+| DRAWN | 当前 generation 的实际绘制已确认 | 是 |
+| DEFERRED | 因 viewport/预算策略暂缓 | 否 |
+| PARTIAL | 范围仅部分完成 | 否 |
+| STALE | 对应版本已过期 | 否 |
+| FAILED | 失败 | 否 |
+
+Coverage ledger 的区间必须采用统一半开区间，并记录 document/tree/query/theme/layout/renderer generation。相邻区间合并时不能把不同 revision 或不同状态合并成一个完成区间。
+
+### 18.4 滚动期间的预取与调度
+
+- 预取范围按滚动方向、速度、设备内存和历史耗时动态调整；
+- 快速滚动时优先当前 viewport，降低远端预取，避免大量无用 Query；
+- 滚动停止后再补齐相邻范围；
+- 预取必须有上限，不能因持续滚动无限积累待处理任务；
+- 预取结果可以缓存，但必须绑定版本和范围；
+- 多个 viewport 请求重叠时可合并计算，但必须保留每个请求的 generation/消费者；
+- 新 viewport 到来后，旧任务可被取消、降级为缓存填充或继续作为低优先级后台任务，但不得提交旧 viewport 的 RenderPlan；
+- 同一 Parser 的状态推进不能因多个滚动事件而并发执行。
+
+### 18.5 常见根因分类
+
+**A. 没有触发更新**
+- Editor 的滚动/viewport 回调未接入高亮 Provider；
+- 只在文本 change 时刷新，滚动时没有请求新范围；
+- Recycler/virtualized line view 复用后没有重新绑定高亮；
+- Piece Tree viewport 映射没有更新。
+
+**B. 请求范围错误**
+- 使用屏幕坐标、行号或局部 chunk offset 代替文档绝对范围；
+- UTF-16 与 UTF-8 转换错误；
+- 新 viewport 的 end exclusive 计算错误；
+- viewport 跨 Piece Tree leaf 时只请求了第一段；
+- 预取区间覆盖当前视口计算错误。
+
+**C. 结果没有生成**
+- Query cursor 只执行初始范围；
+- Parser 尚未提供所需上下文；
+- 缓存 key 不包含范围或 revision；
+- match limit/pending limit 使后续范围被截断；
+- 大文件调度器把新 viewport 请求排在永不完成的全量任务之后。
+
+**D. 结果生成但未应用**
+- MatchSet 到 RenderPlan 的范围裁剪错误；
+- StyleResolver 对新批次没有正确解析；
+- RenderPlan 使用旧 viewport/layout generation；
+- Renderer 只在首次 attach 时应用 Span；
+- Span 被后续全量替换或清理逻辑删除；
+- 新行 View 复用后没有重新绑定对应 Span。
+
+**E. 已应用但没有实际绘制**
+- 没有触发正确的 invalidate/requestLayout；
+- invalidate 调用对象不是实际显示的 Editor/View；
+- 绘制发生在错误线程；
+- Renderer 的绘制缓存未因 viewport/layout generation 更新；
+- Canvas clip/visible range 错误；
+- 只记录 APPLIED，却没有验证 Draw。
+
+### 18.6 滚动正确性与性能指标
+
+必须测量：
+
+- viewport event → 新 viewport TTF；
+- viewport event → TTF-Complete；
+- 当前视口已覆盖区间比例；
+- viewport 内未着色区间长度；
+- 缓存命中率、Query 新增执行范围；
+- 每次滚动触发的解析/查询/Span 数量；
+- 任务合并率、取消率、过期结果丢弃率；
+- 预取命中率与无用预取字节；
+- 快速滚动期间 UI 帧时间、掉帧和主线程最长任务；
+- 当前 viewport 的 READY/APPLIED/DRAWN 延迟分布；
+- 进入不同 Piece Tree leaf/chunk 时的覆盖连续性。
+
+验收必须包括慢速滚动、快速 fling、反向滚动、跳转到远端行、跨多个 Piece Tree 分区、滚动同时编辑、主题切换同时滚动、低内存压力和后台恢复。
+
+---
+
+## 19. 渲染响应不准确与速度慢：端到端时序、调度和一致性
+
+响应不准确不仅是匹配结果错，也包括“结果属于正确对象但来得太迟”“正确结果被旧任务覆盖”“只更新部分可视范围”“显示的颜色与当前主题/规则不一致”。性能慢也不能只归因于 Tree-sitter Parser；必须拆解每个阶段的排队、执行、转换、等待和绘制耗时。
+
+### 19.1 响应准确性的四个维度
+
+1. **数据准确**：Match/Capture 对应正确语法节点、Pattern、Rule 和文本。
+2. **空间准确**：Range 与当前文档绝对坐标、viewport 和实际行布局一致。
+3. **时间准确**：结果属于当前 document/tree/query/theme/layout/renderer generation，没有迟到旧结果。
+4. **显示准确**：最终 Renderer 对应范围实际显示了正确颜色/装饰，而不是只完成了中间对象更新。
+
+任一维度失败，都属于渲染响应不准确。
+
+### 19.2 全链路时序模型
+
+每个任务应记录以下时间点：
+
+- createdAt：viewport/change 请求创建；
+- enqueuedAt：进入调度队列；
+- startedAt：Native/Query 开始；
+- inputReadyAt：需要的 TextSource 数据准备好；
+- parseReadyAt：必要 Tree 状态可用；
+- queryDoneAt：Match/Capture 结果完成；
+- normalizedAt：统一 MatchSet 完成；
+- styleResolvedAt：样式解析完成；
+- planBuiltAt：RenderPlan 创建；
+- appliedAt：Renderer 应用完成；
+- drawnAt：实际绘制确认；
+- cancelledAt/staleAt：取消或过期时间。
+
+据此计算排队耗时、读取耗时、解析耗时、Query 耗时、归一化耗时、样式耗时、Renderer 应用耗时和真实绘制耗时。只记录总耗时会掩盖瓶颈。
+
+### 19.3 任务优先级与公平性
+
+建议任务优先级：
+
+1. 当前 viewport 首次可见范围；
+2. 当前 viewport 的缺失/错误高亮修复；
+3. 用户正在编辑位置附近的增量更新；
+4. 滚动方向上的有限预取；
+5. 低优先级远端索引/全文件统计；
+6. 非必要后台缓存预热。
+
+必须有公平性与饥饿保护：连续滚动不能让编辑任务永远得不到执行；连续编辑也不能让当前可见区域永远没有高亮。任务优先级不能只依赖提交顺序。
+
+### 19.4 过期任务和结果覆盖
+
+每个任务至少携带：
+- documentId/documentRevision；
+- treeRevision；
+- grammarFingerprint；
+- queryRevision/regexRevision；
+- theme/styleRevision；
+- viewportGeneration；
+- layoutGeneration；
+- rendererGeneration；
+- taskId/priority/cancellation token。
+
+提交 RenderPlan 前必须验证所有相关 generation。对于仅 viewport 变化而文档语义未变的情况，可以复用范围匹配结果，但必须重新裁剪/布局并验证 renderer generation；不能把旧 viewport 的完整计划直接提交。
+
+### 19.5 结果更新必须避免闪烁与错误回退
+
+- 不要在新结果尚未准备时无条件清空仍然有效的旧高亮；
+- 旧高亮若因文档内容已改变而不再可信，应明确标记 invalid 并采取安全清除/占位策略；
+- 新结果采用 staging，再按 generation 原子替换可见范围；
+- 对局部更新只替换目标范围，不清空无关区域；
+- 失败时保留仍有效的旧范围，并标记失败区间；
+- 多批次到达必须按 page sequence/revision 处理，不能按线程完成顺序覆盖；
+- 对同一范围的样式冲突使用确定性优先级，不依赖异步到达顺序。
+
+### 19.6 性能瓶颈检查清单
+
+**输入与解析**
+- 是否每次滚动都重新 parse 全文；
+- 是否每次打开都复制全文；
+- TextSource 是否产生大量小块 JNI 往返；
+- read callback 是否重复查找 Piece Tree；
+- Parser 是否因错误的 revision/edit range 丢失增量复用；
+- 是否在同一个 Parser 上重复排队多个全量任务。
+
+**Query 与匹配**
+- 是否每次滚动都从文档开头遍历 Query；
+- Query cursor 是否设置合理 range；
+- 是否对所有 Pattern 重复执行相同工作；
+- 是否先生成全量 Capture 再裁剪 viewport；
+- 是否存在 Match/Capture 的重复分配和多次排序；
+- 是否因 pending match 限制导致反复重试/扫描。
+
+**坐标与样式**
+- 是否对每个 Capture 重复进行昂贵的全局 offset 转换；
+- 是否逐 Capture 查找 Style 而没有批量/缓存；
+- 是否每次滚动重新解析整份 .tsh/Theme；
+- 是否发生 Scope/Style ID 映射重复构建；
+- 是否对未变化范围重复生成 RenderInstruction。
+
+**JNI 与对象分配**
+- 是否逐 Token/Match/Capture 调 JNI；
+- 是否把 Native 紧凑结构逐个装箱为 Kotlin 对象；
+- 是否同时保留 Native vector 与 JVM List；
+- 是否频繁创建短命 byte[]/char[]/String；
+- 是否因跨线程复制和序列化造成额外成本。
+
+**Renderer 与 UI**
+- 是否每次 viewport 更新全量清除/重建 Span；
+- 是否对单个 Capture 反复 invalidate；
+- 是否每次高亮更新都触发不必要 layout；
+- 是否在主线程做大量排序、合并和 Span 创建；
+- 是否重复绘制视口外范围；
+- 是否 Renderer capability 检查和 Theme resolve 每次重复执行。
+
+### 19.7 性能报告最低要求
+
+每个性能结论必须附：
+- commit SHA、设备型号/内存、Android API、构建类型；
+- 文件大小、行数、Token 密度、语法和 .tsh 规则规模；
+- 冷启动/热启动、缓存冷/热；
+- TTF、TTF-Complete、TTC；
+- 滚动 TTF、viewport coverage、P50/P95/P99；
+- parse/query/style/apply/draw 分阶段耗时；
+- UI frame time、掉帧、主线程阻塞；
+- Native/JVM peak memory、分配与复制字节；
+- 结果准确性对照与 completeness；
+- 是否真实设备验证。
+
+没有这些数据时，只能说“观察到慢”或“某阶段疑似瓶颈”，不能宣称性能已经优化完成。
+
+---
+
+## 20. 针对首次打开与滚动问题的专项验收
+
+### 20.1 首次打开场景
+
+- 冷启动首次打开小/中/大文件；
+- Native 已加载但 Grammar/Query 缓存冷；
+- Grammar/Query 缓存热；
+- 200–300 MiB 文件打开后立即观察首屏；
+- 首屏尚未完整时快速滚动到远端；
+- 首屏 Query 与后台全局任务并发；
+- 打开期间编辑、关闭、切换文件；
+- Theme/Grammar/Query 在首屏计算中更新；
+- 低内存设备触发缓存淘汰；
+- 检查首屏颜色是否正确、稳定且无旧结果闪回。
+
+### 20.2 滚动场景
+
+- 首屏 → 相邻屏 → 远端跳转；
+- 慢速滚动、快速 fling、立即反向；
+- 跨 Piece Tree 多个 leaf/chunk；
+- 超长行横向滚动（若编辑器支持）；
+- 滚动同时输入、删除、撤销/重做；
+- 滚动同时切换主题/语言；
+- 快速重复 viewport 事件；
+- 后台任务晚于当前 viewport 到达；
+- Renderer detach/attach 和 Activity 生命周期变化；
+- 低内存与后台恢复。
+
+### 20.3 通过标准
+
+- 当前 viewport 不允许出现无法解释的长期无高亮空洞；
+- 所有可见高亮必须对应当前 revision 和当前 Style/Theme；
+- 不得由旧 viewport/旧文档任务覆盖当前屏幕；
+- viewport 外 deferred 不能计入已绘制；
+- 快速滚动后最终覆盖必须收敛，取消/丢弃旧任务不影响当前范围；
+- 首屏与滚动都必须记录 TTF 和实际 DRAWN；
+- 任何截断、预算不足和失败必须显式呈现，不能以默认色或空结果伪装成功；
+- 性能阈值按目标设备基线与产品目标定义，P95/P99 必须纳入验收，不能只看平均值。
+
+---
+
+## 21. 与大文本 Native Token 架构的关联
+
+本文新增的首次打开与滚动性能要求，必须与 [TSH / Tree-sitter 超大文本 Token 与 Native 分块处理技术理论及架构设计](TSH_LARGE_TEXT_NATIVE_TOKEN_ARCHITECTURE.md) 一起执行：
+
+- Native TextSource/TSInput 负责按需读取，不能在首次打开或滚动时隐式 flatten 全文；
+- Parser 状态跨 ReadWindow 连续，不能把 viewport 当独立语法文件；
+- Token/Subtree/Query/Regex 缓存绑定 revision 并受统一内存预算约束；
+- 首屏和 viewport 结果采用有限批次/结果页，不能全量物化；
+- 当前 viewport 的任务优先级高于远端预取；
+- 双/三缓冲只准备输入，不得并发推进同一个 Parser；
+- 结果分页必须传播 COMPLETE/PARTIAL/TRUNCATED 等状态；
+- Regex/Oniguruma 窗口必须有稳定连续 BufferLease；
+- 真实首绘与滚动 Draw 必须通过 Renderer receipt 和设备证据确认。
+
