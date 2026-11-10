@@ -98,6 +98,12 @@ struct RegexStateCase {
     uint16_t style_id = 0;
     std::string token_name;
     bool is_default = false;
+    // Case matchers participate in the state rule's execution semantics.
+    // Keep their width proof separate so a bounded parent pattern cannot
+    // incorrectly make a context-dependent case appear window-safe.
+    RegexExecutionCapability execution_capability =
+        RegexExecutionCapability::DOCUMENT_CONTEXT_REQUIRED;
+    uint64_t maximum_match_bytes = 0;
 };
 
 struct RegexStateRule {
