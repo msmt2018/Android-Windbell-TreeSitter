@@ -359,6 +359,12 @@ public:
 
     std::vector<CompiledRegexRule> regex_rules;
     std::unordered_map<std::string, std::vector<RegexStateRule>> regex_states;
+    // Aggregate proof for the start-state reachable Regex State graph. A true
+    // value means every enabled matcher reachable through include/transition
+    // edges has a compiler-proven finite width; it does not waive the runtime
+    // window-boundary and UTF-16 alignment checks.
+    bool regex_state_graph_bounded = false;
+    uint64_t regex_state_graph_maximum_match_bytes = 0;
     std::unordered_map<std::string, std::string> regex_variables;
     std::string regex_token_postfix;
     std::string regex_start_state = "root";
