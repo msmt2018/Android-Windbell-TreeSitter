@@ -51,6 +51,11 @@ WindbellEngine::WindbellEngine() {
 }
 
 WindbellEngine::~WindbellEngine() {
+    // Grammar destructors release compiled Regex handles; they must run before onig_end().
+    {
+        std::lock_guard<std::mutex> lock(registry_lock_);
+        grammar_registry_.clear();
+    }
     onig_end();
 }
 
