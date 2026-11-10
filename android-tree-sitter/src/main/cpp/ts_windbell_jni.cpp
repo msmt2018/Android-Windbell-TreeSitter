@@ -1469,55 +1469,21 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
         }
     }
 
-    windbell::largefile::TextChunkView view{};
     const uint16_t *input = nullptr;
-    std::vector<uint16_t> compatibility_window;
-    if (total_bytes != 0 && !source_native_ast_only) {
-        if (!highlight_source->read(0, UINT32_MAX, &view) ||
-            !view.data || view.size == 0) {
-            throw_illegal_state(env, "Native Piece Tree cannot provide its first input window");
+    if (total_bytes != 0 && source_has_regex) {
+        const char *contiguous_data = nullptr;
+        uint64_t contiguous_size = 0;
+        if (highlight_source->contiguousData(&contiguous_data, &contiguous_size) &&
+            contiguous_size == total_bytes && contiguous_data != nullptr) {
+            input = reinterpret_cast<const uint16_t *>(contiguous_data);
+        } else if (source_requires_contiguous_regex) {
+            // Never run a context-dependent pattern against a partial window.
+            throw_illegal_state(env,
+                "Context-dependent TSH Regex requires a complete immutable contiguous source");
             return nullptr;
         }
-        if (view.size == total_bytes) {
-            // A source that fits in the first bounded window remains zero-copy.
-            input = reinterpret_cast<const uint16_t *>(view.data);
-        } else {
-            // The legacy contiguous Regex entry point requires one contiguous UTF-16
-            // buffer. Rebuilding it after edits defeats Piece Tree storage and can
-            // consume hundreds of MiB, preventing large-file viewport rendering.
-            // Retain this bridge only for modest documents. For larger edited Piece
-            // Trees, leave input null so TextSource-backed Tree-sitter queries still
-            // produce absolute captures for the renderer. Regex state rules need their
-            // own source-windowed scanners before they can run in this mode.
-            constexpr uint64_t kMaxLegacyCompatibilityBytes = 32ULL * 1024ULL * 1024ULL;
-            if (total_bytes <= kMaxLegacyCompatibilityBytes) {
-                try {
-                    compatibility_window.resize(static_cast<size_t>(total_bytes / 2u));
-                } catch (...) {
-                    compatibility_window.clear();
-                }
-                if (!compatibility_window.empty()) {
-                    uint64_t copied = 0;
-                    while (copied < total_bytes) {
-                        windbell::largefile::TextChunkView chunk{};
-                        const uint32_t request = static_cast<uint32_t>(std::min<uint64_t>(
-                            windbell::largefile::kTreeSitterInputChunkBytes, total_bytes - copied));
-                        if (!highlight_source->read(copied, request, &chunk) ||
-                            !chunk.data || chunk.size == 0 || chunk.size > total_bytes - copied) {
-                            throw_illegal_state(env, "Failed to stream edited Piece Tree into legacy TSH input");
-                            return nullptr;
-                        }
-                        std::memcpy(reinterpret_cast<uint8_t *>(compatibility_window.data()) + copied,
-                            chunk.data, chunk.size);
-                        copied += chunk.size;
-                    }
-                    input = compatibility_window.data();
-                }
-            } else {
-                // No whole-document compatibility allocation: source-backed
-                // Tree-sitter captures remain available to the viewport renderer.
-            }
-        }
+        // Finite-width Regex and query predicates use the existing bounded
+        // TextSource window executors; no legacy whole-document heap bridge.
     }
     std::vector<HighlightSpan> candidates;
     uint32_t counts[4] = {};
