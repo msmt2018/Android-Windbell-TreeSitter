@@ -333,6 +333,44 @@ static void testPieceTreeUsesBoundedFileWindowAfterUnlink() {
     assert(readAll(source) == expected);
 }
 
+static void testEditedPieceTreeCreatesImmutableMappedSnapshot() {
+    char path[] = "/tmp/windbell-piece-snapshot-source-XXXXXX";
+    const int fd = ::mkstemp(path);
+    assert(fd >= 0);
+    const char initial[] = {
+        'a',0,'b',0,'c',0,'d',0,'e',0,'f',0
+    };
+    assert(::write(fd, initial, sizeof(initial)) ==
+           static_cast<ssize_t>(sizeof(initial)));
+    ::close(fd);
+
+    auto original = std::make_shared<MappedFileSource>(path);
+    assert(original->isOpen());
+    PieceTreeSource edited(original, 1024u * 1024u);
+    const char inserted[] = {'X',0,'Y',0};
+    assert(edited.replace(4, 4, inserted, sizeof(inserted)));
+    assert(!edited.contiguousData(nullptr, nullptr));
+
+    auto snapshot = MappedFileSource::createSnapshot(edited, "/tmp");
+    assert(snapshot && snapshot->isOpen());
+    const char *snapshot_data = nullptr;
+    uint64_t snapshot_size = 0;
+    assert(snapshot->contiguousData(&snapshot_data, &snapshot_size));
+    const std::string expected = std::string(initial, 4) +
+        std::string(inserted, sizeof(inserted)) + std::string(initial + 4, 8);
+    assert(snapshot_size == expected.size());
+    assert(std::memcmp(snapshot_data, expected.data(), expected.size()) == 0);
+
+    // Later edits must not mutate the mapped snapshot already held by readers.
+    const char replacement[] = {'Q',0};
+    assert(edited.replace(0, 2, replacement, sizeof(replacement)));
+    assert(snapshot->sizeBytes() == expected.size());
+    assert(std::memcmp(snapshot_data, expected.data(), expected.size()) == 0);
+
+    snapshot.reset();
+    ::unlink(path);
+}
+
 static void testCopyTextRangeAcrossPieceBoundaries() {
     char path[] = "/tmp/windbell-copy-range-XXXXXX";
     const int fd = ::mkstemp(path);
@@ -556,6 +594,7 @@ int main() {
     testPieceTreeSnapshotIsolatedAndSharesBacking();
     testPieceTreeUsesBoundedFileWindowAfterUnlink();
     testPieceTreeHandlesThreeHundredMegabytesWithoutMaterializingDocument();
+    testEditedPieceTreeCreatesImmutableMappedSnapshot();
     testCopyTextRangeAcrossPieceBoundaries();
     testSparsePartitionIndexSurvivesEdits();
     testSparseFilesFromOneToThreeHundredMegabytesUseBoundedWindow();
