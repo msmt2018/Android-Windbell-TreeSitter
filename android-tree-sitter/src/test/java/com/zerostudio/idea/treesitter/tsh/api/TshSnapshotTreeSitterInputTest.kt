@@ -153,13 +153,13 @@ class TshSnapshotTreeSitterInputTest {
 
     @Test
     fun reservesReusableStreamingJniBufferForWholeParseLifetime() {
-        val budget = TshMemoryBudget(TshMemoryBudgetOptions(2_048, 4_096))
+        val budget = TshMemoryBudget(TshMemoryBudgetOptions(4_096, 8_192))
         val reservation = (TshParserInputMemoryReservations.reserveChunkBuffer(
             budget, "doc", 3L, 1_024
         ) as TshResult.Success).value!!
 
-        assertEquals(1_088L, reservation.bytes)
-        assertEquals(1_088L, budget.snapshot().bytesByCategory[TshMemoryCategory.PARSER_INPUT])
+        assertEquals(2_112L, reservation.bytes)
+        assertEquals(2_112L, budget.snapshot().bytesByCategory[TshMemoryCategory.PARSER_INPUT])
         reservation.close()
         assertEquals(0L, budget.snapshot().reservedBytes)
     }
