@@ -989,8 +989,10 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
 
     // Stateful Regex rules run inside the same Regex pipeline and emit the same
     // capture ABI as ordinary Regex rules; there is no separate token model.
+    constexpr uint64_t kMaxRegexStateContextFallbackBytes = 50ull * 1024ull * 1024ull;
     if ((input_chars ||
-        (text_source && (grammar->regex_state_graph_bounded || total_bytes <= 8u * 1024u * 1024u))) &&
+        (text_source && (grammar->regex_state_graph_bounded ||
+            static_cast<uint64_t>(total_bytes) <= kMaxRegexStateContextFallbackBytes))) &&
         !grammar->regex_states.empty()) {
         std::vector<std::string> state_stack{grammar->regex_start_state};
         uint32_t position = 0;
@@ -1123,14 +1125,20 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
         uint32_t state_window_end = total_bytes;
         const uint64_t state_window_match_width = grammar->regex_state_graph_maximum_match_bytes;
         bool state_full_source_fallback = false;
-        // Context-sensitive patterns retain the original whole-document
-        // Oniguruma semantics for modest sources. Large sources never trigger
-        // an unbounded allocation merely to preserve an unsupported pattern.
-        constexpr uint32_t kMaxRegexStateContiguousFallbackBytes = 8u * 1024u * 1024u;
+        // Context-sensitive patterns retain whole-document Oniguruma semantics
+        // when the source fits the explicit 50 MiB fallback budget. The buffer
+        // is sized to the actual document (not preallocated to the budget), so
+        // smaller documents consume only their own source size. This is a hard
+        // ceiling, not a claim that arbitrary context-sensitive patterns can
+        // be evaluated correctly in independent windows.
         if (!input_chars && text_source && !grammar->regex_state_graph_bounded &&
-            total_bytes <= kMaxRegexStateContiguousFallbackBytes) {
-            try { state_window.resize(static_cast<size_t>(total_bytes / sizeof(UChar))); }
-            catch (...) { state_window.clear(); }
+            static_cast<uint64_t>(total_bytes) <= kMaxRegexStateContextFallbackBytes) {
+            const uint64_t required_units = static_cast<uint64_t>(total_bytes) / sizeof(UChar);
+            if (required_units <= static_cast<uint64_t>(state_window.max_size())) {
+                try { state_window.resize(static_cast<size_t>(required_units)); }
+                catch (const std::bad_alloc&) { state_window.clear(); }
+                catch (const std::length_error&) { state_window.clear(); }
+            }
             if (state_window.size() == total_bytes / sizeof(UChar) &&
                 windbell::largefile::copyTextRange(*text_source, 0, total_bytes, state_window.data())) {
                 state_full_source_fallback = true;
