@@ -1822,11 +1822,17 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                     tshIncrementDiagnostic(&diagnostic_match_counts[3], accepted_match_count);
                 }
             } else {
-                // Do not expose a partial query block. Earlier AST selector
-                // results and completed query blocks remain intact.
+                // A Tree-sitter cursor drops the earliest in-progress match when
+                // its capture-list pool is exhausted. Returning the remaining
+                // matches as an ordinary highlight result would therefore make
+                // the output look complete while silently omitting valid
+                // captures. Roll back this block and fail the whole highlight
+                // operation so JNI/Kotlin can report the incomplete execution.
                 macro_spans.resize(query_span_checkpoint);
-                LOGE("WindbellTSH", "Native query '%s' exceeded the maximum pending-match capacity; its captures were withheld",
-                     native_query.id.c_str());
+                throw std::runtime_error(
+                    "TSH native query '" + native_query.id +
+                    "' exceeded Tree-sitter's pending capture-list capacity; "
+                    "the query result is incomplete");
             }
             q_cursor.reset();
         }
