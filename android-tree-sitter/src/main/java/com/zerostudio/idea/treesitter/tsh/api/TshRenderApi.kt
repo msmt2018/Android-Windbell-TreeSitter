@@ -216,18 +216,18 @@ class TshRenderCoordinator @JvmOverloads constructor(
             synchronized(lock) { removePendingLocked(stablePlan.id) }
             return failure("TSH-RENDER-005", "Renderer provider threw during submission", error)
         } catch (error: LinkageError) {
-            synchronized(lock) { pending.remove(stablePlan.id) }
+            synchronized(lock) { removePendingLocked(stablePlan.id) }
             return failure("TSH-RENDER-024", "Renderer provider failed with a linkage error during submission", error)
         }
         return when (submitted) {
             is TshResult.Failure -> {
-                synchronized(lock) { pending.remove(stablePlan.id) }
+                synchronized(lock) { removePendingLocked(stablePlan.id) }
                 submitted
             }
             is TshResult.Success -> {
                 val receipt = submitted.value
                 validateReceipt(stablePlan, receipt)?.let { problem ->
-                    synchronized(lock) { pending.remove(stablePlan.id) }
+                    synchronized(lock) { removePendingLocked(stablePlan.id) }
                     return TshResult.Failure(listOf(problem))
                 }
                 if (receipt.status == TshRenderReceiptStatus.QUEUED) {
@@ -258,11 +258,11 @@ class TshRenderCoordinator @JvmOverloads constructor(
         }
         val current = synchronized(lock) { currentRevisions }
         if (current != plan.revisions) {
-            synchronized(lock) { pending.remove(receipt.planId) }
+            synchronized(lock) { removePendingLocked(receipt.planId) }
             return failure("TSH-RENDER-007", "Renderer acknowledged a stale RenderPlan")
         }
         if (receipt.status != TshRenderReceiptStatus.QUEUED) {
-            synchronized(lock) { pending.remove(receipt.planId) }
+            synchronized(lock) { removePendingLocked(receipt.planId) }
         }
         return when (receipt.status) {
             TshRenderReceiptStatus.REJECTED, TshRenderReceiptStatus.FAILED -> {
