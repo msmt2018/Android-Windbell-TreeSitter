@@ -10,9 +10,9 @@ import com.zerostudio.idea.treesitter.tsh.api.TshResolvedStyle
 import com.zerostudio.idea.treesitter.tsh.api.TshResult
 import com.zerostudio.idea.treesitter.tsh.api.TshSourcePosition
 import com.zerostudio.idea.treesitter.tsh.api.TshSourceRange
-import org.junit.Assert.assertEquals
-import org.junit.Assert.assertTrue
-import org.junit.Test
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 
 class TshRenderPlanSyntaxHighlighterTest {
     private val documentId = TshDocumentId("document-1")
