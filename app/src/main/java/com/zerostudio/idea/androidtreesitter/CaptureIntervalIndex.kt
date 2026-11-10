@@ -16,7 +16,7 @@ internal class CaptureIntervalIndex(
     init {
         var maximum = Long.MIN_VALUE
         spans.forEachIndexed { index, span ->
-            maximum = maxOf(maximum, span.endByte.toLong())
+            maximum = maxOf(maximum, span.endByteUnsigned)
             prefixMaxEnd[index] = maximum
         }
     }
