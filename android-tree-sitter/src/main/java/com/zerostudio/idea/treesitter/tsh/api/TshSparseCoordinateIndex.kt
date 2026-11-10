@@ -74,14 +74,14 @@ class TshSparseCoordinateIndex private constructor(
         if (closed.compareAndSet(false, true)) sourceLease.close()
     }
 
-    private fun metricLimit(system: TshCoordinateSystem): Long {
+    private fun metricLimit(system: TshCoordinateSystem): Long? {
         val last = checkpoints.last()
         return when (system) {
             TshCoordinateSystem.UTF16_CODE_UNIT -> lengthUtf16
             TshCoordinateSystem.UTF8_BYTE -> last.utf8
             TshCoordinateSystem.UNICODE_CODE_POINT -> last.codePoints
             else -> null
-        } ?: return -1L
+        }
     }
 
     private fun findCheckpoint(system: TshCoordinateSystem, offset: Long): Checkpoint {
