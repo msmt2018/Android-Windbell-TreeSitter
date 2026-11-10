@@ -92,9 +92,13 @@
 
 - [x] 修复 UTF-8 Regex pattern 被逐字节复制为 UTF-16 的问题，改为严格 UTF-8 解码和 UTF-16LE 编码。
 - [x] OnigRegion 使用 RAII 管理，避免分支异常/早退时泄漏。
-- [x] Regex WindowLease/Sequence 已提供有界 UTF-16 连续窗口资源、core 唯一归属、surrogate-safe 边界和 REGEX_WINDOW admission；尚未接入 Oniguruma Native Executor。
-- [ ] Regex Native buffer/Oniguruma Executor、有限模式静态能力声明、锚点/lookaround 正确性及跨窗口等价尚未实现。
-- [ ] BLOCK 规则跨窗口状态机、Regex 增量 dirty range、Native timeout/cancellation 与 Oniguruma 测试尚未实现。
+- [x] Regex WindowLease/Sequence 提供有界 UTF-16 连续窗口资源、core 唯一归属、surrogate-safe 边界、双侧 max-match overlap/lookaround context 和 REGEX_WINDOW admission（源码与窗口预算测试已提交）。
+- [x] 新增 `TshRegexNativeRegistry` / `TshOnigurumaRegex`：opaque Native Handle compile/release/find-all、JNI 桥接、单 Handle 执行串行化、in-flight shared ownership、UTF-16LE bounded window 执行、NOTBOL/NOTEOL 文档边界选项、core start 唯一归属、捕获/Match 数量上限和 Lease 释放（源码已提交，待 NDK/JNI 构建与运行验证）。
+- [x] 新 Executor 顺序消费 `TshRegexWindowSequence`，每个窗口执行后立即释放；输出绝对 UTF-16 `TshRegexResult` 并接入 `TshRegexMatchAdapter`；按 Match 数与估算字节预算限制结果累积（源码已提交，待 JUnit/Native 验证）。
+- [x] 修复 `TshGrammar` 析构仅释放顶层 Regex 指针的问题，递归释放嵌套规则。
+- [ ] Regex 有限能力声明目前仍由调用方提供，尚无静态分析证明；`\G` 等全局状态/特殊锚点及任意 greedy/lazy/lookaround 模式的跨窗口等价尚未验证，不能宣称通用模式安全。
+- [ ] Oniguruma named-capture 名称枚举、BLOCK 跨窗口状态机、timeout/强制取消、灾难性回溯隔离、增量 dirty range 和完整 Native 测试尚未实现。
+- [ ] 旧 `WindbellTshEngine.nativeHighlight(String)` 仍走整份连续文本；新 Executor 尚未迁移既有 DSL MATCH/BLOCK 与旧混合高亮入口。
 
 ### 统一 Match / Scope / Selector
 
@@ -102,7 +106,7 @@
 - [x] Match 具有 canonical UTF-16 range、source provenance、pipeline revision、document version。
 - [x] MatchMerger 支持两来源汇合、去重、稳定排序、stale Match 排除和 partial 状态。
 - [x] 新增 `TshTreeSitterMatchAdapter`：校验 query/tree/document/grammar revisions，将 UTF-8 byte 或 UTF-16LE/BE byte range 正确映射为 canonical UTF-16 Match；保留 UTF-8 rawRange、capture/pattern/node provenance、确定性 Match ID/排序，并传播 TRUNCATED 状态（源码与 JUnit 测试已提交，待 CI 验证）。
-- [x] 新增 `TshRegexMatchAdapter`：把独立 Regex result 的绝对 UTF-16 范围与捕获组映射为 REGEX `TshMatchSet`，校验文档版本/范围/捕获嵌套，保留 Regex provenance、TRUNCATED/diagnostics，并在适配阶段限制 Match count 与 estimated-byte 工作集（源码与 JUnit 测试已提交，待 CI）。
+- [x] 新增 `TshRegexMatchAdapter`：把独立 Regex result 的绝对 UTF-16 范围与捕获组映射为 REGEX `TshMatchSet`，校验文档版本/范围/捕获坐标，保留 Regex provenance、TRUNCATED/diagnostics，并在适配阶段限制 Match count 与 estimated-byte 工作集（源码与 JUnit 测试已提交，待 CI）。
 - [ ] Regex Oniguruma Executor 尚未产出 `TshRegexResult`；窗口本身未执行正则，不能将 Match adapter 标记为 Regex 执行完成。ATS 前端完成后复用 Tree-sitter 结果适配路径。
 - [x] 首版 ScopeSelector AST、exact/suffix path 匹配、StyleRule priority/specificity merge、MatchSet→RenderPlan resolver 源码与测试源码。
 - [ ] Scope parser/stack/assignment pipeline、DSL Selector parser/compiler/specificity 与高级冲突策略尚未完成。
