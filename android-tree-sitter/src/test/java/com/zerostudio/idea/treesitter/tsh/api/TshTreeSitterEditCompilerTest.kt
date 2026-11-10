@@ -177,6 +177,35 @@ class TshTreeSitterEditCompilerTest {
     }
 
     @Test
+    fun usesHostNativeSnapshotCoordinateIndexWithoutFullDocumentScan() {
+        val indexedSnapshot = object : TshTextSnapshot {
+            override val documentId = "doc"
+            override val version = 4L
+            override val lengthUtf16 = 1_000_000L
+            override fun readUtf16(start: Long, end: Long): CharSequence =
+                error("Host-native coordinates must avoid scanning document text")
+
+            override fun lineColumnAtUtf16(offset: Long): TshTextPosition? = when (offset) {
+                900_000L -> TshTextPosition(120, 17L)
+                900_010L -> TshTextPosition(120, 27L)
+                else -> null
+            }
+        }
+        val change = TshTextChange(
+            "doc", 4L, 5L,
+            listOf(TshTextEdit(900_000L, 900_010L, "x"))
+        )
+
+        val result = TshTreeSitterEditCompiler.compile(indexedSnapshot, change)
+        assertTrue(result is TshResult.Success)
+        val edit = (result as TshResult.Success<List<TSInputEdit>>).value.single()
+        assertEquals(120, edit.startPoint.row)
+        assertEquals(34, edit.startPoint.column)
+        assertEquals(120, edit.oldEndPoint.row)
+        assertEquals(54, edit.oldEndPoint.column)
+    }
+
+    @Test
     fun usesHostBeforeVersionCoordinatesWithoutScanningSnapshot() {
         val change = TshTextChange(
             "doc", 4L, 5L,
