@@ -624,6 +624,34 @@ public class ParserTest extends TreeSitterTest {
     }
   }
 
+  @Test
+  public void testQueryCursorProgressCallbackCanCancelExecution() {
+    final StringBuilder source = new StringBuilder("class ProgressCallback {");
+    for (int i = 0; i < 4096; i++) {
+      source.append(" int value").append(i).append(';');
+    }
+    source.append('}');
+
+    try (final TSParser parser = TSParser.create()) {
+      parser.setLanguage(TSLanguageJava.getInstance());
+      try (final TSTree tree = parser.parseString(source.toString());
+           final TSQuery query = TSQuery.create(
+             TSLanguageJava.getInstance(), "(identifier) @identifier");
+           final TSQueryCursor cursor = TSQueryCursor.create()) {
+        final boolean[] callbackInvoked = {false};
+        cursor.exec(query, tree.getRootNode(), byteOffset -> {
+          callbackInvoked[0] = true;
+          return true;
+        });
+
+        while (cursor.nextMatch() != null) {
+          // Continue until Tree-sitter reaches the cooperative progress callback.
+        }
+        assertThat(callbackInvoked[0]).isTrue();
+      }
+    }
+  }
+
   private static Map<String, List<TSNode>> execQueryGroupByCaptures(String querySource,
                                                                     TSLanguage language, TSNode node
   ) {
