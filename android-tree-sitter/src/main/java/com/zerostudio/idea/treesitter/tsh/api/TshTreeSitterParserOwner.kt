@@ -58,6 +58,200 @@ class TshTreeSitterParserOwner private constructor(
         documentId, documentVersion, treeRevision
     ) { parser -> parser.parseString(source) }
 
+    /**
+     * Requests cancellation of the currently active Native parse without releasing its parser
+     * lease. The parse thread remains responsible for publishing or discarding its result.
+     */
+    fun requestCancellation(): TshResult<Unit> {
+        val lease = resources.acquire(parser.handle)
+            ?: return failure(
+                "TSH-PARSER-OWNER-002",
+                "Parser is retired, closed, or unavailable",
+                TshDiagnosticStage.LIFECYCLE,
+                parser.descriptor.id
+            )
+        return try {
+            if (lease.resource.requestCancellationAsync()) {
+                TshResult.Success(Unit)
+            } else {
+                failure(
+                    "TSH-PARSER-OWNER-029",
+                    "No active Native parse accepted the cancellation request",
+                    TshDiagnosticStage.LIFECYCLE,
+                    parser.descriptor.id
+                )
+            }
+        } catch (error: LinkageError) {
+            failure(
+                "TSH-PARSER-OWNER-033",
+                "Tree-sitter Native cancellation linkage failed: ${error.message}",
+                TshDiagnosticStage.PARSE,
+                parser.descriptor.id,
+                error
+            )
+        } catch (error: Exception) {
+            failure(
+                "TSH-PARSER-OWNER-034",
+                "Tree-sitter Native cancellation request failed: ${error.message}",
+                TshDiagnosticStage.PARSE,
+                parser.descriptor.id,
+                error
+            )
+        } finally {
+            lease.close()
+        }
+    }
+
+    /**
+     * Requests Native cancellation and waits until the parser leaves its parsing critical section.
+     * This is a blocking API and must not be called from the parse callback/thread itself.
+     */
+    fun requestCancellationAndWait(): TshResult<Unit> {
+        val lease = resources.acquire(parser.handle)
+            ?: return failure(
+                "TSH-PARSER-OWNER-002",
+                "Parser is retired, closed, or unavailable",
+                TshDiagnosticStage.LIFECYCLE,
+                parser.descriptor.id
+            )
+        return try {
+            if (lease.resource.requestCancellationAndWaitIfParsing()) {
+                TshResult.Success(Unit)
+            } else {
+                failure(
+                    "TSH-PARSER-OWNER-029",
+                    "No active Native parse accepted the cancellation request",
+                    TshDiagnosticStage.LIFECYCLE,
+                    parser.descriptor.id
+                )
+            }
+        } catch (error: LinkageError) {
+            failure(
+                "TSH-PARSER-OWNER-033",
+                "Tree-sitter Native cancellation linkage failed: ${error.message}",
+                TshDiagnosticStage.PARSE,
+                parser.descriptor.id,
+                error
+            )
+        } catch (error: Exception) {
+            failure(
+                "TSH-PARSER-OWNER-034",
+                "Waiting for Tree-sitter Native cancellation failed: ${error.message}",
+                TshDiagnosticStage.PARSE,
+                parser.descriptor.id,
+                error
+            )
+        } finally {
+            lease.close()
+        }
+    }
+
+    /** Configures Tree-sitter's native timeout in microseconds; zero disables the timeout. */
+    fun setTimeoutMicros(timeoutMicros: Long): TshResult<Unit> {
+        if (timeoutMicros < 0L) {
+            return failure(
+                "TSH-PARSER-OWNER-035",
+                "Parser timeout must be non-negative",
+                TshDiagnosticStage.PARSE,
+                parser.descriptor.id
+            )
+        }
+        val lease = resources.acquire(parser.handle)
+            ?: return failure(
+                "TSH-PARSER-OWNER-002",
+                "Parser is retired, closed, or unavailable",
+                TshDiagnosticStage.LIFECYCLE,
+                parser.descriptor.id
+            )
+        return try {
+            parseLock.withLock {
+                lease.resource.setTimeout(timeoutMicros)
+                TshResult.Success(Unit)
+            }
+        } catch (error: LinkageError) {
+            failure(
+                "TSH-PARSER-OWNER-036",
+                "Tree-sitter Native timeout configuration linkage failed: ${error.message}",
+                TshDiagnosticStage.PARSE,
+                parser.descriptor.id,
+                error
+            )
+        } catch (error: Exception) {
+            failure(
+                "TSH-PARSER-OWNER-037",
+                "Cannot configure Tree-sitter parser timeout: ${error.message}",
+                TshDiagnosticStage.PARSE,
+                parser.descriptor.id,
+                error
+            )
+        } finally {
+            lease.close()
+        }
+    }
+
+    /** Returns the configured native parser timeout in microseconds. */
+    fun timeoutMicros(): TshResult<Long> {
+        val lease = resources.acquire(parser.handle)
+            ?: return failure(
+                "TSH-PARSER-OWNER-002",
+                "Parser is retired, closed, or unavailable",
+                TshDiagnosticStage.LIFECYCLE,
+                parser.descriptor.id
+            )
+        return try {
+            TshResult.Success(lease.resource.timeout)
+        } catch (error: LinkageError) {
+            failure(
+                "TSH-PARSER-OWNER-036",
+                "Tree-sitter Native timeout inspection linkage failed: ${error.message}",
+                TshDiagnosticStage.PARSE,
+                parser.descriptor.id,
+                error
+            )
+        } catch (error: Exception) {
+            failure(
+                "TSH-PARSER-OWNER-037",
+                "Cannot inspect Tree-sitter parser timeout: ${error.message}",
+                TshDiagnosticStage.PARSE,
+                parser.descriptor.id,
+                error
+            )
+        } finally {
+            lease.close()
+        }
+    }
+
+    private fun nullTreeFailure(
+        nativeParser: TSParser,
+        parseStartedAtNanos: Long,
+        operation: String
+    ): TshResult.Failure {
+        if (nativeParser.isCancellationRequested) {
+            return failure(
+                "TSH-PARSER-OWNER-030",
+                "Tree-sitter $operation was cancelled by an accepted Native cancellation request",
+                TshDiagnosticStage.PARSE,
+                parser.descriptor.id
+            )
+        }
+        val timeoutMicros = runCatching { nativeParser.timeout }.getOrDefault(0L)
+        val elapsedMicros = ((System.nanoTime() - parseStartedAtNanos).coerceAtLeast(0L)) / 1_000L
+        if (timeoutMicros > 0L && elapsedMicros >= timeoutMicros) {
+            return failure(
+                "TSH-PARSER-OWNER-031",
+                "Tree-sitter $operation returned no tree after the configured timeout interval; timeout is the likely stop reason (the Native API does not expose an exact stop-reason flag)",
+                TshDiagnosticStage.PARSE,
+                parser.descriptor.id
+            )
+        }
+        return failure(
+            "TSH-PARSER-OWNER-004",
+            "Tree-sitter $operation returned no syntax tree without an observable cancellation or elapsed timeout",
+            TshDiagnosticStage.PARSE,
+            parser.descriptor.id
+        )
+    }
+
     private fun parseWithInput(
         documentId: String,
         documentVersion: Long,
@@ -93,13 +287,11 @@ class TshTreeSitterParserOwner private constructor(
         var tree: TSTree? = null
         var languageLeaseTransferred = false
         try {
-            val parsedTree = parseLock.withLock { parse(parserLease.resource) }
-                ?: return failure(
-                    "TSH-PARSER-OWNER-004",
-                    "Tree-sitter parser returned no syntax tree",
-                    TshDiagnosticStage.PARSE,
-                    parser.descriptor.id
-                )
+            var parseStartedAtNanos = 0L
+            val parsedTree = parseLock.withLock {
+                parseStartedAtNanos = System.nanoTime()
+                parse(parserLease.resource)
+            } ?: return nullTreeFailure(parserLease.resource, parseStartedAtNanos, "String parse")
             tree = parsedTree
             if (!parsedTree.canAccess()) {
                 return failure(
@@ -555,14 +747,11 @@ class TshTreeSitterParserOwner private constructor(
         var languageLeaseTransferred = false
         try {
             val input = TshSnapshotTreeSitterInput(textProvider, snapshotLease, memoryBudget)
+            var parseStartedAtNanos = 0L
             val parsedTree = parseLock.withLock {
+                parseStartedAtNanos = System.nanoTime()
                 parserLease.resource.parseInput(oldTreeLease?.resource, input, chunkSizeBytes)
-            } ?: return failure(
-                "TSH-PARSER-OWNER-004",
-                "Tree-sitter streaming parser returned no syntax tree",
-                TshDiagnosticStage.PARSE,
-                parser.descriptor.id
-            )
+            } ?: return nullTreeFailure(parserLease.resource, parseStartedAtNanos, "Snapshot parse")
             tree = parsedTree
             if (!parsedTree.canAccess()) {
                 return failure(
