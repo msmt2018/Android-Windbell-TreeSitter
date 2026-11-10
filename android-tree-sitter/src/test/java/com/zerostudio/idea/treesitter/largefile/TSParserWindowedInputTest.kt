@@ -61,7 +61,7 @@ class TSParserWindowedInputTest {
     }
 
     @Test fun windowedNativeParserConsumesBoundedUtf16ChunksWithoutAstErrors() {
-        val text = ("class A${'$'}{0} { int value; String emoji = \"😀\"; }\\n").repeat(12000)
+        val text = ("class A { int value; String emoji = \"😀\"; }\n").repeat(12000)
         val parser = TSParser.create().apply { setLanguage(TSLanguageJava.getInstance()) }
         var maxRead = 0
         val callback = CharSequenceParseWindowCallback(text) { start, maxChars ->
