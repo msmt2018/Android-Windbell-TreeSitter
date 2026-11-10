@@ -2152,7 +2152,11 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                                     uint64_t maximum_width = 0;
                                     if (analyzeBoundedRegexWidth(expanded_pattern, &maximum_width)) {
                                         rule.execution_capability = RegexExecutionCapability::BOUNDED_WINDOW;
-                                        if (maximum_width <= std::numeric_limits<uint64_t>::max() / sizeof(UChar))
+                                        // TextSource and Oniguruma use UTF-16LE byte offsets.
+                                        // UChar is an 8-bit storage byte in this adapter,
+                                        // so the overflow guard must use the 2-byte code-unit
+                                        // width used by the stored document, not sizeof(UChar).
+                                        if (maximum_width <= std::numeric_limits<uint64_t>::max() / sizeof(uint16_t))
                                             rule.maximum_match_bytes = maximum_width * sizeof(uint16_t);
                                         else
                                             rule.execution_capability = RegexExecutionCapability::DOCUMENT_CONTEXT_REQUIRED;
