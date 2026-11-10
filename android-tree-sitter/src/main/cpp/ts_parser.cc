@@ -18,6 +18,7 @@
 #include <atomic>
 #include <chrono>
 #include <iostream>
+#include <memory>
 
 #include "utf16str/UTF16String.h"
 #include "utils/ts_obj_utils.h"

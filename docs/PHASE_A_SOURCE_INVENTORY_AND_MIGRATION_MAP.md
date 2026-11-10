@@ -64,12 +64,12 @@
 
 | 文件 | 当前 main Blob SHA | 主要职责 | 迁移处理 |
 |---|---|---|---|
-| `android-tree-sitter/src/main/cpp/tsh/WindbellTshCompiler.cpp` | `<see main ref>` | DSL 编译、规则和 Query 编译 | 先审查与 TextSource 的直接依赖，再迁移 |
-| `android-tree-sitter/src/main/cpp/tsh/WindbellTshCompiler.h` | `<see main ref>` | Compiler API | 迁移 |
+| `android-tree-sitter/src/main/cpp/tsh/WindbellTshCompiler.cpp` | `fdba100221de9d22d103d145f84bf78ef9646379` | DSL 编译、规则和 Query 编译 | 先审查与 TextSource 的直接依赖，再迁移 |
+| `android-tree-sitter/src/main/cpp/tsh/WindbellTshCompiler.h` | `ca9a5ac79ef7db41e4be00307e1500669b366730` | Compiler API | 迁移 |
 | `android-tree-sitter/src/main/cpp/tsh/WindbellTshCore.cpp` | `598c83554d4f7ba5d671d5da7480513bb09aef27` | ATS/Regex 执行、Capture、Style 结果 | 必须改成连续输入核心 |
 | `android-tree-sitter/src/main/cpp/tsh/WindbellTshCore.h` | `45ae238d62a5d1db347798ab1a1c891a5f43dbfc` | TSH Native 类型和执行契约 | 移除 TextSource / Partition / Checkpoint 参数 |
-| `android-tree-sitter/src/main/cpp/tsh/TshRegexNative.cpp` | `<see main ref>` | 独立 Oniguruma API | 审查后迁移 |
-| `android-tree-sitter/src/main/cpp/tsh/TshRegexNative.h` | `<see main ref>` | Regex Native API | 审查后迁移 |
+| `android-tree-sitter/src/main/cpp/tsh/TshRegexNative.cpp` | `5d029a0d1d3677528b0b17f8a23a19554a9829a2` | 独立 Oniguruma API | 审查后迁移 |
+| `android-tree-sitter/src/main/cpp/tsh/TshRegexNative.h` | `ed788b579698291c14cbe172f9b90000a20b4d99` | Regex Native API | 审查后迁移 |
 | `android-tree-sitter/src/main/cpp/ts_windbell_jni.cpp` | `6f8fd1c316460201b982bcdc03650eef68ea7870` | TSH JNI、配置、Palette、Highlight、Document Session | 保留普通 Highlight 与配置 API；删除 Native Document Session / 分区接口 |
 
 当前 `WindbellTshCore::highlightHybrid` 已存在完整连续文本入口：调用方传入完整 `input_chars`，且 `text_source == nullptr` 时走连续文本分支。后续重构应把这条路径提升为唯一正式执行路径，并从签名、辅助函数和状态结构中移除 TextSource 依赖，而不是另造一条 TSH 执行管线。
