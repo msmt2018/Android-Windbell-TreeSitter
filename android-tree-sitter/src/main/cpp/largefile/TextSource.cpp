@@ -95,6 +95,15 @@ uint64_t ContiguousTextSource::sizeBytes() const noexcept {
     return size_bytes_;
 }
 
+bool ContiguousTextSource::contiguousData(
+    const char **data, uint64_t *sizeBytes
+) const noexcept {
+    if (!data || !sizeBytes || (size_bytes_ != 0 && !data_)) return false;
+    *data = data_;
+    *sizeBytes = size_bytes_;
+    return true;
+}
+
 bool ContiguousTextSource::read(
     uint64_t offset,
     uint32_t maxBytes,
