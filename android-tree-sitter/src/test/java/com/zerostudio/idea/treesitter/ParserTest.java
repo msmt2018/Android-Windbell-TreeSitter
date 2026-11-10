@@ -386,6 +386,41 @@ public class ParserTest extends TreeSitterTest {
   }
 
   @Test
+  public void testStreamingProgressCallbackExceptionUnwindsNativeParseSafely() {
+    try (TSParser parser = TSParser.create()) {
+      parser.setLanguage(TSLanguageJava.getInstance());
+      final String source = readResource("View.java.txt").repeat(3);
+      final byte[] bytes = source.getBytes(StandardCharsets.UTF_16LE);
+      final TSInput input = (byteOffset, row, column, destination) -> {
+        final int start = Math.toIntExact(byteOffset);
+        if (start >= bytes.length) return 0;
+        int count = Math.min(destination.length, bytes.length - start) & ~1;
+        if (count == 0) return 0;
+        System.arraycopy(bytes, start, destination, 0, count);
+        return count;
+      };
+      final AtomicInteger calls = new AtomicInteger();
+      boolean callbackFailed = false;
+      try {
+        parser.parseInput(input, (offset, hasError) -> {
+          calls.incrementAndGet();
+          throw new IllegalStateException("progress callback failure");
+        });
+      } catch (IllegalStateException expected) {
+        callbackFailed = "progress callback failure".equals(expected.getMessage());
+      }
+      assertThat(calls.get()).isGreaterThan(0);
+      assertThat(callbackFailed).isTrue();
+      assertThat(parser.isParsing()).isFalse();
+
+      parser.reset();
+      try (var recoveredTree = parser.parseInput(input)) {
+        assertThat(recoveredTree).isNotNull();
+      }
+    }
+  }
+
+  @Test
   public void testParserParseCallShouldFailIfAnotherParseIsInProgress() {
     try (final var parser = TSParser.create(); final var mainParseContent = UTF16StringFactory.newString()) {
       parser.setLanguage(TSLanguageJava.getInstance());
