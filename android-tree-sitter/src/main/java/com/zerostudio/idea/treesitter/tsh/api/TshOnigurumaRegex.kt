@@ -174,7 +174,7 @@ class TshOnigurumaRegex private constructor(
                 partial = true
                 break
             }
-            val acquired = (next as TshResult.Success).value ?: break
+            val acquired = (next as TshResult.Success<TshRegexWindowLease?>).value ?: break
 
             val isLastCore = acquired.coreEndUtf16 == sequence.documentLengthUtf16
             val remaining = maxMatches - records.size
@@ -199,7 +199,7 @@ class TshOnigurumaRegex private constructor(
                 partial = true
                 break
             }
-            val windowResult = (execution as TshResult.Success).value
+            val windowResult = (execution as TshResult.Success<TshRegexWindowExecution>).value
             for (record in windowResult.matches) {
                 val recordBytes = estimateRecordBytes(record)
                 if (records.size >= maxMatches ||
