@@ -542,14 +542,14 @@ internal class PieceTreeBase {
         pieceStarts.add(length)
 
         val typedText: CharSequence = typed.toString()
-        val typedLineStarts = createLineStartsFast(typedText).toIntArray()
+        val typedLineStarts = createLineStartsFast(typedText)
         val starts = sourceStarts.toIntArray()
         val buffers = pieceBufferIndices.toIntArray()
-        val lineStartsCache = arrayOfNulls<IntArray>(this._buffers.size)
+        val lineStartsCache = arrayOfNulls<IntList>(this._buffers.size)
         lineStartsCache[0] = typedLineStarts
         val pieceLineStarts = Array(sources.size) { index ->
             val bufferIndex = buffers[index]
-            lineStartsCache[bufferIndex] ?: this._buffers[bufferIndex].lineStarts.toIntArray().also {
+            lineStartsCache[bufferIndex] ?: this._buffers[bufferIndex].lineStarts.also {
                 lineStartsCache[bufferIndex] = it
             }
         }
