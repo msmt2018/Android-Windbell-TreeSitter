@@ -49,7 +49,7 @@ class TshRegexWindowSequenceTest {
         val released = AtomicInteger()
         val source = Snapshot("text ".repeat(200))
         val callerLease = TshSharedTextSnapshotLease.acquire(source) { released.incrementAndGet() }
-        val sequence = (TshRegexWindowSequence.open(callerLease, constraints()) as TshResult.Success).value
+        val sequence = (TshRegexWindowSequence.open(callerLease, constraints()) as TshResult.Success<TshRegexWindowSequence>).value
 
         callerLease.close()
         assertEquals(0, released.get())
@@ -78,7 +78,7 @@ class TshRegexWindowSequenceTest {
 
         val emptyLease = TshSharedTextSnapshotLease.acquire(Snapshot(""))
         val emptySequence = (TshRegexWindowSequence.open(emptyLease, constraints()) as TshResult.Success<TshRegexWindowSequence>).value
-        assertEquals(null, (emptySequence.nextWindow() as TshResult.Success).value)
+        assertEquals(null, (emptySequence.nextWindow() as TshResult.Success<TshRegexWindowLease?>).value)
         emptySequence.close()
         emptyLease.close()
     }
@@ -110,8 +110,8 @@ class TshRegexWindowSequenceTest {
         val source = Snapshot("r".repeat(1_000))
         val callerLease = TshSharedTextSnapshotLease.acquire(source)
         val budget = TshMemoryBudget(TshMemoryBudgetOptions(4_096, 8_192))
-        val sequence = (TshRegexWindowSequence.open(callerLease, constraints(), budget) as TshResult.Success).value
-        val window = (sequence.nextWindow() as TshResult.Success).value!!
+        val sequence = (TshRegexWindowSequence.open(callerLease, constraints(), budget) as TshResult.Success<TshRegexWindowSequence>).value
+        val window = (sequence.nextWindow() as TshResult.Success<TshRegexWindowLease?>).value!!
         val heldBytes = budget.snapshot().reservedBytes
         assertTrue(heldBytes > 0L)
 
