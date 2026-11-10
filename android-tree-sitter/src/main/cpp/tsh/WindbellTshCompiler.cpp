@@ -29,6 +29,7 @@
 #include <limits>
 #include <unordered_set>
 #include <cstdint>
+#include <new>
 #include "ts__log.h"
 
 namespace windbell::tsh {
@@ -2651,6 +2652,7 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                                     std::to_string(static_cast<int>(error_type)) + ")";
                                 return nullptr;
                             }
+                            try {
                             // Predicate steps are evaluated by TSH at complete-match
                             // granularity. Reject unsupported or malformed forms at compile time.
                             const uint32_t compiled_pattern_count = ts_query_pattern_count(program.query);
@@ -2757,7 +2759,12 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                                             entry.maximum_match_bytes =
                                                 maximum_width_units * sizeof(uint16_t);
                                         }
-                                        program.predicate_regexes.push_back(entry);
+                                        try {
+                                            program.predicate_regexes.push_back(entry);
+                                        } catch (...) {
+                                            onig_free(compiled);
+                                            throw;
+                                        }
                                     }
                                     // Keep immutable predicate steps with the query.
                                     // The execution hot path reuses these instead of
@@ -2826,6 +2833,24 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                                     program.query = nullptr;
                                     return nullptr;
                                 }
+                            }
+                            } catch (const std::bad_alloc&) {
+                                // A partially compiled query owns both its Tree-sitter
+                                // query and any regex predicates compiled before the
+                                // allocation failed. Release them before returning;
+                                // never let a C++ allocation exception cross JNI.
+                                release_predicate_regexes();
+                                if (program.query) {
+                                    ts_query_delete(program.query);
+                                    program.query = nullptr;
+                                }
+                                try {
+                                    g_tsh_last_error_detail =
+                                        "out of memory while compiling native query";
+                                } catch (...) {
+                                    g_tsh_last_error_detail.clear();
+                                }
+                                return nullptr;
                             }
                         }
                         grammar->native_queries.push_back(std::move(program));
