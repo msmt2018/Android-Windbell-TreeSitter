@@ -21,6 +21,17 @@ class TshQueryApiTest {
         assertFalse(TshQueryCompileOptions().strictNodeValidation)
         assertNull(TshQueryExecutionBudget().maxSteps)
         assertEquals(100_000, TshQueryExecutionBudget().maxMatches)
+        assertEquals(1_000_000, TshQueryExecutionBudget().maxCaptures)
+        assertEquals(32L * 1024L * 1024L, TshQueryExecutionBudget().maxResultBytes)
+    }
+
+    @Test fun queryResultBudgetsRequirePositiveCaptureAndByteLimits() {
+        assertThrows(IllegalArgumentException::class.java) {
+            TshQueryExecutionBudget(maxCaptures = 0)
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            TshQueryExecutionBudget(maxResultBytes = 0)
+        }
     }
 
     @Test fun byteRangeUsesHalfOpenIntervals() {
