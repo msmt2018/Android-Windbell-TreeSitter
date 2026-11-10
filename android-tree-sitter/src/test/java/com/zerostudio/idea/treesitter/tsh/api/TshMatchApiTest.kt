@@ -93,4 +93,56 @@ class TshMatchApiTest {
             )
         }
     }
+
+    @Test
+    fun mergeStopsAtConfiguredMatchCountAndMarksResultTruncated() {
+        val result = TshMatchMerger.merge(
+            documentId, 4, "tree-r1", "regex-r1", "config-r2",
+            listOf(treeMatch("first", 0, 2), treeMatch("second", 3, 5)),
+            TshMatchMergeBudget(maxMatches = 1, maxEstimatedBytes = 64L * 1024L)
+        ) as TshResult.Success
+        assertEquals(listOf("first"), result.value.matches.map { it.id.value })
+        assertEquals(TshMatchCompleteness.TRUNCATED, result.value.completeness)
+        assertTrue(result.diagnostics.any { it.code == "TSH-MATCH-006" })
+    }
+
+    @Test
+    fun mergeStopsBeforeRetainingMatchThatExceedsEstimatedByteBudget() {
+        val result = TshMatchMerger.merge(
+            documentId, 4, "tree-r1", "regex-r1", "config-r2",
+            listOf(treeMatch("too-large", 0, 2)),
+            TshMatchMergeBudget(maxMatches = 100, maxEstimatedBytes = 32L)
+        ) as TshResult.Success
+        assertTrue(result.value.matches.isEmpty())
+        assertEquals(TshMatchCompleteness.TRUNCATED, result.value.completeness)
+        assertTrue(result.diagnostics.any { it.code == "TSH-MATCH-006" })
+    }
+
+    @Test
+    fun mergeBoundsNestedCapturePayloadAndPreservesStalePartialSemantics() {
+        val nested = treeMatch("nested", 0, 4).copy(
+            captures = listOf(TshCaptureValue("body", range(0, 4), "x".repeat(4096)))
+        )
+        val result = TshMatchMerger.merge(
+            documentId, 4, "tree-r1", "regex-r1", "config-r2",
+            listOf(nested, treeMatch("stale", 5, 8, "tree-old")),
+            TshMatchMergeBudget(maxMatches = 10, maxEstimatedBytes = 1024L)
+        ) as TshResult.Success
+        assertTrue(result.value.matches.isEmpty())
+        assertEquals(TshMatchCompleteness.TRUNCATED, result.value.completeness)
+        assertTrue(result.diagnostics.any { it.code == "TSH-MATCH-006" })
+    }
+
+    @Test
+    fun mergeCapsDiagnosticAccumulation() {
+        val stale = (0 until 5000).map { treeMatch("stale-$it", it.toLong(), it.toLong() + 1, "tree-old") }
+        val result = TshMatchMerger.merge(
+            documentId, 4, "tree-r1", "regex-r1", "config-r2", stale,
+            TshMatchMergeBudget(maxMatches = 10, maxEstimatedBytes = 1024L)
+        ) as TshResult.Success
+        assertTrue(result.diagnostics.size <= 4096)
+        assertTrue(result.diagnostics.any { it.code == "TSH-MATCH-007" })
+        assertEquals(TshMatchCompleteness.PARTIAL, result.value.completeness)
+    }
+
 }
