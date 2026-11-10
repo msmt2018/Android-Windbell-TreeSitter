@@ -231,3 +231,13 @@
 
 
 - [x] TSH Parser Owner 在 null tree、Native cancellation、progress callback cancellation、timeout 或 parse 异常后，持有 Owner parse lock 执行 `TSParser.reset()`，防止 Tree-sitter 的默认 resumable parse state 被错误用于下一文档/版本。
+
+### 2026-11-10：Native Tree 生命周期预算接入
+
+- [x] 新增 `TshNativeTreeMemoryEstimator` / `TshNativeTreeMemoryRequest`：由宿主根据 Grammar、输入规模及增量解析状态提供 Native Tree admission estimate，不伪装成 Native 实际内存测量。
+- [x] String 与 Snapshot 两条 Parser Owner 解析路径在 Native parse 前申请 `SYNTAX_TREE` reservation；预算不足或估算器异常时不启动解析。
+- [x] 成功发布的 Tree 将 reservation 与 Language lease 一起转交给 `TshNativeResourceRegistry`；只有 Tree 实际关闭（包括最后一个活动 Tree lease 释放之后）才释放预算。
+- [x] `TshEngine` 拥有共享 `TshMemoryBudget`，通过 `TshEngineOptions.memoryBudgetOptions` 配置；Engine 打开 Parser 时自动共享该预算，并允许传入 Tree estimator。
+- [x] 增加估算器校验、预算拒绝、reservation 生命周期及 Engine 关闭行为测试源码。
+- [ ] Native Tree 估算值仍由宿主提供，Tree-sitter 内部 allocator 尚未按 Parser/Tree 做精确归属；不可声称 Native RSS 已被硬限制。
+- [ ] 本轮新增 JUnit 测试待 CI 对最新 HEAD 执行验证。
