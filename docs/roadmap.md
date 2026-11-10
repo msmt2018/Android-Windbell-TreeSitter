@@ -101,7 +101,8 @@
 - [x] 新增 TshMatch/TshMatchSet/TshScopePath/TshMatchMerger 首版纯 Kotlin 模型。
 - [x] Match 具有 canonical UTF-16 range、source provenance、pipeline revision、document version。
 - [x] MatchMerger 支持两来源汇合、去重、稳定排序、stale Match 排除和 partial 状态。
-- [ ] Tree-sitter/ATS Capture 与 Regex 执行结果尚未接入 TshMatch。
+- [x] 新增 `TshTreeSitterMatchAdapter`：校验 query/tree/document/grammar revisions，将 UTF-8 byte 或 UTF-16LE/BE byte range 正确映射为 canonical UTF-16 Match；保留 UTF-8 rawRange、capture/pattern/node provenance、确定性 Match ID/排序，并传播 TRUNCATED 状态（源码与 JUnit 测试已提交，待 CI 验证）。
+- [ ] Regex 执行结果尚未接入 TshMatch；ATS 前端完成后复用 Tree-sitter 结果适配路径。
 - [x] 首版 ScopeSelector AST、exact/suffix path 匹配、StyleRule priority/specificity merge、MatchSet→RenderPlan resolver 源码与测试源码。
 - [ ] Scope parser/stack/assignment pipeline、DSL Selector parser/compiler/specificity 与高级冲突策略尚未完成。
 - [ ] 完整重叠/包含/交叉冲突策略与跨管线一致性测试尚未完成。
