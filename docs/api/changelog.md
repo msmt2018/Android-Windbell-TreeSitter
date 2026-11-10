@@ -8,6 +8,7 @@
 
 ### Added
 - editor 模块新增 `TshRenderPlanSyntaxHighlighter`，实现 TSH UTF-16 RenderPlan → EditorView `SyntaxHighlighter`/`LineStyler` → `StyledTextPainter` 的实际 Span 数据桥接；使用有界行区间查询索引、零文本复制的只读 `Spanned` 视图和文档版本门禁；将当前绘制器尚不支持的 font family/size/strike-through 明确报告为 warning。源码已提交，仍待 CI 与真实设备绘制验证。
+- `StyledTextPainter` 新增 `StrikethroughSpan` 绘制，RenderPlan highlighter 现在支持 foreground/background/bold/italic/underline/strike-through；font family 与 font size 仍显式报告 unsupported warning。
 - 新增 `docs/api/editor-render-integration.md`，记录 RenderPlan → LineStyler → StyledTextPainter 的接线方式、版本门禁、支持属性和设备验证边界；新增 highlighter 版本门禁测试源码。
 - `TshRenderPlanSyntaxHighlighter` 的计划发布与 EditorView 编辑回调使用同一状态锁线性化；编辑期间拒绝安装计划，发布前二次核验 PieceTree 版本，避免后台解析结果与正在进行的编辑交错发布。
 - editor 模块新增 TshPieceTreeDocument/TshPieceTreeTextAccessProvider，直接适配仓库现有 PieceTreeTextBuffer/PieceTreeSnapshot；按 UTF-16 范围读取，不调用全文 toString；使用不可变快照持有原始 chunk 引用并保留旧版本读取能力；新增 PieceTree 适配测试源码，editor 模块接入 android-tree-sitter API 依赖。
