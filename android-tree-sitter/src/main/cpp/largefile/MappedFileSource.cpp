@@ -68,7 +68,7 @@ std::unique_ptr<MappedFileSource> MappedFileSource::createSnapshot(
             std::min<uint64_t>(kTreeSitterInputChunkBytes, source_size - offset));
         if (!source.read(offset, request, &chunk) || !chunk.data ||
             chunk.size == 0 || (chunk.size & 1u) != 0 ||
-            chunk.size > source_size - offset) {
+            chunk.size > request || chunk.size > source_size - offset) {
             success = false;
             break;
         }
