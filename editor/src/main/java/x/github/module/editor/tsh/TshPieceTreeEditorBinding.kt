@@ -30,7 +30,7 @@ class TshPieceTreeEditorBinding private constructor(
     private val provider: TshPieceTreeTextAccessProvider,
     private val onTransaction: (TshTextChange, TshTextSnapshotLease, TshTextSnapshotLease) -> Unit,
     private val onInvalidated: (TshResult.Failure) -> Unit,
-    private val onBufferReplaced: () -> Unit
+    private val onBackingBufferReplaced: () -> Unit
 ) : AutoCloseable {
     private var beforeLease: TshTextSnapshotLease? = null
     private var beforeCoordinatesSupported: Boolean = false
@@ -66,7 +66,7 @@ class TshPieceTreeEditorBinding private constructor(
                     }
                     // The previous tree belongs to a different backing storage generation.
                     // Rebuild from the new authoritative snapshot; never synthesize an edit.
-                    onBufferReplaced()
+                    onBackingBufferReplaced()
                 }
             }
             if (Looper.myLooper() == Looper.getMainLooper()) {
