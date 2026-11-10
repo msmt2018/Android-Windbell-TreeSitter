@@ -153,8 +153,14 @@ bool TshRegexNativeRegistry::execute(
     const UChar* current = begin;
     const UChar* search_range = end;
     OnigOptionType options = ONIG_OPTION_NONE;
-    if (!document_start) options |= ONIG_OPTION_NOTBOL;
-    if (!document_end) options |= ONIG_OPTION_NOTEOL;
+    if (!document_start) {
+        options |= ONIG_OPTION_NOTBOL;
+        options |= ONIG_OPTION_NOTBOS;
+    }
+    if (!document_end) {
+        options |= ONIG_OPTION_NOTEOL;
+        options |= ONIG_OPTION_NOTEOS;
+    }
 
     while (current <= end) {
         const OnigPosition hit = onig_search(
