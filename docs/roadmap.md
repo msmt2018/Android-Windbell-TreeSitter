@@ -190,7 +190,9 @@
 - [ ] Native Tree 尚未接入可证明有效的统一 reservation；Tree-sitter 内部 Native 分配不可由此账本精确计量。
 - [x] 新增 `TshRegexWindowLease`：仅获取有界连续 UTF-16 窗口，要求有限最大匹配长度/lookaround，按实际窗口估算预留 REGEX_WINDOW，随 Lease.close() 释放；拒绝无界 Regex 窗口，不把全文转成 String。
 - [x] 新增 `TshRegexWindowSequence`：持有独立 Snapshot Lease，自动按 code point 边界生成连续且不重叠的 core 区间；窗口申请失败不推进游标，可在压力解除后重试；空文档仍产生一个零长度首尾窗口，保留 offset 0 的零宽匹配机会。
-- [ ] Regex 编译器/Oniguruma 执行器、跨窗口状态/捕获、超长匹配策略与端到端边界测试尚未接入；WindowLease/Sequence 只是输入资源契约，不代表 Regex 执行已完成。
+- [ ] 新增 WindowLease/Sequence 尚未接入现有 `WindbellTshEngine.computeHighlights(tree, text, extension)` → JNI `nativeHighlight` → C++ `WindbellEngine::highlightHybrid` 链路；该旧链路仍把完整 String/连续 UTF-16 buffer 交给 Oniguruma。
+- [ ] 现有 TSH Regex MATCH 规则尚未声明 maxMatchLength/lookbehind/lookahead，BLOCK 规则仍需要跨窗口状态机；在这些契约完成前，不得声称大文本 Regex 已切换为窗口执行。
+- [ ] Regex WindowLease/Sequence 是输入资源契约，不代表 Regex 执行已完成；还需统一输出为 `TshMatch` 并补齐跨窗口捕获/边界测试。
 - [ ] 本轮新增 JUnit 测试源码待 CI 执行；未声称构建或设备压力测试通过。
 
 
