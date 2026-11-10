@@ -699,15 +699,23 @@ class TshEditorPipelineRenderingTest {
             // the already-open large Piece Tree. The previous partition cache must
             // not be mistaken for the new revision; the new token must be queried,
             // converted to a span and painted by EditorView again.
-            val editedLine = "class DistantEditedRenderProbe { int value; }"
+            val intermediateLine = "class DistantIntermediateRenderProbe { int value; }"
+            val editedLine = "class DistantFinalRenderProbe { int value; }"
             InstrumentationRegistry.getInstrumentation().runOnMainSync {
                 editor.replace(
-                    editedLine,
+                    intermediateLine,
                     Range(targetLineNumber, 1, targetLineNumber, targetLine.length + 1)
                 )
+                // Submit a second edit before yielding the UI thread. This exercises
+                // concurrent onEditFinished callbacks and verifies native transactions
+                // remain ordered rather than applying pre-edit offsets out of sequence.
+                editor.replace(
+                    editedLine,
+                    Range(targetLineNumber, 1, targetLineNumber, intermediateLine.length + 1)
+                )
             }
-            val editedNameStart = editedLine.indexOf("DistantEditedRenderProbe")
-            val editedNameEnd = editedNameStart + "DistantEditedRenderProbe".length
+            val editedNameStart = editedLine.indexOf("DistantFinalRenderProbe")
+            val editedNameEnd = editedNameStart + "DistantFinalRenderProbe".length
             var editedColor: Int? = null
             val editDeadline = SystemClock.uptimeMillis() + 30_000L
             while (editedColor == null && SystemClock.uptimeMillis() < editDeadline) {
