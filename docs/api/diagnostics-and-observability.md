@@ -85,6 +85,7 @@ IntegrationReport 至少展示：
 - `TSH-MEMORY-007`：Native Tree estimator 抛出 Exception。
 - `TSH-MEMORY-008`：legacy String parser input 的文档身份/长度无效。
 - `TSH-MEMORY-009`：streaming JNI input buffer 的文档身份/长度/大小无效。
+- `TSH-MEMORY-010`：active reservation 数量达到配置上限。
 - `TSH-MATCH-006`：Match 合并达到数量或估算内存上限，结果为 TRUNCATED。
 - `TSH-MATCH-007`：诊断列表达到 4,096 条上限，后续诊断被省略。
 
