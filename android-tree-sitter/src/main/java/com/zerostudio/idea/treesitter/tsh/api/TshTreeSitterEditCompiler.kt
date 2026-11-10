@@ -48,10 +48,8 @@ object TshTreeSitterEditCompiler {
                 }
                 if (indexed.values.all { it != null }) {
                     indexed.mapValues { (_, position) ->
-                        pointFromUtf16Coordinates(
-                            position!!.row,
-                            position.columnUtf16
-                        )
+                        val resolved = requireNotNull(position)
+                        pointFromUtf16Coordinates(resolved.row, resolved.columnUtf16)
                     }
                 } else {
                     Utf16EndpointPoints.build(before, scanEndpoints)
