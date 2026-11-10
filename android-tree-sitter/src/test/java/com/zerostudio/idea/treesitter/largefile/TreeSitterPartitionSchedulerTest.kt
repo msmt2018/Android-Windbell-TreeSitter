@@ -61,6 +61,40 @@ class TreeSitterPartitionSchedulerTest {
         scheduler.close()
     }
 
+    @Test fun cancelledViewportPlanningDoesNotLeaveUnsubmittedTasksPending() {
+        val text = ("line\n").repeat(600)
+        val cancel = AtomicBoolean(true)
+        val reads = AtomicInteger()
+        val source = object : Utf16DocumentSource {
+            override val length = text.length.toLong()
+            override val version = 81L
+            override fun get(offset: Long) = text[offset.toInt()]
+            override fun readChunk(offset: Long, maxChars: Int): CharSequence {
+                if (cancel.get() && reads.incrementAndGet() >= 2) {
+                    throw CancellationException("cancel viewport planning")
+                }
+                if (offset >= length) return ""
+                return text.substring(offset.toInt(), minOf(text.length, offset.toInt() + maxChars))
+            }
+        }
+        val manager = DocumentPartitionManager(256, prefetchPartitions = 0)
+        val cache = PartitionAstCache(1024) { 1L }
+        val scheduler = TreeSitterPartitionScheduler(manager, cache, contextChars = 8)
+
+        assertTrue(scheduler.requestViewport(source, 100, 700, 1) { null }.isEmpty())
+
+        cancel.set(false)
+        reads.set(0)
+        val parsed = CountDownLatch(1)
+        val keys = scheduler.requestViewport(source, 100, 700, 1) {
+            parsed.countDown()
+            null
+        }
+        assertTrue(keys.isNotEmpty())
+        assertTrue(parsed.await(2, TimeUnit.SECONDS), "rolled-back tasks must be schedulable again")
+        scheduler.close()
+    }
+
     @Test fun windowedCallbackKeepsUtf16SurrogatePairsInsideChunkBoundaries() {
         val text = "aaaaa😀b"
         val callback = CharSequenceParseWindowCallback(text)
