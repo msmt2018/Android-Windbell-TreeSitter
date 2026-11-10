@@ -168,7 +168,7 @@ class TshEngineNativeResourceLifecycleTest {
     fun engineCannotOpenParserAfterClose() {
         val engine = TshEngine.create()
         val language = FakeLanguage()
-        val handle = TshNativeResourceLeaseStore.Handle(TshObjectId(901L), language)
+        val handle = TshNativeResourceLeaseStore.Handle<TSLanguage>(TshObjectId(901L), language)
         val grammar = TshGrammarDescriptor("fake", "1", 15, "fake-fingerprint")
 
         engine.close()
@@ -177,4 +177,4 @@ class TshEngineNativeResourceLifecycleTest {
         assertTrue(result is TshResult.Failure)
         assertTrue(language.canAccess())
     }
-}\n
+}

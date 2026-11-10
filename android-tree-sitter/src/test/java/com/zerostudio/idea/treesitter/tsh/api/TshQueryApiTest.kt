@@ -14,7 +14,8 @@ class TshQueryApiTest {
             grammar = grammar,
             source = TshAtsSource("(identifier) @variable"),
             sourceHash = "sha256:query",
-            compilerVersion = "ats-1"
+            compilerVersion = "ats-1",
+            options = TshQueryCompileOptions()
         )
 
     @Test fun unsupportedBudgetsAreNotEnabledByDefault() {

@@ -21,8 +21,8 @@ class TshNativeTreeMemoryEstimatorTest {
     @Test fun noEstimatorDoesNotCreateAFakeNativeTreeReservation() {
         val budget = TshMemoryBudget(TshMemoryBudgetOptions(1024, 2048))
         val result = TshNativeTreeMemoryReservations.reserve(budget, null, request())
-        assertTrue(result is TshResult.Success)
-        assertNull((result as TshResult.Success).value)
+        assertTrue(result is TshResult.Success<*>)
+        assertNull((result as TshResult.Success<TshMemoryReservation?>).value)
         assertEquals(0L, budget.snapshot().reservedBytes)
     }
 
@@ -34,8 +34,8 @@ class TshNativeTreeMemoryEstimatorTest {
             768L
         }
         val result = TshNativeTreeMemoryReservations.reserve(budget, estimator, request())
-        assertTrue(result is TshResult.Success)
-        val reservation = (result as TshResult.Success).value!!
+        assertTrue(result is TshResult.Success<*>)
+        val reservation = (result as TshResult.Success<TshMemoryReservation?>).value!!
         assertEquals(768L, reservation.bytes)
         assertEquals(768L, budget.snapshot().bytesByCategory[TshMemoryCategory.SYNTAX_TREE])
         reservation.close()
@@ -72,8 +72,8 @@ class TshNativeTreeMemoryEstimatorTest {
         val result = TshParserInputMemoryReservations.reserveStringInput(
             budget, "doc-string", 3L, 100L
         )
-        assertTrue(result is TshResult.Success)
-        val reservation = (result as TshResult.Success).value!!
+        assertTrue(result is TshResult.Success<*>)
+        val reservation = (result as TshResult.Success<TshMemoryReservation?>).value!!
         assertEquals(264L, reservation.bytes)
         assertEquals(264L, budget.snapshot().bytesByCategory[TshMemoryCategory.PARSER_INPUT])
         reservation.close()
@@ -91,11 +91,11 @@ class TshNativeTreeMemoryEstimatorTest {
 
     @Test fun streamingBridgeBufferReservationCoversArrayAndPossibleJniCopy() {
         val budget = TshMemoryBudget(TshMemoryBudgetOptions(1024, 2048))
-        val result = TshParserInputMemoryReservations.reserveChunkBuffer(
+        val result = TshParserInputMemoryReservations.reserveStreamingBridge(
             budget, "doc-stream", 5L, 64
         )
-        assertTrue(result is TshResult.Success)
-        val reservation = (result as TshResult.Success).value!!
+        assertTrue(result is TshResult.Success<*>)
+        val reservation = (result as TshResult.Success<TshMemoryReservation?>).value!!
         assertEquals(192L, reservation.bytes)
         assertEquals(192L, budget.snapshot().bytesByCategory[TshMemoryCategory.PARSER_INPUT])
         reservation.close()
@@ -104,7 +104,7 @@ class TshNativeTreeMemoryEstimatorTest {
 
     @Test fun streamingBridgeRejectsInvalidChunkSizeBeforeNativeParse() {
         val budget = TshMemoryBudget(TshMemoryBudgetOptions(1024, 2048))
-        val result = TshParserInputMemoryReservations.reserveChunkBuffer(
+        val result = TshParserInputMemoryReservations.reserveStreamingBridge(
             budget, "doc-stream", 5L, 63
         )
         assertTrue(result is TshResult.Failure)
