@@ -182,6 +182,7 @@ class TshTreeSitterEditCompilerTest {
             override val documentId = "doc"
             override val version = 4L
             override val lengthUtf16 = 1_000_000L
+            override val supportsLineColumnLookup = true
             override fun readUtf16(start: Long, end: Long): CharSequence =
                 error("Host-native coordinates must avoid scanning document text")
 
