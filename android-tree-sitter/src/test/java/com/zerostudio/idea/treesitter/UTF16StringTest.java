@@ -131,6 +131,28 @@ public class UTF16StringTest extends TreeSitterTest {
     str.close();
   }
 
+
+  @Test
+  public void testByteSliceCreationHonorsOffsetAndLength() {
+    final byte[] source = "xA😀By".getBytes(java.nio.charset.StandardCharsets.UTF_16LE);
+    try (final var str = UTF16StringFactory.newString(source, 2, 8)) {
+      assertThat(str.toString()).isEqualTo("A😀B");
+      assertThat(str.length()).isEqualTo(4);
+      assertThat(str.byteLength()).isEqualTo(8);
+    }
+  }
+
+  @Test
+  public void testByteSliceCreationRejectsInvalidUtf16Ranges() {
+    final byte[] source = "abcd".getBytes(java.nio.charset.StandardCharsets.UTF_16LE);
+    org.junit.Assert.assertThrows(
+        IllegalArgumentException.class,
+        () -> UTF16StringFactory.newString(source, 1, 2));
+    org.junit.Assert.assertThrows(
+        IllegalArgumentException.class,
+        () -> UTF16StringFactory.newString(source, 0, 9));
+  }
+
   @Test
   public void testContinuousStringCreation() {
     final var arr = new UTF16String[100];
