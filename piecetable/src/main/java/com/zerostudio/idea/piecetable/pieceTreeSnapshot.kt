@@ -187,14 +187,24 @@ class PieceTreeSnapshot internal constructor(
             return ""
         }
         val piece = this.pieceAt(offset)
-        // only what is asked for is copied
-        val start = this.sourceStarts[piece] + offset - this.pieceStarts[piece]
-        val end = this.sourceStarts[piece] + this.pieceStarts[piece + 1] - this.pieceStarts[piece]
-        // Avoid start + Int.MAX_VALUE overflow for the default unbounded request.
-        // Bound the requested length by the remainder of this immutable source piece first.
-        val requestedLength = maxLength.coerceAtLeast(1)
-        val chunkLength = Math.min(end - start, requestedLength)
-        return this.sources[piece].substring(start, start + chunkLength)
+        // Only copy the portion that belongs to this immutable piece. Compute the end in
+        // Long arithmetic and clamp it to the backing source: this keeps the default
+        // Int.MAX_VALUE request safe even if a stale/corrupt piece span is encountered.
+        val source = this.sources[piece]
+        val start = this.sourceStarts[piece].toLong() +
+            offset.toLong() - this.pieceStarts[piece].toLong()
+        if (start < 0L || start > source.length.toLong()) {
+            throw IllegalStateException("Snapshot piece start is outside its backing source")
+        }
+        val pieceLength = this.pieceStarts[piece + 1].toLong() -
+            this.pieceStarts[piece].toLong()
+        if (pieceLength < 0L) {
+            throw IllegalStateException("Snapshot piece has a negative document span")
+        }
+        val sourceEnd = minOf(source.length.toLong(), start + pieceLength)
+        val requestedLength = maxLength.coerceAtLeast(1).toLong()
+        val end = minOf(sourceEnd, start + requestedLength)
+        return source.substring(start.toInt(), end.toInt())
     }
 
     /** Hands the whole content to [callback], one piece at a time, in order, without the BOM. */
