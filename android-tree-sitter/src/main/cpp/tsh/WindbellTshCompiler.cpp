@@ -2687,19 +2687,16 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                                     const bool membership = op == "any-of?" || op == "not-any-of?";
                                     const bool regex_match = op == "match?" || op == "not-match?";
                                     const bool supported = equality || membership || regex_match;
+                                    const bool fixed_arity = equality || regex_match;
                                     bool valid = predicate.size() >= 3 &&
                                         predicate[1].type == TSQueryPredicateStepTypeCapture &&
-                                        ((equality || regex_match) ? predicate.size() == 3 : true);
-                                    for (size_t arg = 2; arg < predicate.size(); ++arg) {
+                                        (!fixed_arity || predicate.size() == 3);
+                                    for (size_t arg = 2; valid && arg < predicate.size(); ++arg) {
                                         const bool capture_comparison =
                                             equality && predicate.size() == 3 &&
                                             predicate[arg].type == TSQueryPredicateStepTypeCapture;
-                                        valid = valid && (capture_comparison ||
-                                            predicate[arg].type == TSQueryPredicateStepTypeString);
-                                    }
-                                    if (equality && predicate.size() == 3 &&
-                                        predicate[2].type == TSQueryPredicateStepTypeCapture) {
-                                        valid = true;
+                                        valid = capture_comparison ||
+                                            predicate[arg].type == TSQueryPredicateStepTypeString;
                                     }
                                     if (!supported || !valid) {
                                         g_tsh_last_error_detail = supported
