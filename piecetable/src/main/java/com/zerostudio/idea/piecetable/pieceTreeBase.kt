@@ -500,13 +500,21 @@ internal class PieceTreeBase {
      * ones). The change buffer is appended to by every edit and its line starts lose their last
      * entry when a "\r\n" is joined, so its text is copied, piece by piece.
      */
-    fun createSnapshot(BOM: String): PieceTreeSnapshot {
+    fun createSnapshot(
+        BOM: String,
+        supportsTreeSitterLineCoordinates: Boolean = true
+    ): PieceTreeSnapshot {
         val changeBuffer = this._buffers[0].buffer
         val typed = StringBuilder()
         // null: the piece lies in `typed`, filled in once `typed` is complete
         val sources = ArrayList<CharSequence?>()
         val sourceStarts = IntList()
         val pieceStarts = IntList()
+        val pieceBufferIndices = IntList()
+        val pieceStartLineIndices = IntList()
+        val pieceStartColumns = IntList()
+        val pieceLineFeedPrefixes = IntList()
+        var lineFeedPrefix = 0
         var length = 0
 
         this.iterate(this.root) { node ->
@@ -514,6 +522,11 @@ internal class PieceTreeBase {
             if (node !== sentinel && piece.length > 0) {
                 val start = this.offsetInBuffer(piece.bufferIndex, piece.start)
                 pieceStarts.add(length)
+                pieceBufferIndices.add(piece.bufferIndex)
+                pieceStartLineIndices.add(piece.start.line)
+                pieceStartColumns.add(piece.start.column)
+                pieceLineFeedPrefixes.add(lineFeedPrefix)
+                lineFeedPrefix = Math.addExact(lineFeedPrefix, piece.lineFeedCnt)
                 if (piece.bufferIndex == 0) {
                     sources.add(null)
                     sourceStarts.add(typed.length)
@@ -529,10 +542,44 @@ internal class PieceTreeBase {
         pieceStarts.add(length)
 
         val typedText: CharSequence = typed.toString()
+        val typedLineStarts = createLineStartsFast(typedText).toIntArray()
+        val starts = sourceStarts.toIntArray()
+        val buffers = pieceBufferIndices.toIntArray()
+        val lineStartsCache = arrayOfNulls<IntArray>(this._buffers.size)
+        lineStartsCache[0] = typedLineStarts
+        val pieceLineStarts = Array(sources.size) { index ->
+            val bufferIndex = buffers[index]
+            lineStartsCache[bufferIndex] ?: this._buffers[bufferIndex].lineStarts.toIntArray().also {
+                lineStartsCache[bufferIndex] = it
+            }
+        }
+        val pieceStartLines = IntArray(sources.size)
+        val pieceStartColumns = IntArray(sources.size)
+        for (index in sources.indices) {
+            if (buffers[index] == 0) {
+                val startsForBuffer = pieceLineStarts[index]
+                var low = 0
+                var high = startsForBuffer.lastIndex
+                while (low < high) {
+                    val mid = (low + high + 1) ushr 1
+                    if (startsForBuffer[mid] <= starts[index]) low = mid else high = mid - 1
+                }
+                pieceStartLines[index] = low
+                pieceStartColumns[index] = starts[index] - startsForBuffer[low]
+            } else {
+                pieceStartLines[index] = pieceStartLineIndices[index]
+                pieceStartColumns[index] = this.pieceStartColumns[index]
+            }
+        }
         return PieceTreeSnapshot(
             Array(sources.size) { sources[it] ?: typedText },
-            sourceStarts.toIntArray(),
+            starts,
             pieceStarts.toIntArray(),
+            pieceLineStarts,
+            pieceStartLines,
+            pieceStartColumns,
+            pieceLineFeedPrefixes.toIntArray(),
+            supportsTreeSitterLineCoordinates,
             this._versionId,
             this._lineCnt,
             this._EOL,
