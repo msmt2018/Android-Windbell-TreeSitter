@@ -351,9 +351,16 @@ class TshTreeSitterParserOwner private constructor(
             }
 
         var tree: TSTree? = null
+        var parserInputReservation: TshMemoryReservation? = null
         var treeMemoryReservation: TshMemoryReservation? = null
         var dependenciesTransferred = false
         try {
+            when (val reserved = TshParserInputMemoryReservations.reserveStringInput(
+                memoryBudget, documentId, documentVersion, sourceLengthUtf16
+            )) {
+                is TshResult.Success -> parserInputReservation = reserved.value
+                is TshResult.Failure -> return reserved
+            }
             when (val reserved = reserveTreeMemory(
                 documentId, documentVersion, treeRevision, sourceLengthUtf16, incremental = false
             )) {
@@ -451,6 +458,7 @@ class TshTreeSitterParserOwner private constructor(
             )
         } finally {
             tree?.let { runCatching { it.close() } }
+            parserInputReservation?.close()
             if (!dependenciesTransferred) {
                 treeMemoryReservation?.close()
                 languageLease.close()
