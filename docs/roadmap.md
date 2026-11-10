@@ -186,5 +186,6 @@
 - [ ] Query capture 字节数目前是明确的保留结果估算（字符串 UTF-16 长度 + 每项固定开销），不是 JVM heap 精确测量；尚未与 QueryResult 生命周期 reservation 绑定。
 - [x] Sparse CoordinateIndex 可选接入 reservation：按 checkpoint 数量预估，在分配 checkpoint 列表前申请，随 Index.close() 释放；估算不等于 JVM heap 精确值。
 - [x] RenderCoordinator 可选接入 RENDER_PLAN reservation：pending 期间持有，终态回执、成功取消、提交失败、无效/过期回执和 coordinator close 时释放。
-- [ ] Parser 输入/Native Tree、Regex Window 尚未全部接入统一 reservation；Tree-sitter 内部 Native 分配不可由此账本精确计量。
+- [x] Snapshot-backed Parser 输入回调可选接入 PARSER_INPUT reservation：按请求 chunk 上限预留临时 UTF-16 数据估算，回调结束在 finally 释放；Native destination 与 Tree-sitter 内部 Native 分配不计入此账本。
+- [ ] Native Tree、Regex Window 尚未接入统一 reservation；Tree-sitter 内部 Native 分配不可由此账本精确计量。
 - [ ] 本轮新增 JUnit 测试源码待 CI 执行；未声称构建或设备压力测试通过。
