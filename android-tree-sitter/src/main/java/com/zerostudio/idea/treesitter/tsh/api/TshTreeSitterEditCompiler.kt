@@ -10,9 +10,9 @@ import com.zerostudio.idea.treesitter.TSPoint
  * coordinates of all earlier edits unchanged, so every point/byte offset is based on one
  * before-version snapshot.
  *
- * Position lookup uses supplied before-version UTF-16 coordinates when available; otherwise it
- * uses one bounded streaming pass and stores only requested endpoints. It does not flatten the
- * document or allocate a line-start table proportional to line count.
+ * Position lookup prefers coordinates supplied with each edit, then a host-native snapshot
+ * coordinate index (Piece Tree/Rope), and only falls back to one bounded streaming pass when
+ * neither is available. The compiler never flattens the document.
  */
 object TshTreeSitterEditCompiler {
     private const val INDEX_CHUNK_UTF16 = 32 * 1024
@@ -43,7 +43,19 @@ object TshTreeSitterEditCompiler {
             val points = if (scanEndpoints.isEmpty()) {
                 emptyMap()
             } else {
-                Utf16EndpointPoints.build(before, scanEndpoints)
+                val indexed = scanEndpoints.distinct().associateWith {
+                    before.lineColumnAtUtf16(it)
+                }
+                if (indexed.values.all { it != null }) {
+                    indexed.mapValues { (_, position) ->
+                        pointFromUtf16Coordinates(
+                            position!!.row,
+                            position.columnUtf16
+                        )
+                    }
+                } else {
+                    Utf16EndpointPoints.build(before, scanEndpoints)
+                }
             }
             val compiled = ArrayList<TSInputEdit>(change.edits.size)
             for (edit in change.edits) {
