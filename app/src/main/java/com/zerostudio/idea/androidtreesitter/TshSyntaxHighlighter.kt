@@ -67,6 +67,10 @@ class TshSyntaxHighlighter(
         val cacheSessionId: Long,
         val ticket: Long,
         val documentRevision: AtomicLong = AtomicLong(),
+        // Distinguish edits received by the UI from edits committed to the native tree.
+        // While these epochs differ, cached spans belong to an older document revision.
+        val pendingEditEpoch: AtomicLong = AtomicLong(),
+        val appliedEditEpoch: AtomicLong = AtomicLong(),
         val nativeMutex: Mutex = Mutex(),
         val partitionWork: ConcurrentHashMap<Int, PartitionWork> = ConcurrentHashMap()
     )
@@ -143,6 +147,8 @@ class TshSyntaxHighlighter(
             bytes[index * 2] = (unit and 0xFF).toByte()
             bytes[index * 2 + 1] = (unit ushr 8).toByte()
         }
+        val active = largeSession
+        active?.pendingEditEpoch?.incrementAndGet()
         synchronized(nativeEditLock) {
             pendingNativeEdits += NativeEdit(
                 startByte = change.rangeOffset.toLong() * 2L,
@@ -157,6 +163,7 @@ class TshSyntaxHighlighter(
     override fun onEditFinished() {
         val active: LargeSession?
         val edits: List<NativeEdit>
+        var editEpoch = 0L
         synchronized(nativeEditLock) {
             active = largeSession
             if (active == null) {
@@ -170,9 +177,10 @@ class TshSyntaxHighlighter(
             }
             edits = pendingNativeEdits.toList()
             pendingNativeEdits.clear()
+            editEpoch = active.pendingEditEpoch.get()
         }
         if (edits.isEmpty()) return
-        applyNativeEdits(active ?: return, edits)
+        applyNativeEdits(active ?: return, edits, editEpoch)
     }
 
     override fun styleLine(
@@ -196,6 +204,9 @@ class TshSyntaxHighlighter(
             return null
         }
         val active = largeSession
+        if (active == null && parsing) return null
+        if (active != null && active.pendingEditEpoch.get() != active.appliedEditEpoch.get()) return null
+
         val spans = if (active != null) {
             val boundedStart = queryStart.coerceAtMost(active.lengthChars.get())
             val boundedEnd = queryEnd.coerceAtMost(active.lengthChars.get())
@@ -237,6 +248,7 @@ class TshSyntaxHighlighter(
         end: Int
     ): Boolean {
         val active = largeSession ?: return !parsing
+        if (active.pendingEditEpoch.get() != active.appliedEditEpoch.get()) return false
         if (lineStartOffset < 0 || start < 0 || end <= start) return false
 
         // start/end are columns in the current buffer line. Omitting start here used
@@ -572,7 +584,7 @@ class TshSyntaxHighlighter(
         }
     }
 
-    private fun applyNativeEdits(active: LargeSession, edits: List<NativeEdit>) {
+    private fun applyNativeEdits(active: LargeSession, edits: List<NativeEdit>, editEpoch: Long) {
         val previous = synchronized(nativeEditLock) { nativeEditJob }
         val job = scope.launch(Dispatchers.IO) {
             previous?.join()
@@ -595,6 +607,8 @@ class TshSyntaxHighlighter(
                     val firstInvalid = (earliestOffset / PARTITION_CHARS).toInt()
                     captureCache.invalidate { key, _ -> key.sessionId == active.cacheSessionId && key.partitionIndex >= firstInvalid }
                     active.partitionWork.keys.filter { it >= firstInvalid }.forEach(active.partitionWork::remove)
+                    // Publish the new revision only after its stale cache entries are gone.
+                    active.appliedEditEpoch.set(editEpoch)
                     if (generation.get() == active.ticket && largeSession === active) {
                         host?.invalidateStyles()
                         host?.invalidateStructure()
