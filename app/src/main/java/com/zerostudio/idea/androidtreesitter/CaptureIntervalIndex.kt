@@ -23,6 +23,18 @@ internal class CaptureIntervalIndex(
 
     fun query(startUtf16: Int, endUtf16: Int): List<WindbellTshEngine.HighlightSpan> {
         if (startUtf16 < 0 || endUtf16 <= startUtf16 || spans.isEmpty()) return emptyList()
+        val result = ArrayList<WindbellTshEngine.HighlightSpan>()
+        appendQuery(startUtf16, endUtf16, result)
+        return result
+    }
+
+    /** Appends matching captures without allocating a temporary list per partition. */
+    fun appendQuery(
+        startUtf16: Int,
+        endUtf16: Int,
+        destination: MutableList<WindbellTshEngine.HighlightSpan>
+    ) {
+        if (startUtf16 < 0 || endUtf16 <= startUtf16 || spans.isEmpty()) return
         val startByte = startUtf16.toLong() * 2L
         val endByte = endUtf16.toLong() * 2L
         var low = 0
@@ -33,7 +45,7 @@ internal class CaptureIntervalIndex(
             else high = middle
         }
         val upper = low
-        if (upper == 0) return emptyList()
+        if (upper == 0) return
         low = 0
         high = upper
         while (low < high) {
@@ -41,13 +53,10 @@ internal class CaptureIntervalIndex(
             if (prefixMaxEnd[middle] <= startByte) low = middle + 1
             else high = middle
         }
-        if (low >= upper) return emptyList()
-        val result = ArrayList<WindbellTshEngine.HighlightSpan>()
         for (index in low until upper) {
             val span = spans[index]
-            if (span.endByte.toLong() > startByte) result += span
+            if (span.endByte.toLong() > startByte) destination.add(span)
         }
-        return result
     }
 
     val size: Int get() = spans.size
