@@ -358,8 +358,9 @@ public class TSParser extends TSNativeObject {
 
   /**
    * Parses a versioned/random-access UTF-16 document through bounded windows.
-   * Only bytes requested by Tree-sitter are materialized; this is the preferred
-   * path for large Piece Tree snapshots and viewport-included ranges.
+   * Only bytes requested by Tree-sitter are materialized. Pass an empty included
+   * range set for a complete document AST; non-empty ranges intentionally produce
+   * a partial tree and must not replace the complete ATS symbol tree.
    */
   public TSTree parseWindowed(
       TSTree oldTree,
