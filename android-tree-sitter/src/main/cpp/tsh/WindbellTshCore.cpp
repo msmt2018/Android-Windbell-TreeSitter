@@ -1900,6 +1900,7 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
             q_cursor.reset();
         }
     }
+#endif // TSH_TREE_SITTER_HAS_QUERY_CURSOR_OPTIONS
     for (size_t i = native_query_span_begin; i < macro_spans.size(); ++i) {
         macro_spans[i].source = static_cast<uint8_t>(HighlightSource::NATIVE_QUERY);
     }
