@@ -274,9 +274,9 @@ class PieceTreeSnapshotTest {
         val tree = buffer.getPieceTree()
 
         // Split original pieces and create change-buffer pieces without flattening the snapshot.
-        tree.insert(2, "X")
+        tree.insert(2, "X", eolNormalized = true)
         tree.delete(7, 1)
-        tree.insert(buffer.length - 2, "\\nTAIL")
+        tree.insert(buffer.length - 2, "\\nTAIL", eolNormalized = true)
         val expected = buffer.toString()
         val snapshot = buffer.createSnapshot()
 
