@@ -49,6 +49,12 @@ class TshOnigurumaRegex private constructor(
             )
         }
 
+        val bytesPerNativeMatch = 24L + (maxCaptureGroups + 1L) * 16L
+        val memoryBoundedMatchLimit = maxOf(
+            1,
+            (MAX_NATIVE_RESULT_BYTES_PER_WINDOW / bytesPerNativeMatch).toInt()
+        )
+        val effectiveMaxMatches = minOf(maxMatches, memoryBoundedMatchLimit)
         val raw = try {
             native.nativeFindAll(
                 handle,
@@ -57,14 +63,14 @@ class TshOnigurumaRegex private constructor(
                 window.coreEndInWindow,
                 window.isDocumentStart,
                 window.isDocumentEnd,
-                maxMatches,
+                effectiveMaxMatches,
                 maxCaptureGroups
             )
         } catch (error: Exception) {
             return failure("TSH-REGEX-NATIVE-004", "Oniguruma execution failed: ${error.message}", error)
         } ?: return failure("TSH-REGEX-NATIVE-005", "Oniguruma returned a null result")
 
-        if (raw.size < 2 || raw[1] < 0L || raw[1] > maxMatches.toLong()) {
+        if (raw.size < 2 || raw[1] < 0L || raw[1] > effectiveMaxMatches.toLong()) {
             return failure("TSH-REGEX-NATIVE-006", "Oniguruma returned a malformed result header")
         }
         val count = raw[1].toInt()
@@ -267,6 +273,7 @@ class TshOnigurumaRegex private constructor(
 
     companion object {
         private const val MAX_MATCHES_PER_WINDOW = 8192
+        private const val MAX_NATIVE_RESULT_BYTES_PER_WINDOW = 2L * 1024L * 1024L
         private const val MAX_CAPTURE_GROUPS = 256
         private const val DEFAULT_MAX_CAPTURE_GROUPS = 32
         private const val DEFAULT_MAX_MATCHES = 250_000
