@@ -85,6 +85,49 @@ public class ParserTest extends TreeSitterTest {
   }
 
   @Test
+  public void testParseInputUsesBoundedReusableUtf16Buffer() {
+    final StringBuilder sourceBuilder = new StringBuilder();
+    for (int i = 0; i < 256; i++) {
+      sourceBuilder.append("class StreamingInput").append(i)
+          .append(" { int value = ").append(i).append("; }\\n");
+    }
+    final String source = sourceBuilder.toString();
+    final AtomicInteger readCalls = new AtomicInteger();
+    final AtomicInteger progressCalls = new AtomicInteger();
+
+    try (TSParser parser = TSParser.create()) {
+      parser.setLanguage(TSLanguageJava.getInstance());
+      TSInput input = (byteOffset, row, column, destination) -> {
+        readCalls.incrementAndGet();
+        final int start = Math.toIntExact(byteOffset / 2L);
+        if (start >= source.length()) {
+          return 0;
+        }
+        final int count = Math.min(destination.length / 2, source.length() - start);
+        for (int i = 0; i < count; i++) {
+          final char value = source.charAt(start + i);
+          destination[i * 2] = (byte) (value & 0xff);
+          destination[i * 2 + 1] = (byte) ((value >>> 8) & 0xff);
+        }
+        return count * 2;
+      };
+
+      try (TSTree tree = parser.parseInput(
+          null,
+          input,
+          128,
+          (byteOffset, hasError) -> {
+            progressCalls.incrementAndGet();
+            return false;
+          })) {
+        assertThat(tree).isNotNull();
+        assertThat(readCalls.get()).isGreaterThan(1);
+        assertThat(tree.getRootNode().getEndByte()).isEqualTo(source.length() * 2);
+      }
+    }
+  }
+
+  @Test
   public void testCodeEditor() throws Throwable {
     final long start = System.currentTimeMillis();
     try (TSParser parser = TSParser.create()) {
