@@ -15,6 +15,7 @@
 #include <unordered_set>
 #include <string_view>
 #include <stdexcept>
+#include <new>
 #include "ts__log.h"
 #include "../largefile/TextSource.h"
 
