@@ -16,6 +16,7 @@ class TshRegexWindowSequence private constructor(
     val documentLengthUtf16: Long
 ) : AutoCloseable {
     private var nextCoreStartUtf16 = 0L
+    private var emptyDocumentWindowEmitted = false
     private var closed = false
 
     val isClosed: Boolean
@@ -32,6 +33,18 @@ class TshRegexWindowSequence private constructor(
     fun nextWindow(): TshResult<TshRegexWindowLease?> {
         if (closed || snapshotLease.isClosed) {
             return failure("TSH-REGEX-SEQUENCE-001", "Regex window sequence is closed")
+        }
+        if (documentLengthUtf16 == 0L) {
+            if (emptyDocumentWindowEmitted) return TshResult.Success(null)
+            return when (val acquired = TshRegexWindowLease.acquire(
+                snapshotLease, 0L, 0, constraints, memoryBudget
+            )) {
+                is TshResult.Failure -> TshResult.Failure(acquired.diagnostics)
+                is TshResult.Success -> {
+                    emptyDocumentWindowEmitted = true
+                    TshResult.Success(acquired.value, acquired.diagnostics)
+                }
+            }
         }
         if (nextCoreStartUtf16 >= documentLengthUtf16) {
             return TshResult.Success(null)
