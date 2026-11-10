@@ -349,7 +349,9 @@ static void testEditedPieceTreeCreatesImmutableMappedSnapshot() {
     PieceTreeSource edited(original, 1024u * 1024u);
     const char inserted[] = {'X',0,'Y',0};
     assert(edited.replace(4, 4, inserted, sizeof(inserted)));
-    assert(!edited.contiguousData(nullptr, nullptr));
+    const char *edited_data = nullptr;
+    uint64_t edited_size = 0;
+    assert(!edited.contiguousData(&edited_data, &edited_size));
 
     auto snapshot = MappedFileSource::createSnapshot(edited, "/tmp");
     assert(snapshot && snapshot->isOpen());
