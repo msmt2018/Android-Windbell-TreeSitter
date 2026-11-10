@@ -120,25 +120,35 @@ data class TshMatchSet(
 ) {
     init {
         require(documentVersion >= 0L)
-        require(matches.all { it.documentId == documentId && it.documentVersion == documentVersion })
-        require(matches.map { it.id }.distinct().size == matches.size)
-        require(matches.none { it.source == TshMatchSource.TREE_SITTER_ATS } || treeSitterRevision != null) {
-            "Tree-sitter matches require a Tree-sitter pipeline revision"
-        }
-        require(matches.filter { it.source == TshMatchSource.TREE_SITTER_ATS }
-            .all { it.pipelineRevision == treeSitterRevision }) {
-            "Tree-sitter Match pipeline revision does not match the MatchSet"
-        }
-        require(matches.none { it.source == TshMatchSource.REGEX } || regexRevision != null) {
-            "Regex matches require a Regex pipeline revision"
-        }
-        require(matches.filter { it.source == TshMatchSource.REGEX }
-            .all { it.pipelineRevision == regexRevision }) {
-            "Regex Match pipeline revision does not match the MatchSet"
-        }
         require(treeSitterRevision == null || treeSitterRevision.isNotBlank())
         require(regexRevision == null || regexRevision.isNotBlank())
         require(configRevision == null || configRevision.isNotBlank())
+
+        // Validate all MatchSet invariants in one pass. The previous filter/map/distinct chain
+        // created several full-size temporary collections for large result sets.
+        val ids = HashSet<TshMatchId>(matches.size)
+        for (match in matches) {
+            require(match.documentId == documentId && match.documentVersion == documentVersion)
+            require(ids.add(match.id)) { "Match ids must be unique within a MatchSet" }
+            when (match.source) {
+                TshMatchSource.TREE_SITTER_ATS -> {
+                    require(treeSitterRevision != null) {
+                        "Tree-sitter matches require a Tree-sitter pipeline revision"
+                    }
+                    require(match.pipelineRevision == treeSitterRevision) {
+                        "Tree-sitter Match pipeline revision does not match the MatchSet"
+                    }
+                }
+                TshMatchSource.REGEX -> {
+                    require(regexRevision != null) {
+                        "Regex matches require a Regex pipeline revision"
+                    }
+                    require(match.pipelineRevision == regexRevision) {
+                        "Regex Match pipeline revision does not match the MatchSet"
+                    }
+                }
+            }
+        }
     }
 
     fun isCurrentFor(
@@ -153,6 +163,17 @@ data class TshMatchSet(
             this.treeSitterRevision == treeSitterRevision &&
             this.regexRevision == regexRevision &&
             this.configRevision == configRevision
+}
+
+/** Limits the merger's retained working set; estimates are not JVM heap measurements. */
+data class TshMatchMergeBudget(
+    val maxMatches: Int = 250_000,
+    val maxEstimatedBytes: Long = 64L * 1024L * 1024L
+) {
+    init {
+        require(maxMatches > 0)
+        require(maxEstimatedBytes > 0L)
+    }
 }
 
 /** Deterministic merge point for the two execution pipelines; it does not perform styling or drawing. */
@@ -178,45 +199,124 @@ object TshMatchMerger {
         input: Collection<TshMatch>,
         completeness: TshMatchCompleteness = TshMatchCompleteness.COMPLETE,
         diagnostics: List<TshDiagnostic> = emptyList()
+    ): TshResult<TshMatchSet> = merge(
+        documentId, documentVersion, treeSitterRevision, regexRevision, configRevision,
+        input, completeness, diagnostics, TshMatchMergeBudget()
+    )
+
+    /** Convenience overload for callers that only need to customize merge limits. */
+    fun merge(
+        documentId: TshDocumentId,
+        documentVersion: Long,
+        treeSitterRevision: String?,
+        regexRevision: String?,
+        configRevision: String?,
+        input: Collection<TshMatch>,
+        budget: TshMatchMergeBudget
+    ): TshResult<TshMatchSet> = merge(
+        documentId, documentVersion, treeSitterRevision, regexRevision, configRevision,
+        input, TshMatchCompleteness.COMPLETE, emptyList(), budget
+    )
+
+    /** Explicit-budget overload; the legacy signature above remains source/binary compatible. */
+    fun merge(
+        documentId: TshDocumentId,
+        documentVersion: Long,
+        treeSitterRevision: String?,
+        regexRevision: String?,
+        configRevision: String?,
+        input: Collection<TshMatch>,
+        completeness: TshMatchCompleteness,
+        diagnostics: List<TshDiagnostic>,
+        budget: TshMatchMergeBudget
     ): TshResult<TshMatchSet> {
         if (documentVersion < 0L) return failure("TSH-MATCH-001", "Document version must be non-negative")
-        if (input.any { it.source == TshMatchSource.TREE_SITTER_ATS } && treeSitterRevision == null) {
-            return failure("TSH-MATCH-003", "Tree-sitter revision is required when Tree-sitter matches are supplied")
+        // Keep only bounded diagnostics from caller and stale-input filtering. Reserve one slot
+        // for the diagnostic that reports diagnostic truncation itself.
+        val outputDiagnostics = ArrayList<TshDiagnostic>(minOf(diagnostics.size, MAX_DIAGNOSTICS))
+        diagnostics.take(MAX_DIAGNOSTICS - 1).forEach { outputDiagnostics.add(it) }
+        var diagnosticsTruncated = diagnostics.size > MAX_DIAGNOSTICS - 1
+        var staleMatches = 0
+        var truncated = false
+        var estimatedBytes = 0L
+        val acceptedById = LinkedHashMap<TshMatchId, TshMatch>()
+        val deduplicated = LinkedHashMap<DedupKey, TshMatch>()
+
+        fun addDiagnostic(value: TshDiagnostic) {
+            if (outputDiagnostics.size < MAX_DIAGNOSTICS - 1) {
+                outputDiagnostics += value
+            } else {
+                diagnosticsTruncated = true
+            }
         }
-        if (input.any { it.source == TshMatchSource.REGEX } && regexRevision == null) {
-            return failure("TSH-MATCH-004", "Regex revision is required when Regex matches are supplied")
-        }
-        val outputDiagnostics = diagnostics.toMutableList()
-        val accepted = input.filter { match ->
+
+        for (match in input) {
+            if (match.source == TshMatchSource.TREE_SITTER_ATS && treeSitterRevision == null) {
+                return failure("TSH-MATCH-003", "Tree-sitter revision is required when Tree-sitter matches are supplied")
+            }
+            if (match.source == TshMatchSource.REGEX && regexRevision == null) {
+                return failure("TSH-MATCH-004", "Regex revision is required when Regex matches are supplied")
+            }
             val expectedPipelineRevision = when (match.source) {
                 TshMatchSource.TREE_SITTER_ATS -> treeSitterRevision
                 TshMatchSource.REGEX -> regexRevision
             }
             val valid = match.documentId == documentId &&
                 match.documentVersion == documentVersion &&
-                (expectedPipelineRevision != null && match.pipelineRevision == expectedPipelineRevision)
-            if (!valid) outputDiagnostics += TshDiagnostic(
-                code = "TSH-MATCH-002",
-                severity = TshDiagnosticSeverity.WARNING,
-                stage = TshDiagnosticStage.SEMANTIC,
-                message = "Stale or foreign Match was excluded from the merged result"
-            )
-            valid
-        }
-        val idGroups = accepted.groupBy { it.id }
-        if (idGroups.values.any { group -> group.distinct().size > 1 }) {
-            return failure("TSH-MATCH-005", "A Match id identifies more than one distinct Match payload")
-        }
-        val acceptedById = idGroups.values.map { it.first() }
-        val deduplicated = LinkedHashMap<DedupKey, TshMatch>()
-        acceptedById.forEach { match ->
+                expectedPipelineRevision != null &&
+                match.pipelineRevision == expectedPipelineRevision
+            if (!valid) {
+                staleMatches++
+                addDiagnostic(TshDiagnostic(
+                    code = "TSH-MATCH-002",
+                    severity = TshDiagnosticSeverity.WARNING,
+                    stage = TshDiagnosticStage.SEMANTIC,
+                    message = "Stale or foreign Match was excluded from the merged result"
+                ))
+                continue
+            }
+
+            val existing = acceptedById[match.id]
+            if (existing != null) {
+                if (existing != match) {
+                    return failure("TSH-MATCH-005", "A Match id identifies more than one distinct Match payload")
+                }
+                continue
+            }
+
+            val matchBytes = estimateMatchBytes(match)
+            if (acceptedById.size >= budget.maxMatches ||
+                matchBytes > budget.maxEstimatedBytes - estimatedBytes) {
+                truncated = true
+                break
+            }
+
+            acceptedById[match.id] = match
             val key = DedupKey(
                 match.source, match.ruleId.value, match.captureName, match.patternIndex,
                 match.range.start.offset, match.range.end.offset, match.rawRange,
                 match.captures, match.pipelineRevision
             )
             deduplicated.putIfAbsent(key, match)
+            estimatedBytes += matchBytes
         }
+
+        if (truncated) addDiagnostic(TshDiagnostic(
+            code = "TSH-MATCH-006",
+            severity = TshDiagnosticSeverity.WARNING,
+            stage = TshDiagnosticStage.MEMORY,
+            message = "Match merge stopped at its configured count or estimated-memory budget; output is truncated"
+        ))
+        if (diagnosticsTruncated) {
+            if (outputDiagnostics.size >= MAX_DIAGNOSTICS) outputDiagnostics.removeAt(outputDiagnostics.lastIndex)
+            outputDiagnostics += TshDiagnostic(
+                code = "TSH-MATCH-007",
+                severity = TshDiagnosticSeverity.WARNING,
+                stage = TshDiagnosticStage.MEMORY,
+                message = "Additional diagnostics were omitted because the diagnostic budget was reached"
+            )
+        }
+
         val sorted = deduplicated.values.sortedWith(
             compareBy<TshMatch> { it.range.start.offset }
                 .thenByDescending { it.range.end.offset }
@@ -225,9 +325,11 @@ object TshMatchMerger {
                 .thenBy { it.ruleId.value }
                 .thenBy { it.id.value }
         )
-        val finalCompleteness = if (accepted.size != input.size && completeness == TshMatchCompleteness.COMPLETE) {
-            TshMatchCompleteness.PARTIAL
-        } else completeness
+        val finalCompleteness = when {
+            truncated -> TshMatchCompleteness.TRUNCATED
+            staleMatches > 0 && completeness == TshMatchCompleteness.COMPLETE -> TshMatchCompleteness.PARTIAL
+            else -> completeness
+        }
         val result = TshMatchSet(
             documentId, documentVersion, treeSitterRevision, regexRevision, configRevision,
             sorted, finalCompleteness, outputDiagnostics.toList()
@@ -235,10 +337,53 @@ object TshMatchMerger {
         return TshResult.Success(result, outputDiagnostics.toList())
     }
 
+    /** Includes nested capture/scope payload and transient merge-map/list overhead estimates. */
+    private fun estimateMatchBytes(match: TshMatch): Long {
+        var total = 256L
+        fun addString(value: String?) {
+            if (value == null) return
+            total = saturatedAdd(total, saturatedAdd(saturatedMultiply(value.length.toLong(), 2L), 16L))
+        }
+        addString(match.id.value)
+        addString(match.documentId.value)
+        addString(match.pipelineRevision)
+        addString(match.ruleId.value)
+        addString(match.captureName)
+        addString(match.provenance.grammarFingerprint)
+        addString(match.provenance.queryId)
+        addString(match.provenance.queryRevision)
+        addString(match.provenance.regexId)
+        addString(match.provenance.regexRevision)
+        total = saturatedAdd(total, saturatedMultiply(match.captures.size.toLong(), 96L))
+        match.captures.forEach { capture ->
+            addString(capture.name)
+            addString(capture.text)
+        }
+        total = saturatedAdd(total, saturatedMultiply(match.scopeAssignments.size.toLong(), 128L))
+        match.scopeAssignments.forEach { assignment ->
+            addString(assignment.captureName)
+            total = saturatedAdd(total, saturatedMultiply(assignment.path.segments.size.toLong(), 64L))
+            assignment.path.segments.forEach { segment ->
+                addString(segment.id)
+                addString(segment.displayName)
+            }
+        }
+        return total
+    }
+
+    private fun saturatedMultiply(left: Long, right: Long): Long =
+        if (left == 0L || right == 0L) 0L
+        else if (left > Long.MAX_VALUE / right) Long.MAX_VALUE else left * right
+
+    private fun saturatedAdd(left: Long, right: Long): Long =
+        if (Long.MAX_VALUE - left < right) Long.MAX_VALUE else left + right
+
     private fun failure(code: String, message: String) = TshResult.Failure(listOf(TshDiagnostic(
         code = code,
         severity = TshDiagnosticSeverity.ERROR,
         stage = TshDiagnosticStage.SEMANTIC,
         message = message
     )))
+
+    private const val MAX_DIAGNOSTICS = 4096
 }

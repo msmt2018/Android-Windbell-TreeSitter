@@ -516,6 +516,8 @@ internal class PieceTreeBase {
         val pieceStartColumnValues = IntList()
         val pieceLineFeedPrefixes = IntList()
         var lineFeedPrefix = 0
+        // UTF-16 column in the assembled document at the beginning of the next piece.
+        var documentColumn = 0
         var length = 0
 
         this.iterate(this.root) { node ->
@@ -526,9 +528,32 @@ internal class PieceTreeBase {
                 pieceBufferIndices.add(piece.bufferIndex)
                 pieceCoordinateStarts.add(start)
                 pieceStartLineIndices.add(piece.start.line)
-                pieceStartColumnValues.add(piece.start.column)
+                if (length == 0) {
+                    // The first visible piece may begin in the middle of a backing-buffer line
+                    // after a prefix deletion; preserve that source column as the document start.
+                    documentColumn = piece.start.column
+                }
+                pieceStartColumnValues.add(documentColumn)
                 pieceLineFeedPrefixes.add(lineFeedPrefix)
                 lineFeedPrefix = Math.addExact(lineFeedPrefix, piece.lineFeedCnt)
+                if (piece.lineFeedCnt > 0) {
+                    // Once this piece contains an LF, its trailing document column is
+                    // independent of the preceding pieces. Resolve the source line start
+                    // at the piece end; do not use the backing buffer's piece.start.column
+                    // as that is local to that buffer, not to the assembled document.
+                    val lineStarts = this._buffers[piece.bufferIndex].lineStarts
+                    val sourceEnd = start + piece.length
+                    var low = 0
+                    var high = lineStarts.size
+                    while (low < high) {
+                        val mid = (low + high) ushr 1
+                        if (lineStarts[mid] <= sourceEnd) low = mid + 1 else high = mid
+                    }
+                    val lastLineStart = lineStarts[(low - 1).coerceAtLeast(0)]
+                    documentColumn = sourceEnd - lastLineStart
+                } else {
+                    documentColumn = Math.addExact(documentColumn, piece.length)
+                }
                 if (piece.bufferIndex == 0) {
                     sources.add(null)
                     sourceStarts.add(typed.length)

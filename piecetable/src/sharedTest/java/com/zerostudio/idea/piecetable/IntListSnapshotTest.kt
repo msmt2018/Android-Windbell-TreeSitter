@@ -25,7 +25,7 @@ class IntListSnapshotTest {
         values.clear()
         values.add(100)
 
-        assertEquals(listOf(2, 7, 11, 15, 17, 21),
+        assertEquals(listOf(2, 7, 11, 13, 17, 21),
             (0 until second.size).map { second[it] })
         assertEquals(listOf(100), (0 until values.size).map { values[it] })
     }

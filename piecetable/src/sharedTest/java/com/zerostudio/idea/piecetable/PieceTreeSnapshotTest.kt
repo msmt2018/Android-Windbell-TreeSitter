@@ -267,8 +267,8 @@ class PieceTreeSnapshotTest {
     @Test
     fun snapshotTreeSitterCoordinatesUsePieceAndBackingBufferLineIndexes() {
         val builder = PieceTreeTextBufferBuilder()
-        builder.acceptChunk("alpha\\n")
-        builder.acceptChunk("beta😀\\n")
+        builder.acceptChunk("alpha\n")
+        builder.acceptChunk("beta😀\n")
         builder.acceptChunk("gamma")
         val buffer = builder.build(EndOfLine.LF, normalizeEOL = true)
         val tree = buffer.getPieceTree()
@@ -276,7 +276,7 @@ class PieceTreeSnapshotTest {
         // Split original pieces and create change-buffer pieces without flattening the snapshot.
         tree.insert(2, "X", eolNormalized = true)
         tree.delete(7, 1)
-        tree.insert(buffer.length - 2, "\\nTAIL", eolNormalized = true)
+        tree.insert(buffer.length - 2, "\nTAIL", eolNormalized = true)
         val expected = buffer.toString()
         val snapshot = buffer.createSnapshot()
 
@@ -298,7 +298,7 @@ class PieceTreeSnapshotTest {
     @Test
     fun snapshotDisablesTreeSitterCoordinatesForUnusualLineTerminators() {
         val builder = PieceTreeTextBufferBuilder()
-        builder.acceptChunk("first\\rsecond\\nthird")
+        builder.acceptChunk("first\rsecond\nthird")
         val buffer = builder.build(EndOfLine.LF, normalizeEOL = false)
         val snapshot = buffer.createSnapshot()
 
