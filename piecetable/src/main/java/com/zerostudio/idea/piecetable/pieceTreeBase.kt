@@ -550,9 +550,11 @@ internal class PieceTreeBase {
         val lineStartsCache = arrayOfNulls<IntListSnapshot>(this._buffers.size)
         val pieceLineStarts = Array(sources.size) { index ->
             val bufferIndex = buffers[index]
-            lineStartsCache[bufferIndex] ?: this._buffers[bufferIndex].lineStarts
-                .snapshotView()
-                .also { lineStartsCache[bufferIndex] = it }
+            lineStartsCache[bufferIndex] ?: run {
+                val view = this._buffers[bufferIndex].lineStarts.snapshotView()
+                lineStartsCache[bufferIndex] = view
+                view
+            }
         }
         return PieceTreeSnapshot(
             Array(sources.size) { sources[it] ?: typedText },
