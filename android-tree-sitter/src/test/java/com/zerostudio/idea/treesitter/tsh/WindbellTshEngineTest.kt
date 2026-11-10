@@ -1667,9 +1667,16 @@ class WindbellTshLinkageTest {
         val tree = parser.parseString(source)
         assertNotNull(tree)
         try {
+            val root = tree!!.rootNode
             assertFalse(
-                tree!!.rootNode.hasErrors(),
+                root.hasErrors(),
                 "Large full-document ATS tree must not contain ERROR or MISSING descendants"
+            )
+            assertEquals(0, root.startByte, "The ATS root must begin at absolute byte zero")
+            assertEquals(
+                source.length.toLong() * 2L,
+                root.endByte.toLong(),
+                "The ATS root must cover the complete UTF-16LE source without truncation"
             )
             val spans = engine.computeHighlights(tree, source, extension)
             val queryCaptures = spans.count { it.source == 3 }
