@@ -38,7 +38,8 @@ class TshTreeSitterParserOwner private constructor(
     private val resources: TshNativeResourceRegistry,
     private val parserLanguageLease: TshNativeResourceLeaseStore.Lease<TSLanguage>,
     private val grammar: TshGrammarDescriptor,
-    private val parser: TshNativeResourceRegistry.Registration<TSParser>
+    private val parser: TshNativeResourceRegistry.Registration<TSParser>,
+    private val memoryBudget: TshMemoryBudget?
 ) : AutoCloseable {
     /** TSParser is mutable Native state and cannot parse two documents concurrently. */
     private val parseLock = ReentrantLock()
@@ -553,7 +554,7 @@ class TshTreeSitterParserOwner private constructor(
         var tree: TSTree? = null
         var languageLeaseTransferred = false
         try {
-            val input = TshSnapshotTreeSitterInput(textProvider, snapshotLease)
+            val input = TshSnapshotTreeSitterInput(textProvider, snapshotLease, memoryBudget)
             val parsedTree = parseLock.withLock {
                 parserLease.resource.parseInput(oldTreeLease?.resource, input, chunkSizeBytes)
             } ?: return failure(
@@ -640,10 +641,12 @@ class TshTreeSitterParserOwner private constructor(
          * The supplied Language handle must belong to [resources].
          */
         @JvmStatic
+        @JvmOverloads
         fun open(
             resources: TshNativeResourceRegistry,
             languageHandle: TshNativeResourceLeaseStore.Handle<TSLanguage>,
-            grammar: TshGrammarDescriptor
+            grammar: TshGrammarDescriptor,
+            memoryBudget: TshMemoryBudget? = null
         ): TshResult<TshTreeSitterParserOwner> {
             val languageLease = resources.acquire(languageHandle)
                 ?: return failure(
@@ -669,7 +672,7 @@ class TshTreeSitterParserOwner private constructor(
                 )
                 ownershipTransferred = true
                 return TshResult.Success(
-                    TshTreeSitterParserOwner(resources, languageLease, grammar, registration)
+                    TshTreeSitterParserOwner(resources, languageLease, grammar, registration, memoryBudget)
                 )
             } catch (error: Throwable) {
                 return failure(
