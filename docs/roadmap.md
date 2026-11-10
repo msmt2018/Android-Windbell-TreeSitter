@@ -209,9 +209,10 @@
 
 - [x] `TSParser` 新增 `isCancellationRequested()` 公共只读状态和 `requestCancellationAndWaitIfParsing()` 布尔返回 API；保留既有 void `requestCancellationAndWait()` ABI。
 - [x] `TshTreeSitterParserOwner` 新增异步取消、取消并等待、Native timeout 设置/读取 API；取消时保留 Parser Lease，等待 Native parse 退出后才释放调用侧 Lease。
+- [x] 基于 Tree-sitter `TSParseOptions.progress_callback` 新增 Java `TSParser.ProgressCallback` 与 TSH `TshParseProgressCallback`；快照流式解析可观察 UTF-16 进度、hasError，并由回调返回 true 协作取消；回调异常映射为结构化诊断。
 - [x] String parse 与 Snapshot streaming parse 的 null-tree 路径区分已接受的 Native cancellation、达到已配置 timeout 的“可能超时”以及其他无树失败。
 - [ ] Tree-sitter Native API 对 timeout/cancel 只返回 null，没有精确 stop-reason；timeout 分类使用实际 parse 耗时与配置阈值推断，诊断明确标注“likely”，不伪称 Native 精确原因。
-- [ ] TSH Owner 的真实并发 parse/cancel、timeout、close 竞态需在 CI/设备验证；当前新增底层 ParserTest 源码尚未通过最新 CI。
+- [ ] TSH Owner 的真实并发 parse/cancel、timeout、progress callback、close 竞态需在 CI/设备验证；当前新增底层 ParserTest 源码尚未通过最新 CI。
 
 
 ### 2026-11-10：Regex 有界窗口 Lease（SOURCE_PARTIAL）
@@ -226,3 +227,6 @@
 
 
 - [x] Regex WindowSequence 测试覆盖跨 surrogate core 边界、连续分区、caller Lease 提前关闭、空文档、无界 pattern 拒绝与 Sequence 生命周期。
+
+
+- [x] TSH Parser Owner 在 null tree、Native cancellation、progress callback cancellation、timeout 或 parse 异常后，持有 Owner parse lock 执行 `TSParser.reset()`，防止 Tree-sitter 的默认 resumable parse state 被错误用于下一文档/版本。
