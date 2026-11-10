@@ -47,7 +47,11 @@ class PartitionAstCache(
         private val releaseAction: () -> Unit
     ) : AutoCloseable {
         private var released = false
-        override fun close() {
+        private fun closeTree(tree: TSTree) {
+        try { tree.close() } catch (_: Throwable) { }
+    }
+
+    override fun close() {
             synchronized(lock) {
                 if (released) return
                 released = true
@@ -68,11 +72,19 @@ class PartitionAstCache(
 
     /** Takes ownership of [tree] whether admitted or rejected. */
     fun put(key: PartitionAstKey, tree: TSTree, sourceUtf16Length: Long): Boolean {
-        require(sourceUtf16Length >= 0L)
-        val weight = estimatedBytes(sourceUtf16Length).coerceAtLeast(1L)
+        if (sourceUtf16Length < 0L) {
+            closeTree(tree)
+            return false
+        }
+        val weight = try {
+            estimatedBytes(sourceUtf16Length).coerceAtLeast(1L)
+        } catch (_: Throwable) {
+            closeTree(tree)
+            return false
+        }
         synchronized(lock) {
             if (closed || weight > maxEstimatedBytes) {
-                tree.close()
+                closeTree(tree)
                 return false
             }
             removeLocked(key)
@@ -103,7 +115,7 @@ class PartitionAstCache(
                 iterator.remove()
                 if (entry.leases == 0) {
                     usedBytes -= entry.weight
-                    entry.tree.close()
+                    closeTree(entry.tree)
                 } else {
                     // The tree remains physically allocated while any lease is
                     // alive. Keep its weight charged even though it is no longer
@@ -135,7 +147,7 @@ class PartitionAstCache(
         val previous = entries.remove(key) ?: return
         if (previous.leases == 0) {
             usedBytes -= previous.weight
-            previous.tree.close()
+            closeTree(previous.tree)
         } else {
             // Replacing a leased key must not make its still-live tree disappear
             // from the memory budget.
