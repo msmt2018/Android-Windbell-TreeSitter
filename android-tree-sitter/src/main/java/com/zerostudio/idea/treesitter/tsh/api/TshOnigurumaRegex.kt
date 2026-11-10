@@ -164,11 +164,17 @@ class TshOnigurumaRegex private constructor(
         val records = ArrayList<TshRegexMatchRecord>(minOf(maxMatches, 4096))
         var estimatedBytes = 0L
         var truncated = false
+        var partial = false
+        val executionDiagnostics = ArrayList<TshDiagnostic>()
         while (true) {
-            val acquired = when (val next = sequence.nextWindow()) {
-                is TshResult.Failure -> return TshResult.Failure(next.diagnostics)
-                is TshResult.Success -> next.value
-            } ?: break
+            val next = sequence.nextWindow()
+            if (next is TshResult.Failure) {
+                if (records.isEmpty()) return TshResult.Failure(next.diagnostics)
+                executionDiagnostics.addAll(next.diagnostics)
+                partial = true
+                break
+            }
+            val acquired = (next as TshResult.Success).value ?: break
 
             val isLastCore = acquired.coreEndUtf16 == sequence.documentLengthUtf16
             val remaining = maxMatches - records.size
@@ -182,16 +188,18 @@ class TshOnigurumaRegex private constructor(
                 break
             }
 
-            val windowResult = try {
-                when (val execution = executeWindow(
-                    acquired, minOf(remaining, MAX_MATCHES_PER_WINDOW), maxCaptureGroups
-                )) {
-                    is TshResult.Failure -> return execution
-                    is TshResult.Success -> execution.value
-                }
+            val execution = try {
+                executeWindow(acquired, minOf(remaining, MAX_MATCHES_PER_WINDOW), maxCaptureGroups)
             } finally {
                 acquired.close()
             }
+            if (execution is TshResult.Failure) {
+                if (records.isEmpty()) return execution
+                executionDiagnostics.addAll(execution.diagnostics)
+                partial = true
+                break
+            }
+            val windowResult = (execution as TshResult.Success).value
             for (record in windowResult.matches) {
                 val recordBytes = estimateRecordBytes(record)
                 if (records.size >= maxMatches ||
@@ -224,7 +232,12 @@ class TshOnigurumaRegex private constructor(
             regexRevision = regexRevision,
             pipelineRevision = pipelineRevision,
             matches = records,
-            completeness = if (truncated) TshMatchCompleteness.TRUNCATED else TshMatchCompleteness.COMPLETE
+            completeness = when {
+                truncated -> TshMatchCompleteness.TRUNCATED
+                partial -> TshMatchCompleteness.PARTIAL
+                else -> TshMatchCompleteness.COMPLETE
+            },
+            diagnostics = executionDiagnostics
         )
         return TshRegexMatchAdapter.adapt(regexResult, budget = budget)
     }
