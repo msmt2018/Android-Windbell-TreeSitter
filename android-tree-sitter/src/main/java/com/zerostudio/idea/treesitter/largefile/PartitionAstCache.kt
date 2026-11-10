@@ -47,16 +47,21 @@ class PartitionAstCache(
         private val releaseAction: () -> Unit
     ) : AutoCloseable {
         private var released = false
-        private fun closeTree(tree: TSTree) {
-        try { tree.close() } catch (_: Throwable) { }
-    }
-
-    override fun close() {
+        override fun close() {
             synchronized(lock) {
                 if (released) return
                 released = true
                 releaseAction()
             }
+        }
+    }
+
+    private fun closeTree(tree: TSTree) {
+        // Retire native ownership even if JNI reports a teardown error.
+        try {
+            tree.close()
+        } catch (_: Throwable) {
+            // Continue releasing other cache entries.
         }
     }
 
@@ -90,7 +95,7 @@ class PartitionAstCache(
             removeLocked(key)
             evictUntilFitsLocked(weight)
             if (weight > maxEstimatedBytes - usedBytes.coerceAtMost(maxEstimatedBytes)) {
-                tree.close()
+                closeTree(tree)
                 return false
             }
             entries[key] = Entry(tree, weight)
@@ -173,7 +178,7 @@ class PartitionAstCache(
             entries.values.forEach { entry ->
                 if (entry.leases == 0) {
                     usedBytes -= entry.weight
-                    entry.tree.close()
+                    closeTree(entry.tree)
                 } else {
                     // close() prevents new leases, but an outstanding lease still
                     // owns a live native tree and therefore keeps its budget charge.
