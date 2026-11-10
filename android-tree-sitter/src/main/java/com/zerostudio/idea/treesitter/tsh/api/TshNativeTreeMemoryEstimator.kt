@@ -135,34 +135,6 @@ internal object TshParserInputMemoryReservations {
         }
     }
 
-    fun reserveStreamingBridge(
-        budget: TshMemoryBudget?,
-        documentId: String,
-        documentVersion: Long,
-        chunkSizeBytes: Int
-    ): TshResult<TshMemoryReservation?> {
-        if (budget == null) return TshResult.Success(null)
-        if (documentId.isBlank() || documentVersion < 0L ||
-            chunkSizeBytes !in 2..(1024 * 1024) || (chunkSizeBytes and 1) != 0) {
-            return failure(
-                "TSH-MEMORY-009",
-                "Streaming parser bridge identity or chunk size is invalid"
-            )
-        }
-        // The JNI bridge owns one reusable Java byte[] and GetByteArrayElements may expose a
-        // second copied buffer on runtimes that do not pin the array. Both live across callbacks
-        // for the entire native parse. The callback-local provider String is accounted separately.
-        val estimate = chunkSizeBytes.toLong() * 2L + 64L
-        return when (val result = budget.reserve(
-            TshMemoryCategory.PARSER_INPUT,
-            estimate,
-            "tree-sitter-streaming-bridge:${documentId}:${documentVersion}"
-        )) {
-            is TshResult.Success -> TshResult.Success(result.value)
-            is TshResult.Failure -> TshResult.Failure(result.diagnostics)
-        }
-    }
-
     private fun failure(code: String, message: String) = TshResult.Failure(listOf(TshDiagnostic(
         code = code,
         severity = TshDiagnosticSeverity.ERROR,
