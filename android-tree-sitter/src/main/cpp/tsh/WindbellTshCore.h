@@ -327,6 +327,8 @@ struct TshEditorMetadata {
 
 class TshGrammar {
 public:
+    // Identity of this immutable compiled grammar snapshot.
+    uint64_t revision = 0;
     std::string id;
     std::string name;
     std::vector<std::string> file_extensions;
