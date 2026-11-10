@@ -233,7 +233,7 @@ object TshMatchMerger {
         if (documentVersion < 0L) return failure("TSH-MATCH-001", "Document version must be non-negative")
         // Keep only bounded diagnostics from caller and stale-input filtering. Reserve one slot
         // for the diagnostic that reports diagnostic truncation itself.
-        val outputDiagnostics = ArrayList<TshDiagnostic>(minOf(diagnostics.size + 8, MAX_DIAGNOSTICS))
+        val outputDiagnostics = ArrayList<TshDiagnostic>(minOf(diagnostics.size, MAX_DIAGNOSTICS))
         diagnostics.take(MAX_DIAGNOSTICS - 1).forEach(outputDiagnostics::add)
         var diagnosticsTruncated = diagnostics.size > MAX_DIAGNOSTICS - 1
         var staleMatches = 0
