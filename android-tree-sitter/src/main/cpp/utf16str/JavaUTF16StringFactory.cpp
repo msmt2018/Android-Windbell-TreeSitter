@@ -31,9 +31,22 @@ UTF16StringFactory_newString(
     JNIEnv *env,
     jclass clazz,
     jstring source) {
-  auto *str = new UTF16String;
+  if (source == nullptr) {
+    throw_npe(env, "source");
+    return 0;
+  }
+  auto *str = new (std::nothrow) UTF16String;
+  if (str == nullptr) {
+    throw_exception(env, "java/lang/OutOfMemoryError",
+                    "Unable to allocate native UTF16String");
+    return 0;
+  }
   str->append(env, source);
-  return (jlong) str;
+  if (env->ExceptionCheck()) {
+    delete str;
+    return 0;
+  }
+  return reinterpret_cast<jlong>(str);
 }
 
 static jlong
