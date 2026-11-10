@@ -172,12 +172,14 @@ class TshRegexWindowLease private constructor(
                     )
                 }
 
+                // One extra code unit preserves multiline ^ semantics when the true line
+                // boundary is immediately outside the nominal lookbehind/match overlap.
                 val leftContext = maxMatchLength.toLong() - 1L +
-                    constraints.maxLookbehindUtf16.toLong()
+                    constraints.maxLookbehindUtf16.toLong() + 1L
                 var windowStart = maxOf(0L, coreStartUtf16 - leftContext)
                 var windowEnd = minOf(
                     length,
-                    safeAdd(coreEnd, maxMatchLength.toLong() - 1L + constraints.maxLookaheadUtf16.toLong())
+                    safeAdd(coreEnd, maxMatchLength.toLong() - 1L + constraints.maxLookaheadUtf16.toLong() + 1L)
                 )
                 if (splitsSurrogate(snapshot, windowStart)) windowStart--
                 if (splitsSurrogate(snapshot, windowEnd)) windowEnd++
