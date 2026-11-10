@@ -449,6 +449,71 @@ static int tshPredicateCaptureEquals(const TSNode& node,
     return 1;
 }
 
+static int tshPredicateRegexMatchesContiguous(
+    regex_t* regex, const UChar* begin, const UChar* end
+) {
+    if (!regex || !begin || !end || end < begin) return -1;
+    static const UChar empty_input = 0;
+    if (begin == end) begin = end = &empty_input;
+    OnigRegion* region = onig_region_new();
+    if (!region) return -1;
+    const int result = onig_search(regex, begin, end, begin, end, region, ONIG_OPTION_NONE);
+    onig_region_free(region, 1);
+    if (result >= 0) return 1;
+    return result == ONIG_MISMATCH ? 0 : -1;
+}
+
+static int tshPredicateRegexMatchesTextSourceBounded(
+    const windbell::largefile::TextSource& source,
+    uint64_t start_byte,
+    uint64_t end_byte,
+    regex_t* regex,
+    uint64_t maximum_match_bytes
+) {
+    if (!regex || start_byte > end_byte || (start_byte & 1u) ||
+        (end_byte & 1u) || end_byte > source.sizeBytes() ||
+        maximum_match_bytes == 0) return -1;
+    constexpr uint64_t kCoreWindowBytes = 256u * 1024u;
+    const uint64_t overlap = maximum_match_bytes >= 2u
+        ? maximum_match_bytes - 2u : 0u;
+    uint64_t core_start = start_byte;
+    while (core_start < end_byte) {
+        const uint64_t remaining = end_byte - core_start;
+        const uint64_t core_end = remaining <= kCoreWindowBytes
+            ? end_byte : core_start + kCoreWindowBytes;
+        const uint64_t after_core = end_byte - core_end;
+        const uint64_t window_end = overlap >= after_core
+            ? end_byte : core_end + overlap;
+        const uint64_t window_bytes = window_end - core_start;
+        if (window_bytes == 0 || (window_bytes & 1u) != 0 ||
+            window_bytes > static_cast<uint64_t>(std::numeric_limits<size_t>::max()))
+            return -1;
+        std::vector<UChar> window;
+        try { window.resize(static_cast<size_t>(window_bytes)); }
+        catch (const std::bad_alloc&) { return -1; }
+        if (!windbell::largefile::copyTextRange(
+                source, core_start, window_bytes, window.data())) return -1;
+        const UChar* begin = window.data();
+        const UChar* end = begin + window.size();
+        OnigRegion* region = onig_region_new();
+        if (!region) return -1;
+        const int hit = onig_search(regex, begin, end, begin, end, region, ONIG_OPTION_NONE);
+        bool found_in_core = false;
+        bool failed = false;
+        if (hit >= 0) {
+            if (region->beg[0] < 0 || region->end[0] < region->beg[0]) failed = true;
+            else found_in_core = static_cast<uint64_t>(region->beg[0]) < core_end - core_start;
+        } else if (hit != ONIG_MISMATCH) {
+            failed = true;
+        }
+        onig_region_free(region, 1);
+        if (failed) return -1;
+        if (found_in_core) return 1;
+        core_start = core_end;
+    }
+    return 0;
+}
+
 enum class TshPredicateResult : uint8_t { ACCEPT, REJECT, ERROR };
 
 static TshPredicateResult tshEvaluateNativePredicates(const NativeQueryProgram& program,
@@ -469,12 +534,7 @@ static TshPredicateResult tshEvaluateNativePredicates(const NativeQueryProgram& 
         std::string op(op_text, op_length);
         if (!op.empty() && op.front() == '#') op.erase(op.begin());
 
-        const bool needs_regex_text = op == "match?" || op == "not-match?";
         std::vector<std::vector<UChar>> actual;
-        if (needs_regex_text &&
-            !tshPredicateCaptureTexts(match, predicate[1].value_id, utf16_source,
-                text_source, source_bytes, actual)) return TshPredicateResult::ERROR;
-
         std::vector<std::vector<UChar>> expected;
         try {
             for (size_t i = 2; i < predicate.size(); ++i) {
@@ -540,26 +600,59 @@ static TshPredicateResult tshEvaluateNativePredicates(const NativeQueryProgram& 
             }
             if (!compiled || !compiled->regex) return TshPredicateResult::REJECT;
 
-            bool regex_allocation_failed = false;
-            const auto matches_regex = [&](const std::vector<UChar>& value) -> bool {
-                static const UChar empty_input = 0;
-                OnigRegion* region = onig_region_new();
-                if (!region) {
-                    regex_allocation_failed = true;
-                    return false;
+            bool has_capture = false;
+            bool all_match = true;
+            bool all_not_match = true;
+            if (text_source &&
+                compiled->execution_capability == RegexExecutionCapability::BOUNDED_WINDOW &&
+                compiled->maximum_match_bytes > 0) {
+                for (uint32_t i = 0; i < match.capture_count; ++i) {
+                    if (match.captures[i].index != predicate[1].value_id) continue;
+                    has_capture = true;
+                    const uint32_t start_byte = ts_node_start_byte(match.captures[i].node);
+                    const uint32_t end_byte = ts_node_end_byte(match.captures[i].node);
+                    if (start_byte > end_byte || end_byte > source_bytes ||
+                        (start_byte & 1u) || (end_byte & 1u))
+                        return TshPredicateResult::ERROR;
+                    const int matched = tshPredicateRegexMatchesTextSourceBounded(
+                        *text_source, start_byte, end_byte, compiled->regex,
+                        compiled->maximum_match_bytes);
+                    if (matched < 0) return TshPredicateResult::ERROR;
+                    all_match = all_match && (matched == 1);
+                    all_not_match = all_not_match && (matched == 0);
                 }
-                const UChar* begin = value.empty() ? &empty_input : value.data();
-                const UChar* end = begin + value.size();
-                const int result = onig_search(compiled->regex, begin, end, begin, end,
-                    region, ONIG_OPTION_NONE);
-                onig_region_free(region, 1);
-                return result >= 0;
-            };
-            const bool all_match = !actual.empty() &&
-                std::all_of(actual.begin(), actual.end(), matches_regex);
-            const bool all_not_match = std::all_of(actual.begin(), actual.end(),
-                [&](const std::vector<UChar>& value) { return !matches_regex(value); });
-            if (regex_allocation_failed) return TshPredicateResult::ERROR;
+            } else if (utf16_source) {
+                for (uint32_t i = 0; i < match.capture_count; ++i) {
+                    if (match.captures[i].index != predicate[1].value_id) continue;
+                    has_capture = true;
+                    const uint32_t start_byte = ts_node_start_byte(match.captures[i].node);
+                    const uint32_t end_byte = ts_node_end_byte(match.captures[i].node);
+                    if (start_byte > end_byte || end_byte > source_bytes ||
+                        (start_byte & 1u) || (end_byte & 1u))
+                        return TshPredicateResult::ERROR;
+                    const int matched = tshPredicateRegexMatchesContiguous(
+                        compiled->regex, utf16_source + start_byte,
+                        utf16_source + end_byte);
+                    if (matched < 0) return TshPredicateResult::ERROR;
+                    all_match = all_match && (matched == 1);
+                    all_not_match = all_not_match && (matched == 0);
+                }
+            } else {
+                if (!tshPredicateCaptureTexts(match, predicate[1].value_id,
+                        utf16_source, text_source, source_bytes, actual))
+                    return TshPredicateResult::ERROR;
+                has_capture = !actual.empty();
+                for (const auto& value : actual) {
+                    const UChar* begin = value.empty() ? nullptr : value.data();
+                    const UChar* end = value.empty() ? nullptr : value.data() + value.size();
+                    const int matched = tshPredicateRegexMatchesContiguous(
+                        compiled->regex, begin, end);
+                    if (matched < 0) return TshPredicateResult::ERROR;
+                    all_match = all_match && (matched == 1);
+                    all_not_match = all_not_match && (matched == 0);
+                }
+            }
+            all_match = has_capture && all_match;
             accepted = compiled->negate ? all_not_match : all_match;
         } else return TshPredicateResult::REJECT;
 
