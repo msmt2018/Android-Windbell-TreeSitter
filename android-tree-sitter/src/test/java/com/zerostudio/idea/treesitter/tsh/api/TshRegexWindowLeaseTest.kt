@@ -65,7 +65,7 @@ class TshRegexWindowLeaseTest {
         val snapshot = Snapshot(content)
         val sourceLease = lease(snapshot)
         val window = (TshRegexWindowLease.acquire(
-            sourceLease, 256L, 256, constraints()
+            sourceLease, 256L, 256, constraints(lookahead = 0)
         ) as TshResult.Success).value
 
         // The lookbehind start (248) is exactly before the first surrogate pair. The right
@@ -113,7 +113,7 @@ class TshRegexWindowLeaseTest {
 
         assertEquals(TshMemoryCategory.REGEX_WINDOW, budget.snapshot().bytesByCategory
             .filterValues { it > 0L }.keys.single())
-        assertEquals(662L, budget.snapshot().reservedBytes)
+        assertEquals(1_260L, budget.snapshot().reservedBytes)
         window.close()
         window.close()
         assertEquals(0L, budget.snapshot().reservedBytes)
