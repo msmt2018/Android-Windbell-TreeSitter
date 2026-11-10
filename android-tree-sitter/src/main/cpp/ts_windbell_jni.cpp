@@ -1305,10 +1305,13 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
         throw_illegal_args(env, "Native TSH range must be ordered UTF-16LE byte offsets");
         return nullptr;
     }
+    const auto grammar = WindbellEngine::getInstance().getGrammarByExtension(document->extension);
+    if (!grammar) return env->NewIntArray(0);
     NativeHighlightCache::Key cache_key{
         document->version,
         document->source->version(),
         document->partition_index.version(),
+        grammar->revision,
         static_cast<uint32_t>(range_start_byte),
         static_cast<uint32_t>(range_end_byte),
         diagnostics == JNI_TRUE
@@ -1321,7 +1324,6 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
     windbell::largefile::TextChunkView view{};
     const uint16_t *input = nullptr;
     std::vector<uint16_t> compatibility_window;
-    const auto grammar = WindbellEngine::getInstance().getGrammarByExtension(document->extension);
     const bool source_native_ast_only = grammar &&
         grammar->regex_rules.empty() && grammar->regex_states.empty();
     if (total_bytes != 0 && !source_native_ast_only) {
