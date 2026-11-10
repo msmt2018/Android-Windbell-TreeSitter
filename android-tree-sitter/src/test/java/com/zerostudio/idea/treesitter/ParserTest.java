@@ -141,6 +141,7 @@ public class ParserTest extends TreeSitterTest {
       } catch (IllegalStateException expected) {
         assertThat(expected).hasMessageThat().contains("synthetic TSInput failure");
       }
+      parser.reset();
 
       TSInput invalidCountInput = (byteOffset, row, column, destination) -> 3;
       try {
