@@ -218,7 +218,7 @@
 
 - [x] 新增 `TshRegexWindowConstraints` 与 `TshRegexWindowLease`，显式约束 core window、最大连续窗口、最大匹配长度、lookbehind/lookahead。
 - [x] 窗口只读取当前 core 和必要上下文；核心区间决定 match start 的唯一归属，避免相邻窗口重复输出。
-- [x] 拒绝未声明有限最大匹配长度的模式；核心边界不能拆分 surrogate pair，读取窗口边缘自动扩展一个 UTF-16 code unit 以保持完整 code point。
+- [x] 拒绝未声明有限最大匹配长度的模式；核心边界不能拆分 surrogate pair，读取窗口边缘自动扩展一个 UTF-16 code unit 以保持完整 code point；match-start 归属与 local→absolute 映射也拒绝落在 surrogate pair 中间的偏移。
 - [x] 通过 REGEX_WINDOW reservation 预留临时 CharSequence 与 retained String 的双份估算，Reservation 随 Lease.close() 释放；超预算在读取完整窗口前拒绝。
 - [x] 暴露 document length 与窗口是否触及文档首尾，供 Regex Executor 正确处理文档锚点；Executor 仍需在非文档边界禁用窗口伪造的 BOL/EOL 语义。
 - [ ] WindowLease 不执行 Regex、不实现 Oniguruma 状态跨窗延续；使用者必须按 core interval 过滤 match start，并遵守有限 match/lookaround 声明。
