@@ -6,7 +6,7 @@ concurrency:
 
 on:
   push:
-    branches: [ "dev", "main", "fix/tsh-core-architecture" ]
+    branches: [ "dev", "main", "fix/tsh-core-architecture", "integrate/tsh-unified-api-large-text" ]
     paths-ignore:
       - '**.md'
   pull_request:
