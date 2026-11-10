@@ -989,7 +989,7 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
 
     // Stateful Regex rules run inside the same Regex pipeline and emit the same
     // capture ABI as ordinary Regex rules; there is no separate token model.
-    if (input_chars && !grammar->regex_states.empty()) {
+    if ((input_chars || (text_source && grammar->regex_state_graph_bounded)) && !grammar->regex_states.empty()) {
         std::vector<std::string> state_stack{grammar->regex_start_state};
         uint32_t position = 0;
         uint64_t next_checkpoint = 64u * 1024u;
@@ -1116,11 +1116,46 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
             return final_spans;
         }
         uint32_t zero_width_steps = 0;
+        std::vector<UChar> state_window;
+        uint32_t state_window_start = 0;
+        uint32_t state_window_end = total_bytes;
+        const uint64_t state_window_match_width = grammar->regex_state_graph_maximum_match_bytes;
+        auto ensure_state_window = [&]() -> bool {
+            if (input_chars) {
+                state_window_start = 0;
+                state_window_end = total_bytes;
+                return true;
+            }
+            if (!text_source || !grammar->regex_state_graph_bounded ||
+                state_window_match_width == 0) return false;
+            const uint64_t remaining = static_cast<uint64_t>(total_bytes) - position;
+            if (!state_window.empty() && position >= state_window_start &&
+                position < state_window_end &&
+                static_cast<uint64_t>(state_window_end - position) >= state_window_match_width) {
+                return true;
+            }
+            constexpr uint64_t kStateCoreWindowBytes = 256u * 1024u;
+            const uint64_t requested = std::max(kStateCoreWindowBytes, state_window_match_width);
+            const uint64_t bytes = std::min<uint64_t>(remaining, requested);
+            if (bytes == 0 || (bytes & 1u) != 0 ||
+                bytes > static_cast<uint64_t>(std::numeric_limits<size_t>::max()) / sizeof(UChar)) return false;
+            try { state_window.resize(static_cast<size_t>(bytes / sizeof(UChar))); }
+            catch (...) { return false; }
+            if (!windbell::largefile::copyTextRange(*text_source, position, bytes, state_window.data())) return false;
+            state_window_start = position;
+            state_window_end = static_cast<uint32_t>(static_cast<uint64_t>(position) + bytes);
+            return true;
+        };
         // Tokenize only through the requested viewport. The final match may
         // extend past range_end_byte (needed for correct token boundaries and
         // state transitions), but the next iteration must not scan the tail of
         // a multi-hundred-megabyte document merely to answer one viewport.
         while (position < total_bytes && position < range_end_byte) {
+            if (!ensure_state_window()) break;
+            const UChar* state_text_start = input_chars ? text_start : state_window.data();
+            const UChar* state_text_end = input_chars ? text_end : state_window.data() + state_window.size();
+            const uint32_t local_position = position - state_window_start;
+            const UChar* state_position_ptr = state_text_start + local_position;
             const RegexStateRule* matched_rule = nullptr;
             std::unordered_set<std::string> include_path;
             std::function<const RegexStateRule*(const std::string&)> find_rule =
@@ -1142,9 +1177,9 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                         if (!candidate.pattern) continue;
                         const int length = onig_match(
                             candidate.pattern,
-                            text_start,
-                            text_end,
-                            text_start + position,
+                            state_text_start,
+                            state_text_end,
+                            state_position_ptr,
                             state_region,
                             ONIG_OPTION_NONE
                         );
@@ -1161,8 +1196,8 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                 grammar->regex_start_state : state_stack.back();
             matched_rule = find_rule(active_state);
             if (!matched_rule) {
-                const UChar* next = advanceOneUtf16CodePoint(text_start + position, text_end);
-                const uint32_t end = static_cast<uint32_t>(next - text_start);
+                const UChar* next = advanceOneUtf16CodePoint(state_position_ptr, state_text_end);
+                const uint32_t end = state_window_start + static_cast<uint32_t>(next - state_text_start);
                 if (grammar->regex_has_default_style && end > position &&
                     end > range_start_byte && position < range_end_byte) {
                     HighlightSpan span;
@@ -1181,9 +1216,9 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
 
             if (diagnostic_match_counts) ++diagnostic_match_counts[1];
             const uint32_t match_start = state_region->beg[0] >= 0 ?
-                static_cast<uint32_t>(state_region->beg[0]) : position;
+                state_window_start + static_cast<uint32_t>(state_region->beg[0]) : position;
             const uint32_t match_end = state_region->end[0] >= 0 ?
-                static_cast<uint32_t>(state_region->end[0]) : position;
+                state_window_start + static_cast<uint32_t>(state_region->end[0]) : position;
             uint16_t resolved_style_id = matched_rule->style_id;
             bool has_resolved_style = matched_rule->has_style;
             if (!matched_rule->cases.empty()) {
@@ -1197,9 +1232,9 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                     if (!case_entry.matcher) continue;
                     const int case_length = onig_match(
                         case_entry.matcher,
-                        text_start,
-                        text_end,
-                        text_start + match_start,
+                        state_text_start,
+                        state_text_end,
+                        state_text_start + (match_start - state_window_start),
                         state_case_region,
                         ONIG_OPTION_NONE
                     );
@@ -1253,8 +1288,9 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
 
             if (matched_rule->rematch && state_stack != old_stack) {
                 if (++zero_width_steps > 64) {
-                    const UChar* next = advanceOneUtf16CodePoint(text_start + position, text_end);
-                    position = static_cast<uint32_t>(next - text_start);
+                    const UChar* next = advanceOneUtf16CodePoint(
+                        state_text_start + (position - state_window_start), state_text_end);
+                    position = state_window_start + static_cast<uint32_t>(next - state_text_start);
                     zero_width_steps = 0;
                 }
             } else if (match_end > position) {
@@ -1262,8 +1298,9 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                 zero_width_steps = 0;
                 save_regex_state_checkpoint();
             } else {
-                const UChar* next = advanceOneUtf16CodePoint(text_start + position, text_end);
-                position = static_cast<uint32_t>(next - text_start);
+                const UChar* next = advanceOneUtf16CodePoint(
+                    state_text_start + (position - state_window_start), state_text_end);
+                position = state_window_start + static_cast<uint32_t>(next - state_text_start);
                 if (++zero_width_steps > 64) zero_width_steps = 0;
                 save_regex_state_checkpoint();
             }
