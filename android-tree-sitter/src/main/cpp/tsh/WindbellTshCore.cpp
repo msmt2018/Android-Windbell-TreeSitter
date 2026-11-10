@@ -989,7 +989,9 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
 
     // Stateful Regex rules run inside the same Regex pipeline and emit the same
     // capture ABI as ordinary Regex rules; there is no separate token model.
-    if ((input_chars || (text_source && grammar->regex_state_graph_bounded)) && !grammar->regex_states.empty()) {
+    if ((input_chars ||
+        (text_source && (grammar->regex_state_graph_bounded || total_bytes <= 8u * 1024u * 1024u))) &&
+        !grammar->regex_states.empty()) {
         std::vector<std::string> state_stack{grammar->regex_start_state};
         uint32_t position = 0;
         uint64_t next_checkpoint = 64u * 1024u;
@@ -1120,8 +1122,24 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
         uint32_t state_window_start = 0;
         uint32_t state_window_end = total_bytes;
         const uint64_t state_window_match_width = grammar->regex_state_graph_maximum_match_bytes;
+        bool state_full_source_fallback = false;
+        // Context-sensitive patterns retain the original whole-document
+        // Oniguruma semantics for modest sources. Large sources never trigger
+        // an unbounded allocation merely to preserve an unsupported pattern.
+        constexpr uint32_t kMaxRegexStateContiguousFallbackBytes = 8u * 1024u * 1024u;
+        if (!input_chars && text_source && !grammar->regex_state_graph_bounded &&
+            total_bytes <= kMaxRegexStateContiguousFallbackBytes) {
+            try { state_window.resize(static_cast<size_t>(total_bytes / sizeof(UChar))); }
+            catch (...) { state_window.clear(); }
+            if (state_window.size() == total_bytes / sizeof(UChar) &&
+                windbell::largefile::copyTextRange(*text_source, 0, total_bytes, state_window.data())) {
+                state_full_source_fallback = true;
+            } else {
+                state_window.clear();
+            }
+        }
         auto ensure_state_window = [&]() -> bool {
-            if (input_chars) {
+            if (input_chars || state_full_source_fallback) {
                 state_window_start = 0;
                 state_window_end = total_bytes;
                 return true;
