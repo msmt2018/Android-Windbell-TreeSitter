@@ -44,7 +44,7 @@
 - [x] 项目 editor 模块新增真实 PieceTreeTextBuffer → PieceTreeSnapshot → TSH Snapshot Provider；不可变 PieceTreeSnapshot 保留原始 chunk 引用并复制活动 change buffer 有效文本，Lease 可独立持有旧版本（SOURCE_PARTIAL）。
 - [x] EditorView Binding 在编辑线程的 before/after transaction 边界创建 PieceTreeSnapshot，并通过 EditorDocument 替换事件在同一 documentId 下自动触发 Session.resync（SOURCE_PARTIAL；尚未完成并发/设备验证）。
 - [ ] 其他可变 Piece Tree/Rope 仍需由宿主提供读写互斥或 pin persistent root/unpin。
-- [ ] Piece Tree/Rope 索引化 UTF-8/UTF-16/Code Point/Grapheme 转换尚未实现。
+- [x] 新增 `TshSparseCoordinateIndex`：绑定不可变 Snapshot 的 documentId/version/length，以 4 Ki UTF-16 间隔建立稀疏 UTF-8/UTF-16/Code Point 检查点；构建只分块读取，转换只扫描最近检查点后的有限区间，拒绝 surrogate/UTF-8 中间偏移；不展平全文（SOURCE_PARTIAL，测试源码已补，待 CI）。\n- [ ] Piece Tree/Rope 索引增量复用、行列/CRLF 索引及完整 Grapheme（UAX #29）转换尚未实现。
 - [ ] Grapheme 目前使用运行时 BreakIterator，不宣称完整 UAX #29。
 - [x] 项目 PieceTree Provider 的 change/disposal subscription 已由 EditorDocument edit callback、Binding.publishChange 与 Binding.close 接线；Buffer replacement 现通过独立生命周期事件通知 EditorView observers（SOURCE_PARTIAL）。
 - [ ] 文档永久关闭自动 dispose、文件身份切换自动关闭旧 Session/重新 attach，以及真实线程竞态验证尚未完成。
