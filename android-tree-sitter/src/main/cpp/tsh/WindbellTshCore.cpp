@@ -413,22 +413,22 @@ static bool tshPredicateCaptureTexts(const TSQueryMatch& match, uint32_t capture
     return true;
 }
 
-static bool tshPredicateCaptureEquals(const TSNode& node,
+static int tshPredicateCaptureEquals(const TSNode& node,
     const std::vector<UChar>& expected,
     const UChar* utf16_source,
     const windbell::largefile::TextSource* text_source,
     uint32_t source_bytes) {
     const uint32_t start = ts_node_start_byte(node);
     const uint32_t end = ts_node_end_byte(node);
-    if (start > end || end > source_bytes || (start & 1u) || (end & 1u)) return false;
+    if (start > end || end > source_bytes || (start & 1u) || (end & 1u)) return -1;
     const uint64_t length = static_cast<uint64_t>(end) - start;
-    if (length != expected.size()) return false;
-    if (length == 0) return true;
+    if (length != expected.size()) return 0;
+    if (length == 0) return 1;
     if (utf16_source) {
         return std::memcmp(utf16_source + start, expected.data(),
-            static_cast<size_t>(length)) == 0;
+            static_cast<size_t>(length)) == 0 ? 1 : 0;
     }
-    if (!text_source) return false;
+    if (!text_source) return -1;
 
     // Compare large captures incrementally. Predicate equality must not
     // materialize a potentially document-sized capture into a temporary vector.
@@ -440,12 +440,12 @@ static bool tshPredicateCaptureEquals(const TSNode& node,
             std::min<uint64_t>(kCompareChunkBytes, length - compared));
         if (!windbell::largefile::copyTextRange(
                 *text_source, static_cast<uint64_t>(start) + compared,
-                amount, scratch.data())) return false;
+                amount, scratch.data())) return -1;
         if (std::memcmp(scratch.data(), expected.data() + compared, amount) != 0)
-            return false;
+            return 0;
         compared += amount;
     }
-    return true;
+    return 1;
 }
 
 static bool tshEvaluateNativePredicates(const NativeQueryProgram& program,
@@ -493,8 +493,10 @@ static bool tshEvaluateNativePredicates(const NativeQueryProgram& program,
             for (uint32_t i = 0; i < match.capture_count; ++i) {
                 if (match.captures[i].index != predicate[1].value_id) continue;
                 has_capture = true;
-                const bool equal = tshPredicateCaptureEquals(match.captures[i].node,
+                const int comparison = tshPredicateCaptureEquals(match.captures[i].node,
                     expected.front(), utf16_source, text_source, source_bytes);
+                if (comparison < 0) return false;
+                const bool equal = comparison == 1;
                 all_equal = all_equal && equal;
                 all_not_equal = all_not_equal && !equal;
                 if (!all_equal && !all_not_equal) break;
@@ -507,8 +509,10 @@ static bool tshEvaluateNativePredicates(const NativeQueryProgram& program,
                 if (match.captures[i].index != predicate[1].value_id) continue;
                 bool found = false;
                 for (const auto& candidate : expected) {
-                    if (tshPredicateCaptureEquals(match.captures[i].node,
-                            candidate, utf16_source, text_source, source_bytes)) {
+                    const int comparison = tshPredicateCaptureEquals(match.captures[i].node,
+                        candidate, utf16_source, text_source, source_bytes);
+                    if (comparison < 0) return false;
+                    if (comparison == 1) {
                         found = true;
                         break;
                     }
