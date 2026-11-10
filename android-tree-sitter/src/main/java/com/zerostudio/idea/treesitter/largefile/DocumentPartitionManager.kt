@@ -526,14 +526,15 @@ class TokenizerCheckpointStore(
     }
 
     @Synchronized fun put(checkpoint: TokenizerCheckpoint) {
-        val weight = estimateBytes(checkpoint)
-        val previous = entries.remove(checkpoint.line)
+        // Snapshot first, then weigh the exact retained value. Weighing the caller's
+        // mutable List before copying it allowed concurrent mutation to make the
+        // cache exceed its byte budget or change a stored continuation state.
+        val stored = checkpoint.copy(stateStack = checkpoint.stateStack.toList())
+        val weight = estimateBytes(stored)
+        val previous = entries.remove(stored.line)
         if (previous != null) usedBytes = (usedBytes - estimateBytes(previous)).coerceAtLeast(0L)
         if (weight > maxBytes || maxBytes == 0L) return
 
-        // Snapshot the stack list so external mutation cannot invalidate the
-        // accounting or change a checkpoint after it has entered the cache.
-        val stored = checkpoint.copy(stateStack = checkpoint.stateStack.toList())
         entries[stored.line] = stored
         usedBytes = saturatedAdd(usedBytes, weight)
         while ((entries.size > maxEntries || usedBytes > maxBytes) && entries.isNotEmpty()) {
