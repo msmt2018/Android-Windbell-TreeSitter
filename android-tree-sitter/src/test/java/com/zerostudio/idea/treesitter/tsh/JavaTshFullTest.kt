@@ -182,6 +182,56 @@ class JavaTshFullTest {
     }
 
     @Test
+    fun testAstSelectorViewportMatchesFullDocumentAndSkipsEarlierSubtrees() {
+        val declarations = (0 until 1200).joinToString("\n") { index ->
+            "    private int field_$index = $index;"
+        }
+        val source = "class ViewportProbe {\n$declarations\n}"
+        val parser = TSParser.create().apply { language = TSLanguageJava.getInstance() }
+        val tree = parser.parseString(source)
+        assertNotNull(tree)
+        try {
+            val engine = WindbellTshEngine.instance
+            val full = engine.computeHighlights(tree, source, "java")
+                .filter { it.source == 2 }
+            assertTrue(full.isNotEmpty(), "The full ATS selector pipeline must emit symbol spans")
+
+            val targetStart = source.indexOf("field_1190")
+            val targetEnd = source.indexOf("field_1195") + "field_1195".length
+            assertTrue(targetStart >= 0 && targetEnd > targetStart)
+            val startByte = targetStart.toLong() * 2L
+            val endByte = targetEnd.toLong() * 2L
+            val viewport = engine.computeHighlights(
+                tree, source, "java", startByte, endByte
+            ).filter { it.source == 2 }
+
+            val expected = full.mapNotNull { span ->
+                val start = maxOf(span.startByte, startByte)
+                val end = minOf(span.endByte, endByte)
+                if (start < end) {
+                    listOf(start, end, span.styleId.toLong(), span.priority.toLong(),
+                        span.declarationOrder.toLong())
+                } else null
+            }.sortedWith(compareBy<List<Long>> { it[0] }.thenBy { it[1] }.thenBy { it[2] })
+            val actual = viewport.map { span ->
+                listOf(span.startByte, span.endByte, span.styleId.toLong(),
+                    span.priority.toLong(), span.declarationOrder.toLong())
+            }.sortedWith(compareBy<List<Long>> { it[0] }.thenBy { it[1] }.thenBy { it[2] })
+
+            assertEquals(expected, actual,
+                "A late-file ATS viewport must preserve the exact full-document selector captures")
+            assertTrue(viewport.any { span ->
+                val tokenStart = (span.startByte / 2L).toInt()
+                val tokenEnd = (span.endByte / 2L).toInt()
+                source.substring(tokenStart, tokenEnd).startsWith("field_")
+            }, "The viewport must retain actual declaration-name symbol tokens")
+        } finally {
+            tree?.close()
+            parser.close()
+        }
+    }
+
+    @Test
     fun testHighConcurrencyReentrancy() {
         val threadCount = 32
         val iterationsPerThread = 50
