@@ -8,7 +8,7 @@ import java.util.concurrent.atomic.AtomicLong
  * The current per-window executor cannot prove their global semantics, so reject them
  * conservatively (including inside character classes/quoted regions).
  */
-private fun unsupportedWindowSearchEscape(pattern: String): Char? {
+internal fun unsupportedWindowSearchEscape(pattern: String): Char? {
     var index = 0
     while (index + 1 < pattern.length) {
         if (pattern[index] == '\\') {
