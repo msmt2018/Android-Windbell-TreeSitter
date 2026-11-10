@@ -182,7 +182,11 @@ class PieceTreeTextBuffer : CharSequence {
      */
     fun createSnapshot(preserveBOM: Boolean = false): PieceTreeSnapshot {
         val bom = if (preserveBOM) this._BOM else ""
-        return this._pieceTree.createSnapshot(bom)
+        // Tree-sitter advances rows on LF. Disable the snapshot fast path when the host
+        // buffer contains unusual terminators or is not normalized to its declared EOL.
+        val supportsTreeSitterCoordinates =
+            !this._mightContainUnusualLineTerminators && this._pieceTree.isEOLNormalized()
+        return this._pieceTree.createSnapshot(bom, supportsTreeSitterCoordinates)
     }
 
     /**
