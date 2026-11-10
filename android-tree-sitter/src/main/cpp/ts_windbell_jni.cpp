@@ -19,6 +19,7 @@
 #include "tsh/WindbellTshCompiler.h"
 #include "tsh/NativeHighlightCache.h"
 #include "largefile/FileWindowSource.h"
+#include "largefile/MappedFileSource.h"
 #include "largefile/PieceTreeSource.h"
 #include "largefile/TextPartitionIndex.h"
 #include <cerrno>
@@ -1052,21 +1053,29 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeCreateDocument(
     }
 
     auto document = std::make_shared<NativeTshDocument>();
-    // Use a fixed 64 KiB pread window instead of mapping the complete
-    // document. This keeps native virtual-address usage bounded on 32-bit and
-    // memory-constrained devices; the document mutex serializes window reads.
-    auto window_source = std::make_shared<windbell::largefile::FileWindowSource>(
-        backing_path, windbell::largefile::kTreeSitterInputChunkBytes);
-    if (!window_source->isOpen()) {
-        ::unlink(backing_path.c_str());
-        throw_illegal_state(env, "Unable to open bounded native document source");
-        return 0;
+    // Prefer a read-only demand-paged mapping. This gives Oniguruma a
+    // contiguous address-space view without allocating a document-sized native
+    // heap buffer; pages are faulted in only as the active Regex pipeline reads
+    // them. Fall back to the fixed pread window when mmap cannot reserve a
+    // contiguous range (notably on fragmented 32-bit address spaces).
+    std::shared_ptr<const windbell::largefile::TextSource> original_source;
+    auto mapped_source = std::make_shared<windbell::largefile::MappedFileSource>(backing_path);
+    if (mapped_source->isOpen()) {
+        original_source = mapped_source;
+    } else {
+        auto window_source = std::make_shared<windbell::largefile::FileWindowSource>(
+            backing_path, windbell::largefile::kTreeSitterInputChunkBytes);
+        if (!window_source->isOpen()) {
+            ::unlink(backing_path.c_str());
+            throw_illegal_state(env, "Unable to open mapped or windowed native document source");
+            return 0;
+        }
+        original_source = window_source;
     }
-    // The open descriptor remains valid after unlink, so no temporary file is
-    // left behind if the process exits before the document handle is closed.
+    // Both mmap and the open pread descriptor remain valid after unlink.
     ::unlink(backing_path.c_str());
     document->source = std::make_unique<windbell::largefile::PieceTreeSource>(
-        std::static_pointer_cast<const windbell::largefile::TextSource>(window_source));
+        std::move(original_source));
     if (!document->source->isValid()) {
         throw_illegal_state(env, "Unable to initialize native Piece Tree document source");
         return 0;
