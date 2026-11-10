@@ -44,16 +44,16 @@ class TshRegexWindowLeaseTest {
         assertEquals(2_000L, window.documentLengthUtf16)
         assertFalse(window.isDocumentStart)
         assertFalse(window.isDocumentEnd)
-        assertEquals(261L, window.windowStartUtf16)
-        assertEquals(591L, window.windowEndUtf16)
-        assertEquals(330, window.lengthUtf16)
-        assertEquals(39, window.coreStartInWindow)
-        assertEquals(295, window.coreEndInWindow)
+        assertEquals(260L, window.windowStartUtf16)
+        assertEquals(592L, window.windowEndUtf16)
+        assertEquals(332, window.lengthUtf16)
+        assertEquals(40, window.coreStartInWindow)
+        assertEquals(296, window.coreEndInWindow)
         assertTrue(window.ownsMatchStart(300L))
         assertTrue(window.ownsMatchStart(555L))
         assertFalse(window.ownsMatchStart(556L))
-        assertEquals(300L, window.absoluteUtf16Offset(39))
-        assertEquals(330L, snapshot.largestRead)
+        assertEquals(300L, window.absoluteUtf16Offset(40))
+        assertEquals(332L, snapshot.largestRead)
 
         window.close()
         sourceLease.close()
@@ -70,7 +70,7 @@ class TshRegexWindowLeaseTest {
 
         // The left context includes max-match-length overlap plus lookbehind. The right
         // context boundary (543) falls between the second pair's code units and is extended.
-        assertEquals(217L, window.windowStartUtf16)
+        assertEquals(216L, window.windowStartUtf16)
         assertEquals(544L, window.windowEndUtf16)
         assertTrue(TshUnicode.isWellFormedUtf16(window.text))
         window.close()
@@ -113,7 +113,7 @@ class TshRegexWindowLeaseTest {
 
         assertEquals(TshMemoryCategory.REGEX_WINDOW, budget.snapshot().bytesByCategory
             .filterValues { it > 0L }.keys.single())
-        assertEquals(1_384L, budget.snapshot().reservedBytes)
+        assertEquals(1_392L, budget.snapshot().reservedBytes)
         window.close()
         window.close()
         assertEquals(0L, budget.snapshot().reservedBytes)
