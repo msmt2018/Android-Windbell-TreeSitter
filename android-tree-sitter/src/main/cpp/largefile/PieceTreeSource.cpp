@@ -47,8 +47,7 @@ std::unique_ptr<PieceTreeSource> PieceTreeSource::clone() const noexcept {
     // subtrees remain shared and become private only along a later edit path.
     copy->root_ = root_;
     try {
-        copy->added_chunk_blocks_ = added_chunk_blocks_;
-        copy->added_chunk_count_ = added_chunk_count_;
+        copy->added_chunks_ = added_chunks_;
     } catch (...) {
         return nullptr;
     }
@@ -246,46 +245,17 @@ bool PieceTreeSource::appendAdded(const uint8_t *data, uint64_t bytes,
         (bytesBeyondTail + chunkBytes - 1u) / chunkBytes;
     if (requiredChunks > (memory_limit_bytes_ -
         std::min(memory_limit_bytes_, added_allocated_)) / chunkBytes ||
-        requiredChunks > std::numeric_limits<uint64_t>::max() - added_chunk_count_ ||
-        added_chunk_count_ > static_cast<uint64_t>(std::numeric_limits<size_t>::max())) return false;
-    const size_t currentChunkCount = static_cast<size_t>(added_chunk_count_);
-    if (requiredChunks > static_cast<uint64_t>(
-            std::numeric_limits<size_t>::max() - currentChunkCount)) return false;
+        requiredChunks > static_cast<uint64_t>(std::numeric_limits<size_t>::max()) ||
+        requiredChunks > static_cast<uint64_t>(std::numeric_limits<size_t>::max() -
+                                               added_chunks_.size())) return false;
 
-    // Allocate all chunk payloads and directory metadata before touching
-    // logical size or existing tail bytes. The directory is a persistent
-    // vector-of-blocks (256 chunk references per block): cloning a document
-    // copies only the small outer index, while appending to a shared final
-    // block performs bounded copy-on-write of at most 256 references.
+    // Allocate all chunks and vector capacity before touching logical size or
+    // existing tail bytes. A failed append is observationally atomic.
     const size_t requiredChunkCount = static_cast<size_t>(requiredChunks);
     std::vector<std::shared_ptr<uint8_t>> pending;
-    std::vector<std::shared_ptr<AddedChunkBlock>> newBlocks;
-    std::shared_ptr<AddedChunkBlock> replacementLastBlock;
-    size_t firstBlockSlot = 0;
     try {
         pending.reserve(requiredChunkCount);
-        const size_t fanout = AddedChunkBlock::kFanout;
-        const size_t lastCount = added_chunk_blocks_.empty()
-            ? fanout : added_chunk_blocks_.back()->count;
-        firstBlockSlot = added_chunk_blocks_.empty() ? fanout : lastCount;
-        size_t slotsAfterTail = requiredChunkCount;
-        if (!added_chunk_blocks_.empty() && firstBlockSlot < fanout) {
-            const size_t consumedSlots = std::min(slotsAfterTail, fanout - firstBlockSlot);
-            slotsAfterTail -= consumedSlots;
-            if (consumedSlots != 0 && added_chunk_blocks_.back().use_count() > 1) {
-                replacementLastBlock =
-                    std::make_shared<AddedChunkBlock>(*added_chunk_blocks_.back());
-            }
-        }
-        const size_t additionalBlocks = slotsAfterTail == 0 ? 0 :
-            ((slotsAfterTail - 1u) / fanout) + 1u;
-        newBlocks.reserve(additionalBlocks);
-        if (additionalBlocks > std::numeric_limits<size_t>::max() - added_chunk_blocks_.size())
-            return false;
-        added_chunk_blocks_.reserve(added_chunk_blocks_.size() + additionalBlocks);
-        for (size_t i = 0; i < additionalBlocks; ++i) {
-            newBlocks.push_back(std::make_shared<AddedChunkBlock>());
-        }
+        added_chunks_.reserve(added_chunks_.size() + requiredChunkCount);
         for (size_t i = 0; i < requiredChunkCount; ++i) {
             std::shared_ptr<uint8_t> chunk(
                 new (std::nothrow) uint8_t[chunkBytes], std::default_delete<uint8_t[]>());
@@ -296,37 +266,19 @@ bool PieceTreeSource::appendAdded(const uint8_t *data, uint64_t bytes,
         return false;
     }
 
-    // Commit the directory only after every allocation has succeeded.
-    if (replacementLastBlock) added_chunk_blocks_.back() = replacementLastBlock;
-    size_t pendingIndex = 0;
-    if (!added_chunk_blocks_.empty()) {
-        auto &last = added_chunk_blocks_.back();
-        while (pendingIndex < pending.size() &&
-               last->count < AddedChunkBlock::kFanout) {
-            last->chunks[last->count++] = std::move(pending[pendingIndex++]);
-        }
-    }
-    for (auto &block : newBlocks) {
-        while (pendingIndex < pending.size() &&
-               block->count < AddedChunkBlock::kFanout) {
-            block->chunks[block->count++] = std::move(pending[pendingIndex++]);
-        }
-        added_chunk_blocks_.push_back(std::move(block));
-    }
-    // The precomputed block/slot counts must consume every pending chunk.
-    added_chunk_count_ += requiredChunkCount;
-    added_allocated_ += requiredChunks * chunkBytes;
-
     *startOffset = added_size_;
+    for (auto &chunk : pending) {
+        added_chunks_.push_back(std::move(chunk));
+        added_allocated_ += chunkBytes;
+    }
+
     uint64_t consumed = 0;
     while (consumed < bytes) {
         const size_t index = static_cast<size_t>(added_size_ / chunkBytes);
-        const size_t blockIndex = index / AddedChunkBlock::kFanout;
-        const size_t chunkIndex = index % AddedChunkBlock::kFanout;
         const size_t inChunk = static_cast<size_t>(added_size_ % chunkBytes);
         const uint64_t count = std::min<uint64_t>(bytes - consumed, chunkBytes - inChunk);
-        std::memcpy(added_chunk_blocks_[blockIndex]->chunks[chunkIndex].get() + inChunk,
-                    data + consumed, static_cast<size_t>(count));
+        std::memcpy(added_chunks_[index].get() + inChunk, data + consumed,
+                    static_cast<size_t>(count));
         consumed += count;
         added_size_ += count;
     }
@@ -345,15 +297,11 @@ bool PieceTreeSource::readAdded(uint64_t offset, uint32_t maxBytes,
     if (index64 > static_cast<uint64_t>(std::numeric_limits<size_t>::max())) return false;
     const size_t index = static_cast<size_t>(index64);
     const size_t local = static_cast<size_t>(offset % chunkBytes);
-    const size_t blockIndex = index / AddedChunkBlock::kFanout;
-    const size_t chunkIndex = index % AddedChunkBlock::kFanout;
-    if (blockIndex >= added_chunk_blocks_.size() ||
-        chunkIndex >= added_chunk_blocks_[blockIndex]->count) return false;
+    if (index >= added_chunks_.size()) return false;
     const uint64_t count = std::min<uint64_t>(
         std::min<uint64_t>(added_size_ - offset, chunkBytes - local), maxBytes) & ~uint64_t{1};
     if (count == 0) return false;
-    out->data = reinterpret_cast<const char *>(
-        added_chunk_blocks_[blockIndex]->chunks[chunkIndex].get() + local);
+    out->data = reinterpret_cast<const char *>(added_chunks_[index].get() + local);
     out->size = static_cast<uint32_t>(count);
     return true;
 }
