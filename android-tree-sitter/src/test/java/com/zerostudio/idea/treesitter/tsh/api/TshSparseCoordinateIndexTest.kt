@@ -41,6 +41,8 @@ class TshSparseCoordinateIndexTest {
             TshCoordinateSystem.UTF8_BYTE) is TshResult.Failure)
         assertTrue(result.value.convert(2L, TshCoordinateSystem.UTF8_BYTE,
             TshCoordinateSystem.UTF16_CODE_UNIT) is TshResult.Failure)
+        assertTrue(result.value.convert(2L, TshCoordinateSystem.UTF8_BYTE,
+            TshCoordinateSystem.UTF8_BYTE) is TshResult.Failure)
     }
 
     @Test
