@@ -8,7 +8,6 @@ import com.zerostudio.idea.treesitter.TSLanguage
 import com.zerostudio.idea.treesitter.TSParser
 import com.zerostudio.idea.treesitter.TSTree
 import com.zerostudio.idea.treesitter.largefile.ByteBudgetLruCache
-import com.zerostudio.idea.treesitter.largefile.DocumentPartition
 import com.zerostudio.idea.treesitter.tsh.WindbellTshEngine
 import com.zerostudio.idea.treesitter.tsh.NativeTextWindowReader
 import kotlinx.coroutines.CancellationException
@@ -251,12 +250,11 @@ class TshSyntaxHighlighter(
         val boundedStart = queryStart.coerceAtLeast(0L)
         val boundedEnd = queryEnd.coerceAtMost(length)
         if (boundedStart >= boundedEnd) return true
-        val partitions = nativeViewportPartitions(active, boundedStart, boundedEnd)
         var ready = true
-        for (partition in partitions) {
-            if (captureCache.get(CaptureCacheKey(active.cacheSessionId, partition.index)) == null) {
+        forEachNativeViewportPartition(active, boundedStart, boundedEnd) { partitionIndex, _, _ ->
+            if (captureCache.get(CaptureCacheKey(active.cacheSessionId, partitionIndex)) == null) {
                 ready = false
-                requestLargePartition(active, partition.start, partition.endExclusive)
+                requestLargePartition(active, partitionIndex)
             }
         }
         return ready
@@ -473,11 +471,10 @@ class TshSyntaxHighlighter(
         queryEndUtf16: Int
     ): List<WindbellTshEngine.HighlightSpan> {
         if (generation.get() != active.ticket || largeSession !== active) return emptyList()
-        val partitions = nativeViewportPartitions(active, start, end)
         val result = ArrayList<WindbellTshEngine.HighlightSpan>()
-        for (partition in partitions) {
-            val index = captureCache.get(CaptureCacheKey(active.cacheSessionId, partition.index))
-            if (index == null) requestLargePartition(active, partition.start, partition.endExclusive)
+        forEachNativeViewportPartition(active, start, end) { partitionIndex, _, _ ->
+            val index = captureCache.get(CaptureCacheKey(active.cacheSessionId, partitionIndex))
+            if (index == null) requestLargePartition(active, partitionIndex)
             else index.appendQuery(queryStartUtf16, queryEndUtf16, result)
         }
         return result
@@ -485,29 +482,18 @@ class TshSyntaxHighlighter(
 
     private fun requestLargeViewport(active: LargeSession, start: Long, end: Long) {
         if (generation.get() != active.ticket || largeSession !== active) return
-        nativeViewportPartitions(active, start, end).forEach { partition ->
-            if (captureCache.get(CaptureCacheKey(active.cacheSessionId, partition.index)) == null) {
-                requestLargePartition(active, partition.start, partition.endExclusive)
+        forEachNativeViewportPartition(active, start, end) { partitionIndex, _, _ ->
+            if (captureCache.get(CaptureCacheKey(active.cacheSessionId, partitionIndex)) == null) {
+                requestLargePartition(active, partitionIndex)
             }
         }
     }
 
-    private fun requestLargePartition(active: LargeSession, start: Long, end: Long) {
+    private fun requestLargePartition(active: LargeSession, partitionIndex: Int) {
         if (generation.get() != active.ticket || largeSession !== active) return
-        val safeStart = start.coerceIn(0L, active.lengthChars.get())
-        val partitionIndex = (safeStart / PARTITION_CHARS).toInt()
-        val partitionStart = partitionIndex.toLong() * PARTITION_CHARS
-        val partition = DocumentPartition(
-            index = partitionIndex,
-            start = partitionStart,
-            endExclusive = minOf(active.lengthChars.get(), partitionStart + PARTITION_CHARS),
-            firstLine = 0L,
-            lineCount = 0L,
-            version = active.ticket
-        )
-        if (captureCache.get(CaptureCacheKey(active.cacheSessionId, partition.index)) != null) return
+        if (captureCache.get(CaptureCacheKey(active.cacheSessionId, partitionIndex)) != null) return
         val work = PartitionWork()
-        if (active.partitionWork.putIfAbsent(partition.index, work) != null) return
+        if (active.partitionWork.putIfAbsent(partitionIndex, work) != null) return
         val requestedRevision = active.documentRevision.get()
 
         // One native document handle has one serialized operation stream. Viewport
@@ -527,17 +513,17 @@ class TshSyntaxHighlighter(
                     }
                     engine.highlightNativeDocument(
                         documentHandle = active.nativeHandle,
-                        startByte = partition.start * 2L,
-                        endByte = partition.endExclusive * 2L
+                        startByte = partitionIndex.toLong() * PARTITION_CHARS * 2L,
+                        endByte = minOf(active.lengthChars.get(), (partitionIndex.toLong() + 1L) * PARTITION_CHARS) * 2L
                     ) ?: throw IllegalStateException(
-                        "Native viewport TSH returned null (partition=${partition.index})"
+                        "Native viewport TSH returned null (partition=$partitionIndex)"
                     )
                 }
                 val spans = decodeNativeSpans(flat)
                 if (generation.get() == active.ticket && largeSession === active &&
                     active.documentRevision.get() == requestedRevision) {
                     // Empty IntArray is a valid completed result and is cached as such.
-                    captureCache.put(CaptureCacheKey(active.cacheSessionId, partition.index), CaptureIntervalIndex(spans))
+                    captureCache.put(CaptureCacheKey(active.cacheSessionId, partitionIndex), CaptureIntervalIndex(spans))
                     work.state = PartitionWorkState.SUCCEEDED
                     host?.invalidateStyles()
                     host?.invalidateStructure()
@@ -551,38 +537,38 @@ class TshSyntaxHighlighter(
                 // Draw callbacks therefore cannot cause an immediate retry/log storm.
                 work.state = PartitionWorkState.FAILED
                 if (generation.get() == active.ticket && largeSession === active) {
-                    Log.e(TAG, "Native viewport TSH failed: extension=.$extension partition=${partition.index}", error)
+                    Log.e(TAG, "Native viewport TSH failed: extension=.$extension partition=$partitionIndex", error)
                 }
             } finally {
                 if (work.state != PartitionWorkState.FAILED) {
-                    active.partitionWork.remove(partition.index, work)
+                    active.partitionWork.remove(partitionIndex, work)
                 }
             }
         }
     }
 
-    private fun nativeViewportPartitions(
+    /** Iterate viewport partitions without allocating a List or DocumentPartition per draw. */
+    private inline fun forEachNativeViewportPartition(
         active: LargeSession,
         start: Long,
-        end: Long
-    ): List<DocumentPartition> {
+        end: Long,
+        action: (index: Int, start: Long, endExclusive: Long) -> Unit
+    ) {
         val length = active.lengthChars.get()
-        if (length <= 0L || start >= end || start >= length) return emptyList()
+        if (length <= 0L || start >= end || start >= length) return
         val boundedStart = start.coerceAtLeast(0L)
         val boundedEnd = end.coerceAtMost(length)
-        if (boundedStart >= boundedEnd) return emptyList()
-        val first = boundedStart / PARTITION_CHARS
+        if (boundedStart >= boundedEnd) return
+        var index = boundedStart / PARTITION_CHARS
         val last = (boundedEnd - 1L) / PARTITION_CHARS
-        return (first..last).map { index ->
+        while (index <= last) {
             val partStart = index * PARTITION_CHARS
-            DocumentPartition(
-                index = index.toInt(),
-                start = partStart,
-                endExclusive = minOf(length, partStart + PARTITION_CHARS),
-                firstLine = 0L,
-                lineCount = 0L,
-                version = active.ticket
+            action(
+                index.toInt(),
+                partStart,
+                minOf(length, partStart + PARTITION_CHARS)
             )
+            index++
         }
     }
 
