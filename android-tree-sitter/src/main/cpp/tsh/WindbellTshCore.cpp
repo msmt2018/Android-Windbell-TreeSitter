@@ -1059,9 +1059,28 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                     regex_state_checkpoints->erase(stale);
                 }
             }
-            if (!converged && (regex_state_checkpoints->empty() ||
-                regex_state_checkpoints->back().byte_offset < position)) {
-                regex_state_checkpoints->push_back(std::move(checkpoint));
+            if (!converged) {
+                const bool already_current = std::any_of(
+                    regex_state_checkpoints->begin(), regex_state_checkpoints->end(),
+                    [&](const RegexStateCheckpoint& candidate) {
+                        return candidate.source_version == source_version &&
+                            candidate.partition_version == partition_version &&
+                            candidate.byte_offset == position;
+                    });
+                if (!already_current) {
+                    // The vector can contain stale suffix candidates whose
+                    // offsets are greater than the current rescan position.
+                    // Appending based on back() would then suppress every
+                    // newly generated checkpoint before that stale suffix.
+                    auto insertion = std::lower_bound(
+                        regex_state_checkpoints->begin(), regex_state_checkpoints->end(),
+                        position,
+                        [](const RegexStateCheckpoint& candidate, uint64_t offset) {
+                            return candidate.byte_offset < offset;
+                        });
+                    regex_state_checkpoints->insert(
+                        insertion, std::move(checkpoint));
+                }
             }
             // Bound persistent tokenizer metadata independently from the
             // source size. 8192 checkpoints cover 512 MiB at 64 KiB spacing.
