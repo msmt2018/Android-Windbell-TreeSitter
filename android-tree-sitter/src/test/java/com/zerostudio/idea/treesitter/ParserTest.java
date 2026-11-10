@@ -29,6 +29,7 @@ import com.zerostudio.idea.treesitter.log.TSLanguageLog;
 import com.zerostudio.idea.treesitter.python.TSLanguagePython;
 import com.zerostudio.idea.treesitter.string.UTF16StringFactory;
 import java.io.UnsupportedEncodingException;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -36,6 +37,7 @@ import java.util.Map;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 import org.junit.After;
 import org.junit.Before;
@@ -345,6 +347,41 @@ public class ParserTest extends TreeSitterTest {
       assertThat(parser.isParsing()).isFalse();
       assertThat(parser.requestCancellationAndWaitIfParsing()).isFalse();
       assertThat(parser.isCancellationRequested()).isFalse();
+    }
+  }
+
+  @Test
+  public void testStreamingParserProgressCallbackCanCancelAndResumeAfterReset() {
+    try (TSParser parser = TSParser.create()) {
+      parser.setLanguage(TSLanguageJava.getInstance());
+      final String source = readResource("View.java.txt").repeat(3);
+      final byte[] bytes = source.getBytes(StandardCharsets.UTF_16LE);
+      final TSInput input = (byteOffset, row, column, destination) -> {
+        final int start = Math.toIntExact(byteOffset);
+        if (start >= bytes.length) return 0;
+        int count = Math.min(destination.length, bytes.length - start);
+        count &= ~1;
+        if (count == 0) return 0;
+        System.arraycopy(bytes, start, destination, 0, count);
+        return count;
+      };
+      final AtomicInteger progressCalls = new AtomicInteger();
+
+      try (var tree = parser.parseInput(input, (offset, hasError) -> {
+        progressCalls.incrementAndGet();
+        return true;
+      })) {
+        assertThat(tree).isNull();
+      }
+      assertThat(progressCalls.get()).isGreaterThan(0);
+      assertThat(parser.isCancellationRequested()).isFalse();
+
+      // A raw TSParser preserves interrupted state until the caller explicitly resets it.
+      parser.reset();
+      try (var recoveredTree = parser.parseInput(input)) {
+        assertThat(recoveredTree).isNotNull();
+        assertThat(recoveredTree.canAccess()).isTrue();
+      }
     }
   }
 
