@@ -68,7 +68,7 @@ class TshRegexWindowLeaseTest {
             sourceLease, 256L, 256, constraints(lookahead = 0)
         ) as TshResult.Success).value
 
-        // The lookbehind start (248) is exactly before the first surrogate pair. The right
+        // The left context includes max-match-length overlap plus lookbehind. The right
         // context boundary (543) falls between the second pair's code units and is extended.
         assertEquals(217L, window.windowStartUtf16)
         assertEquals(544L, window.windowEndUtf16)
