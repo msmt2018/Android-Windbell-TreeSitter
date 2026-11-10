@@ -724,6 +724,119 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
     // reserved hundreds of megabytes before the first rule had matched.
     micro_spans.reserve(std::min<size_t>(length_chars / 4, 4096));
 
+    // Large Piece Trees do not expose a document-sized contiguous pointer.
+    // Execute the compiler-proven finite-width MATCH subset directly against
+    // bounded TextSource windows. This restores ordinary ATS/Regex captures
+    // for large files without rebuilding a 32 MiB+ compatibility buffer.
+    // Anchors, block rules, and stateful tokenizers remain on their dedicated
+    // context-aware paths; they are never silently reinterpreted as window-local.
+    if (!input_chars && text_source) {
+        constexpr uint64_t kRegexCoreWindowBytes = 256u * 1024u;
+        for (const auto& rule : grammar->regex_rules) {
+            if (!rule.enabled || rule.type != RegexRuleType::MATCH ||
+                !rule.onig_start ||
+                rule.execution_capability != RegexExecutionCapability::BOUNDED_WINDOW ||
+                rule.maximum_match_bytes == 0) continue;
+            const uint64_t overlap = rule.maximum_match_bytes >= 2u
+                ? rule.maximum_match_bytes - 2u : 0u;
+            uint64_t core_start = range_start_byte > overlap
+                ? range_start_byte - overlap : 0u;
+            core_start &= ~uint64_t{1};
+            while (core_start < range_end_byte) {
+                const uint64_t core_end = std::min<uint64_t>(
+                    range_end_byte, core_start + kRegexCoreWindowBytes);
+                const uint64_t window_end = std::min<uint64_t>(
+                    total_bytes, core_end + overlap);
+                const uint64_t window_bytes = window_end - core_start;
+                if (window_bytes == 0 || (window_bytes & 1u) != 0 ||
+                    window_bytes > static_cast<uint64_t>(std::numeric_limits<size_t>::max()) /
+                        sizeof(UChar)) break;
+                std::vector<UChar> window;
+                try { window.resize(static_cast<size_t>(window_bytes / sizeof(UChar))); }
+                catch (...) { break; }
+                if (!windbell::largefile::copyTextRange(
+                        *text_source, core_start, window_bytes, window.data())) break;
+                const UChar* window_start = window.data();
+                const UChar* window_end_ptr = window_start + window.size();
+                const UChar* current = window_start;
+                OnigRegion* region = onig_region_new();
+                if (!region) break;
+                while (current < window_end_ptr) {
+                    const int hit = onig_search(
+                        rule.onig_start, window_start, window_end_ptr,
+                        current, window_end_ptr, region, ONIG_OPTION_NONE);
+                    if (hit < 0) break;
+                    const int64_t local_start = region->beg[0];
+                    const int64_t local_end = region->end[0];
+                    if (local_start < 0 || local_end < local_start) break;
+                    const uint64_t absolute_start = core_start +
+                        static_cast<uint64_t>(local_start);
+                    const uint64_t absolute_end = core_start +
+                        static_cast<uint64_t>(local_end);
+                    if (absolute_start >= core_start && absolute_start < core_end &&
+                        absolute_end <= window_end && (absolute_start & 1u) == 0 &&
+                        (absolute_end & 1u) == 0) {
+                        if (diagnostic_match_counts) ++diagnostic_match_counts[0];
+                        auto append_window_capture = [&](int group, uint16_t style_id) {
+                            if (group < 0 || group >= region->num_regs ||
+                                region->beg[group] < 0 || region->end[group] < 0) return;
+                            const uint64_t capture_start = core_start +
+                                static_cast<uint64_t>(region->beg[group]);
+                            const uint64_t capture_end = core_start +
+                                static_cast<uint64_t>(region->end[group]);
+                            if (capture_start >= capture_end ||
+                                capture_end <= range_start_byte ||
+                                capture_start >= range_end_byte ||
+                                capture_end > total_bytes ||
+                                (capture_start & 1u) || (capture_end & 1u)) return;
+                            HighlightSpan span;
+                            span.start_byte = static_cast<uint32_t>(
+                                std::max<uint64_t>(capture_start, range_start_byte));
+                            span.end_byte = static_cast<uint32_t>(
+                                std::min<uint64_t>(capture_end, range_end_byte));
+                            span.style_id = style_id;
+                            span.flags = 0;
+                            span.priority = rule.priority;
+                            span.declaration_order = rule.declaration_order;
+                            span.allow_overlap = rule.allow_overlap ? 1 : 0;
+                            span.source = static_cast<uint8_t>(HighlightSource::ONIG_REGEX);
+                            micro_spans.push_back(span);
+                        };
+                        if (rule.group_style_map.empty() &&
+                            rule.named_group_style_map.empty()) {
+                            if (rule.has_style) append_window_capture(0, rule.style_id);
+                        } else {
+                            auto whole = rule.group_style_map.find(0);
+                            if (whole != rule.group_style_map.end())
+                                append_window_capture(0, whole->second);
+                            for (int group = 1; group < region->num_regs; ++group) {
+                                auto style = rule.group_style_map.find(group);
+                                if (style != rule.group_style_map.end())
+                                    append_window_capture(group, style->second);
+                            }
+                            for (const auto& named : rule.named_group_style_map) {
+                                std::vector<UChar> name;
+                                try {
+                                    name.assign(named.first.begin(), named.first.end());
+                                } catch (...) { continue; }
+                                const int group = onig_name_to_backref_number(
+                                    rule.onig_start, name.data(),
+                                    name.data() + name.size(), region);
+                                append_window_capture(group, named.second);
+                            }
+                        }
+                    }
+                    const int64_t next = local_end > local_start
+                        ? local_end : local_start + 1;
+                    if (next <= 0 || static_cast<uint64_t>(next) >= window.size()) break;
+                    current = window_start + next;
+                }
+                onig_region_free(region, 1);
+                core_start = core_end;
+            }
+        }
+    }
+
     if (input_chars) for (const auto& rule : grammar->regex_rules) {
         if (!rule.enabled) continue;
         if (rule.type == RegexRuleType::BLOCK && rule.onig_start && rule.onig_end) {
