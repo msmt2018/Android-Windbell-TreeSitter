@@ -8,7 +8,7 @@
 - `requestCancellationAndWait()`: requests cancellation and blocks until the Native parser exits its parsing critical section. It also returns `TSH-PARSER-OWNER-029` when no active parse accepted cancellation.
 - `TSParser.requestCancellationAndWaitIfParsing()`: lower-level boolean API indicating whether a parse was active and the cancellation request was accepted. The existing void `requestCancellationAndWait()` remains available for compatibility.
 
-The owner acquires a Native resource lease before requesting cancellation. For asynchronous cancellation, the parse operation continues to own its own Parser lease until parsing returns. For wait cancellation, the caller's lease is retained until the wait completes. Closing the owner therefore cannot free the parser while either operation is using it.
+The owner acquires a Native resource lease before requesting cancellation. For asynchronous cancellation, the parse operation continues to own its own Parser lease until parsing returns. For wait cancellation, the caller's lease is retained until the wait completes. Closing the owner therefore cannot free the parser while either operation is using it. When a TSH-owned parse returns no tree, is cancelled, times out, or throws while parsing, the owner resets Tree-sitter's resumable parser state under its parse lock before allowing another document/revision to use that parser. Raw `TSParser` callers retain the lower-level resume/reset contract and must call `reset()` when they intend to start a different document.
 
 Do not call the blocking wait method from the parse callback or from the thread that must return from the parse operation; doing so can deadlock.
 
