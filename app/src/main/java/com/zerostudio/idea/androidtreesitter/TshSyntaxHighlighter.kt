@@ -52,13 +52,20 @@ class TshSyntaxHighlighter(
         private const val LARGE_DOCUMENT_THRESHOLD_CHARS = 1 * 1024 * 1024
         private const val PARTITION_CHARS = 64L * 1024L
         private const val CAPTURE_CACHE_BYTES = 32L * 1024L * 1024L
+        private val nextSessionId = AtomicLong(1L)
+        private val captureCache = ByteBudgetLruCache<CaptureCacheKey, CaptureIntervalIndex>(
+            CAPTURE_CACHE_BYTES,
+            { index -> 96L + index.size.toLong() * 96L }
+        )
     }
+
+    private data class CaptureCacheKey(val sessionId: Long, val partitionIndex: Int)
 
     private data class LargeSession(
         /** Native-owned PieceTreeSource + incremental Tree-sitter tree. */
         val nativeHandle: Long,
         val lengthChars: AtomicLong,
-        val captureIndexes: ByteBudgetLruCache<Int, CaptureIntervalIndex>,
+        val cacheSessionId: Long,
         val ticket: Long,
         val documentRevision: AtomicLong = AtomicLong(),
         val nativeMutex: Mutex = Mutex(),
@@ -247,7 +254,7 @@ class TshSyntaxHighlighter(
         val partitions = nativeViewportPartitions(active, boundedStart, boundedEnd)
         var ready = true
         for (partition in partitions) {
-            if (active.captureIndexes.get(partition.index) == null) {
+            if (captureCache.get(CaptureCacheKey(active.cacheSessionId, partition.index)) == null) {
                 ready = false
                 requestLargePartition(active, partition.start, partition.endExclusive)
             }
@@ -282,7 +289,7 @@ class TshSyntaxHighlighter(
                 emptyList()
             } else {
                 val partitionIndex = (offset.toLong() / PARTITION_CHARS).toInt()
-                active.captureIndexes.get(partitionIndex)?.query(offset, offset + 1).orEmpty()
+                captureCache.get(CaptureCacheKey(active.cacheSessionId, partitionIndex))?.query(offset, offset + 1).orEmpty()
             }
         } else {
             captureIndex.query(offset, offset + 1)
@@ -343,7 +350,7 @@ class TshSyntaxHighlighter(
 
     private suspend fun initializeLargeSession(snapshot: EditorTextSnapshot, ticket: Long) {
         var nativeHandle = 0L
-        var captureIndexes: ByteBudgetLruCache<Int, CaptureIntervalIndex>? = null
+        var cacheSessionId = 0L
         try {
             // Native owns the canonical Piece Tree and sparse partition index. Kotlin
             // does not rebuild a second full-document index for each edit.
@@ -377,14 +384,10 @@ class TshSyntaxHighlighter(
             currentCoroutineContext().ensureActive()
             if (generation.get() != ticket) throw CancellationException("Stale native document")
 
-            val createdCaptureIndexes = ByteBudgetLruCache<Int, CaptureIntervalIndex>(
-                CAPTURE_CACHE_BYTES,
-                { index -> 96L + index.size.toLong() * 96L }
-            )
-            captureIndexes = createdCaptureIndexes
+            cacheSessionId = nextSessionId.getAndIncrement()
             val active = LargeSession(
                 nativeHandle, AtomicLong(snapshot.length.toLong()),
-                createdCaptureIndexes, ticket
+                cacheSessionId, ticket
             )
             if (generation.get() == ticket) {
                 synchronized(nativeEditLock) {
@@ -399,7 +402,7 @@ class TshSyntaxHighlighter(
                     largeSession = active
                 }
                 nativeHandle = 0L
-                captureIndexes = null
+                cacheSessionId = 0L
                 parsing = false
                 Log.i(
                     TAG,
@@ -419,7 +422,9 @@ class TshSyntaxHighlighter(
             }
         } finally {
             if (nativeHandle != 0L) engine.closeNativeDocument(nativeHandle)
-            captureIndexes?.close()
+            if (cacheSessionId != 0L) {
+                captureCache.invalidate { key, _ -> key.sessionId == cacheSessionId }
+            }
         }
     }
 
@@ -471,7 +476,7 @@ class TshSyntaxHighlighter(
         val partitions = nativeViewportPartitions(active, start, end)
         val result = ArrayList<WindbellTshEngine.HighlightSpan>()
         for (partition in partitions) {
-            val index = active.captureIndexes.get(partition.index)
+            val index = captureCache.get(CaptureCacheKey(active.cacheSessionId, partition.index))
             if (index == null) requestLargePartition(active, partition.start, partition.endExclusive)
             else result += index.query(queryStartUtf16, queryEndUtf16)
         }
@@ -481,7 +486,7 @@ class TshSyntaxHighlighter(
     private fun requestLargeViewport(active: LargeSession, start: Long, end: Long) {
         if (generation.get() != active.ticket || largeSession !== active) return
         nativeViewportPartitions(active, start, end).forEach { partition ->
-            if (active.captureIndexes.get(partition.index) == null) {
+            if (captureCache.get(CaptureCacheKey(active.cacheSessionId, partition.index)) == null) {
                 requestLargePartition(active, partition.start, partition.endExclusive)
             }
         }
@@ -500,7 +505,7 @@ class TshSyntaxHighlighter(
             lineCount = 0L,
             version = active.ticket
         )
-        if (active.captureIndexes.get(partition.index) != null) return
+        if (captureCache.get(CaptureCacheKey(active.cacheSessionId, partition.index)) != null) return
         val work = PartitionWork()
         if (active.partitionWork.putIfAbsent(partition.index, work) != null) return
         val requestedRevision = active.documentRevision.get()
@@ -532,7 +537,7 @@ class TshSyntaxHighlighter(
                 if (generation.get() == active.ticket && largeSession === active &&
                     active.documentRevision.get() == requestedRevision) {
                     // Empty IntArray is a valid completed result and is cached as such.
-                    active.captureIndexes.put(partition.index, CaptureIntervalIndex(spans))
+                    captureCache.put(CaptureCacheKey(active.cacheSessionId, partition.index), CaptureIntervalIndex(spans))
                     work.state = PartitionWorkState.SUCCEEDED
                     host?.invalidateStyles()
                     host?.invalidateStructure()
@@ -602,7 +607,7 @@ class TshSyntaxHighlighter(
                     // and failed-work markers only after the edit transaction completes.
                     active.documentRevision.incrementAndGet()
                     val firstInvalid = (earliestOffset / PARTITION_CHARS).toInt()
-                    active.captureIndexes.invalidate { key, _ -> key >= firstInvalid }
+                    captureCache.invalidate { key, _ -> key.sessionId == active.cacheSessionId && key.partitionIndex >= firstInvalid }
                     active.partitionWork.keys.filter { it >= firstInvalid }.forEach(active.partitionWork::remove)
                     if (generation.get() == active.ticket && largeSession === active) {
                         host?.invalidateStyles()
@@ -660,8 +665,7 @@ class TshSyntaxHighlighter(
                     engine.closeNativeDocument(active.nativeHandle)
                 }
             }.onFailure { Log.w(TAG, "Failed to close native TSH document", it) }
-            runCatching { active.captureIndexes.close() }
-                .onFailure { Log.w(TAG, "Failed to close native TSH capture cache", it) }
+            captureCache.invalidate { key, _ -> key.sessionId == active.cacheSessionId }
         }
     }
 }
