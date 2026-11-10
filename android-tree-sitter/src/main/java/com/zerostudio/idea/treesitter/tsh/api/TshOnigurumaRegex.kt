@@ -1,6 +1,7 @@
 package com.zerostudio.idea.treesitter.tsh.api
 
 import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.locks.ReentrantReadWriteLock
 
 
 /**
@@ -42,6 +43,8 @@ class TshOnigurumaRegex private constructor(
     val windowConstraints: TshRegexWindowConstraints
 ) : AutoCloseable {
     private val native = TshOnigurumaNative()
+    /** Prevents nativeRelease from racing a JNI call that has not acquired its native handle yet. */
+    private val lifecycleLock = ReentrantReadWriteLock()
 
     val isClosed: Boolean get() = nativeHandle.get() == 0L
 
@@ -54,10 +57,6 @@ class TshOnigurumaRegex private constructor(
         maxMatches: Int = MAX_MATCHES_PER_WINDOW,
         maxCaptureGroups: Int = DEFAULT_MAX_CAPTURE_GROUPS
     ): TshResult<TshRegexWindowExecution> {
-        val handle = nativeHandle.get()
-        if (handle == 0L) return failure(
-            "TSH-REGEX-NATIVE-001", "Regex handle is closed"
-        )
         if (window.isClosed) return failure(
             "TSH-REGEX-NATIVE-002", "Regex window lease is closed"
         )
@@ -79,16 +78,28 @@ class TshOnigurumaRegex private constructor(
         )
         val effectiveMaxMatches = minOf(maxMatches, memoryBoundedMatchLimit)
         val raw = try {
-            native.nativeFindAll(
-                handle,
-                window.text.toString(),
-                window.coreStartInWindow,
-                window.coreEndInWindow,
-                window.isDocumentStart,
-                window.isDocumentEnd,
-                effectiveMaxMatches,
-                maxCaptureGroups
-            )
+            val readLock = lifecycleLock.readLock()
+            readLock.lock()
+            try {
+                // Re-read only after taking the lifecycle lock. close() takes the write lock,
+                // so the opaque handle cannot be removed between this check and JNI lookup.
+                val handle = nativeHandle.get()
+                if (handle == 0L) return failure(
+                    "TSH-REGEX-NATIVE-001", "Regex handle is closed"
+                )
+                native.nativeFindAll(
+                    handle,
+                    window.text.toString(),
+                    window.coreStartInWindow,
+                    window.coreEndInWindow,
+                    window.isDocumentStart,
+                    window.isDocumentEnd,
+                    effectiveMaxMatches,
+                    maxCaptureGroups
+                )
+            } finally {
+                readLock.unlock()
+            }
         } catch (error: Exception) {
             return failure("TSH-REGEX-NATIVE-004", "Oniguruma execution failed: ${error.message}", error)
         } ?: return failure("TSH-REGEX-NATIVE-005", "Oniguruma returned a null result")
@@ -272,8 +283,14 @@ class TshOnigurumaRegex private constructor(
     }
 
     override fun close() {
-        val handle = nativeHandle.getAndSet(0L)
-        if (handle != 0L) native.nativeRelease(handle)
+        val writeLock = lifecycleLock.writeLock()
+        writeLock.lock()
+        try {
+            val handle = nativeHandle.getAndSet(0L)
+            if (handle != 0L) native.nativeRelease(handle)
+        } finally {
+            writeLock.unlock()
+        }
     }
 
     private fun estimateRecordBytes(record: TshRegexMatchRecord): Long {
