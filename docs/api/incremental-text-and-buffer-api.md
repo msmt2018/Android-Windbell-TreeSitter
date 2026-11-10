@@ -55,7 +55,7 @@ TextReader 提供 read(range)、readChunk(offset, maxUnits)、iterateChunks(rang
 
 Snapshot Lease 必须覆盖同步 parseInput 调用。ParserOwner 的 Snapshot parse overload 会在 Native 调用前 retain 独立任务 Lease，并在 parse 完成后释放；调用方可独立关闭原句柄。异步调度层若在任务尚未开始时就需要独立持有快照，仍必须在提交任务前 retain，并将该任务句柄的所有权交给任务。
 
-Tree-sitter 分块输入已经具备首版源码契约。项目现有 PieceTreeTextBuffer 的宿主适配器已加入 editor 模块：通过宿主提供的 snapshotFactory 创建 PieceTreeSnapshot，并按范围读取，不调用 PieceTreeTextBuffer.toString()。PieceTreeSnapshot 保留原始文本块引用、复制仍在变化的输入缓冲区内容，且可在后续编辑期间独立读取。此前缺少真实 EditorDocument 接线；本轮新增 `TshPieceTreeEditorBinding`，通过 `EditorView.addEditCallback` 在批量编辑前后分别固定快照，并将 `AppliedChange` 转成一次版本化 Change。该回调运行在 EditorView 编辑线程，快照在编辑前/后边界创建，不依赖 TSH 自行 synchronized 猜测宿主写锁。坐标索引 Provider、文件身份切换与宿主永久关闭的自动生命周期接线、Native 构建和设备级大文件验证仍未完成。
+Tree-sitter 分块输入已经具备首版源码契约。项目现有 PieceTreeTextBuffer 的宿主适配器已加入 editor 模块：通过宿主提供的 snapshotFactory 创建 PieceTreeSnapshot，并按范围读取，不调用 PieceTreeTextBuffer.toString()。PieceTreeSnapshot 保留原始文本块引用、复制仍在变化的输入缓冲区内容，且可在后续编辑期间独立读取。此前缺少真实 EditorDocument 接线；本轮新增 `TshPieceTreeEditorBinding`，通过 `EditorView.addEditCallback` 在批量编辑前后分别固定快照，并将 `AppliedChange` 转成一次版本化 Change。该回调运行在 EditorView 编辑线程，快照在编辑前/后边界创建，不依赖 TSH 自行 synchronized 猜测宿主写锁。坐标索引 Provider、文件身份切换与宿主永久关闭的自动生命周期接线、Native 构建和设备级大文件验证仍未完成。 当前 `TshSparseCoordinateIndex.build(lease)` 会先 retain 独立 Snapshot Lease，调用方可在构建成功后关闭原始 Lease；索引自身实现 `AutoCloseable`，必须在不再使用时调用 `close()`。该索引仍需扫描整个 Snapshot 建立 checkpoint（O(n)），只是将读取与转换扫描限制在有界 chunk/stride 内，不应描述为 Piece Tree/Rope 原生索引或编辑增量索引。
 
 ## 可独立续租的 Snapshot Lease（SOURCE_PARTIAL）
 
