@@ -31,7 +31,8 @@ import com.zerostudio.idea.piecetable.common.IntList
  *
  * Created with [PieceTreeTextBuffer.createSnapshot]. Creating one is a read of the buffer (same
  * rules as any other read: not at the same time as an edit of that buffer) and costs
- * O(number of pieces) plus a copy of the typed text that is still in the document. After that
+ * O(number of pieces + typed text length) plus a copy of the typed text that is still in the document
+ * and its line-start index. After that
  * the snapshot never touches the buffer again: any number of threads may read it at any time,
  * also while the buffer is being edited, compacted or switched to another EOL, without a lock.
  *
