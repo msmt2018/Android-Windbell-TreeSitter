@@ -7,7 +7,7 @@ enum class TshMemoryCategory {
     MATCH_SET, RENDER_PLAN, COORDINATE_INDEX, OTHER
 }
 
-data class TshMemoryBudgetOptions(
+data class TshMemoryBudgetOptions @JvmOverloads constructor(
     val targetBytes: Long = DEFAULT_TARGET_BYTES,
     val hardLimitBytes: Long = DEFAULT_HARD_LIMIT_BYTES,
     val availableMemoryBytes: Long? = null,
@@ -51,7 +51,22 @@ data class TshMemoryBudgetSnapshot(
     val maxReservations: Int,
     val bytesByCategory: Map<TshMemoryCategory, Long>,
     val closed: Boolean
-)
+) {
+    /** Source-compatible constructor retained for callers predating maxReservations. */
+    constructor(
+        limitBytes: Long,
+        hardLimitBytes: Long,
+        reservedBytes: Long,
+        highWatermarkBytes: Long,
+        reservations: Int,
+        bytesByCategory: Map<TshMemoryCategory, Long>,
+        closed: Boolean
+    ) : this(
+        limitBytes, hardLimitBytes, reservedBytes, highWatermarkBytes,
+        reservations, TshMemoryBudgetOptions.DEFAULT_MAX_RESERVATIONS,
+        bytesByCategory, closed
+    )
+}
 
 /**
  * Reservation ledger for TSH-managed or explicitly estimated memory.
