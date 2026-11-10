@@ -3094,6 +3094,76 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                 if (transitions > 1) return nullptr;
             }
         }
+
+        // Compute a conservative capability for the complete state graph that
+        // can actually execute from regex_start_state. Include edges and state
+        // transitions are both relevant: a bounded root rule may enter an
+        // unbounded nested state several tokens later.
+        grammar->regex_state_graph_bounded = true;
+        grammar->regex_state_graph_maximum_match_bytes = 0;
+        std::unordered_set<std::string> reachable_states;
+        std::vector<std::string> pending_states{grammar->regex_start_state};
+        const auto enqueue_state = [&](const std::string& target) {
+            if (target.empty()) return;
+            // @pop/@popall/@push are stack operations, not named states.
+            if (target.front() == '@') return;
+            pending_states.push_back(target);
+        };
+        while (!pending_states.empty()) {
+            std::string state_name = std::move(pending_states.back());
+            pending_states.pop_back();
+            if (!reachable_states.insert(state_name).second) continue;
+            const auto state_it = grammar->regex_states.find(state_name);
+            if (state_it == grammar->regex_states.end()) {
+                // References were validated above; retain a defensive failure
+                // in case the graph is mutated during future compiler changes.
+                grammar->regex_state_graph_bounded = false;
+                break;
+            }
+            for (const auto& rule : state_it->second) {
+                if (!rule.enabled) continue;
+                enqueue_state(rule.include_state);
+                enqueue_state(rule.next_state);
+                enqueue_state(rule.push_state);
+                enqueue_state(rule.switch_state);
+
+                // Include-only entries have no matcher of their own.
+                if (!rule.pattern) {
+                    if (!rule.raw_pattern.empty() ||
+                        std::any_of(rule.cases.begin(), rule.cases.end(),
+                            [](const RegexStateCase& entry) { return !entry.is_default; })) {
+                        grammar->regex_state_graph_bounded = false;
+                        break;
+                    }
+                    continue;
+                }
+                if (rule.execution_capability != RegexExecutionCapability::BOUNDED_WINDOW ||
+                    rule.maximum_match_bytes == 0) {
+                    grammar->regex_state_graph_bounded = false;
+                    break;
+                }
+                grammar->regex_state_graph_maximum_match_bytes = std::max(
+                    grammar->regex_state_graph_maximum_match_bytes,
+                    rule.maximum_match_bytes);
+                for (const auto& case_entry : rule.cases) {
+                    if (case_entry.is_default) continue;
+                    if (!case_entry.matcher ||
+                        case_entry.execution_capability != RegexExecutionCapability::BOUNDED_WINDOW ||
+                        case_entry.maximum_match_bytes == 0) {
+                        grammar->regex_state_graph_bounded = false;
+                        break;
+                    }
+                    grammar->regex_state_graph_maximum_match_bytes = std::max(
+                        grammar->regex_state_graph_maximum_match_bytes,
+                        case_entry.maximum_match_bytes);
+                }
+                if (!grammar->regex_state_graph_bounded) break;
+            }
+            if (!grammar->regex_state_graph_bounded) break;
+        }
+        if (!grammar->regex_state_graph_bounded) {
+            grammar->regex_state_graph_maximum_match_bytes = 0;
+        }
     }
 
     if (style_id_overflow) return nullptr;
