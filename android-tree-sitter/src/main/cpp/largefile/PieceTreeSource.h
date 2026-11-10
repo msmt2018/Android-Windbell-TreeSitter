@@ -37,9 +37,9 @@ public:
     bool replace(uint64_t startByte, uint64_t oldEndByte,
                  const void *inserted, uint64_t insertedBytes) noexcept;
 
-    // O(1) tree snapshot: unchanged nodes, source and sealed append chunks share
-    // ownership. A partial append tail is sealed so snapshots cannot overwrite
-    // bytes referenced by another version.
+    // Persistent snapshot: the treap root and immutable source/chunks are shared;
+    // only the small chunk-block directory (one pointer per 256 chunks) is copied.
+    // A partial append tail is sealed so snapshots cannot observe later writes.
     std::unique_ptr<PieceTreeSource> clone() const noexcept;
 
     uint64_t allocatedBytes() const noexcept;
