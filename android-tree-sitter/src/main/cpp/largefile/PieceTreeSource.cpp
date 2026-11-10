@@ -73,7 +73,7 @@ bool PieceTreeSource::contiguousData(
 ) const noexcept {
     if (!data || !sizeBytes || !valid_) return false;
     *data = nullptr;
-    *sizeBytes = sizeBytes();
+    *sizeBytes = this->sizeBytes();
     if (*sizeBytes == 0) return true;
 
     // A single untouched original piece is already contiguous in its backing
