@@ -125,10 +125,10 @@ public class ParserTest extends TreeSitterTest {
       final int endChar = source.indexOf("class After");
       final int start = startChar * 2;
       final int end = endChar * 2;
-      final int startRow = (int) source.substring(0, startChar).chars().filter(c -> c == '\\n').count();
-      final int endRow = (int) source.substring(0, endChar).chars().filter(c -> c == '\\n').count();
-      final int startColumn = startChar - source.lastIndexOf('\\n', startChar - 1) - 1;
-      final int endColumn = endChar - source.lastIndexOf('\\n', endChar - 1) - 1;
+      final int startRow = (int) source.substring(0, startChar).chars().filter(c -> c == '\n').count();
+      final int endRow = (int) source.substring(0, endChar).chars().filter(c -> c == '\n').count();
+      final int startColumn = startChar - source.lastIndexOf('\n', startChar - 1) - 1;
+      final int endColumn = endChar - source.lastIndexOf('\n', endChar - 1) - 1;
       final TSRange range = TSRange.create(start, end,
         TSPoint.create(startRow, startColumn * 2),
         TSPoint.create(endRow, endColumn * 2));
