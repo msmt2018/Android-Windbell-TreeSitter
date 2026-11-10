@@ -45,7 +45,7 @@
 - [x] EditorView Binding 在编辑线程的 before/after transaction 边界创建 PieceTreeSnapshot，并通过 EditorDocument 替换事件在同一 documentId 下自动触发 Session.resync（SOURCE_PARTIAL；尚未完成并发/设备验证）。
 - [ ] 其他可变 Piece Tree/Rope 仍需由宿主提供读写互斥或 pin persistent root/unpin。
 - [x] 新增 `TshSparseCoordinateIndex`：绑定 documentId/version/length，独立 retain Snapshot Lease；调用方关闭原始 Lease 不影响索引，索引 `close()` 后释放自己的 Lease；构建按有界 chunk 读取，转换按实际 checkpoint stride 分块扫描，支持 UTF-8/UTF-16/Code Point 并拒绝字符编码中间偏移（SOURCE_PARTIAL，新增大 stride 与 Lease 生命周期测试，待 CI）。
-- [x] `PieceTreeSnapshot` 新增基于 Piece 起始偏移、源缓冲区 lineStarts 和 piece line-feed prefix 的 Tree-sitter 坐标查询；`TshTextSnapshot.lineColumnAtUtf16` 将宿主原生坐标索引暴露给 EditCompiler，端点定位不再从文档头扫描（SOURCE_PARTIAL，测试源码已补，待 CI）。
+- [x] `PieceTreeSnapshot` 新增基于 Piece 起始偏移、原始源缓冲区坐标、lineStarts copy-on-write snapshot view 和 piece line-feed prefix 的 Tree-sitter 坐标查询；`TshTextSnapshot.supportsLineColumnLookup/lineColumnAtUtf16` 将宿主原生坐标索引暴露给 EditCompiler，非法端点不会触发全文扫描（SOURCE_PARTIAL，测试源码已补，待 CI）。
 - [ ] 该坐标索引是 Snapshot 固定的 Piece 元数据查找，不维护编辑间可复用的独立增量索引对象；Rope 通用 Provider、CR-only/异常换行快速索引、完整 Grapheme（UAX #29）转换仍未实现。
 - [ ] Grapheme 目前使用运行时 BreakIterator，不宣称完整 UAX #29。
 - [x] 项目 PieceTree Provider 的 change/disposal subscription 已由 EditorDocument edit callback、Binding.publishChange 与 Binding.close 接线；Buffer replacement 现通过独立生命周期事件通知 EditorView observers（SOURCE_PARTIAL）。
