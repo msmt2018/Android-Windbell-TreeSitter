@@ -200,3 +200,12 @@
 - [x] 限制合并诊断累计最多 4,096 条，避免 stale 输入造成诊断列表无限增长。
 - [ ] 上限只约束合并器新增的候选/工作集估算；输入 Collection 由上游提供且其既有内存不计入本次合并预算。该估算不是 JVM heap 精确测量，也不替代上游 Regex/Tree-sitter 执行限额。
 - [ ] 新增测试源码待最新 CI 验证。
+
+
+### 2026-11-10：Parser Native 取消与超时状态（SOURCE_PARTIAL）
+
+- [x] `TSParser` 新增 `isCancellationRequested()` 公共只读状态和 `requestCancellationAndWaitIfParsing()` 布尔返回 API；保留既有 void `requestCancellationAndWait()` ABI。
+- [x] `TshTreeSitterParserOwner` 新增异步取消、取消并等待、Native timeout 设置/读取 API；取消时保留 Parser Lease，等待 Native parse 退出后才释放调用侧 Lease。
+- [x] String parse 与 Snapshot streaming parse 的 null-tree 路径区分已接受的 Native cancellation、达到已配置 timeout 的“可能超时”以及其他无树失败。
+- [ ] Tree-sitter Native API 对 timeout/cancel 只返回 null，没有精确 stop-reason；timeout 分类使用实际 parse 耗时与配置阈值推断，诊断明确标注“likely”，不伪称 Native 精确原因。
+- [ ] TSH Owner 的真实并发 parse/cancel、timeout、close 竞态需在 CI/设备验证；当前新增底层 ParserTest 源码尚未通过最新 CI。
