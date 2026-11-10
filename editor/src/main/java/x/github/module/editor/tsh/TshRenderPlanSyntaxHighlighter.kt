@@ -36,17 +36,19 @@ class TshRenderPlanSyntaxHighlighter(
 
     private data class RenderSnapshot(
         val plan: TshRenderPlan,
-        val index: InstructionIntervalIndex
+        val index: InstructionIntervalIndex,
+        val generation: Long
     )
 
     private data class LineStyleCacheKey(
-        val planId: com.zerostudio.idea.treesitter.tsh.api.TshRenderPlanId,
+        val generation: Long,
         val documentVersion: Long,
         val lineStartOffset: Int,
         val lineLength: Int
     )
 
     private val stateLock = Any()
+    private var planGeneration = 0L
 
     @Volatile
     private var host: SyntaxHighlighter.Host? = null
@@ -134,8 +136,9 @@ class TshRenderPlanSyntaxHighlighter(
             if (editInProgress || latestVersion != version) {
                 false
             } else {
+                planGeneration = Math.addExact(planGeneration, 1L)
                 diagnostics = unsupported
-                snapshot = RenderSnapshot(stablePlan, intervalIndex)
+                snapshot = RenderSnapshot(stablePlan, intervalIndex, planGeneration)
                 true
             }
         }
@@ -224,7 +227,7 @@ class TshRenderPlanSyntaxHighlighter(
         if (safeStart >= safeEnd) return null
 
         val key = LineStyleCacheKey(
-            current.plan.id,
+            current.generation,
             current.plan.revisions.documentVersion,
             lineStartOffset,
             text.length
