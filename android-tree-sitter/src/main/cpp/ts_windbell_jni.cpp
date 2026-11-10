@@ -18,6 +18,7 @@
 
 #include "tsh/WindbellTshCore.h"
 #include "tsh/WindbellTshCompiler.h"
+#include "tsh/TshRegexNative.h"
 #include "utils/ts_exceptions.h"
 #include "utils/ts_preconditions.h"
 #include "utils/jni_string.h"
