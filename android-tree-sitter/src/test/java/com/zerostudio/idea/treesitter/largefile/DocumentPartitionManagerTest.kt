@@ -162,7 +162,7 @@ class DocumentPartitionManagerTest {
         index.add(Int.MAX_VALUE.toLong() + 1L, 2L, 3L)
         assertTrue(index.uses64BitStorage)
         index.add(Int.MAX_VALUE.toLong() + 65_536L, 4L, 5L)
-        assertEquals(2, index.floorIndex(Int.MAX_VALUE.toLong() + 10L))
+        assertEquals(1, index.floorIndex(Int.MAX_VALUE.toLong() + 10L))
         assertEquals(Int.MAX_VALUE.toLong() + 65_536L, index.offsetAt(2))
         assertEquals(4L, index.rowAt(2))
         assertEquals(5L, index.columnAt(2))
