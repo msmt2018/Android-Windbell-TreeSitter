@@ -37,6 +37,8 @@ class TshRenderPlanSyntaxHighlighter(
         val index: InstructionIntervalIndex
     )
 
+    private val stateLock = Any()
+
     @Volatile
     private var host: SyntaxHighlighter.Host? = null
 
@@ -101,16 +103,34 @@ class TshRenderPlanSyntaxHighlighter(
 
         val stablePlan = plan.copy(instructions = stableInstructions.toList())
         val unsupported = collectUnsupportedStyleDiagnostics(stablePlan.instructions)
-        diagnostics = unsupported
-        snapshot = RenderSnapshot(stablePlan, InstructionIntervalIndex(stablePlan.instructions))
-        editInProgress = false
+        val intervalIndex = InstructionIntervalIndex(stablePlan.instructions)
+        val published = synchronized(stateLock) {
+            // An edit may begin while the interval index is being built on a worker. Never
+            // publish a plan across that transaction, even if its version check raced the edit.
+            if (editInProgress || currentDocumentVersion() != version) {
+                false
+            } else {
+                diagnostics = unsupported
+                snapshot = RenderSnapshot(stablePlan, intervalIndex)
+                true
+            }
+        }
+        if (!published) {
+            return failure(
+                "TSH-EDITOR-RENDER-008",
+                "Document changed or an edit transaction began while the RenderPlan was being installed"
+            )
+        }
         host?.invalidateStyles()
         return TshResult.Success(Unit, unsupported)
     }
 
     /** Drops the current plan; the caller must submit a plan for the new document version. */
     fun clearRenderPlan() {
-        snapshot = null
+        synchronized(stateLock) {
+            snapshot = null
+            diagnostics = emptyList()
+        }
         host?.invalidateStyles()
     }
 
@@ -120,27 +140,38 @@ class TshRenderPlanSyntaxHighlighter(
     }
 
     override fun onDetached() {
-        snapshot = null
-        host = null
-        editInProgress = false
+        synchronized(stateLock) {
+            snapshot = null
+            diagnostics = emptyList()
+            editInProgress = false
+            host = null
+        }
     }
 
     override fun onTextReplaced(buffer: EditorBuffer) {
-        snapshot = null
-        editInProgress = false
+        synchronized(stateLock) {
+            snapshot = null
+            diagnostics = emptyList()
+            editInProgress = false
+        }
         host?.invalidateStyles()
     }
 
     override fun onTextChanged(change: EditorDocument.AppliedChange) {
-        snapshot = null
-        editInProgress = true
+        synchronized(stateLock) {
+            snapshot = null
+            diagnostics = emptyList()
+            editInProgress = true
+        }
     }
 
     override fun onEditFinished() {
-        if (editInProgress) {
+        val changed = synchronized(stateLock) {
+            val wasEditing = editInProgress
             editInProgress = false
-            host?.invalidateStyles()
+            wasEditing
         }
+        if (changed) host?.invalidateStyles()
     }
 
     override fun isStyleReady(
@@ -189,7 +220,9 @@ class TshRenderPlanSyntaxHighlighter(
     }
 
     private fun currentSnapshot(): RenderSnapshot? {
-        val current = snapshot ?: return null
+        val current = synchronized(stateLock) {
+            if (editInProgress) null else snapshot
+        } ?: return null
         val version = try {
             currentDocumentVersion()
         } catch (_: Exception) {
@@ -197,11 +230,19 @@ class TshRenderPlanSyntaxHighlighter(
         } catch (_: LinkageError) {
             return null
         }
-        if (editInProgress || version != current.plan.revisions.documentVersion) {
-            if (snapshot === current) snapshot = null
-            return null
+        return synchronized(stateLock) {
+            if (!editInProgress && snapshot === current &&
+                version == current.plan.revisions.documentVersion
+            ) {
+                current
+            } else {
+                if (snapshot === current && version != current.plan.revisions.documentVersion) {
+                    snapshot = null
+                    diagnostics = emptyList()
+                }
+                null
+            }
         }
-        return current
     }
 
     private fun collectUnsupportedStyleDiagnostics(
