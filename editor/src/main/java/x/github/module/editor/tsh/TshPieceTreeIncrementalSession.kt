@@ -97,6 +97,13 @@ class TshPieceTreeIncrementalSession private constructor(
                 ) {
                     resync()
                 }
+            },
+            onBufferReplaced = {
+                // Buffer replacement invalidates every offset and native tree revision. The
+                // binding has already switched its snapshotFactory to the new live buffer.
+                if (this::binding.isInitialized && !closed.get()) {
+                    resync()
+                }
             }
         )
     }
