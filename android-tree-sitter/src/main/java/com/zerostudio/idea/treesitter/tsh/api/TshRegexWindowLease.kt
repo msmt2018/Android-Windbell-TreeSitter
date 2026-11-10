@@ -36,6 +36,7 @@ data class TshRegexWindowConstraints(
 class TshRegexWindowLease private constructor(
     val documentId: String,
     val documentVersion: Long,
+    val documentLengthUtf16: Long,
     val windowStartUtf16: Long,
     val windowEndUtf16: Long,
     val coreStartUtf16: Long,
@@ -52,6 +53,8 @@ class TshRegexWindowLease private constructor(
         }
 
     val lengthUtf16: Int get() = text.length
+    val isDocumentStart: Boolean get() = windowStartUtf16 == 0L
+    val isDocumentEnd: Boolean get() = windowEndUtf16 == documentLengthUtf16
     val coreStartInWindow: Int get() = (coreStartUtf16 - windowStartUtf16).toInt()
     val coreEndInWindow: Int get() = (coreEndUtf16 - windowStartUtf16).toInt()
 
@@ -164,7 +167,7 @@ class TshRegexWindowLease private constructor(
                     )
                 }
                 val window = TshRegexWindowLease(
-                    snapshot.documentId, snapshot.version, windowStart, windowEnd,
+                    snapshot.documentId, snapshot.version, length, windowStart, windowEnd,
                     coreStartUtf16, coreEnd, source.toString(), reservation
                 )
                 transferred = true
