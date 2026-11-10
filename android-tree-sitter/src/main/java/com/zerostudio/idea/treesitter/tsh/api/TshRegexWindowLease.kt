@@ -133,7 +133,7 @@ class TshRegexWindowLease private constructor(
                     "TSH-REGEX-WINDOW-002",
                     "Regex windowing requires a finite maximum match length; unbounded patterns must be rejected or handled by a separately bounded strategy"
                 )
-            if (coreLengthUtf16 <= 0 || coreLengthUtf16 > constraints.coreWindowUtf16) {
+            if (coreLengthUtf16 < 0 || coreLengthUtf16 > constraints.coreWindowUtf16) {
                 return failure("TSH-REGEX-WINDOW-003", "Requested core length is outside the configured core window")
             }
 
@@ -152,10 +152,16 @@ class TshRegexWindowLease private constructor(
                 if (snapshot.documentId.isBlank() || snapshot.version < 0L || length < 0L) {
                     return failure("TSH-REGEX-WINDOW-005", "Snapshot identity, version, or length is invalid")
                 }
-                if (coreStartUtf16 < 0L || coreStartUtf16 >= length) {
-                    return failure("TSH-REGEX-WINDOW-006", "Core start is outside the source snapshot")
+                val emptyDocument = length == 0L
+                if (emptyDocument) {
+                    if (coreStartUtf16 != 0L || coreLengthUtf16 != 0) {
+                        return failure("TSH-REGEX-WINDOW-006", "An empty snapshot requires a zero-length core at offset zero")
+                    }
+                } else if (coreStartUtf16 < 0L || coreStartUtf16 >= length || coreLengthUtf16 == 0) {
+                    return failure("TSH-REGEX-WINDOW-006", "Core start/length is outside the source snapshot")
                 }
-                val coreEnd = minOf(length, safeAdd(coreStartUtf16, coreLengthUtf16.toLong()))
+                val coreEnd = if (emptyDocument) 0L else
+                    minOf(length, safeAdd(coreStartUtf16, coreLengthUtf16.toLong()))
                 if (splitsSurrogate(snapshot, coreStartUtf16) || splitsSurrogate(snapshot, coreEnd)) {
                     return failure(
                         "TSH-REGEX-WINDOW-007",
@@ -171,7 +177,8 @@ class TshRegexWindowLease private constructor(
                 if (splitsSurrogate(snapshot, windowStart)) windowStart--
                 if (splitsSurrogate(snapshot, windowEnd)) windowEnd++
                 val actualLength = windowEnd - windowStart
-                if (actualLength <= 0L || actualLength > constraints.maxWindowUtf16.toLong()) {
+                if ((!emptyDocument && actualLength <= 0L) ||
+                    actualLength > constraints.maxWindowUtf16.toLong()) {
                     return failure(
                         "TSH-REGEX-WINDOW-008",
                         "Required Regex window ($actualLength UTF-16 units) exceeds maxWindowUtf16 (${constraints.maxWindowUtf16})"
