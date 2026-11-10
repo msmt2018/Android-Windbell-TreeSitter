@@ -31,6 +31,38 @@ include(${CMAKE_CURRENT_SOURCE_DIR}/../../../../cmake/common-config.cmake)
 include_directories("${TS_DIR}/lib/src")
 include_directories("${TS_DIR}/lib/include")
 
+# Detect the Tree-sitter 0.28 Query Cursor controls without forcing a
+# submodule update on consumers that still build the previous API. Once the
+# vendored tree-sitter-lib is upgraded, the same TSH source automatically
+# enables bounded query execution and cancellation.
+include(CheckCXXSourceCompiles)
+# Re-evaluate the complete ABI probe after its source changes; otherwise a
+# stale cached success from an earlier, weaker probe could enable the code.
+unset(TSH_TREE_SITTER_HAS_QUERY_CURSOR_OPTIONS CACHE)
+set(CMAKE_REQUIRED_INCLUDES "${TS_DIR}/lib/include")
+check_cxx_source_compiles("
+    #include <tree_sitter/api.h>
+    #include <type_traits>
+    using ProgressCallback = decltype(TSQueryCursorOptions::progress_callback);
+    using ExpectedProgressCallback = bool (*)(TSQueryCursorState *);
+    using ExecWithOptions = decltype(&ts_query_cursor_exec_with_options);
+    using ExpectedExecWithOptions = void (*)(
+        TSQueryCursor *, const TSQuery *, TSNode, const TSQueryCursorOptions *);
+    using SetMatchLimit = decltype(&ts_query_cursor_set_match_limit);
+    using DidExceedMatchLimit = decltype(&ts_query_cursor_did_exceed_match_limit);
+    static_assert(std::is_same<ProgressCallback, ExpectedProgressCallback>::value,
+        \"Tree-sitter progress callback signature is incompatible\");
+    static_assert(std::is_same<ExecWithOptions, ExpectedExecWithOptions>::value,
+        \"Tree-sitter exec-with-options signature is incompatible\");
+    static_assert(sizeof(TSQueryCursorOptions) > 0, \"Query cursor options are available\");
+    int main() { return 0; }
+" TSH_TREE_SITTER_HAS_QUERY_CURSOR_OPTIONS)
+unset(CMAKE_REQUIRED_INCLUDES)
+if(TSH_TREE_SITTER_HAS_QUERY_CURSOR_OPTIONS)
+    add_compile_definitions(TSH_TREE_SITTER_HAS_QUERY_CURSOR_OPTIONS=1)
+endif()
+
+# ==============================================================================
 # ==============================================================================
 # Oniguruma (鬼车) 路径配置：位于当前 cpp/oniguruma 目录
 # ==============================================================================

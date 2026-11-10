@@ -24,7 +24,8 @@ import com.zerostudio.idea.treesitter.predicate.TSPredicateHandler.Result;
 import com.zerostudio.idea.treesitter.util.TSObjectFactoryProvider;
 import dalvik.annotation.optimization.FastNative;
 import java.util.ArrayList;
-import java.util.HashSet;
+import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Iterator;
 import java.util.NoSuchElementException;
 import java.util.Objects;
@@ -37,9 +38,10 @@ public class TSQueryCursor extends TSNativeObject implements Iterable<TSQueryMat
 
   protected boolean isExecuted = false;
   private boolean allowChangedNodes = false;
+  private boolean predicateEvaluationEnabled = true;
   protected TSNode targetNode = null;
   protected TSQuery execQuery = null;
-  protected final Set<TSPredicateHandler> predicateHandlers = new HashSet<>();
+  protected final Set<TSPredicateHandler> predicateHandlers = new LinkedHashSet<>();
 
   protected TSQueryCursor() {
     this(Native.newCursor());
@@ -111,7 +113,33 @@ public class TSQueryCursor extends TSNativeObject implements Iterable<TSQueryMat
   /**
    * Start running the given query on the given node.
    */
+  public interface ProgressCallback {
+    /**
+     * @param currentByteOffset Approximate absolute byte offset reached by the query cursor.
+     * @return true to cancel query execution.
+     *
+     * <p>The callback runs synchronously from {@link #nextMatch()}. It must not re-enter,
+     * close, or otherwise access the same query cursor.
+     */
+    boolean onProgress(long currentByteOffset);
+  }
+
   public void exec(TSQuery query, TSNode node) {
+    execute(query, node, null);
+  }
+
+  /**
+   * Execute a query with Tree-sitter 0.28 cooperative progress cancellation.
+   * The callback is retained until the cursor is executed again or closed.
+   *
+   * @throws UnsupportedOperationException when the bundled Tree-sitter lacks the 0.28 API.
+   */
+  public void exec(TSQuery query, TSNode node, ProgressCallback callback) {
+    Objects.requireNonNull(callback, "ProgressCallback cannot be null");
+    execute(query, node, callback);
+  }
+
+  private void execute(TSQuery query, TSNode node, ProgressCallback callback) {
     Objects.requireNonNull(node, "TSNode cannot be null");
     checkAccess();
     if (query == null || !query.canAccess()) {
@@ -122,12 +150,14 @@ public class TSQueryCursor extends TSNativeObject implements Iterable<TSQueryMat
       String msg = "Cannot execute query on invalid node. node=" + node + " node.canAccess=" +
         node.canAccess() + " node.tree.canAccess=" + node.getTree().canAccess() +
         " node.hasChanges=" + node.hasChanges() + " isAllowChangedNodes=" + isAllowChangedNodes();
-
       throw new IllegalArgumentException(msg);
     }
 
-    Native.exec(getNativeObject(), query.getNativeObject(), node);
-
+    if (callback == null) {
+      Native.exec(getNativeObject(), query.getNativeObject(), node);
+    } else {
+      Native.execWithOptions(getNativeObject(), query.getNativeObject(), node, callback);
+    }
     isExecuted = true;
     targetNode = node;
     execQuery = query;
@@ -214,23 +244,35 @@ public class TSQueryCursor extends TSNativeObject implements Iterable<TSQueryMat
     Native.setPointRange(getNativeObject(), start, end);
   }
 
+  /** Enable or disable Java-side predicate evaluation for subsequent matches. */
+  public void setPredicateEvaluationEnabled(boolean enabled) {
+    checkAccess();
+    predicateEvaluationEnabled = enabled;
+  }
+
   public TSQueryMatch nextMatch() {
     checkAccess();
     checkExecuted("nextMatch");
-    final var match = Native.nextMatch(getNativeObject());
-    if (match != null) {
-      applyPredicates(match);
+    while (true) {
+      final var match = Native.nextMatch(getNativeObject());
+      if (match == null || !predicateEvaluationEnabled || applyPredicates(match)) {
+        return match;
+      }
     }
-    return match;
   }
 
-  private void applyPredicates(TSQueryMatch match) {
+  private boolean applyPredicates(TSQueryMatch match) {
     if (match == null || execQuery == null) {
-      return;
+      return true;
     }
 
     final var predicates = execQuery.getPredicatesForPattern(match.getPatternIndex());
-    final var steps = new ArrayList<PredicateStep>(predicates.length);
+    if (predicates == null || predicates.length == 0) {
+      return true;
+    }
+
+    final var group = new ArrayList<PredicateStep>();
+    boolean foundExpression = false;
 
     for (final var predicate : predicates) {
       final PredicateStep step;
@@ -243,19 +285,53 @@ public class TSQueryCursor extends TSNativeObject implements Iterable<TSQueryMat
           step = new PredicateStep(predicate.getType(),
             execQuery.getStringValueForId(predicate.getValueId()));
           break;
+        case Done:
         default:
           step = new PredicateStep(predicate.getType(), "");
           break;
       }
 
-      steps.add(step);
+      if (predicate.getType() != TSQueryPredicateStep.Type.Done) {
+        foundExpression = true;
+        group.add(step);
+        continue;
+      }
+
+      // A Done step closes exactly one predicate/directive expression.
+      group.add(step);
+      if (foundExpression && !dispatchPredicateGroup(match, group)) {
+        return false;
+      }
+      group.clear();
+      foundExpression = false;
     }
 
+    // Be defensive if a malformed/native implementation omits the trailing Done step.
+    return !foundExpression || dispatchPredicateGroup(match, group);
+  }
+
+  /**
+   * Dispatch one complete predicate/directive expression in registration order.
+   */
+  private boolean dispatchPredicateGroup(
+    TSQueryMatch match,
+    List<PredicateStep> steps
+  ) {
     for (final var handler : predicateHandlers) {
-      if (handler.handle(execQuery, match, steps) == Result.OK) {
-        break;
+      final Result result = handler.handle(execQuery, match, steps);
+      if (result == Result.OK) {
+        return true;
+      }
+      if (result == Result.ERR) {
+        return false;
       }
     }
+    // UNHANDLED is not a predicate mismatch. Returning false here would silently
+    // discard a valid native match and make unsupported query semantics look successful.
+    throw new IllegalStateException(
+      "No TSPredicateHandler handled predicate '" +
+      (steps.isEmpty() ? "<empty>" : steps.get(0).value) + "'"
+    );
   }
 
   public void removeMatch(int id) {
@@ -289,31 +365,27 @@ public class TSQueryCursor extends TSNativeObject implements Iterable<TSQueryMat
     @FastNative
     static native long newCursor();
 
-    @FastNative
     static native void delete(long cursor);
 
-    @FastNative
     static native void exec(long cursor, long query, TSNode node);
 
-    @FastNative
+    static native void execWithOptions(
+      long cursor, long query, TSNode node, ProgressCallback callback);
+
     static native boolean exceededMatchLimit(long cursor);
 
-    @FastNative
     static native void setMatchLimit(long cursor, int newLimit);
 
-    @FastNative
     static native int getMatchLimit(long cursor);
 
-    @FastNative
     static native void setByteRange(long cursor, int start, int end);
 
-    @FastNative
     static native void setPointRange(long cursor, TSPoint start, TSPoint end);
 
-    @FastNative
+    // This method must not use FastNative: Tree-sitter may call the Java
+    // progress callback while nextMatch is executing.
     static native TSQueryMatch nextMatch(long cursor);
 
-    @FastNative
     static native void removeMatch(long cursor, int id);
   }
 }

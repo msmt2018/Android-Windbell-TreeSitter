@@ -16,11 +16,102 @@
  */
 
 #include <iostream>
+#include <memory>
+#include <mutex>
+#include <new>
+#include <unordered_map>
 
 #include "utils/ts_obj_utils.h"
 #include "utils/ts_preconditions.h"
 
 #include "ts_query_cursor.h"
+
+namespace {
+
+#if defined(TSH_TREE_SITTER_HAS_QUERY_CURSOR_OPTIONS)
+struct QueryProgressCallbackState {
+  jobject callback = nullptr;
+  jmethodID method = nullptr;
+  JNIEnv *active_env = nullptr;
+  TSQueryCursorOptions options{};
+};
+
+std::mutex g_query_progress_lock;
+// The map owns each state pointer. Raw pointers avoid losing the JNI global
+// reference if unordered_map allocation throws while moving a unique_ptr.
+std::unordered_map<TSQueryCursor *, QueryProgressCallbackState *>
+    g_query_progress_callbacks;
+
+bool queryProgressCallback(TSQueryCursorState *state) {
+  if (!state || !state->payload) return true;
+  auto *callback_state = static_cast<QueryProgressCallbackState *>(state->payload);
+  JNIEnv *env = callback_state->active_env;
+  if (!env || !callback_state->callback || !callback_state->method) return true;
+  const jboolean cancel = env->CallBooleanMethod(
+      callback_state->callback, callback_state->method,
+      static_cast<jlong>(state->current_byte_offset));
+  // Preserve a Java exception and stop native work. JNI will propagate the
+  // pending exception when nextMatch returns to Java.
+  return env->ExceptionCheck() || cancel == JNI_TRUE;
+}
+
+void throwIllegalState(JNIEnv *env, const char *message);
+
+bool releaseQueryProgressCallback(JNIEnv *env, TSQueryCursor *cursor) {
+  QueryProgressCallbackState *state = nullptr;
+  {
+    std::lock_guard<std::mutex> lock(g_query_progress_lock);
+    auto found = g_query_progress_callbacks.find(cursor);
+    if (found == g_query_progress_callbacks.end()) return true;
+    state = found->second;
+    // The callback is currently using this options payload. Releasing it
+    // re-entrantly would invalidate Tree-sitter's active callback stack.
+    if (state->active_env != nullptr) {
+      throwIllegalState(env, "Cannot re-enter or close a query cursor from its progress callback");
+      return false;
+    }
+    g_query_progress_callbacks.erase(found);
+  }
+  if (state->callback) env->DeleteGlobalRef(state->callback);
+  delete state;
+  return true;
+}
+
+bool rejectQueryCursorReentry(JNIEnv *env, TSQueryCursor *cursor) {
+  std::lock_guard<std::mutex> lock(g_query_progress_lock);
+  auto found = g_query_progress_callbacks.find(cursor);
+  if (found == g_query_progress_callbacks.end() ||
+      found->second->active_env == nullptr) return false;
+  throwIllegalState(env, "Cannot access a query cursor from its progress callback");
+  return true;
+}
+#endif
+
+void throwUnsupportedOperation(JNIEnv *env, const char *message) {
+  jclass exception_class = env->FindClass("java/lang/UnsupportedOperationException");
+  if (exception_class) {
+    env->ThrowNew(exception_class, message);
+    env->DeleteLocalRef(exception_class);
+  }
+}
+
+void throwOutOfMemory(JNIEnv *env, const char *message) {
+  jclass exception_class = env->FindClass("java/lang/OutOfMemoryError");
+  if (exception_class) {
+    env->ThrowNew(exception_class, message);
+    env->DeleteLocalRef(exception_class);
+  }
+}
+
+void throwIllegalState(JNIEnv *env, const char *message) {
+  jclass exception_class = env->FindClass("java/lang/IllegalStateException");
+  if (exception_class) {
+    env->ThrowNew(exception_class, message);
+    env->DeleteLocalRef(exception_class);
+  }
+}
+
+} // namespace
 
 static jlong TSQueryCursor_newCursor(JNIEnv *env, jclass self) {
   return (jlong) ts_query_cursor_new();
@@ -28,6 +119,9 @@ static jlong TSQueryCursor_newCursor(JNIEnv *env, jclass self) {
 
 static void TSQueryCursor_delete(JNIEnv *env, jclass self, jlong cursor) {
   req_nnp(env, cursor);
+#if defined(TSH_TREE_SITTER_HAS_QUERY_CURSOR_OPTIONS)
+  if (!releaseQueryProgressCallback(env, (TSQueryCursor *) cursor)) return;
+#endif
   ts_query_cursor_delete((TSQueryCursor *) cursor);
 }
 
@@ -37,14 +131,88 @@ static void TSQueryCursor_exec(JNIEnv *env,
                                jlong query,
                                jobject node) {
   req_nnp(env, cursor);
+#if defined(TSH_TREE_SITTER_HAS_QUERY_CURSOR_OPTIONS)
+  // A regular exec resets Tree-sitter's retained options pointer.
+  if (!releaseQueryProgressCallback(env, (TSQueryCursor *) cursor)) return;
+#endif
   ts_query_cursor_exec((TSQueryCursor *) cursor,
                        (TSQuery *) query,
                        _unmarshalNode(env, node));
 }
 
+static void TSQueryCursor_execWithOptions(JNIEnv *env,
+                                          jclass self,
+                                          jlong cursor,
+                                          jlong query,
+                                          jobject node,
+                                          jobject callback) {
+  req_nnp(env, cursor);
+  req_nnp(env, query);
+  req_nnp(env, callback);
+#if defined(TSH_TREE_SITTER_HAS_QUERY_CURSOR_OPTIONS)
+  TSQueryCursor *native_cursor = (TSQueryCursor *) cursor;
+  // Resolve the Java node before installing callback state. If node conversion
+  // raises, the cursor must not retain an options pointer for a query that
+  // was never started.
+  TSNode native_node = _unmarshalNode(env, node);
+  if (env->ExceptionCheck()) return;
+
+  if (!releaseQueryProgressCallback(env, native_cursor)) return;
+
+  std::unique_ptr<QueryProgressCallbackState> state(
+      new (std::nothrow) QueryProgressCallbackState());
+  if (!state) {
+    throwOutOfMemory(env, "Unable to allocate query progress callback state");
+    return;
+  }
+  state->callback = env->NewGlobalRef(callback);
+  if (!state->callback) return;
+  jclass callback_class = env->GetObjectClass(callback);
+  if (!callback_class) {
+    env->DeleteGlobalRef(state->callback);
+    return;
+  }
+  state->method = env->GetMethodID(callback_class, "onProgress", "(J)Z");
+  env->DeleteLocalRef(callback_class);
+  if (!state->method) {
+    env->DeleteGlobalRef(state->callback);
+    return;
+  }
+
+  state->options.payload = state.get();
+  state->options.progress_callback = queryProgressCallback;
+  QueryProgressCallbackState *callback_state = state.get();
+  try {
+    std::lock_guard<std::mutex> lock(g_query_progress_lock);
+    const auto inserted = g_query_progress_callbacks.emplace(native_cursor, callback_state);
+    if (!inserted.second) {
+      env->DeleteGlobalRef(callback_state->callback);
+      throwIllegalState(env, "A query is already active on this cursor");
+      return;
+    }
+    state.release();
+  } catch (const std::bad_alloc &) {
+    // Ownership is released only after successful map insertion.
+    env->DeleteGlobalRef(callback_state->callback);
+    throwOutOfMemory(env, "Unable to allocate query progress callback state");
+    return;
+  }
+  ts_query_cursor_exec_with_options(
+      native_cursor, (TSQuery *) query, native_node, &callback_state->options);
+#else
+  (void) self;
+  (void) node;
+  throwUnsupportedOperation(
+      env, "Query progress callbacks require Tree-sitter 0.28 or newer");
+#endif
+}
+
 static jboolean
 TSQueryCursor_exceededMatchLimit(JNIEnv *env, jclass self, jlong cursor) {
   req_nnp(env, cursor);
+#if defined(TSH_TREE_SITTER_HAS_QUERY_CURSOR_OPTIONS)
+  if (rejectQueryCursorReentry(env, (TSQueryCursor *) cursor)) return 0;
+#endif
   return (jboolean) ts_query_cursor_did_exceed_match_limit((TSQueryCursor *) cursor);
 }
 
@@ -53,12 +221,18 @@ static void TSQueryCursor_setMatchLimit(JNIEnv *env,
                                         jlong cursor,
                                         jint newLimit) {
   req_nnp(env, cursor);
+#if defined(TSH_TREE_SITTER_HAS_QUERY_CURSOR_OPTIONS)
+  if (rejectQueryCursorReentry(env, (TSQueryCursor *) cursor)) return;
+#endif
   ts_query_cursor_set_match_limit((TSQueryCursor *) cursor, newLimit);
 }
 
 static jint
 TSQueryCursor_getMatchLimit(JNIEnv *env, jclass self, jlong cursor) {
   req_nnp(env, cursor);
+#if defined(TSH_TREE_SITTER_HAS_QUERY_CURSOR_OPTIONS)
+  if (rejectQueryCursorReentry(env, (TSQueryCursor *) cursor)) return 0;
+#endif
   return (jint) ts_query_cursor_match_limit((TSQueryCursor *) cursor);
 }
 
@@ -68,6 +242,9 @@ static void TSQueryCursor_setByteRange(JNIEnv *env,
                                        jint start,
                                        jint end) {
   req_nnp(env, cursor);
+#if defined(TSH_TREE_SITTER_HAS_QUERY_CURSOR_OPTIONS)
+  if (rejectQueryCursorReentry(env, (TSQueryCursor *) cursor)) return;
+#endif
   ts_query_cursor_set_byte_range((TSQueryCursor *) cursor, start, end);
 }
 
@@ -77,6 +254,9 @@ static void TSQueryCursor_setPointRange(JNIEnv *env,
                                         jobject start,
                                         jobject end) {
   req_nnp(env, cursor);
+#if defined(TSH_TREE_SITTER_HAS_QUERY_CURSOR_OPTIONS)
+  if (rejectQueryCursorReentry(env, (TSQueryCursor *) cursor)) return;
+#endif
   ts_query_cursor_set_point_range((TSQueryCursor *) cursor,
                                   _unmarshalPoint(env, start),
                                   _unmarshalPoint(env, end));
@@ -84,17 +264,36 @@ static void TSQueryCursor_setPointRange(JNIEnv *env,
 
 static jobject TSQueryCursor_nextMatch(JNIEnv *env, jclass self, jlong cursor) {
   req_nnp(env, cursor);
+#if defined(TSH_TREE_SITTER_HAS_QUERY_CURSOR_OPTIONS)
+  QueryProgressCallbackState *callback_state = nullptr;
+  {
+    std::lock_guard<std::mutex> lock(g_query_progress_lock);
+    auto found = g_query_progress_callbacks.find((TSQueryCursor *) cursor);
+    if (found != g_query_progress_callbacks.end()) {
+      callback_state = found->second;
+      if (callback_state->active_env != nullptr) {
+        throwIllegalState(env, "Cannot re-enter a query cursor from its progress callback");
+        return nullptr;
+      }
+      callback_state->active_env = env;
+    }
+  }
+#endif
   TSQueryMatch m;
   bool b = ts_query_cursor_next_match((TSQueryCursor *) cursor, &m);
-  if (!b) {
-    return nullptr;
-  }
+#if defined(TSH_TREE_SITTER_HAS_QUERY_CURSOR_OPTIONS)
+  if (callback_state) callback_state->active_env = nullptr;
+#endif
+  if (env->ExceptionCheck() || !b) return nullptr;
   return _marshalMatch(env, m);
 }
 
 static void
 TSQueryCursor_removeMatch(JNIEnv *env, jclass self, jlong cursor, jint id) {
   req_nnp(env, cursor);
+#if defined(TSH_TREE_SITTER_HAS_QUERY_CURSOR_OPTIONS)
+  if (rejectQueryCursorReentry(env, (TSQueryCursor *) cursor)) return;
+#endif
   ts_query_cursor_remove_match((TSQueryCursor *) cursor, id);
 }
 
@@ -102,6 +301,8 @@ void TSQueryCursor_Native__SetJniMethods(JNINativeMethod *methods, int count) {
   SET_JNI_METHOD(methods, TSQueryCursor_Native_newCursor, TSQueryCursor_newCursor);
   SET_JNI_METHOD(methods, TSQueryCursor_Native_delete, TSQueryCursor_delete);
   SET_JNI_METHOD(methods, TSQueryCursor_Native_exec, TSQueryCursor_exec);
+  SET_JNI_METHOD(methods, TSQueryCursor_Native_execWithOptions,
+                 TSQueryCursor_execWithOptions);
   SET_JNI_METHOD(methods, TSQueryCursor_Native_exceededMatchLimit,
                  TSQueryCursor_exceededMatchLimit);
   SET_JNI_METHOD(methods, TSQueryCursor_Native_setMatchLimit,
