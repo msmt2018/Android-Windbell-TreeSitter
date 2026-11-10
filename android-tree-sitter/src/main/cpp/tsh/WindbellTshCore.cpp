@@ -31,27 +31,20 @@ public:
     void add(const HighlightSpan& span, size_t spanIndex,
              const std::vector<HighlightSpan>& spans) {
         if (span.allow_overlap) return;
-        const uint64_t key = rangeKey(span.start_byte, span.end_byte);
-        exact_ranges_.try_emplace(key, spanIndex);
         Node node;
         node.span_index = spanIndex;
         node.heap_priority = mix(static_cast<uint64_t>(spanIndex) + 0x9E3779B97F4A7C15ULL);
-        node.min_start = node.max_start = span.start_byte;
-        node.min_end = node.max_end = span.end_byte;
+        node.max_end = span.end_byte;
         nodes_.push_back(node);
         root_ = insert(root_, nodes_.size() - 1u, spans);
     }
 
-    void findCrossings(uint32_t start, uint32_t end,
-                       const std::vector<HighlightSpan>& spans,
-                       std::vector<size_t>& output) const {
+    void findOverlaps(uint32_t start, uint32_t end,
+                      const std::vector<HighlightSpan>& spans,
+                      std::vector<size_t>& output) const {
         output.clear();
         if (start >= end) return;
-        const auto exact = exact_ranges_.find(rangeKey(start, end));
-        if (exact != exact_ranges_.end()) output.push_back(exact->second);
         collect(root_, start, end, spans, output);
-        std::sort(output.begin(), output.end());
-        output.erase(std::unique(output.begin(), output.end()), output.end());
     }
 
 private:
@@ -62,15 +55,8 @@ private:
         size_t left = kNone;
         size_t right = kNone;
         uint64_t heap_priority = 0;
-        uint32_t min_start = 0;
-        uint32_t max_start = 0;
-        uint32_t min_end = 0;
         uint32_t max_end = 0;
     };
-
-    static uint64_t rangeKey(uint32_t start, uint32_t end) noexcept {
-        return (static_cast<uint64_t>(start) << 32u) | end;
-    }
 
     static uint64_t mix(uint64_t value) noexcept {
         value += 0x9E3779B97F4A7C15ULL;
@@ -81,23 +67,11 @@ private:
 
     void update(size_t index, const std::vector<HighlightSpan>& spans) noexcept {
         Node& node = nodes_[index];
-        const HighlightSpan& span = spans[node.span_index];
-        node.min_start = node.max_start = span.start_byte;
-        node.min_end = node.max_end = span.end_byte;
-        if (node.left != kNone) {
-            const Node& child = nodes_[node.left];
-            node.min_start = std::min(node.min_start, child.min_start);
-            node.max_start = std::max(node.max_start, child.max_start);
-            node.min_end = std::min(node.min_end, child.min_end);
-            node.max_end = std::max(node.max_end, child.max_end);
-        }
-        if (node.right != kNone) {
-            const Node& child = nodes_[node.right];
-            node.min_start = std::min(node.min_start, child.min_start);
-            node.max_start = std::max(node.max_start, child.max_start);
-            node.min_end = std::min(node.min_end, child.min_end);
-            node.max_end = std::max(node.max_end, child.max_end);
-        }
+        node.max_end = spans[node.span_index].end_byte;
+        if (node.left != kNone)
+            node.max_end = std::max(node.max_end, nodes_[node.left].max_end);
+        if (node.right != kNone)
+            node.max_end = std::max(node.max_end, nodes_[node.right].max_end);
     }
 
     bool lessKey(size_t left, size_t right,
@@ -133,15 +107,11 @@ private:
         if (lessKey(inserted, root, spans)) {
             nodes_[root].left = insert(nodes_[root].left, inserted, spans);
             if (nodes_[nodes_[root].left].heap_priority >
-                nodes_[root].heap_priority) {
-                root = rotateRight(root, spans);
-            }
+                nodes_[root].heap_priority) root = rotateRight(root, spans);
         } else {
             nodes_[root].right = insert(nodes_[root].right, inserted, spans);
             if (nodes_[nodes_[root].right].heap_priority >
-                nodes_[root].heap_priority) {
-                root = rotateLeft(root, spans);
-            }
+                nodes_[root].heap_priority) root = rotateLeft(root, spans);
         }
         update(root, spans);
         return root;
@@ -152,28 +122,22 @@ private:
                  std::vector<size_t>& output) const {
         if (index == kNone) return;
         const Node& node = nodes_[index];
-        // Only strict interval crossings and exact duplicates can conflict.
-        // Subtree bounds prune fully nested intervals, which are common in AST
-        // captures and must remain layered rather than being flattened.
-        const bool mayContainLeftCrossing =
-            node.min_start < start && node.max_end > start && node.min_end < end;
-        const bool mayContainRightCrossing =
-            node.max_start > start && node.min_start < end && node.max_end > end;
-        if (!mayContainLeftCrossing && !mayContainRightCrossing) return;
+        // A subtree whose maximum end is before the query start cannot overlap.
+        if (node.max_end <= start) return;
+        if (node.left != kNone && nodes_[node.left].max_end > start)
+            collect(node.left, start, end, spans, output);
 
         const HighlightSpan& accepted = spans[node.span_index];
-        const bool leftCrossing = accepted.start_byte < start &&
-            accepted.end_byte > start && accepted.end_byte < end;
-        const bool rightCrossing = accepted.start_byte > start &&
-            accepted.start_byte < end && accepted.end_byte > end;
-        if (leftCrossing || rightCrossing) output.push_back(node.span_index);
+        if (accepted.start_byte < end && accepted.end_byte > start)
+            output.push_back(node.span_index);
 
-        collect(node.left, start, end, spans, output);
-        collect(node.right, start, end, spans, output);
+        // The tree is ordered by start byte; no right-side interval can overlap
+        // once this node starts at/after the query end.
+        if (accepted.start_byte < end)
+            collect(node.right, start, end, spans, output);
     }
 
     std::vector<Node> nodes_;
-    std::unordered_map<uint64_t, size_t> exact_ranges_;
     size_t root_ = kNone;
 };
 
@@ -1979,7 +1943,7 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                     remaining.push_back(fragment);
                     continue;
                 }
-                conflict_index.findCrossings(
+                conflict_index.findOverlaps(
                     fragment.start_byte, fragment.end_byte, resolved_spans, conflicts);
                 if (conflicts.empty()) {
                     remaining.push_back(fragment);
@@ -1990,6 +1954,17 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                 for (size_t acceptedIndex : conflicts) {
                     if (acceptedIndex >= resolved_spans.size()) continue;
                     const auto& accepted = resolved_spans[acceptedIndex];
+                    const bool sameRange = fragment.start_byte == accepted.start_byte &&
+                        fragment.end_byte == accepted.end_byte;
+                    const bool fragmentContains =
+                        fragment.start_byte <= accepted.start_byte &&
+                        fragment.end_byte >= accepted.end_byte;
+                    const bool acceptedContains =
+                        accepted.start_byte <= fragment.start_byte &&
+                        accepted.end_byte >= fragment.end_byte;
+                    const bool nested = !sameRange &&
+                        (fragmentContains || acceptedContains);
+                    if (nested || fragment.allow_overlap || accepted.allow_overlap) continue;
                     const uint32_t cutStart = std::max(
                         fragment.start_byte, accepted.start_byte);
                     const uint32_t cutEnd = std::min(
