@@ -79,3 +79,40 @@ internal object TshNativeTreeMemoryReservations {
             cause = cause
         )))
 }
+
+/** Admission accounting for the contiguous UTF-16LE copy used by the legacy String parse path. */
+internal object TshParserInputMemoryReservations {
+    private const val ESTIMATED_FIXED_OVERHEAD_BYTES = 64L
+
+    fun reserveStringInput(
+        budget: TshMemoryBudget?,
+        documentId: String,
+        documentVersion: Long,
+        sourceLengthUtf16: Long
+    ): TshResult<TshMemoryReservation?> {
+        if (budget == null) return TshResult.Success(null)
+        if (documentId.isBlank() || documentVersion < 0L || sourceLengthUtf16 < 0L ||
+            sourceLengthUtf16 > (Long.MAX_VALUE - ESTIMATED_FIXED_OVERHEAD_BYTES) / 2L) {
+            return failure(
+                "TSH-MEMORY-008",
+                "String parser input size or document identity is invalid"
+            )
+        }
+        val estimate = sourceLengthUtf16 * 2L + ESTIMATED_FIXED_OVERHEAD_BYTES
+        return when (val result = budget.reserve(
+            TshMemoryCategory.PARSER_INPUT,
+            estimate,
+            "tree-sitter-string-input:${documentId}:${documentVersion}"
+        )) {
+            is TshResult.Success -> TshResult.Success(result.value)
+            is TshResult.Failure -> TshResult.Failure(result.diagnostics)
+        }
+    }
+
+    private fun failure(code: String, message: String) = TshResult.Failure(listOf(TshDiagnostic(
+        code = code,
+        severity = TshDiagnosticSeverity.ERROR,
+        stage = TshDiagnosticStage.MEMORY,
+        message = message
+    )))
+}
