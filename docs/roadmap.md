@@ -93,7 +93,7 @@
 - [x] 修复 UTF-8 Regex pattern 被逐字节复制为 UTF-16 的问题，改为严格 UTF-8 解码和 UTF-16LE 编码。
 - [x] OnigRegion 使用 RAII 管理，避免分支异常/早退时泄漏。
 - [x] Regex WindowLease/Sequence 提供有界 UTF-16 连续窗口资源、core 唯一归属、surrogate-safe 边界、双侧 max-match overlap/lookaround context、行锚点边界字符和 REGEX_WINDOW admission（源码与窗口预算测试已提交）。
-- [x] 新增 `TshRegexNativeRegistry` / `TshOnigurumaRegex`：opaque Native Handle compile/release/find-all、JNI 桥接、单 Handle 执行串行化、in-flight shared ownership、UTF-16LE bounded window 执行、合成非换行边界 sentinel 保护 `^`/`$`/`\A`/`\z` 文档与行锚点、core start 唯一归属、捕获/Match 数量上限和 Lease 释放（源码已提交，待 NDK/JNI 构建与运行验证）。
+- [x] 新增 `TshRegexNativeRegistry` / `TshOnigurumaRegex`：opaque Native Handle compile/release/find-all、JNI 桥接、单 Handle 执行串行化、in-flight shared ownership、UTF-16LE bounded window 执行、合成非换行边界 sentinel 保护 `^`/`$`/`\A`/`\z` 文档与行锚点、core start 唯一归属、64 Ki pattern/512 active handle/2 MiB per-window result 硬上限、捕获/Match 数量上限和 Lease 释放（源码已提交，待 NDK/JNI 构建与运行验证）。
 - [x] 新 Executor 顺序消费 `TshRegexWindowSequence`，每个窗口执行后立即释放；输出绝对 UTF-16 `TshRegexResult` 并接入 `TshRegexMatchAdapter`；按 Match 数与估算字节预算限制结果累积（源码已提交，待 JUnit/Native 验证）。
 - [x] 修复 `TshGrammar` 析构仅释放顶层 Regex 指针的问题，递归释放嵌套规则；`WindbellEngine` 关闭时先清空 Grammar Registry 释放所有 Regex Handle，再调用 `onig_end()`。
 - [ ] Regex 有限能力声明目前仍由调用方提供，尚无静态分析证明；`\G`/`\K` 已保守拒绝，其他全局状态及任意 greedy/lazy/lookaround 模式的跨窗口等价尚未验证，不能宣称通用模式安全。
