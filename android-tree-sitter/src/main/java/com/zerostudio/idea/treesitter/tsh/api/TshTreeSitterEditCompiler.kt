@@ -16,6 +16,14 @@ import com.zerostudio.idea.treesitter.TSPoint
  */
 object TshTreeSitterEditCompiler {
     private const val INDEX_CHUNK_UTF16 = 32 * 1024
+    /**
+     * Compatibility fallback for snapshots without a host-native line/column index.
+     *
+     * Large Piece Tree/Rope documents must provide lineColumnAtUtf16; a bounded chunk size
+     * limits temporary allocations, not total scan work. Never silently scan a huge document
+     * for a small edit batch.
+     */
+    private const val MAX_FALLBACK_SCAN_UTF16 = 1024 * 1024
 
     @JvmStatic
     fun compile(
@@ -58,6 +66,14 @@ object TshTreeSitterEditCompiler {
                         pointFromUtf16Coordinates(resolved.row, resolved.columnUtf16)
                     }
                 } else {
+                    if (before.lengthUtf16 > MAX_FALLBACK_SCAN_UTF16.toLong()) {
+                        return failure(
+                            "TSH-EDIT-COMPILE-009",
+                            "Snapshot has no host-native coordinate index and exceeds the " +
+                                "$MAX_FALLBACK_SCAN_UTF16 UTF-16 fallback scan limit; " +
+                                "provide lineColumnAtUtf16() backed by the host Piece Tree/Rope index"
+                        )
+                    }
                     Utf16EndpointPoints.build(before, scanEndpoints)
                 }
             }
