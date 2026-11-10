@@ -22,6 +22,7 @@ import com.zerostudio.idea.treesitter.string.UTF16String;
 import com.zerostudio.idea.treesitter.string.UTF16StringFactory;
 import com.zerostudio.idea.treesitter.util.TSObjectFactoryProvider;
 import java.nio.ByteBuffer;
+import java.util.Arrays;
 import dalvik.annotation.optimization.CriticalNative;
 import dalvik.annotation.optimization.FastNative;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -29,13 +30,11 @@ import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.ReentrantLock;
 
 /**
- * Implementation of tree sitter's <code>TSParser</code> APIs. This implementation always converts
- * the input source code to {@link UTF16String UTF-16 string}. Native parsing requests source bytes
- * from a bounded 64 KiB callback window rather than exposing the entire remaining document to
- * Tree-sitter at once. Upstream Tree-sitter still uses 32-bit byte offsets; this binding's
- * UTF16String storage also currently has signed 32-bit byte lengths, so a single parse is limited
- * to fewer than 2 GiB of UTF-16LE bytes. Applications should use regional parsing for very large
- * documents instead of assuming that chunked input makes the syntax tree itself small.
+ * Tree-sitter JNI parser binding. Small String/byte inputs use the contiguous UTF16String path;
+ * larger inputs use bounded 64 KiB UTF-16LE windows while Tree-sitter still constructs one
+ * complete document AST. Windowing limits transient input copies, not the AST itself. The
+ * upstream Tree-sitter byte-offset ABI remains uint32, so the absolute input ceiling is
+ * {@link #MAX_SEGMENTED_INPUT_BYTES}; device memory and AST size impose lower practical limits.
  */
 public class TSParser extends TSNativeObject {
 
@@ -53,6 +52,9 @@ public class TSParser extends TSNativeObject {
    */
   public static final long MAX_SEGMENTED_INPUT_BYTES = 0xFFFF_FFFEL;
 
+  /** Avoid a second native UTF16String copy for ordinary large String/byte inputs. */
+  private static final int WINDOWED_PARSE_THRESHOLD_BYTES = 1024 * 1024;
+
   protected final ReentrantLock parseLock = new ReentrantLock();
   protected final Condition parseCondition = parseLock.newCondition();
   protected final AtomicBoolean isParsing = new AtomicBoolean(false);
@@ -65,6 +67,86 @@ public class TSParser extends TSNativeObject {
    */
   public interface ParseWindowCallback {
     byte[] read(long byteOffset, int maxBytes);
+  }
+
+  private static final class StringParseWindowCallback implements ParseWindowCallback {
+    private final String source;
+
+    StringParseWindowCallback(String source) {
+      this.source = source;
+    }
+
+    @Override
+    public byte[] read(long byteOffset, int maxBytes) {
+      final long byteLength = (long) source.length() * 2L;
+      if (byteOffset < 0L || (byteOffset & 1L) != 0L ||
+          byteOffset > byteLength || maxBytes < 2) {
+        throw new IllegalArgumentException("Invalid UTF-16LE String window");
+      }
+      if (byteOffset == byteLength) return new byte[0];
+
+      final int start = (int) (byteOffset / 2L);
+      final int maxChars = maxBytes / 2;
+      int end = Math.min(source.length(), start + maxChars);
+      if (end < source.length() && end > start &&
+          Character.isHighSurrogate(source.charAt(end - 1)) &&
+          Character.isLowSurrogate(source.charAt(end))) {
+        end--;
+      }
+      if (end == start) {
+        throw new IllegalStateException(
+            "Tree-sitter input window is too small to keep a surrogate pair together");
+      }
+
+      final byte[] result = new byte[(end - start) * 2];
+      int output = 0;
+      for (int index = start; index < end; index++) {
+        final char value = source.charAt(index);
+        result[output++] = (byte) value;
+        result[output++] = (byte) (value >>> 8);
+      }
+      return result;
+    }
+  }
+
+  private static final class ByteArrayParseWindowCallback implements ParseWindowCallback {
+    private final byte[] source;
+    private final int offset;
+    private final int length;
+
+    ByteArrayParseWindowCallback(byte[] source, int offset, int length) {
+      this.source = source;
+      this.offset = offset;
+      this.length = length;
+    }
+
+    @Override
+    public byte[] read(long byteOffset, int maxBytes) {
+      if (byteOffset < 0L || (byteOffset & 1L) != 0L ||
+          byteOffset > length || maxBytes < 2) {
+        throw new IllegalArgumentException("Invalid UTF-16LE byte-array window");
+      }
+      if (byteOffset == length) return new byte[0];
+
+      final int start = (int) byteOffset;
+      int count = Math.min(length - start, maxBytes) & ~1;
+      if (count >= 2 && start + count < length) {
+        final int last = offset + start + count - 2;
+        final int next = offset + start + count;
+        final char lastUnit = (char) ((source[last] & 0xFF) |
+            ((source[last + 1] & 0xFF) << 8));
+        final char nextUnit = (char) ((source[next] & 0xFF) |
+            ((source[next + 1] & 0xFF) << 8));
+        if (Character.isHighSurrogate(lastUnit) && Character.isLowSurrogate(nextUnit)) {
+          count -= 2;
+        }
+      }
+      if (count <= 0) {
+        throw new IllegalStateException(
+            "Tree-sitter input window is too small to keep a surrogate pair together");
+      }
+      return Arrays.copyOfRange(source, offset + start, offset + start + count);
+    }
   }
 
   protected TSParser(long pointer) {
@@ -124,10 +206,7 @@ public class TSParser extends TSNativeObject {
    * @return The parsed tree, or <code>null</code> if the parse failed or was cancelled.
    */
   public TSTree parseString(String source) {
-    throwIfParseNotCancelled();
-    try (final var str = UTF16StringFactory.newString(source)) {
-      return parseString(str);
-    }
+    return parseString(null, source);
   }
 
   /**
@@ -163,7 +242,16 @@ public class TSParser extends TSNativeObject {
    * @return The parsed tree, or <code>null</code> if the parse failed or was cancelled.
    */
   public TSTree parseBytes(byte[] bytes, int offset, int len) {
+    if (bytes == null) throw new NullPointerException("bytes");
+    if (offset < 0 || len < 0 || offset > bytes.length || len > bytes.length - offset ||
+        (len & 1) != 0) {
+      throw new IllegalArgumentException("UTF-16LE byte range must be even and within the source array");
+    }
     throwIfParseNotCancelled();
+    if (len >= WINDOWED_PARSE_THRESHOLD_BYTES) {
+      return parseWindowed(null, len, new TSRange[0],
+          new ByteArrayParseWindowCallback(bytes, offset, len));
+    }
     try (final var source = UTF16StringFactory.newString(bytes, offset, len)) {
       return parseString(source);
     }
@@ -179,7 +267,13 @@ public class TSParser extends TSNativeObject {
    * @return The parsed tree, or <code>null</code> if the parse failed or was cancelled.
    */
   public TSTree parseString(TSTree oldTree, String source) {
+    if (source == null) throw new NullPointerException("source");
     throwIfParseNotCancelled();
+    final long byteLength = (long) source.length() * 2L;
+    if (byteLength >= WINDOWED_PARSE_THRESHOLD_BYTES) {
+      return parseWindowed(oldTree, byteLength, new TSRange[0],
+          new StringParseWindowCallback(source));
+    }
     try (final var str = UTF16StringFactory.newString(source)) {
       return parseString(oldTree, str);
     }
