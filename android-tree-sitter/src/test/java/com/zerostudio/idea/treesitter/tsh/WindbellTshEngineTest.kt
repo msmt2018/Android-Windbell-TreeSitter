@@ -1917,8 +1917,10 @@ class WindbellTshLinkageTest {
                 }
             }
         """.trimIndent()
-        assertTrue("Large query TSH DSL must compile: ${engine.lastCompileDiagnostics}",
-            engine.loadTshSource(extension, dsl, TSLanguageJava.getInstance()))
+        assertTrue(
+            engine.loadTshSource(extension, dsl, TSLanguageJava.getInstance()),
+            "Large query TSH DSL must compile: ${engine.lastCompileDiagnostics}"
+        )
 
         val totalBytes = 32L * 1024L * 1024L + 128L * 1024L
         val totalChars = totalBytes / 2L
@@ -1962,13 +1964,16 @@ class WindbellTshLinkageTest {
                         Integer.toUnsignedLong(values[base + 1]) == end * 2L
                 }
             assertTrue(
-                "Native Tree-sitter query must capture a declaration near EOF beyond 32 MiB",
-                containsCapture(first, originalNameStart, originalNameEnd)
+                containsCapture(first, originalNameStart, originalNameEnd),
+                "Native Tree-sitter query must capture a declaration near EOF beyond 32 MiB"
             )
 
             val replacement = "UpdatedTokenProbe"
-            assertEquals("Incremental test replacement must preserve token width",
-                "DistantTokenProbe".length, replacement.length)
+            assertEquals(
+                "DistantTokenProbe".length,
+                replacement.length,
+                "Incremental test replacement must preserve token width"
+            )
             val editStart = originalNameStart * 2L
             val editEnd = originalNameEnd * 2L
             val inserted = ByteArray(replacement.length * 2)
@@ -1977,16 +1982,18 @@ class WindbellTshLinkageTest {
                 inserted[index * 2] = (unit and 0xFF).toByte()
                 inserted[index * 2 + 1] = (unit ushr 8).toByte()
             }
-            assertTrue("Native Piece Tree and Tree-sitter incremental edit must commit",
-                engine.applyNativeDocumentEdit(handle, editStart, editEnd, inserted))
+            assertTrue(
+                engine.applyNativeDocumentEdit(handle, editStart, editEnd, inserted),
+                "Native Piece Tree and Tree-sitter incremental edit must commit"
+            )
 
             val updated = engine.highlightNativeDocument(handle, queryStart, queryEnd, false)
                 ?: error("Post-edit large-file query returned null")
             val updatedStart = targetChar + classText.indexOf("DistantTokenProbe")
             val updatedEnd = updatedStart + replacement.length
             assertTrue(
-                "Tree-sitter query must return the edited identifier at the same absolute range",
-                containsCapture(updated, updatedStart, updatedEnd)
+                containsCapture(updated, updatedStart, updatedEnd),
+                "Tree-sitter query must return the edited identifier at the same absolute range"
             )
         } finally {
             engine.closeNativeDocument(handle)
@@ -2013,8 +2020,8 @@ class WindbellTshLinkageTest {
             }
         """.trimIndent()
         assertTrue(
-            "Dense-query TSH DSL must compile: ${engine.lastCompileDiagnostics}",
-            engine.loadTshSource(extension, dsl, TSLanguageJava.getInstance())
+            engine.loadTshSource(extension, dsl, TSLanguageJava.getInstance()),
+            "Dense-query TSH DSL must compile: ${engine.lastCompileDiagnostics}"
         )
 
         // Three captures per declaration deliberately exceed the former
