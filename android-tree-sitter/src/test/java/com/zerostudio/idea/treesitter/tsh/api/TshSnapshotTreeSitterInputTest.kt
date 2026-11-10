@@ -150,4 +150,34 @@ class TshSnapshotTreeSitterInputTest {
         lease.close()
     }
 
+
+    @Test
+    fun reservesReusableStreamingJniBufferForWholeParseLifetime() {
+        val budget = TshMemoryBudget(TshMemoryBudgetOptions(2_048, 4_096))
+        val reservation = (TshParserInputMemoryReservations.reserveChunkBuffer(
+            budget, "doc", 3L, 1_024
+        ) as TshResult.Success).value!!
+
+        assertEquals(1_088L, reservation.bytes)
+        assertEquals(1_088L, budget.snapshot().bytesByCategory[TshMemoryCategory.PARSER_INPUT])
+        reservation.close()
+        assertEquals(0L, budget.snapshot().reservedBytes)
+    }
+
+    @Test
+    fun rejectsInvalidOrOverBudgetStreamingJniBufferBeforeNativeAllocation() {
+        val budget = TshMemoryBudget(TshMemoryBudgetOptions(1_024, 2_048))
+        val tooLarge = TshParserInputMemoryReservations.reserveChunkBuffer(
+            budget, "doc", 3L, 1_024
+        )
+        assertTrue(tooLarge is TshResult.Failure)
+        assertEquals(0L, budget.snapshot().reservedBytes)
+
+        val invalid = TshParserInputMemoryReservations.reserveChunkBuffer(
+            budget, "doc", 3L, 1_025
+        )
+        assertTrue(invalid is TshResult.Failure)
+        assertEquals("TSH-MEMORY-009", invalid.diagnostics().single().code)
+    }
+
 }
