@@ -16,10 +16,28 @@ uint64_t TshRegexNativeRegistry::compile(
     size_t pattern_bytes,
     std::string& error
 ) {
+    constexpr size_t kMaxPatternUtf16 = 1024u * 1024u;
     if ((!pattern && pattern_bytes != 0) || (pattern_bytes & 1u) != 0 ||
+        pattern_bytes / 2u > kMaxPatternUtf16 ||
         pattern_bytes > static_cast<size_t>(std::numeric_limits<OnigLen>::max())) {
-        error = "Regex pattern has an invalid UTF-16LE buffer";
+        error = "Regex pattern has an invalid or oversized UTF-16LE buffer";
         return 0;
+    }
+    const uint16_t* pattern_units = reinterpret_cast<const uint16_t*>(pattern);
+    const size_t pattern_length = pattern_bytes / 2u;
+    for (size_t i = 0; i < pattern_length; ++i) {
+        const uint16_t unit = pattern_units[i];
+        if (unit >= 0xD800 && unit <= 0xDBFF) {
+            if (i + 1 >= pattern_length ||
+                pattern_units[i + 1] < 0xDC00 || pattern_units[i + 1] > 0xDFFF) {
+                error = "Regex pattern contains an unpaired UTF-16 high surrogate";
+                return 0;
+            }
+            ++i;
+        } else if (unit >= 0xDC00 && unit <= 0xDFFF) {
+            error = "Regex pattern contains an unpaired UTF-16 low surrogate";
+            return 0;
+        }
     }
 
     regex_t* compiled = nullptr;
