@@ -15,6 +15,7 @@
  *  along with android-tree-sitter.  If not, see <https://www.gnu.org/licenses/>.
  */
 
+#include <algorithm>
 #include <string>
 #include <sstream>
 #include <cstring>
@@ -115,8 +116,7 @@ UTF16String *UTF16String::append(JNIEnv *env, jstring src, jint from, jint len) 
         throw_illegal_args(env, "UTF16String append range is outside the source string");
         return this;
     }
-    jint actual_length = 0;
-    const jchar *chars = FNI_GetStringChars(env, src, &actual_length);
+    const jchar *chars = FNI_GetStringChars(env, src, nullptr);
     if (chars == nullptr) return this;
     const size_t append_bytes = static_cast<size_t>(len) * 2u;
     if (append_bytes > static_cast<size_t>(std::numeric_limits<jint>::max()) -
