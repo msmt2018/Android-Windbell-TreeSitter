@@ -34,6 +34,18 @@ import java.util.concurrent.locks.ReentrantLock;
  */
 public class TSParser extends TSNativeObject {
 
+  /** Receives Tree-sitter parse progress on the parsing thread; return true to stop the parse. */
+  @FunctionalInterface
+  public interface ProgressCallback {
+    /**
+     * @param currentByteOffset current source offset in bytes in the parser input encoding
+     * @param hasError whether Tree-sitter has encountered a parse error at this position
+     * @return true to cancel the current parse
+     */
+    boolean onProgress(long currentByteOffset, boolean hasError);
+  }
+
+
   protected final ReentrantLock parseLock = new ReentrantLock();
   protected final Condition parseCondition = parseLock.newCondition();
   protected final AtomicBoolean isParsing = new AtomicBoolean(false);
@@ -208,7 +220,12 @@ public class TSParser extends TSNativeObject {
    * The input must remain bound to one immutable document snapshot until this call returns.
    */
   public TSTree parseInput(TSInput input) {
-    return parseInput(null, input, 64 * 1024);
+    return parseInput(null, input, 64 * 1024, null);
+  }
+
+  /** Parses a host-provided input with a progress callback and the default chunk size. */
+  public TSTree parseInput(TSInput input, ProgressCallback progressCallback) {
+    return parseInput(null, input, 64 * 1024, progressCallback);
   }
 
   /**
@@ -219,6 +236,18 @@ public class TSParser extends TSNativeObject {
    * @param chunkSizeBytes callback buffer size; must be even and between 2 and 1 MiB
    */
   public TSTree parseInput(TSTree oldTree, TSInput input, int chunkSizeBytes) {
+    return parseInput(oldTree, input, chunkSizeBytes, null);
+  }
+
+  /**
+   * Parses a host-provided random-access input with optional progress/cancellation observation.
+   * The callback runs on the parsing thread and must return quickly; true stops the parse.
+   */
+  public TSTree parseInput(
+      TSTree oldTree,
+      TSInput input,
+      int chunkSizeBytes,
+      ProgressCallback progressCallback) {
     Objects.requireNonNull(input, "input");
     if (chunkSizeBytes < 2 || chunkSizeBytes > 1024 * 1024 || (chunkSizeBytes & 1) != 0) {
       throw new IllegalArgumentException("chunkSizeBytes must be even and between 2 and 1 MiB");
@@ -234,7 +263,7 @@ public class TSParser extends TSNativeObject {
     try {
       final long oldTreePointer = oldTree != null ? oldTree.getNativeObject() : 0;
       final long tree = Native.parseInput(
-          getNativeObject(), oldTreePointer, input, chunkSizeBytes
+          getNativeObject(), oldTreePointer, input, chunkSizeBytes, progressCallback
       );
       return createTree(tree);
     } finally {
@@ -461,7 +490,9 @@ public class TSParser extends TSNativeObject {
     static native long parse(long parser, long treePointer, long strPointer);
 
     // Regular JNI: this operation calls the host TSInput.read callback for bounded chunks.
-    static native long parseInput(long parser, long treePointer, TSInput input, int chunkSizeBytes);
+    static native long parseInput(
+        long parser, long treePointer, TSInput input, int chunkSizeBytes,
+        ProgressCallback progressCallback);
 
     @FastNative
     static native boolean requestCancellation(long parser);
