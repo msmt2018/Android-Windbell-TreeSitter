@@ -1088,16 +1088,27 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
         // sources into a synthetic aggregate program.
         for (const auto& native_query : grammar->native_queries) {
             if (!native_query.enabled || !native_query.query) continue;
-            TSQueryCursor* q_cursor = ts_query_cursor_new();
-            if (!q_cursor) continue;
-            // Restrict Tree-sitter query execution to the requested UTF-16LE byte
-            // window. The AST remains document-wide so node offsets stay absolute.
-            ts_query_cursor_set_byte_range(q_cursor, range_start_byte, range_end_byte);
-            ts_query_cursor_exec(q_cursor, native_query.query, ts_tree_root_node(tree));
+            std::unique_ptr<TSQueryCursor, decltype(&ts_query_cursor_delete)> q_cursor(
+                ts_query_cursor_new(), &ts_query_cursor_delete);
+            if (!q_cursor) throw std::bad_alloc();
+            TSQueryCursor* cursor = q_cursor.get();
+
+            // Never silently accept a truncated match stream. The cursor limit
+            // is raised to the API maximum, and the exceeded flag is checked
+            // after iteration before any partial highlight result can escape.
+            ts_query_cursor_set_match_limit(cursor, UINT32_MAX);
+            ts_query_cursor_set_byte_range(cursor, range_start_byte, range_end_byte);
+#if defined(TSH_TREE_SITTER_HAS_QUERY_CURSOR_OPTIONS)
+            TSQueryCursorOptions query_options{};
+            ts_query_cursor_exec_with_options(
+                cursor, native_query.query, ts_tree_root_node(tree), &query_options);
+#else
+            ts_query_cursor_exec(cursor, native_query.query, ts_tree_root_node(tree));
+#endif
 
             TSQueryMatch match;
             uint32_t match_order = 0;
-            while (ts_query_cursor_next_match(q_cursor, &match)) {
+            while (ts_query_cursor_next_match(cursor, &match)) {
                 const uint32_t current_order = match_order++;
                 auto pattern_metadata = native_query.pattern_metadata.find(match.pattern_index);
                 if (pattern_metadata != native_query.pattern_metadata.end() &&
@@ -1132,7 +1143,10 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                     macro_spans.push_back(span);
                 }
             }
-            ts_query_cursor_delete(q_cursor);
+            if (ts_query_cursor_did_exceed_match_limit(cursor)) {
+                throw std::runtime_error(
+                    "Tree-sitter query match limit was exceeded; refusing partial highlights");
+            }
         }
     }
     for (size_t i = native_query_span_begin; i < macro_spans.size(); ++i) {

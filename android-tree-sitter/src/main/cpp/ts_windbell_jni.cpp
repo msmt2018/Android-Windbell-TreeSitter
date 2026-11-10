@@ -518,50 +518,107 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlight(
         return nullptr;
     }
 
-    TSTree* tree = reinterpret_cast<TSTree*>(tree_ptr);
-    const char* ext = env->GetStringUTFChars(extension_jstr, nullptr);
-    if (!ext) {
-        throw_npe(env, "Failed to extract extension string");
+    try {
+        TSTree* tree = reinterpret_cast<TSTree*>(tree_ptr);
+
+        const char* ext_chars = env->GetStringUTFChars(extension_jstr, nullptr);
+        if (!ext_chars) {
+            if (!env->ExceptionCheck()) {
+                throw_exception(env, "java/lang/OutOfMemoryError",
+                                "Unable to access TSH extension string");
+            }
+            return nullptr;
+        }
+        std::string ext_str;
+        try {
+            ext_str.assign(ext_chars);
+        } catch (...) {
+            env->ReleaseStringUTFChars(extension_jstr, ext_chars);
+            throw;
+        }
+        env->ReleaseStringUTFChars(extension_jstr, ext_chars);
+        if (env->ExceptionCheck()) return nullptr;
+
+        const jsize length = env->GetStringLength(text_jstr);
+        if (env->ExceptionCheck()) return nullptr;
+        if (static_cast<uint64_t>(length) >
+            static_cast<uint64_t>(std::numeric_limits<uint32_t>::max() / sizeof(uint16_t))) {
+            throw_illegal_args(env, "TSH UTF-16 input exceeds Tree-sitter byte-offset limits");
+            return nullptr;
+        }
+        if (length == 0) {
+            jintArray empty = env->NewIntArray(0);
+            if (!empty && !env->ExceptionCheck()) {
+                throw_exception(env, "java/lang/OutOfMemoryError",
+                                "Unable to allocate empty TSH result");
+            }
+            return empty;
+        }
+
+        // Android's Java char storage is UTF-16. Copy it once into an owned
+        // contiguous Native snapshot; the parser and both TSH pipelines read
+        // this same complete document buffer.
+        std::vector<uint16_t> buffer;
+        buffer.resize(static_cast<size_t>(length));
+        env->GetStringRegion(
+            text_jstr, 0, length, reinterpret_cast<jchar*>(buffer.data()));
+        if (env->ExceptionCheck()) return nullptr;
+
+        std::vector<HighlightSpan> spans = WindbellEngine::getInstance().highlightHybrid(
+            tree ? ts_tree_language(tree) : nullptr,
+            tree,
+            buffer.data(),
+            static_cast<uint32_t>(length),
+            ext_str
+        );
+
+        if (spans.size() >
+            static_cast<size_t>(std::numeric_limits<jsize>::max() / 5)) {
+            throw_illegal_state(env, "TSH result exceeds Java array capacity");
+            return nullptr;
+        }
+        const jsize out_size = static_cast<jsize>(spans.size() * 5u);
+        std::vector<jint> flat_spans;
+        flat_spans.resize(static_cast<size_t>(out_size));
+        for (size_t i = 0; i < spans.size(); ++i) {
+            flat_spans[i * 5u + 0u] = static_cast<jint>(spans[i].start_byte);
+            flat_spans[i * 5u + 1u] = static_cast<jint>(spans[i].end_byte);
+            flat_spans[i * 5u + 2u] = static_cast<jint>(
+                spans[i].style_id | (static_cast<uint32_t>(spans[i].flags) << 16));
+            flat_spans[i * 5u + 3u] = static_cast<jint>(spans[i].priority);
+            flat_spans[i * 5u + 4u] = static_cast<jint>(spans[i].declaration_order);
+        }
+
+        jintArray result = env->NewIntArray(out_size);
+        if (!result) {
+            if (!env->ExceptionCheck()) {
+                throw_exception(env, "java/lang/OutOfMemoryError",
+                                "Unable to allocate TSH result array");
+            }
+            return nullptr;
+        }
+        if (out_size > 0) {
+            env->SetIntArrayRegion(result, 0, out_size, flat_spans.data());
+            if (env->ExceptionCheck()) return nullptr;
+        }
+        return result;
+    } catch (const std::bad_alloc&) {
+        if (!env->ExceptionCheck()) {
+            throw_exception(env, "java/lang/OutOfMemoryError",
+                            "Native TSH allocation failed");
+        }
+        return nullptr;
+    } catch (const std::exception& error) {
+        if (!env->ExceptionCheck()) {
+            throw_illegal_state(env, error.what());
+        }
+        return nullptr;
+    } catch (...) {
+        if (!env->ExceptionCheck()) {
+            throw_illegal_state(env, "Unknown native TSH execution failure");
+        }
         return nullptr;
     }
-    std::string ext_str(ext);
-    env->ReleaseStringUTFChars(extension_jstr, ext);
-
-    const jsize len = env->GetStringLength(text_jstr);
-    if (len == 0) {
-        return env->NewIntArray(0);
-    }
-
-    // 利用 UTF-16LE 零重编码特征：无损获取 Java 内存原始双字节字符流
-    std::vector<uint16_t> buffer(len);
-    env->GetStringRegion(text_jstr, 0, len, reinterpret_cast<jchar*>(buffer.data()));
-
-    std::vector<HighlightSpan> spans = WindbellEngine::getInstance().highlightHybrid(
-        tree ? ts_tree_language(tree) : nullptr,
-        tree,
-        buffer.data(),
-        static_cast<uint32_t>(len),
-        ext_str
-    );
-
-    const jsize out_size = static_cast<jsize>(spans.size() * 5);
-    jintArray result = env->NewIntArray(out_size);
-    if (!result) {
-        throw_npe(env, "Out of memory allocating spans int array");
-        return nullptr;
-    }
-
-    std::vector<jint> flat_spans(out_size);
-    for (size_t i = 0; i < spans.size(); ++i) {
-        flat_spans[i * 5 + 0] = static_cast<jint>(spans[i].start_byte);
-        flat_spans[i * 5 + 1] = static_cast<jint>(spans[i].end_byte);
-        flat_spans[i * 5 + 2] = static_cast<jint>(spans[i].style_id | (static_cast<uint32_t>(spans[i].flags) << 16));
-        flat_spans[i * 5 + 3] = static_cast<jint>(spans[i].priority);
-        flat_spans[i * 5 + 4] = static_cast<jint>(spans[i].declaration_order);
-    }
-
-    env->SetIntArrayRegion(result, 0, out_size, flat_spans.data());
-    return result;
 }
 
 } // extern "C"
