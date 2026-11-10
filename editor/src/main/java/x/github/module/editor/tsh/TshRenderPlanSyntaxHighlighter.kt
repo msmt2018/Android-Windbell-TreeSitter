@@ -19,6 +19,7 @@ import com.zerostudio.idea.treesitter.tsh.api.TshRenderPlan
 import com.zerostudio.idea.treesitter.tsh.api.TshResult
 import com.zerostudio.idea.treesitter.tsh.api.TshCoordinateSystem
 import java.lang.reflect.Array as ReflectArray
+import java.util.LinkedHashMap
 
 /**
  * Connects a versioned TSH RenderPlan to the EditorView's real LineStyler/SyntaxHighlighter
@@ -38,6 +39,13 @@ class TshRenderPlanSyntaxHighlighter(
         val index: InstructionIntervalIndex
     )
 
+    private data class LineStyleCacheKey(
+        val planId: com.zerostudio.idea.treesitter.tsh.api.TshRenderPlanId,
+        val documentVersion: Long,
+        val lineStartOffset: Int,
+        val lineLength: Int
+    )
+
     private val stateLock = Any()
 
     @Volatile
@@ -48,6 +56,10 @@ class TshRenderPlanSyntaxHighlighter(
 
     @Volatile
     private var editInProgress = false
+
+    private val lineCacheLock = Any()
+    private val lineStyleCache = LinkedHashMap<LineStyleCacheKey, List<TshLineSpan>>(128, 0.75f, true)
+    private var cachedSpanWeight = 0L
 
     @Volatile
     var diagnostics: List<TshDiagnostic> = emptyList()
@@ -133,6 +145,7 @@ class TshRenderPlanSyntaxHighlighter(
                 "Document changed or an edit transaction began while the RenderPlan was being installed"
             )
         }
+        clearLineStyleCache()
         host?.invalidateStyles()
         return TshResult.Success(Unit, unsupported)
     }
@@ -143,6 +156,7 @@ class TshRenderPlanSyntaxHighlighter(
             snapshot = null
             diagnostics = emptyList()
         }
+        clearLineStyleCache()
         host?.invalidateStyles()
     }
 
@@ -158,6 +172,7 @@ class TshRenderPlanSyntaxHighlighter(
             editInProgress = false
             host = null
         }
+        clearLineStyleCache()
     }
 
     override fun onTextReplaced(buffer: EditorBuffer) {
@@ -166,6 +181,7 @@ class TshRenderPlanSyntaxHighlighter(
             diagnostics = emptyList()
             editInProgress = false
         }
+        clearLineStyleCache()
         host?.invalidateStyles()
     }
 
@@ -175,6 +191,7 @@ class TshRenderPlanSyntaxHighlighter(
             diagnostics = emptyList()
             editInProgress = true
         }
+        clearLineStyleCache()
     }
 
     override fun onEditFinished() {
@@ -206,29 +223,40 @@ class TshRenderPlanSyntaxHighlighter(
         val safeEnd = end.coerceIn(safeStart, text.length)
         if (safeStart >= safeEnd) return null
 
-        val absoluteStart = lineStartOffset.toLong() + safeStart.toLong()
-        val absoluteEnd = lineStartOffset.toLong() + safeEnd.toLong()
-        val matches = current.index.query(absoluteStart, absoluteEnd)
-        if (matches.isEmpty()) return null
-
-        // StyledTextPainter selects the first span of each type. Put the most specific
-        // overlay first so overlapping instructions resolve deterministically.
-        val ordered = matches.sortedWith(
-            compareByDescending<TshRenderInstruction> { it.zIndex }
-                .thenByDescending { it.priority }
-                .thenByDescending { it.range.start.offset }
-                .thenBy { it.range.end.offset }
+        val key = LineStyleCacheKey(
+            current.plan.id,
+            current.plan.revisions.documentVersion,
+            lineStartOffset,
+            text.length
         )
-        val spans = ArrayList<TshLineSpan>()
-        for (instruction in ordered) {
-            val clippedStart = maxOf(absoluteStart, instruction.range.start.offset)
-            val clippedEnd = minOf(absoluteEnd, instruction.range.end.offset)
-            if (clippedEnd <= clippedStart) continue
-            val localStart = (clippedStart - lineStartOffset.toLong()).toInt()
-            val localEnd = (clippedEnd - lineStartOffset.toLong()).toInt()
-            appendSupportedSpans(instruction, localStart, localEnd, spans)
+        val lineSpans = lineStyleCache(key) {
+            val absoluteStart = lineStartOffset.toLong()
+            val absoluteEnd = absoluteStart + text.length.toLong()
+            val matches = current.index.query(absoluteStart, absoluteEnd)
+            if (matches.isEmpty()) {
+                emptyList()
+            } else {
+                // StyledTextPainter selects the first span of each type. Put the most
+                // specific overlay first so overlapping instructions resolve deterministically.
+                val ordered = matches.sortedWith(
+                    compareByDescending<TshRenderInstruction> { it.zIndex }
+                        .thenByDescending { it.priority }
+                        .thenByDescending { it.range.start.offset }
+                        .thenBy { it.range.end.offset }
+                )
+                val spans = ArrayList<TshLineSpan>()
+                for (instruction in ordered) {
+                    val clippedStart = maxOf(absoluteStart, instruction.range.start.offset)
+                    val clippedEnd = minOf(absoluteEnd, instruction.range.end.offset)
+                    if (clippedEnd <= clippedStart) continue
+                    val localStart = (clippedStart - absoluteStart).toInt()
+                    val localEnd = (clippedEnd - absoluteStart).toInt()
+                    appendSupportedSpans(instruction, localStart, localEnd, spans)
+                }
+                spans.toList()
+            }
         }
-        return if (spans.isEmpty()) null else TshLineSpanned(text, spans)
+        return if (lineSpans.isEmpty()) null else TshLineSpanned(text, lineSpans)
     }
 
     private fun currentSnapshot(): RenderSnapshot? {
@@ -254,6 +282,39 @@ class TshRenderPlanSyntaxHighlighter(
                 }
                 null
             }
+        }
+    }
+ 
+    private fun lineStyleCache(
+        key: LineStyleCacheKey,
+        create: () -> List<TshLineSpan>
+    ): List<TshLineSpan> {
+        synchronized(lineCacheLock) {
+            lineStyleCache[key]?.let { return it }
+        }
+        val created = create()
+        if (created.size > MAX_CACHED_LINE_SPANS) return created
+        synchronized(lineCacheLock) {
+            lineStyleCache[key]?.let { return it }
+            while (lineStyleCache.size >= MAX_CACHED_LINES ||
+                cachedSpanWeight + created.size > MAX_CACHED_LINE_SPANS
+            ) {
+                val iterator = lineStyleCache.entries.iterator()
+                if (!iterator.hasNext()) break
+                val eldest = iterator.next()
+                cachedSpanWeight -= eldest.value.size.toLong()
+                iterator.remove()
+            }
+            lineStyleCache[key] = created
+            cachedSpanWeight += created.size.toLong()
+        }
+        return created
+    }
+
+    private fun clearLineStyleCache() {
+        synchronized(lineCacheLock) {
+            lineStyleCache.clear()
+            cachedSpanWeight = 0L
         }
     }
 
@@ -418,3 +479,6 @@ private class TshLineSpanned(
         return next
     }
 }
+
+private const val MAX_CACHED_LINES = 128
+private const val MAX_CACHED_LINE_SPANS = 16_384
