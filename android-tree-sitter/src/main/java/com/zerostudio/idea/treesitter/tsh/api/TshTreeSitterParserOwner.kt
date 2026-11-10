@@ -3,6 +3,8 @@ package com.zerostudio.idea.treesitter.tsh.api
 import com.zerostudio.idea.treesitter.TSLanguage
 import com.zerostudio.idea.treesitter.TSParser
 import com.zerostudio.idea.treesitter.TSTree
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
 
@@ -701,6 +703,28 @@ class TshTreeSitterParserOwner private constructor(
         treeRevision: Long,
         oldTree: TshOwnedSyntaxTree? = null,
         chunkSizeBytes: Int = 64 * 1024
+    ): TshResult<TshOwnedSyntaxTree> = parse(
+        snapshotLease, textProvider, treeRevision, oldTree, chunkSizeBytes, null
+    )
+
+    /** Convenience overload for a full snapshot parse with progress observation. */
+    fun parse(
+        snapshotLease: TshTextSnapshotLease,
+        textProvider: TshTextAccessProvider,
+        treeRevision: Long,
+        progressCallback: TshParseProgressCallback
+    ): TshResult<TshOwnedSyntaxTree> = parse(
+        snapshotLease, textProvider, treeRevision, null, 64 * 1024, progressCallback
+    )
+
+    /** Snapshot parse with explicit chunk sizing and optional cooperative progress cancellation. */
+    fun parse(
+        snapshotLease: TshTextSnapshotLease,
+        textProvider: TshTextAccessProvider,
+        treeRevision: Long,
+        oldTree: TshOwnedSyntaxTree?,
+        chunkSizeBytes: Int,
+        progressCallback: TshParseProgressCallback?
     ): TshResult<TshOwnedSyntaxTree> {
         if (snapshotLease.isClosed) return failure(
             "TSH-PARSER-OWNER-023",
@@ -713,7 +737,7 @@ class TshTreeSitterParserOwner private constructor(
         }
         return try {
             parseRetainedSnapshot(
-                retainedLease, textProvider, treeRevision, oldTree, chunkSizeBytes
+                retainedLease, textProvider, treeRevision, oldTree, chunkSizeBytes, progressCallback
             )
         } finally {
             retainedLease.close()
@@ -725,7 +749,8 @@ class TshTreeSitterParserOwner private constructor(
         textProvider: TshTextAccessProvider,
         treeRevision: Long,
         oldTree: TshOwnedSyntaxTree?,
-        chunkSizeBytes: Int
+        chunkSizeBytes: Int,
+        progressCallback: TshParseProgressCallback?
     ): TshResult<TshOwnedSyntaxTree> {
         if (snapshotLease.isClosed) {
             return failure(
@@ -797,6 +822,20 @@ class TshTreeSitterParserOwner private constructor(
 
         var tree: TSTree? = null
         var languageLeaseTransferred = false
+        val progressCancelled = AtomicBoolean(false)
+        val progressFailure = AtomicReference<Exception?>(null)
+        val nativeProgressCallback = progressCallback?.let { callback ->
+            TSParser.ProgressCallback { byteOffset, hasError ->
+                try {
+                    val shouldCancel = callback.shouldCancel(byteOffset / 2L, hasError)
+                    if (shouldCancel) progressCancelled.set(true)
+                    shouldCancel
+                } catch (error: Exception) {
+                    progressFailure.compareAndSet(null, error)
+                    true
+                }
+            }
+        }
         try {
             val input = TshSnapshotTreeSitterInput(textProvider, snapshotLease, memoryBudget)
             var parseStartedAtNanos = 0L
@@ -804,13 +843,13 @@ class TshTreeSitterParserOwner private constructor(
                 parseStartedAtNanos = System.nanoTime()
                 try {
                     val result = parserLease.resource.parseInput(
-                        oldTreeLease?.resource, input, chunkSizeBytes
+                        oldTreeLease?.resource, input, chunkSizeBytes, nativeProgressCallback
                     )
-                    if (result == null || parserLease.resource.isCancellationRequested) {
+                    if (result == null || parserLease.resource.isCancellationRequested ||
+                        progressCancelled.get() || progressFailure.get() != null) {
                         result?.let { runCatching { it.close() } }
-                        // A cancelled/timed-out Tree-sitter parse may be resumable by default.
-                        // TSH binds this parser to explicit document versions, not an implicit
-                        // continuation, so clear the interrupted Native state before unlocking.
+                        // An interrupted Tree-sitter parse may be resumable by default. TSH binds
+                        // this parser to explicit document versions, not implicit continuation.
                         parserLease.resource.reset()
                         null
                     } else {
@@ -820,6 +859,23 @@ class TshTreeSitterParserOwner private constructor(
                     runCatching { parserLease.resource.reset() }
                     throw error
                 }
+            }
+            progressFailure.get()?.let { error ->
+                return failure(
+                    "TSH-PARSER-OWNER-040",
+                    "Snapshot parse progress callback failed: ${error.message}",
+                    TshDiagnosticStage.PARSE,
+                    parser.descriptor.id,
+                    error
+                )
+            }
+            if (progressCancelled.get()) {
+                return failure(
+                    "TSH-PARSER-OWNER-039",
+                    "Snapshot parse was cancelled by the progress callback",
+                    TshDiagnosticStage.PARSE,
+                    parser.descriptor.id
+                )
             }
             if (parserLease.resource.isCancellationRequested) {
                 return failure(
