@@ -1,4 +1,5 @@
 #include "TshRegexNative.h"
+#include "WindbellTshCore.h"
 
 #include <algorithm>
 #include <cstddef>
@@ -8,6 +9,8 @@
 namespace windbell::tsh {
 
 TshRegexNativeRegistry& TshRegexNativeRegistry::instance() {
+    // Construct the Oniguruma owner first so this registry is destroyed before onig_end().
+    (void)WindbellEngine::getInstance();
     static TshRegexNativeRegistry registry;
     return registry;
 }
