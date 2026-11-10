@@ -10,12 +10,21 @@
 #include <limits>
 #include <functional>
 #include <memory>
+#include <iterator>
 #include <unordered_set>
 #include <string_view>
 #include "ts__log.h"
 #include "../largefile/TextSource.h"
 
 namespace windbell::tsh {
+
+static void tshIncrementDiagnostic(uint32_t* value, uint64_t amount = 1u) noexcept {
+    if (!value) return;
+    const uint64_t remaining = static_cast<uint64_t>(UINT32_MAX - *value);
+    *value = amount >= remaining
+        ? (amount == 0 ? *value : UINT32_MAX)
+        : static_cast<uint32_t>(*value + amount);
+}
 
 static const UChar* advanceOneUtf16CodePoint(const UChar* current, const UChar* end) {
     const auto* bytes = reinterpret_cast<const uint8_t*>(current);
@@ -689,26 +698,6 @@ void WindbellEngine::matchBlockRecursive(
     onig_region_free(end_region, 1);
 }
 
-#if defined(TSH_TREE_SITTER_HAS_QUERY_CURSOR_OPTIONS)
-namespace {
-struct TshQueryProgressBudget {
-    uint32_t callbacks = 0;
-    uint32_t max_callbacks = 1024; // Tree-sitter checks after roughly 1,000 units of work.
-    bool cancelled = false;
-};
-
-static bool tshQueryProgressCallback(TSQueryCursorState* state) {
-    if (!state || !state->payload) return true;
-    auto* budget = static_cast<TshQueryProgressBudget*>(state->payload);
-    if (++budget->callbacks >= budget->max_callbacks) {
-        budget->cancelled = true;
-        return true;
-    }
-    return false;
-}
-} // namespace
-#endif
-
 std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
     const TSLanguage* language,
     TSTree* tree,
@@ -834,7 +823,7 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                     if (absolute_start >= core_start && absolute_start < core_end &&
                         absolute_end <= window_end && (absolute_start & 1u) == 0 &&
                         (absolute_end & 1u) == 0) {
-                        if (diagnostic_match_counts) ++diagnostic_match_counts[0];
+                        if (diagnostic_match_counts) tshIncrementDiagnostic(&diagnostic_match_counts[0]);
                         auto append_window_capture = [&](int group, uint16_t style_id) {
                             if (group < 0 || group >= region->num_regs ||
                                 region->beg[group] < 0 || region->end[group] < 0) return;
@@ -1248,7 +1237,7 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                 continue;
             }
 
-            if (diagnostic_match_counts) ++diagnostic_match_counts[1];
+            if (diagnostic_match_counts) tshIncrementDiagnostic(&diagnostic_match_counts[1]);
             const uint32_t match_start = state_region->beg[0] >= 0 ?
                 state_window_start + static_cast<uint32_t>(state_region->beg[0]) : position;
             const uint32_t match_end = state_region->end[0] >= 0 ?
@@ -1569,7 +1558,7 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                     }
                 }
 
-                if (diagnostic_match_counts) ++diagnostic_match_counts[2];
+                if (diagnostic_match_counts) tshIncrementDiagnostic(&diagnostic_match_counts[2]);
                 if (ast_rule.has_style) {
                     HighlightSpan span;
                     const uint32_t node_start = ts_node_start_byte(node);
@@ -1634,11 +1623,6 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
         span.source = static_cast<uint8_t>(HighlightSource::AST_SELECTOR);
     }
     const size_t native_query_span_begin = macro_spans.size();
-    // Bound aggregate native-query output across all query blocks. This is a
-    // document/render-call budget, not a viewport-size heuristic: the query
-    // still sees the complete document AST and absolute byte coordinates.
-    constexpr size_t kMaxNativeQuerySpansPerRender = 500000;
-
     if (tree && tree_source_valid && !grammar->native_queries.empty()) {
         // Each .tsh query block has its own native TSQuery and capture namespace.
         // This preserves per-block priority/order and avoids concatenating query
@@ -1646,44 +1630,29 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
         for (const auto& native_query : grammar->native_queries) {
             if (!native_query.enabled || !native_query.query) continue;
 #if defined(TSH_TREE_SITTER_HAS_QUERY_CURSOR_OPTIONS)
-            // Tree-sitter 0.28 retains the options pointer in TSQueryCursor and
-            // invokes it from subsequent next_match calls. Declare callback state
-            // before the owning cursor so the cursor is destroyed first on unwind.
-            TshQueryProgressBudget query_budget;
-            TSQueryCursorOptions query_options{};
-            query_options.payload = &query_budget;
-            query_options.progress_callback = tshQueryProgressCallback;
-#endif
             std::unique_ptr<TSQueryCursor, decltype(&ts_query_cursor_delete)> q_cursor(
                 ts_query_cursor_new(), &ts_query_cursor_delete);
             if (!q_cursor) continue;
             TSQueryCursor* cursor = q_cursor.get();
 
-            // Restrict Tree-sitter query execution to the requested UTF-16LE byte
-            // window. The AST remains document-wide so node offsets stay absolute.
+            // Restrict query traversal to the requested range while retaining the
+            // complete document AST and absolute node coordinates. A fixed match
+            // limit or artificial progress timeout would remove valid captures
+            // from dense files, so use the maximum representable pending capacity.
             if (!ts_query_cursor_set_byte_range(cursor, range_start_byte, range_end_byte)) {
                 continue;
             }
-            // Bound in-progress capture state on every supported Tree-sitter version.
-            // The 0.28 progress callback below adds a separate work bound.
-            constexpr uint32_t kQueryMatchLimit = 4096;
-            ts_query_cursor_set_match_limit(cursor, kQueryMatchLimit);
-#if defined(TSH_TREE_SITTER_HAS_QUERY_CURSOR_OPTIONS)
-            // A cancelled/overflowed query is discarded atomically: never publish
-            // partial captures as a complete highlight result.
-            ts_query_cursor_exec_with_options(
-                cursor, native_query.query, ts_tree_root_node(tree), &query_options);
-#else
+            ts_query_cursor_set_match_limit(cursor, UINT32_MAX);
             ts_query_cursor_exec(cursor, native_query.query, ts_tree_root_node(tree));
-#endif
+
+            // Keep each query block transactional: publish its captures only after
+            // the cursor completes without exceeding Tree-sitter's match limit.
             std::vector<HighlightSpan> query_spans;
             TSQueryMatch match;
-            uint32_t match_order = 0;
-            uint32_t accepted_match_count = 0;
-            bool query_span_limit_exceeded = false;
-            while (!query_span_limit_exceeded &&
-                   ts_query_cursor_next_match(cursor, &match)) {
-                const uint32_t current_order = match_order++;
+            uint64_t match_order = 0;
+            uint64_t accepted_match_count = 0;
+            while (ts_query_cursor_next_match(cursor, &match)) {
+                const uint64_t current_order = match_order++;
                 auto pattern_metadata = native_query.pattern_metadata.find(match.pattern_index);
                 if (pattern_metadata != native_query.pattern_metadata.end() &&
                     !pattern_metadata->second.enabled) {
@@ -1713,28 +1682,27 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                     span.style_id = style_binding->second;
                     span.flags = 0;
                     span.priority = pattern_priority;
-                    span.declaration_order = native_query.declaration_order + pattern_order + current_order + capture_index;
-                    const size_t committed_native_spans =
-                        macro_spans.size() - native_query_span_begin;
-                    if (committed_native_spans + query_spans.size() >=
-                        kMaxNativeQuerySpansPerRender) {
-                        query_span_limit_exceeded = true;
-                        break;
-                    }
+                    const uint64_t order = static_cast<uint64_t>(native_query.declaration_order) +
+                        pattern_order + current_order + capture_index;
+                    span.declaration_order = static_cast<uint32_t>(
+                        std::min<uint64_t>(order, UINT32_MAX));
                     query_spans.push_back(span);
                 }
             }
-            bool query_incomplete = ts_query_cursor_did_exceed_match_limit(cursor) ||
-                query_span_limit_exceeded;
-#if defined(TSH_TREE_SITTER_HAS_QUERY_CURSOR_OPTIONS)
-            query_incomplete = query_incomplete || query_budget.cancelled;
-#endif
+            const bool query_incomplete = ts_query_cursor_did_exceed_match_limit(cursor);
             if (!query_incomplete) {
-                if (diagnostic_match_counts) diagnostic_match_counts[3] += accepted_match_count;
-                macro_spans.insert(macro_spans.end(), query_spans.begin(), query_spans.end());
+                if (diagnostic_match_counts) {
+                    tshIncrementDiagnostic(&diagnostic_match_counts[3], accepted_match_count);
+                }
+                macro_spans.reserve(macro_spans.size() + query_spans.size());
+                macro_spans.insert(
+                    macro_spans.end(),
+                    std::make_move_iterator(query_spans.begin()),
+                    std::make_move_iterator(query_spans.end()));
+            } else {
+                LOGE("WindbellTSH", "Native query '%s' exceeded the maximum pending-match capacity; its captures were withheld",
+                     native_query.id.c_str());
             }
-            // Explicitly destroy the cursor while its 0.28 options and payload
-            // are still alive. The unique_ptr also covers early exits/exceptions.
             q_cursor.reset();
         }
     }
