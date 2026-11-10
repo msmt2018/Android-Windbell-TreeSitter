@@ -10,7 +10,8 @@ import com.zerostudio.idea.treesitter.TSInput
  */
 class TshSnapshotTreeSitterInput(
     private val textProvider: TshTextAccessProvider,
-    private val snapshotLease: TshTextSnapshotLease
+    private val snapshotLease: TshTextSnapshotLease,
+    private val memoryBudget: TshMemoryBudget? = null
 ) : TSInput {
     override fun read(
         byteOffset: Long,
@@ -43,28 +44,47 @@ class TshSnapshotTreeSitterInput(
         if (startUtf16 == lengthUtf16) return 0
 
         val maxUtf16Length = destination.size / 2
-        val result = textProvider.readChunk(snapshotLease, startUtf16, maxUtf16Length)
-        val chunk = when (result) {
-            is TshResult.Success -> result.value
-            is TshResult.Failure -> throw TshTextInputException(
-                "Host TextAccessProvider failed to read Tree-sitter input at byte offset $byteOffset",
-                result.diagnostics
-            )
+        val reservation = memoryBudget?.let { budget ->
+            // The provider's temporary UTF-16 payload is bounded by the requested chunk. The
+            // destination array belongs to the Native caller and is intentionally not counted.
+            when (val reserved = budget.reserve(
+                TshMemoryCategory.PARSER_INPUT,
+                maxUtf16Length.toLong() * 2L + 64L,
+                "tree-sitter-input:" + snapshot.documentId + ":" + snapshot.version
+            )) {
+                is TshResult.Success -> reserved.value
+                is TshResult.Failure -> throw TshTextInputException(
+                    "Memory budget rejected the Tree-sitter input chunk at byte offset $byteOffset",
+                    reserved.diagnostics
+                )
+            }
         }
+        try {
+            val result = textProvider.readChunk(snapshotLease, startUtf16, maxUtf16Length)
+            val chunk = when (result) {
+                is TshResult.Success -> result.value
+                is TshResult.Failure -> throw TshTextInputException(
+                    "Host TextAccessProvider failed to read Tree-sitter input at byte offset $byteOffset",
+                    result.diagnostics
+                )
+            }
 
-        validateChunk(snapshot, chunk, startUtf16, maxUtf16Length)
-        val text = chunk.text
-        val byteCountLong = text.length.toLong() * 2L
-        if (byteCountLong <= 0L || byteCountLong > destination.size.toLong()) {
-            throw TshTextInputException("TextAccessProvider returned a chunk outside the Native input buffer bounds")
+            validateChunk(snapshot, chunk, startUtf16, maxUtf16Length)
+            val text = chunk.text
+            val byteCountLong = text.length.toLong() * 2L
+            if (byteCountLong <= 0L || byteCountLong > destination.size.toLong()) {
+                throw TshTextInputException("TextAccessProvider returned a chunk outside the Native input buffer bounds")
+            }
+            val byteCount = byteCountLong.toInt()
+            for (index in text.indices) {
+                val codeUnit = text[index].code
+                destination[index * 2] = (codeUnit and 0xFF).toByte()
+                destination[index * 2 + 1] = ((codeUnit ushr 8) and 0xFF).toByte()
+            }
+            return byteCount
+        } finally {
+            reservation?.close()
         }
-        val byteCount = byteCountLong.toInt()
-        for (index in text.indices) {
-            val codeUnit = text[index].code
-            destination[index * 2] = (codeUnit and 0xFF).toByte()
-            destination[index * 2 + 1] = ((codeUnit ushr 8) and 0xFF).toByte()
-        }
-        return byteCount
     }
 
     private fun validateChunk(
