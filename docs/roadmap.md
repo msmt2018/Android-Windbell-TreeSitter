@@ -93,7 +93,7 @@
 - [x] 修复 UTF-8 Regex pattern 被逐字节复制为 UTF-16 的问题，改为严格 UTF-8 解码和 UTF-16LE 编码。
 - [x] OnigRegion 使用 RAII 管理，避免分支异常/早退时泄漏。
 - [x] Regex WindowLease/Sequence 提供有界 UTF-16 连续窗口资源、core 唯一归属、surrogate-safe 边界、双侧 max-match overlap/lookaround context 和 REGEX_WINDOW admission（源码与窗口预算测试已提交）。
-- [x] 新增 `TshRegexNativeRegistry` / `TshOnigurumaRegex`：opaque Native Handle compile/release/find-all、JNI 桥接、单 Handle 执行串行化、in-flight shared ownership、UTF-16LE bounded window 执行、合成非换行边界 sentinel，保护 `^`/`# TSH 引擎开发计划地图
+- [x] 新增 `TshRegexNativeRegistry` / `TshOnigurumaRegex`：opaque Native Handle compile/release/find-all、JNI 桥接、单 Handle 执行串行化、in-flight shared ownership、UTF-16LE bounded window 执行、合成非换行边界 sentinel 保护 `^`/`$`/`\A`/`\z` 文档与行锚点、core start 唯一归属、捕获/Match 数量上限和 Lease 释放（源码已提交，待 NDK/JNI 构建与运行验证）。
 
 > 产品目标：让第三方开发者将 TSH 接入已有 Editor、Document、Piece Tree/Rope、Layout、Theme 和 Renderer 时，不需要替换宿主对象或重构编辑器。TSH 只负责语法/查询/Regex/Match/Scope/Style/RenderPlan，不成为通用编辑器框架。
 >
