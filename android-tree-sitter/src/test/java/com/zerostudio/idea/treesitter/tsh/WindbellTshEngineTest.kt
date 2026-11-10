@@ -120,6 +120,7 @@ class WindbellTshLinkageTest {
                 styles {
                     comment { scope: "comment.block" }
                     regexComment { scope: "comment.block.regex" }
+                    contextRegex { scope: "comment.block.context-regex" }
                 }
                 treeSitter {
                     queries: [
@@ -132,6 +133,11 @@ class WindbellTshLinkageTest {
                             id: "large-comment-bounded-regex"
                             priority: 26
                             source: `(block_comment) @regexComment (#match? @regexComment "az")`
+                        },
+                        {
+                            id: "large-comment-context-regex"
+                            priority: 27
+                            source: `(block_comment) @contextRegex (#match? @contextRegex "\\A/")`
                         }
                     ]
                 }
@@ -172,6 +178,8 @@ class WindbellTshLinkageTest {
             val values = encoded!!
             val regexStyle = engine.getStyleCatalog(extension)
                 .first { it.name == "regexComment" }.styleId
+            val contextRegexStyle = engine.getStyleCatalog(extension)
+                .first { it.name == "contextRegex" }.styleId
             assertTrue(
                 (0 until values.size / 6).any { index ->
                     val base = index * 6
@@ -180,6 +188,15 @@ class WindbellTshLinkageTest {
                         values[base + 2] == regexStyle.toInt()
                 },
                 "The bounded #match? predicate must independently emit its regexComment style for a 32 MiB capture"
+            )
+            assertTrue(
+                (0 until values.size / 6).any { index ->
+                    val base = index * 6
+                    values[base] <= start.toInt() &&
+                        values[base + 1] >= start.toInt() &&
+                        values[base + 2] == contextRegexStyle.toInt()
+                },
+                "The context-dependent \\A predicate must execute against the mapped capture without whole-capture heap materialization"
             )
         } finally {
             engine.closeNativeDocument(handle)
