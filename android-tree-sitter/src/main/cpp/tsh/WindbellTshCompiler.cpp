@@ -2653,8 +2653,10 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                             }
                             // Predicate steps are evaluated by TSH at complete-match
                             // granularity. Reject unsupported or malformed forms at compile time.
+                            const uint32_t compiled_pattern_count = ts_query_pattern_count(program.query);
+                            program.predicates_by_pattern.resize(compiled_pattern_count);
                             for (uint32_t pattern = 0;
-                                 pattern < ts_query_pattern_count(program.query); ++pattern) {
+                                 pattern < compiled_pattern_count; ++pattern) {
                                 uint32_t step_count = 0;
                                 const TSQueryPredicateStep* steps =
                                     ts_query_predicates_for_pattern(program.query, pattern, &step_count);
@@ -2728,6 +2730,10 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                                         entry.negate = op == "not-match?";
                                         program.predicate_regexes.push_back(entry);
                                     }
+                                    // Keep immutable predicate steps with the query.
+                                    // The execution hot path reuses these instead of
+                                    // allocating/copying a vector for every match.
+                                    program.predicates_by_pattern[pattern].push_back(std::move(predicate));
                                     ++predicate_index;
                                 }
                             }
