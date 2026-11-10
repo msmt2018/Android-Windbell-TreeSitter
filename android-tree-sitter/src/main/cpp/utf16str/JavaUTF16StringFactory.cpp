@@ -17,6 +17,10 @@
 
 #include <jni.h>
 #include <vector>
+#include <new>
+#include <utility>
+
+#include "../utils/ts_exceptions.h"
 
 #include "UTF16String.h"
 
@@ -39,15 +43,38 @@ UTF16StringFactory_newStringBytes(
     jbyteArray bytes,
     jint off,
     jint len) {
-  auto ba = env->GetByteArrayElements(bytes, nullptr);
-  auto vec = std::vector<jbyte>();
-  for (int i = off; i < off + len; ++i) {
-    vec.emplace_back(*(ba + off));
+  if (bytes == nullptr) {
+    throw_npe(env, "bytes");
+    return 0;
   }
 
-  auto *ustr = new UTF16String(vec);
-  env->ReleaseByteArrayElements(bytes, ba, JNI_ABORT);
-  return (jlong) ustr;
+  const jsize array_length = env->GetArrayLength(bytes);
+  if (env->ExceptionCheck()) return 0;
+  if (off < 0 || len < 0 || (len & 1) != 0 ||
+      off > array_length || len > array_length - off) {
+    throw_illegal_args(env,
+        "UTF-16LE byte slice must be even-length and within the source array");
+    return 0;
+  }
+
+  try {
+    std::vector<jbyte> storage(static_cast<size_t>(len));
+    if (len != 0) {
+      env->GetByteArrayRegion(bytes, off, len, storage.data());
+      if (env->ExceptionCheck()) return 0;
+    }
+    auto *ustr = new (std::nothrow) UTF16String(std::move(storage));
+    if (ustr == nullptr) {
+      throw_exception(env, "java/lang/OutOfMemoryError",
+                      "Unable to allocate native UTF16String");
+      return 0;
+    }
+    return reinterpret_cast<jlong>(ustr);
+  } catch (const std::bad_alloc&) {
+    throw_exception(env, "java/lang/OutOfMemoryError",
+                    "Unable to copy UTF-16LE byte slice");
+    return 0;
+  }
 }
 
 void UTF16StringFactory_Native__SetJniMethods(JNINativeMethod *methods, int count) {
