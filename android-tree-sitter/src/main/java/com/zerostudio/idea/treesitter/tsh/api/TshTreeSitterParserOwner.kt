@@ -554,8 +554,17 @@ class TshTreeSitterParserOwner private constructor(
         var languageLeaseTransferred = false
         try {
             val input = TshSnapshotTreeSitterInput(textProvider, snapshotLease)
+            val byteLength = Math.multiplyExact(snapshotLease.snapshot.lengthUtf16, 2L)
+            val callback = TSParser.ParseWindowCallback { byteOffset, maxBytes ->
+                input.read(byteOffset, maxBytes)
+            }
             val parsedTree = parseLock.withLock {
-                parserLease.resource.parseInput(oldTreeLease?.resource, input, chunkSizeBytes)
+                parserLease.resource.parseWindowed(
+                    oldTreeLease?.resource,
+                    byteLength,
+                    emptyArray(),
+                    callback
+                )
             } ?: return failure(
                 "TSH-PARSER-OWNER-004",
                 "Tree-sitter streaming parser returned no syntax tree",
