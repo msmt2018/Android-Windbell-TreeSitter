@@ -143,7 +143,10 @@ class TreeSitterPartitionScheduler(
                 discardUnsubmitted(tasks)
                 return emptyList()
             }
-            if (closed.get() || source.version != plan.documentVersion) return emptyList()
+            if (closed.get() || source.version != plan.documentVersion) {
+                discardUnsubmitted(tasks)
+                return emptyList()
+            }
             // Context windows must not split a UTF-16 surrogate pair either.
             if (contextStart > 0L && contextStart < source.length &&
                 Character.isHighSurrogate(source[contextStart - 1L]) &&
