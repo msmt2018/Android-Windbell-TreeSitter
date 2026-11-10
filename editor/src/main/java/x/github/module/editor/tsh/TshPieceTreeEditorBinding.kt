@@ -1,5 +1,6 @@
 package x.github.module.editor.tsh
 
+import android.os.Handler
 import android.os.Looper
 import com.zerostudio.idea.treesitter.tsh.api.TshDiagnostic
 import com.zerostudio.idea.treesitter.tsh.api.TshDiagnosticSeverity
@@ -8,6 +9,7 @@ import com.zerostudio.idea.treesitter.tsh.api.TshResult
 import com.zerostudio.idea.treesitter.tsh.api.TshTextChange
 import com.zerostudio.idea.treesitter.tsh.api.TshTextEdit
 import com.zerostudio.idea.treesitter.tsh.api.TshTextSnapshotLease
+import x.github.module.editor.model.EditorBuffer
 import x.github.module.editor.model.EditorDocument
 import x.github.module.editor.model.PieceTreeBuffer
 import x.github.module.editor.view.EditorView
@@ -27,7 +29,8 @@ class TshPieceTreeEditorBinding private constructor(
     val document: TshPieceTreeDocument,
     private val provider: TshPieceTreeTextAccessProvider,
     private val onTransaction: (TshTextChange, TshTextSnapshotLease, TshTextSnapshotLease) -> Unit,
-    private val onInvalidated: (TshResult.Failure) -> Unit
+    private val onInvalidated: (TshResult.Failure) -> Unit,
+    private val onBufferReplaced: () -> Unit
 ) : AutoCloseable {
     private var beforeLease: TshTextSnapshotLease? = null
     private var beforeCoordinatesSupported: Boolean = false
@@ -51,6 +54,25 @@ class TshPieceTreeEditorBinding private constructor(
                     lastVersion = acquired.value.snapshot.version
                 }
                 is TshResult.Failure -> onInvalidated(acquired)
+            }
+        }
+
+        override fun onBufferReplaced(previous: EditorBuffer, current: EditorBuffer) {
+            if (closed.get()) return
+            val notify = {
+                if (!closed.get()) {
+                    if (current is PieceTreeBuffer) {
+                        lastVersion = current.pieceTree.getVersionId().toLong()
+                    }
+                    // The previous tree belongs to a different backing storage generation.
+                    // Rebuild from the new authoritative snapshot; never synthesize an edit.
+                    onBufferReplaced()
+                }
+            }
+            if (Looper.myLooper() == Looper.getMainLooper()) {
+                notify()
+            } else {
+                Handler(Looper.getMainLooper()).post(notify)
             }
         }
 
@@ -184,7 +206,8 @@ class TshPieceTreeEditorBinding private constructor(
                 before.close()
                 after.close()
             },
-            onInvalidated: (TshResult.Failure) -> Unit = {}
+            onInvalidated: (TshResult.Failure) -> Unit = {},
+            onBufferReplaced: () -> Unit = {}
         ): TshPieceTreeEditorBinding {
             require(documentId.isNotBlank()) { "documentId must not be blank" }
             check(Looper.myLooper() == Looper.getMainLooper()) {
@@ -199,7 +222,9 @@ class TshPieceTreeEditorBinding private constructor(
                 snapshotFactory = { view.getTextBuffer().createSnapshot() },
                 snapshotThread = Thread.currentThread()
             )
-            return TshPieceTreeEditorBinding(view, document, provider, onTransaction, onInvalidated)
+            return TshPieceTreeEditorBinding(
+                view, document, provider, onTransaction, onInvalidated, onBufferReplaced
+            )
         }
     }
 }
