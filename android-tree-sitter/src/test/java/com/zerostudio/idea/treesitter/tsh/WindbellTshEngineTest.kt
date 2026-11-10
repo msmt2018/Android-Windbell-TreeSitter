@@ -892,6 +892,10 @@ class WindbellTshLinkageTest {
                     ancestorMethod { scope: "entity.name.function.ancestor" }
                     identifierKind { scope: "entity.name.function.kind" }
                     excludesText { scope: "entity.name.function.excludes" }
+                    anyContains { scope: "entity.name.function.any-contains" }
+                    emptyContains { scope: "entity.name.function.empty-contains" }
+                    anyNotContains { scope: "entity.name.function.any-not-contains" }
+                    notDirectClassParent { scope: "entity.name.function.not-direct-class-parent" }
                 }
                 treeSitter {
                     queries: [
@@ -919,6 +923,26 @@ class WindbellTshLinkageTest {
                             id: "negative-contains"
                             priority: 54
                             source: `(method_declaration name: (identifier) @excludesText (#not-contains? @excludesText "skip"))`
+                        },
+                        {
+                            id: "any-contains"
+                            priority: 55
+                            source: `(method_declaration name: (identifier) @anyContains (#any-contains? @anyContains "un"))`
+                        },
+                        {
+                            id: "empty-contains"
+                            priority: 56
+                            source: `(method_declaration name: (identifier) @emptyContains (#contains? @emptyContains ""))`
+                        },
+                        {
+                            id: "any-not-contains"
+                            priority: 57
+                            source: `(method_declaration name: (identifier) @anyNotContains (#any-not-contains? @anyNotContains "skip"))`
+                        },
+                        {
+                            id: "not-direct-class-parent"
+                            priority: 58
+                            source: `(method_declaration name: (identifier) @notDirectClassParent (#not-has-parent? @notDirectClassParent "class_declaration"))`
                         }
                     ]
                 }
@@ -936,6 +960,10 @@ class WindbellTshLinkageTest {
         val ancestorId = catalog.first { it.name == "ancestorMethod" }.styleId
         val kindId = catalog.first { it.name == "identifierKind" }.styleId
         val excludesId = catalog.first { it.name == "excludesText" }.styleId
+        val anyContainsId = catalog.first { it.name == "anyContains" }.styleId
+        val emptyContainsId = catalog.first { it.name == "emptyContains" }.styleId
+        val anyNotContainsId = catalog.first { it.name == "anyNotContains" }.styleId
+        val notDirectClassParentId = catalog.first { it.name == "notDirectClassParent" }.styleId
         val runOffset = code.indexOf("run") * 2
         val skipOffset = code.indexOf("skip") * 2
         val otherOffset = code.indexOf("other") * 2
@@ -946,6 +974,11 @@ class WindbellTshLinkageTest {
         assertTrue(spans.any { it.styleId == kindId && it.startByte == runOffset })
         assertFalse(spans.any { it.styleId == excludesId && it.startByte == skipOffset })
         assertTrue(spans.any { it.styleId == excludesId && it.startByte == otherOffset })
+        assertTrue(spans.any { it.styleId == anyContainsId && it.startByte == runOffset })
+        assertTrue(spans.any { it.styleId == emptyContainsId && it.startByte == skipOffset })
+        assertFalse(spans.any { it.styleId == anyNotContainsId && it.startByte == skipOffset })
+        assertTrue(spans.any { it.styleId == anyNotContainsId && it.startByte == otherOffset })
+        assertTrue(spans.any { it.styleId == notDirectClassParentId && it.startByte == runOffset })
 
         tree?.close()
         parser.close()
