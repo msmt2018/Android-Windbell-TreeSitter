@@ -1530,4 +1530,101 @@ class WindbellTshLinkageTest {
         }, "The lower-priority span must not retain the conflicting interval.")
     }
 
+
+    @Test
+    fun largeNativeTreeSitterQueryCapturesSurviveIncrementalEditsNearEof() {
+        val engine = WindbellTshEngine.instance
+        val extension = "large-query-window"
+        val dsl = """
+            tsh 2 {
+                language { id: "large-query-window" extensions: [".lqw"] }
+                styles { token { scope: "entity.name.type" } }
+                treeSitter {
+                    queries: [
+                        {
+                            id: "class-name"
+                            priority: 20
+                            source: `(class_declaration name: (identifier) @className)`
+                            captures: { className: token }
+                        }
+                    ]
+                }
+            }
+        """.trimIndent()
+        assertTrue("Large query TSH DSL must compile: ${engine.lastCompileDiagnostics}",
+            engine.loadTshSource(extension, dsl, TSLanguageJava.getInstance()))
+
+        val totalBytes = 32L * 1024L * 1024L + 128L * 1024L
+        val totalChars = totalBytes / 2L
+        val classText = "class DistantTokenProbe { int value; }"
+        val targetChar = totalChars - classText.length
+        val closeStart = targetChar - 3L
+        val reader = NativeTextWindowReader { offset, requested ->
+            val bytes = ByteArray(requested)
+            for (i in 0 until requested step 2) {
+                val charIndex = (offset + i) / 2L
+                val ch = when {
+                    charIndex == 0L -> '/'
+                    charIndex == 1L -> '*'
+                    charIndex == closeStart -> '*'
+                    charIndex == closeStart + 1L -> '/'
+                    charIndex == closeStart + 2L -> '\\n'
+                    charIndex in targetChar until targetChar + classText.length ->
+                        classText[(charIndex - targetChar).toInt()]
+                    else -> 'a'
+                }.code
+                bytes[i] = (ch and 0xFF).toByte()
+                bytes[i + 1] = ((ch ushr 8) and 0xFF).toByte()
+            }
+            bytes
+        }
+        val handle = engine.createNativeDocument(
+            TSLanguageJava.getInstance(), extension, totalBytes,
+            File(System.getProperty("java.io.tmpdir")), reader
+        )
+        try {
+            val queryStart = targetChar * 2L
+            val queryEnd = (targetChar + classText.length) * 2L
+            val first = engine.highlightNativeDocument(handle, queryStart, queryEnd, false)
+                ?: error("Initial large-file query returned null")
+            val originalNameStart = targetChar + classText.indexOf("DistantTokenProbe")
+            val originalNameEnd = originalNameStart + "DistantTokenProbe".length
+            fun containsCapture(values: IntArray, start: Long, end: Long): Boolean =
+                (0 until values.size / 6).any { index ->
+                    val base = index * 6
+                    Integer.toUnsignedLong(values[base]) == start * 2L &&
+                        Integer.toUnsignedLong(values[base + 1]) == end * 2L
+                }
+            assertTrue(
+                "Native Tree-sitter query must capture a declaration near EOF beyond 32 MiB",
+                containsCapture(first, originalNameStart, originalNameEnd)
+            )
+
+            val replacement = "UpdatedTokenProbe"
+            assertEquals("Incremental test replacement must preserve token width",
+                "DistantTokenProbe".length, replacement.length)
+            val editStart = originalNameStart * 2L
+            val editEnd = originalNameEnd * 2L
+            val inserted = ByteArray(replacement.length * 2)
+            for (index in replacement.indices) {
+                val unit = replacement[index].code
+                inserted[index * 2] = (unit and 0xFF).toByte()
+                inserted[index * 2 + 1] = (unit ushr 8).toByte()
+            }
+            assertTrue("Native Piece Tree and Tree-sitter incremental edit must commit",
+                engine.applyNativeDocumentEdit(handle, editStart, editEnd, inserted))
+
+            val updated = engine.highlightNativeDocument(handle, queryStart, queryEnd, false)
+                ?: error("Post-edit large-file query returned null")
+            val updatedStart = targetChar + classText.indexOf("DistantTokenProbe")
+            val updatedEnd = updatedStart + replacement.length
+            assertTrue(
+                "Tree-sitter query must return the edited identifier at the same absolute range",
+                containsCapture(updated, updatedStart, updatedEnd)
+            )
+        } finally {
+            engine.closeNativeDocument(handle)
+        }
+    }
+
 }
