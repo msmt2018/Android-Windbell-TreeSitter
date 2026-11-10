@@ -70,6 +70,12 @@ class EditorDocument(
          */
         fun beforeTextChanged(edits: List<SliceEdit>)
 
+        /**
+         * The backing storage was replaced wholesale, not edited in place.
+         * This invalidates offsets, snapshots and native syntax trees; it is not a text edit.
+         */
+        fun onBufferReplaced(previous: EditorBuffer, current: EditorBuffer) {}
+
         /** One change has been applied to the buffer. Called once per change of the edit. */
         fun onTextChanged(change: AppliedChange)
 
@@ -161,7 +167,10 @@ class EditorDocument(
      * what to do with both.
      */
     fun replaceBuffer(newBuffer: EditorBuffer) {
+        val previous = buffer
+        if (previous === newBuffer) return
         buffer = newBuffer
+        callback.onBufferReplaced(previous, newBuffer)
     }
 
     // #region queries
