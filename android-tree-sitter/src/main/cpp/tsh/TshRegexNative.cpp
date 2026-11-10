@@ -148,21 +148,39 @@ bool TshRegexNativeRegistry::execute(
         ~RegionGuard() { if (value) onig_region_free(value, 1); }
     } region{raw_region};
 
+    // Synthetic non-newline sentinels keep absolute \A/\z and line anchors from
+    // treating a window edge as a document edge. The core is always separated from
+    // either synthetic edge by the declared two-sided context.
+    const size_t prefix_bytes = document_start ? 0u : sizeof(uint16_t);
+    const size_t suffix_bytes = document_end ? 0u : sizeof(uint16_t);
+    if (text_bytes > std::numeric_limits<size_t>::max() - prefix_bytes - suffix_bytes) {
+        error = "Regex sentinel buffer size overflow";
+        return false;
+    }
+    std::vector<UChar> sentinel_buffer;
     const UChar* begin = text;
-    const UChar* end = text + text_bytes;
-    const UChar* current = begin;
-    const UChar* search_range = end;
-    OnigOptionType options = ONIG_OPTION_NONE;
-    if (!document_start) {
-        options |= ONIG_OPTION_NOTBOL;
-        options |= ONIG_OPTION_NOTBOS;
+    if (prefix_bytes != 0 || suffix_bytes != 0) {
+        sentinel_buffer.reserve(prefix_bytes + text_bytes + suffix_bytes);
+        if (prefix_bytes != 0) {
+            sentinel_buffer.push_back(0);
+            sentinel_buffer.push_back(0);
+        }
+        sentinel_buffer.insert(sentinel_buffer.end(), text, text + text_bytes);
+        if (suffix_bytes != 0) {
+            sentinel_buffer.push_back(0);
+            sentinel_buffer.push_back(0);
+        }
+        begin = sentinel_buffer.data();
     }
-    if (!document_end) {
-        options |= ONIG_OPTION_NOTEOL;
-        options |= ONIG_OPTION_NOTEOS;
-    }
+    const UChar* actual_begin = begin + prefix_bytes;
+    const UChar* actual_end = actual_begin + text_bytes;
+    const UChar* end = actual_end + suffix_bytes;
+    const UChar* current = actual_begin;
+    const UChar* search_range = actual_end;
+    const size_t actual_end_byte = prefix_bytes + text_bytes;
+    const OnigOptionType options = ONIG_OPTION_NONE;
 
-    while (current <= end) {
+    while (current <= search_range) {
         const OnigPosition hit = onig_search(
             entry->regex, begin, end, current, search_range, region.value, options
         );
@@ -176,16 +194,38 @@ bool TshRegexNativeRegistry::execute(
 
         const OnigPosition start_byte_position = region.value->beg[0];
         const OnigPosition end_byte_position = region.value->end[0];
-        if (start_byte_position < 0 || end_byte_position < start_byte_position ||
-            end_byte_position > static_cast<OnigPosition>(text_bytes) ||
+        if (start_byte_position < static_cast<OnigPosition>(prefix_bytes) ||
+            end_byte_position < start_byte_position ||
+            end_byte_position > static_cast<OnigPosition>(actual_end_byte) ||
             (start_byte_position & 1) != 0 || (end_byte_position & 1) != 0) {
+            // A candidate that consumes the synthetic suffix is not a document match.
+            // Resume one code point after its start instead of accepting or skipping the core.
+            if (start_byte_position >= static_cast<OnigPosition>(prefix_bytes) &&
+                start_byte_position < static_cast<OnigPosition>(actual_end_byte)) {
+                const int32_t local_start = static_cast<int32_t>(
+                    (start_byte_position - static_cast<OnigPosition>(prefix_bytes)) / 2
+                );
+                const uint16_t* units = reinterpret_cast<const uint16_t*>(text);
+                const bool starts_surrogate_pair =
+                    local_start < length &&
+                    units[local_start] >= 0xD800 && units[local_start] <= 0xDBFF &&
+                    local_start + 1 < length &&
+                    units[local_start + 1] >= 0xDC00 && units[local_start + 1] <= 0xDFFF;
+                current = begin + start_byte_position +
+                    (starts_surrogate_pair ? 2 * sizeof(uint16_t) : sizeof(uint16_t));
+                continue;
+            }
             error = "Oniguruma returned a malformed UTF-16 match range";
             return false;
         }
         const int32_t start_byte = static_cast<int32_t>(start_byte_position);
         const int32_t end_byte = static_cast<int32_t>(end_byte_position);
-        const int32_t start = start_byte / 2;
-        const int32_t finish = end_byte / 2;
+        const int32_t start = static_cast<int32_t>(
+            (start_byte_position - static_cast<OnigPosition>(prefix_bytes)) / 2
+        );
+        const int32_t finish = static_cast<int32_t>(
+            (end_byte_position - static_cast<OnigPosition>(prefix_bytes)) / 2
+        );
 
         // Core ownership is half-open. Only the final document EOF owns its zero-width match.
         if (start > core_end_utf16 ||
@@ -214,11 +254,16 @@ bool TshRegexNativeRegistry::execute(
                     match.capture_ranges_utf16.emplace_back(-1, -1);
                 } else {
                     if ((beg & 1) != 0 || (group_end & 1) != 0 ||
-                        group_end < beg || group_end > static_cast<int32_t>(text_bytes)) {
+                        beg < static_cast<int32_t>(prefix_bytes) ||
+                        group_end < beg ||
+                        group_end > static_cast<int32_t>(actual_end_byte)) {
                         error = "Oniguruma returned a malformed UTF-16 capture range";
                         return false;
                     }
-                    match.capture_ranges_utf16.emplace_back(beg / 2, group_end / 2);
+                    match.capture_ranges_utf16.emplace_back(
+                        (beg - static_cast<int32_t>(prefix_bytes)) / 2,
+                        (group_end - static_cast<int32_t>(prefix_bytes)) / 2
+                    );
                 }
             }
             output.matches.emplace_back(std::move(match));
@@ -227,15 +272,17 @@ bool TshRegexNativeRegistry::execute(
         if (end_byte > start_byte) {
             current = begin + end_byte;
         } else {
-            if (end_byte >= static_cast<int32_t>(text_bytes)) break;
-            const int32_t next_unit = end_byte / 2;
+            const int32_t local_end_byte = end_byte - static_cast<int32_t>(prefix_bytes);
+            if (local_end_byte >= static_cast<int32_t>(text_bytes)) break;
+            const int32_t next_unit = local_end_byte / 2;
             const uint16_t* units = reinterpret_cast<const uint16_t*>(text);
             const bool starts_surrogate_pair =
                 next_unit < length &&
                 units[next_unit] >= 0xD800 && units[next_unit] <= 0xDBFF &&
                 next_unit + 1 < length &&
                 units[next_unit + 1] >= 0xDC00 && units[next_unit + 1] <= 0xDFFF;
-            current = begin + end_byte + (starts_surrogate_pair ? 2 * sizeof(uint16_t) : sizeof(uint16_t));
+            current = begin + end_byte +
+                (starts_surrogate_pair ? 2 * sizeof(uint16_t) : sizeof(uint16_t));
         }
     }
     return true;
