@@ -23,6 +23,8 @@
 
 package com.zerostudio.idea.piecetable
 
+import com.zerostudio.idea.piecetable.common.IntList
+
 /**
  * The content of a document at one version, readable from any thread while the buffer keeps
  * being edited.
