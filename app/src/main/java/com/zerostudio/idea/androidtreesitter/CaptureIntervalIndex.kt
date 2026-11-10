@@ -10,15 +10,36 @@ import com.zerostudio.idea.treesitter.tsh.WindbellTshEngine
 internal class CaptureIntervalIndex(
     captures: List<WindbellTshEngine.HighlightSpan>
 ) {
-    private val spans = captures.sortedBy { it.startByteUnsigned }
-    private val prefixMaxEnd = LongArray(spans.size)
+    // Native returns resolved spans in unsigned byte-offset order. Reuse that
+    // immutable result directly; sort only defensive callers that supply an
+    // unsorted list. Avoid a second full-sized capture-object array per partition.
+    private val spans: List<WindbellTshEngine.HighlightSpan> = if (isSorted(captures)) {
+        captures
+    } else {
+        captures.sortedWith { left, right ->
+            Integer.compareUnsigned(left.startByte, right.startByte)
+        }
+    }
+
+    // Tree-sitter byte offsets are uint32. Keep the prefix maximum in the same
+    // four-byte representation instead of widening every entry to Long.
+    private val prefixMaxEnd = IntArray(spans.size)
 
     init {
-        var maximum = Long.MIN_VALUE
+        var maximum = 0
         spans.forEachIndexed { index, span ->
-            maximum = maxOf(maximum, span.endByteUnsigned)
+            if (Integer.compareUnsigned(span.endByte, maximum) > 0) maximum = span.endByte
             prefixMaxEnd[index] = maximum
         }
+    }
+
+    private fun isSorted(values: List<WindbellTshEngine.HighlightSpan>): Boolean {
+        for (index in 1 until values.size) {
+            if (Integer.compareUnsigned(values[index - 1].startByte, values[index].startByte) > 0) {
+                return false
+            }
+        }
+        return true
     }
 
     fun query(startUtf16: Int, endUtf16: Int): List<WindbellTshEngine.HighlightSpan> {
@@ -35,13 +56,13 @@ internal class CaptureIntervalIndex(
         destination: MutableList<WindbellTshEngine.HighlightSpan>
     ) {
         if (startUtf16 < 0 || endUtf16 <= startUtf16 || spans.isEmpty()) return
-        val startByte = startUtf16.toLong() * 2L
-        val endByte = endUtf16.toLong() * 2L
+        val startByte = (startUtf16.toLong() * 2L).toInt()
+        val endByte = (endUtf16.toLong() * 2L).toInt()
         var low = 0
         var high = spans.size
         while (low < high) {
             val middle = (low + high) ushr 1
-            if (spans[middle].startByteUnsigned < endByte) low = middle + 1
+            if (Integer.compareUnsigned(spans[middle].startByte, endByte) < 0) low = middle + 1
             else high = middle
         }
         val upper = low
@@ -50,12 +71,12 @@ internal class CaptureIntervalIndex(
         high = upper
         while (low < high) {
             val middle = (low + high) ushr 1
-            if (prefixMaxEnd[middle] <= startByte) low = middle + 1
+            if (Integer.compareUnsigned(prefixMaxEnd[middle], startByte) <= 0) low = middle + 1
             else high = middle
         }
         for (index in low until upper) {
             val span = spans[index]
-            if (span.endByteUnsigned > startByte) destination.add(span)
+            if (Integer.compareUnsigned(span.endByte, startByte) > 0) destination.add(span)
         }
     }
 
