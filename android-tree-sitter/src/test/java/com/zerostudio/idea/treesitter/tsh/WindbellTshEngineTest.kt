@@ -3,6 +3,7 @@ package com.zerostudio.idea.treesitter
 import com.zerostudio.idea.treesitter.TSParser
 import com.zerostudio.idea.treesitter.java.TSLanguageJava
 import com.zerostudio.idea.treesitter.tsh.WindbellTshEngine
+import com.zerostudio.idea.treesitter.tsh.NativeTextWindowReader
 import org.junit.jupiter.api.Assertions.assertDoesNotThrow
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -11,6 +12,7 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.Test
 import android.text.SpannableStringBuilder
+import java.io.File
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
@@ -42,6 +44,68 @@ class WindbellTshLinkageTest {
                 { match: /\/\/[^\n]*/, style: "comment" }
             ]
         """.trimIndent()
+    }
+
+    @Test
+    fun testLargeNativeDocumentExecutesBoundedRegexWithoutWholeFileBuffer() {
+        val engine = WindbellTshEngine.instance
+        val extension = "large-regex-window"
+        val dsl = """
+            name: ["Large Regex Window", ".large-regex-window"]
+            styles: [
+                "token", #007F00, #6A8759,
+            ]
+            contains: [
+                { match: /token/, style: "token" }
+            ]
+        """.trimIndent()
+        assertTrue(engine.loadTshSource(extension, dsl, TSLanguageJava.getInstance()))
+
+        // Exceed the JNI legacy contiguous-buffer threshold deliberately.
+        // The file is a single Java block comment, so its AST stays small while
+        // the TSH Regex token is placed near EOF in a later 64 KiB source window.
+        val totalBytes = 32L * 1024L * 1024L + 128L * 1024L
+        val targetChar = totalBytes / 2L - 64L
+        val token = "token"
+        val directory = File(System.getProperty("java.io.tmpdir"))
+        val reader = NativeTextWindowReader { offset, requested ->
+            val bytes = ByteArray(requested)
+            for (i in 0 until requested step 2) {
+                val charIndex = (offset + i) / 2L
+                val value = when {
+                    charIndex == 0L -> '/'
+                    charIndex == 1L -> '*'
+                    charIndex in targetChar until targetChar + token.length ->
+                        token[(charIndex - targetChar).toInt()]
+                    charIndex == totalBytes / 2L - 2L -> '*'
+                    charIndex == totalBytes / 2L - 1L -> '/'
+                    else -> 'a'
+                }.code
+                bytes[i] = (value and 0xFF).toByte()
+                bytes[i + 1] = ((value ushr 8) and 0xFF).toByte()
+            }
+            bytes
+        }
+
+        val handle = engine.createNativeDocument(
+            TSLanguageJava.getInstance(), extension, totalBytes, directory, reader
+        )
+        try {
+            val start = (targetChar - 8L) * 2L
+            val end = (targetChar + token.length + 8L) * 2L
+            val encoded = engine.highlightNativeDocument(handle, start, end, false)
+            assertNotNull(encoded)
+            val values = encoded!!
+            assertTrue(values.size >= 6, "Expected the bounded native Regex pipeline to emit the token capture")
+            val found = (0 until values.size / 6).any { index ->
+                val base = index * 6
+                values[base] == (targetChar * 2L).toInt() &&
+                    values[base + 1] == ((targetChar + token.length) * 2L).toInt()
+            }
+            assertTrue(found, "Expected a Regex capture near EOF in a document larger than 32 MiB")
+        } finally {
+            engine.closeNativeDocument(handle)
+        }
     }
 
     @Test
