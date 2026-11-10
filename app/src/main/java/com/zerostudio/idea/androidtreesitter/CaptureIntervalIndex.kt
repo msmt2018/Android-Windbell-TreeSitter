@@ -10,7 +10,7 @@ import com.zerostudio.idea.treesitter.tsh.WindbellTshEngine
 internal class CaptureIntervalIndex(
     captures: List<WindbellTshEngine.HighlightSpan>
 ) {
-    private val spans = captures.sortedBy { it.startByte }
+    private val spans = captures.sortedBy { it.startByteUnsigned }
     private val prefixMaxEnd = LongArray(spans.size)
 
     init {
@@ -41,7 +41,7 @@ internal class CaptureIntervalIndex(
         var high = spans.size
         while (low < high) {
             val middle = (low + high) ushr 1
-            if (spans[middle].startByte.toLong() < endByte) low = middle + 1
+            if (spans[middle].startByteUnsigned < endByte) low = middle + 1
             else high = middle
         }
         val upper = low
@@ -55,7 +55,7 @@ internal class CaptureIntervalIndex(
         }
         for (index in low until upper) {
             val span = spans[index]
-            if (span.endByte.toLong() > startByte) destination.add(span)
+            if (span.endByteUnsigned > startByte) destination.add(span)
         }
     }
 
