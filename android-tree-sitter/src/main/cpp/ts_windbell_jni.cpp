@@ -55,6 +55,11 @@ static std::shared_ptr<SharedNativeMemoryBudget> nativeHighlightBudget() {
 
 struct NativeTshDocument {
     std::unique_ptr<windbell::largefile::PieceTreeSource> source;
+    // A version-keyed immutable mmap snapshot supplies whole-document Regex
+    // semantics for edited/multi-piece sources without a document-sized heap copy.
+    std::unique_ptr<windbell::largefile::MappedFileSource> regex_snapshot;
+    uint64_t regex_snapshot_version = UINT64_MAX;
+    std::string temporary_directory;
     TSParser *parser = nullptr;
     TSTree *tree = nullptr;
     std::string extension;
@@ -1073,6 +1078,7 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeCreateDocument(
         return 0;
     }
     document->extension = extension;
+    document->temporary_directory = directory;
     document->length_chars = static_cast<uint32_t>(static_cast<uint64_t>(byte_length) / 2u);
     document->parser = ts_parser_new();
     if (!document->parser || !ts_parser_set_language(
@@ -1290,6 +1296,10 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeApplyDocumentEdi
     ts_tree_delete(document->tree);
     document->tree = next_tree;
     document->source = std::move(next_source);
+    // Any previous mapped snapshot represents the old immutable document
+    // version. Drop it only after the candidate source/tree transaction commits.
+    document->regex_snapshot.reset();
+    document->regex_snapshot_version = UINT64_MAX;
     document->partition_index = std::move(*next_partition_index);
     document->length_chars = static_cast<uint32_t>(new_size / 2u);
     ++document->version;
@@ -1402,13 +1412,46 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
             return nullptr;
         }
     }
+    // Regex and Regex-backed query predicates require whole-context access
+    // for anchors/lookarounds/backreferences. If the edited Piece Tree is not
+    // already contiguous, create one immutable, version-keyed mmap snapshot.
+    const bool source_requires_contiguous_regex = grammar &&
+        (!grammar->regex_rules.empty() || !grammar->regex_states.empty() ||
+         std::any_of(grammar->native_queries.begin(), grammar->native_queries.end(),
+            [](const NativeQueryProgram &query) { return !query.predicate_regexes.empty(); }) ||
+         std::any_of(grammar->ast_selector_rules.begin(), grammar->ast_selector_rules.end(),
+            [](const AstSelectorRule &rule) { return rule.has_text_regex; }));
+    const bool source_native_ast_only = grammar && !source_requires_contiguous_regex;
+    const windbell::largefile::TextSource *highlight_source = document->source.get();
+    if (source_requires_contiguous_regex) {
+        const char *contiguous_data = nullptr;
+        uint64_t contiguous_size = 0;
+        const bool already_contiguous = document->source->contiguousData(
+            &contiguous_data, &contiguous_size) &&
+            contiguous_size == total_bytes &&
+            (total_bytes == 0 || contiguous_data != nullptr);
+        if (!already_contiguous) {
+            if (!document->regex_snapshot ||
+                document->regex_snapshot_version != document->source->version()) {
+                auto candidate = windbell::largefile::MappedFileSource::createSnapshot(
+                    *document->source, document->temporary_directory);
+                if (!candidate || candidate->sizeBytes() != total_bytes) {
+                    throw_illegal_state(env,
+                        "Unable to create a complete mmap snapshot for context-dependent TSH Regex");
+                    return nullptr;
+                }
+                document->regex_snapshot = std::move(candidate);
+                document->regex_snapshot_version = document->source->version();
+            }
+            highlight_source = document->regex_snapshot.get();
+        }
+    }
+
     windbell::largefile::TextChunkView view{};
     const uint16_t *input = nullptr;
     std::vector<uint16_t> compatibility_window;
-    const bool source_native_ast_only = grammar &&
-        grammar->regex_rules.empty() && grammar->regex_states.empty();
     if (total_bytes != 0 && !source_native_ast_only) {
-        if (!document->source->read(0, UINT32_MAX, &view) ||
+        if (!highlight_source->read(0, UINT32_MAX, &view) ||
             !view.data || view.size == 0) {
             throw_illegal_state(env, "Native Piece Tree cannot provide its first input window");
             return nullptr;
@@ -1437,7 +1480,7 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
                         windbell::largefile::TextChunkView chunk{};
                         const uint32_t request = static_cast<uint32_t>(std::min<uint64_t>(
                             windbell::largefile::kTreeSitterInputChunkBytes, total_bytes - copied));
-                        if (!document->source->read(copied, request, &chunk) ||
+                        if (!highlight_source->read(copied, request, &chunk) ||
                             !chunk.data || chunk.size == 0 || chunk.size > total_bytes - copied) {
                             throw_illegal_state(env, "Failed to stream edited Piece Tree into legacy TSH input");
                             return nullptr;
@@ -1464,7 +1507,7 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
             diagnostics == JNI_TRUE ? &candidates : nullptr,
             diagnostics == JNI_TRUE ? counts : nullptr,
             static_cast<uint32_t>(range_start_byte),
-            static_cast<uint32_t>(range_end_byte), document->source.get(),
+            static_cast<uint32_t>(range_end_byte), highlight_source,
             &document->regex_state_checkpoints, document->source->version(),
             document->partition_index.version());
         if (diagnostics == JNI_TRUE) spans = std::move(candidates);
