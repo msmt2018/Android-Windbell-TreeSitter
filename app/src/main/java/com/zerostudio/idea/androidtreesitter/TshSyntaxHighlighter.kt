@@ -631,9 +631,16 @@ class TshSyntaxHighlighter(
     }
 
     private fun applyNativeEdits(active: LargeSession, edits: List<NativeEdit>, editEpoch: Long) {
-        val previous = synchronized(nativeEditLock) { nativeEditJob }
-        val job = scope.launch(Dispatchers.IO) {
-            previous?.join()
+        // Atomically append this transaction to the per-document edit chain.
+        // Reading the previous job and publishing the new one in separate critical
+        // sections allowed two onEditFinished callbacks to launch out of order.
+        val job = synchronized(nativeEditLock) {
+            val previous = nativeEditJob
+            scope.launch(
+                Dispatchers.IO,
+                start = kotlinx.coroutines.CoroutineStart.LAZY
+            ) {
+                previous?.join()
             if (generation.get() != active.ticket || largeSession !== active) return@launch
             try {
                 active.nativeMutex.withLock {
@@ -666,8 +673,9 @@ class TshSyntaxHighlighter(
                 Log.e(TAG, "Native incremental edit failed; rebuilding the native session", error)
                 if (generation.get() == active.ticket) host?.buffer?.let(::scheduleParse)
             }
+            }.also { nativeEditJob = it }
         }
-        synchronized(nativeEditLock) { nativeEditJob = job }
+        job.start()
     }
 
     private fun decodeNativeSpans(flat: IntArray): List<WindbellTshEngine.HighlightSpan> {
