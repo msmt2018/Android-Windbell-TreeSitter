@@ -169,6 +169,19 @@ class DocumentPartitionManagerTest {
     }
 
 
+
+    @Test fun tokenizerCheckpointStoreSnapshotsMutableStateBeforeWeighing() {
+        val mutableStates = mutableListOf("root")
+        val store = TokenizerCheckpointStore(maxEntries = 8, maxBytes = 512L)
+        store.put(TokenizerCheckpoint(1L, 4L, 40L, mutableStates))
+        val chargedBytes = store.bytesUsed
+
+        mutableStates += "a".repeat(10_000)
+        val stored = store.nearest(4L, 1L)
+        assertEquals(listOf("root"), stored?.stateStack)
+        assertEquals(chargedBytes, store.bytesUsed)
+    }
+
     @Test fun tokenizerCheckpointCacheEvictsByBytesNotOnlyEntryCount() {
         val store = TokenizerCheckpointStore(maxEntries = 100, maxBytes = 200L)
         store.put(TokenizerCheckpoint(1L, 1L, 10L, listOf("root")))
