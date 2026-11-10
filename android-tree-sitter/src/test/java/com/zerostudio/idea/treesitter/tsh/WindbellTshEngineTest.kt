@@ -817,6 +817,68 @@ class WindbellTshLinkageTest {
     }
 
     @Test
+    fun testNativeQueryCaptureToCaptureEqualityPredicates() {
+        val engine = WindbellTshEngine.instance
+        val language = TSLanguageJava.getInstance()
+        val source = """
+            tsh 2 {
+                language { id: "java-capture-equality" name: "Java Capture Equality" extensions: [".jce"] }
+                styles {
+                    equal { scope: "entity.name.function.equal" }
+                    different { scope: "entity.name.function.different" }
+                    anyEqual { scope: "entity.name.function.anyEqual" }
+                    anyDifferent { scope: "entity.name.function.anyDifferent" }
+                }
+                treeSitter {
+                    queries: [
+                        {
+                            id: "equal-captures"
+                            priority: 20
+                            source: `(method_declaration name: (identifier) @left parameters: (formal_parameters (formal_parameter name: (identifier) @right)) (#eq? @left @right))`
+                        },
+                        {
+                            id: "different-captures"
+                            priority: 21
+                            source: `(method_declaration name: (identifier) @left parameters: (formal_parameters (formal_parameter name: (identifier) @right)) (#not-eq? @left @right))`
+                        },
+                        {
+                            id: "any-equal-captures"
+                            priority: 22
+                            source: `(method_declaration name: (identifier) @left parameters: (formal_parameters (formal_parameter name: (identifier) @right)) (#any-eq? @left @right))`
+                        },
+                        {
+                            id: "any-different-captures"
+                            priority: 23
+                            source: `(method_declaration name: (identifier) @left parameters: (formal_parameters (formal_parameter name: (identifier) @right)) (#any-not-eq? @left @right))`
+                        }
+                    ]
+                }
+            }
+        """.trimIndent()
+
+        assertTrue(engine.loadTshSource("java-capture-equality", source, language))
+        val parser = TSParser.create().apply { setLanguage(language) }
+        val code = "class Demo { void same(int same) {} void diff(int other) {} }"
+        val tree = parser.parseString(code)
+        val spans = engine.computeHighlights(tree, code, "java-capture-equality")
+        val catalog = engine.getStyleCatalog("java-capture-equality")
+        val equalId = catalog.first { it.name == "equal" }.styleId
+        val differentId = catalog.first { it.name == "different" }.styleId
+        val anyEqualId = catalog.first { it.name == "anyEqual" }.styleId
+        val anyDifferentId = catalog.first { it.name == "anyDifferent" }.styleId
+        val sameOffset = code.indexOf("same") * 2
+        val diffOffset = code.indexOf("diff") * 2
+
+        assertTrue(spans.any { it.styleId == equalId && it.startByte == sameOffset })
+        assertTrue(spans.any { it.styleId == differentId && it.startByte == diffOffset })
+        assertTrue(spans.any { it.styleId == anyEqualId && it.startByte == sameOffset })
+        assertTrue(spans.any { it.styleId == anyDifferentId && it.startByte == diffOffset })
+
+        tree?.close()
+        parser.close()
+    }
+
+    @Test
     fun testAstSelectorNodeFlagsAreExecuted() {
         val engine = WindbellTshEngine.instance
         val language = TSLanguageJava.getInstance()
