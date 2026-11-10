@@ -82,4 +82,45 @@ class TshRegexWindowSequenceTest {
         emptySequence.close()
         emptyLease.close()
     }
+
+    @Test
+    fun failedWindowAdmissionDoesNotAdvanceAndCanBeRetried() {
+        val source = Snapshot("q".repeat(1_000))
+        val callerLease = TshSharedTextSnapshotLease.acquire(source)
+        val budget = TshMemoryBudget(TshMemoryBudgetOptions(2_048, 4_096))
+        val blocker = (budget.reserve(TshMemoryCategory.OTHER, 1_000) as TshResult.Success).value
+        val sequence = (TshRegexWindowSequence.open(callerLease, constraints(), budget) as TshResult.Success).value
+
+        val rejected = sequence.nextWindow()
+        assertTrue(rejected is TshResult.Failure)
+        assertEquals(0L, sequence.nextCoreOffsetUtf16)
+        blocker.close()
+
+        val retried = (sequence.nextWindow() as TshResult.Success).value
+        assertNotNull(retried)
+        assertEquals(256L, sequence.nextCoreOffsetUtf16)
+        retried!!.close()
+        sequence.close()
+        callerLease.close()
+        assertEquals(0L, budget.snapshot().reservedBytes)
+    }
+
+    @Test
+    fun sequenceCloseDoesNotReleaseAnOutstandingCopiedWindow() {
+        val source = Snapshot("r".repeat(1_000))
+        val callerLease = TshSharedTextSnapshotLease.acquire(source)
+        val budget = TshMemoryBudget(TshMemoryBudgetOptions(4_096, 8_192))
+        val sequence = (TshRegexWindowSequence.open(callerLease, constraints(), budget) as TshResult.Success).value
+        val window = (sequence.nextWindow() as TshResult.Success).value!!
+        val heldBytes = budget.snapshot().reservedBytes
+        assertTrue(heldBytes > 0L)
+
+        sequence.close()
+        assertTrue(window.text.isNotEmpty())
+        assertEquals(heldBytes, budget.snapshot().reservedBytes)
+        window.close()
+        assertEquals(0L, budget.snapshot().reservedBytes)
+        callerLease.close()
+    }
+
 }
