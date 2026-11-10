@@ -491,6 +491,75 @@ static int tshPredicateNodesEqual(const TSNode& left, const TSNode& right,
     return 1;
 }
 
+static int tshPredicateContainsText(
+    const UChar* utf16_source,
+    const windbell::largefile::TextSource* text_source,
+    uint32_t source_bytes,
+    uint32_t start_byte,
+    uint32_t end_byte,
+    const std::vector<UChar>& needle) {
+    if (start_byte > end_byte || end_byte > source_bytes ||
+        (start_byte & 1u) || (end_byte & 1u)) return -1;
+    if (needle.empty()) return 1;
+    const uint64_t text_units = (static_cast<uint64_t>(end_byte) - start_byte) / sizeof(UChar);
+    if (needle.size() > text_units) return 0;
+
+    // KMP keeps memory proportional to the predicate literal, not to the
+    // captured node. TextSource is consumed in fixed-size UTF-16 chunks.
+    std::vector<size_t> prefix;
+    try {
+        prefix.resize(needle.size());
+    } catch (const std::bad_alloc&) {
+        return -1;
+    }
+    for (size_t i = 1, matched = 0; i < needle.size(); ++i) {
+        while (matched > 0 && needle[i] != needle[matched])
+            matched = prefix[matched - 1];
+        if (needle[i] == needle[matched]) ++matched;
+        prefix[i] = matched;
+    }
+
+    constexpr uint32_t kChunkBytes = 16u * 1024u;
+    std::array<UChar, kChunkBytes / sizeof(UChar)> chunk{};
+    uint64_t consumed_units = 0;
+    size_t matched = 0;
+    while (consumed_units < text_units) {
+        const uint32_t amount_bytes = static_cast<uint32_t>(
+            std::min<uint64_t>(kChunkBytes,
+                (text_units - consumed_units) * sizeof(UChar)));
+        UChar* input = chunk.data();
+        if (text_source) {
+            if (!windbell::largefile::copyTextRange(*text_source,
+                    static_cast<uint64_t>(start_byte) + consumed_units * sizeof(UChar),
+                    amount_bytes, input)) return -1;
+        } else if (utf16_source) {
+            std::memcpy(input, utf16_source + start_byte / sizeof(UChar) + consumed_units,
+                amount_bytes);
+        } else {
+            return -1;
+        }
+        const size_t units = amount_bytes / sizeof(UChar);
+        for (size_t i = 0; i < units; ++i) {
+            while (matched > 0 && input[i] != needle[matched])
+                matched = prefix[matched - 1];
+            if (input[i] == needle[matched]) ++matched;
+            if (matched == needle.size()) return 1;
+        }
+        consumed_units += units;
+    }
+    return 0;
+}
+
+static bool tshPredicateNodeHasType(const TSNode& node,
+    const std::vector<std::string>& expected_types) {
+    const char* type = ts_node_type(node);
+    if (!type) return false;
+    for (const std::string& expected : expected_types) {
+        if (expected == type) return true;
+    }
+    return false;
+}
+
 static int tshPredicateRegexMatchesContiguous(
     regex_t* regex, const UChar* begin, const UChar* end
 ) {
@@ -584,6 +653,19 @@ static TshPredicateResult tshEvaluateNativePredicates(const NativeQueryProgram& 
         if (!op.empty() && op.front() == '#') op.erase(op.begin());
 
         std::vector<std::vector<UChar>> expected;
+        std::vector<std::string> expected_types;
+        std::vector<std::vector<UChar>> actual;
+        const bool equality_operator = op == "eq?" || op == "not-eq?" ||
+            op == "any-eq?" || op == "any-not-eq?";
+        const bool contains_operator = op == "contains?" || op == "not-contains?" ||
+            op == "any-contains?" || op == "any-not-contains?";
+        const bool ancestry_operator = op == "has-ancestor?" || op == "not-has-ancestor?" ||
+            op == "any-has-ancestor?" || op == "any-not-has-ancestor?";
+        const bool parent_operator = op == "has-parent?" || op == "not-has-parent?" ||
+            op == "any-has-parent?" || op == "any-not-has-parent?";
+        const bool kind_operator = op == "kind-eq?" || op == "not-kind-eq?" ||
+            op == "any-kind-eq?" || op == "any-not-kind-eq?";
+        const bool structural_operator = ancestry_operator || parent_operator || kind_operator;
         try {
             for (size_t i = 2; i < predicate.size(); ++i) {
                 if (predicate[i].type == TSQueryPredicateStepTypeCapture &&
@@ -593,10 +675,15 @@ static TshPredicateResult tshEvaluateNativePredicates(const NativeQueryProgram& 
                     return TshPredicateResult::REJECT;
                 uint32_t length = 0;
                 const char* value = ts_query_string_value_for_id(query, predicate[i].value_id, &length);
-                std::vector<UChar> converted;
-                if (!value || !tshUtf8ToUtf16(std::string(value, length), converted))
-                    return TshPredicateResult::REJECT;
-                expected.push_back(std::move(converted));
+                if (!value) return TshPredicateResult::REJECT;
+                if (structural_operator) {
+                    expected_types.emplace_back(value, length);
+                } else {
+                    std::vector<UChar> converted;
+                    if (!tshUtf8ToUtf16(std::string(value, length), converted))
+                        return TshPredicateResult::REJECT;
+                    expected.push_back(std::move(converted));
+                }
             }
         } catch (const std::bad_alloc&) {
             return TshPredicateResult::ERROR;
@@ -683,6 +770,53 @@ static TshPredicateResult tshEvaluateNativePredicates(const NativeQueryProgram& 
                 any_in_set = any_in_set || found;
             }
             accepted = op == "any-of?" ? all_in_set : !any_in_set;
+        } else if (contains_operator || structural_operator) {
+            const bool any = op.rfind("any-", 0) == 0;
+            const bool negative = op.find("not-") != std::string::npos;
+            if (contains_operator && expected.empty()) return TshPredicateResult::REJECT;
+            if (structural_operator && expected_types.empty()) return TshPredicateResult::REJECT;
+            bool has_capture = false;
+            bool all_satisfied = true;
+            bool any_satisfied = false;
+            for (uint32_t i = 0; i < match.capture_count; ++i) {
+                if (match.captures[i].index != predicate[1].value_id) continue;
+                has_capture = true;
+                const TSNode& node = match.captures[i].node;
+                bool matched = false;
+                if (contains_operator) {
+                    for (const auto& literal : expected) {
+                        const int result = tshPredicateContainsText(
+                            utf16_source, text_source, source_bytes,
+                            ts_node_start_byte(node), ts_node_end_byte(node), literal);
+                        if (result < 0) return TshPredicateResult::ERROR;
+                        if (result == 1) { matched = true; break; }
+                    }
+                } else if (kind_operator) {
+                    matched = tshPredicateNodeHasType(node, expected_types);
+                } else if (parent_operator) {
+                    const TSNode parent = ts_node_parent(node);
+                    matched = !ts_node_is_null(parent) &&
+                        tshPredicateNodeHasType(parent, expected_types);
+                } else {
+                    TSNode ancestor = ts_node_parent(node);
+                    while (!ts_node_is_null(ancestor)) {
+                        if (tshPredicateNodeHasType(ancestor, expected_types)) {
+                            matched = true;
+                            break;
+                        }
+                        ancestor = ts_node_parent(ancestor);
+                    }
+                }
+                const bool satisfied = negative ? !matched : matched;
+                all_satisfied = all_satisfied && satisfied;
+                any_satisfied = any_satisfied || satisfied;
+                if (any && any_satisfied) break;
+                if (!any && !all_satisfied) break;
+            }
+            // The standard predicates quantify over all captures; any-* requires
+            // at least one capture. Empty capture sets therefore hold only for
+            // non-any predicates, consistent with the query-filter fallback.
+            accepted = any ? (has_capture && any_satisfied) : all_satisfied;
         } else if (op == "match?" || op == "not-match?") {
             const NativeQueryProgram::PredicateRegex* compiled = nullptr;
             for (const auto& candidate : program.predicate_regexes) {
