@@ -195,28 +195,28 @@ bool TshRegexNativeRegistry::execute(
         const OnigPosition start_byte_position = region.value->beg[0];
         const OnigPosition end_byte_position = region.value->end[0];
         if (start_byte_position < static_cast<OnigPosition>(prefix_bytes) ||
+            start_byte_position > static_cast<OnigPosition>(actual_end_byte) ||
             end_byte_position < start_byte_position ||
-            end_byte_position > static_cast<OnigPosition>(actual_end_byte) ||
             (start_byte_position & 1) != 0 || (end_byte_position & 1) != 0) {
-            // A candidate that consumes the synthetic suffix is not a document match.
-            // Resume one code point after its start instead of accepting or skipping the core.
-            if (start_byte_position >= static_cast<OnigPosition>(prefix_bytes) &&
-                start_byte_position < static_cast<OnigPosition>(actual_end_byte)) {
-                const int32_t local_start = static_cast<int32_t>(
-                    (start_byte_position - static_cast<OnigPosition>(prefix_bytes)) / 2
-                );
-                const uint16_t* units = reinterpret_cast<const uint16_t*>(text);
-                const bool starts_surrogate_pair =
-                    local_start < length &&
-                    units[local_start] >= 0xD800 && units[local_start] <= 0xDBFF &&
-                    local_start + 1 < length &&
-                    units[local_start + 1] >= 0xDC00 && units[local_start + 1] <= 0xDFFF;
-                current = begin + start_byte_position +
-                    (starts_surrogate_pair ? 2 * sizeof(uint16_t) : sizeof(uint16_t));
-                continue;
-            }
             error = "Oniguruma returned a malformed UTF-16 match range";
             return false;
+        }
+        if (end_byte_position > static_cast<OnigPosition>(actual_end_byte)) {
+            // A candidate that consumes the synthetic suffix is not a document match.
+            // Resume one code point after its start instead of accepting or skipping the core.
+            if (start_byte_position >= static_cast<OnigPosition>(actual_end_byte)) break;
+            const int32_t local_start = static_cast<int32_t>(
+                (start_byte_position - static_cast<OnigPosition>(prefix_bytes)) / 2
+            );
+            const uint16_t* units = reinterpret_cast<const uint16_t*>(text);
+            const bool starts_surrogate_pair =
+                local_start < length &&
+                units[local_start] >= 0xD800 && units[local_start] <= 0xDBFF &&
+                local_start + 1 < length &&
+                units[local_start + 1] >= 0xDC00 && units[local_start + 1] <= 0xDFFF;
+            current = begin + start_byte_position +
+                (starts_surrogate_pair ? 2 * sizeof(uint16_t) : sizeof(uint16_t));
+            continue;
         }
         const int32_t start_byte = static_cast<int32_t>(start_byte_position);
         const int32_t end_byte = static_cast<int32_t>(end_byte_position);
