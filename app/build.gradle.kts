@@ -30,16 +30,32 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
-    val commonSigning = signingConfigs.create("common") {
-        storeFile = file("dev.keystore")
-        keyAlias = "androidide"
-        storePassword = "ed68424fb109e5aa8146e4b86caa72e3"
-        keyPassword = "ed68424fb109e5aa8146e4b86caa72e3"
+    // CI builds must not depend on a developer's local keystore. A signed release is
+    // produced only when all signing values are explicitly supplied by the build environment.
+    val releaseStorePath = System.getenv("ANDROID_SIGNING_STORE_FILE")
+    val releaseStorePassword = System.getenv("ANDROID_SIGNING_STORE_PASSWORD")
+    val releaseKeyAlias = System.getenv("ANDROID_SIGNING_KEY_ALIAS")
+    val releaseKeyPassword = System.getenv("ANDROID_SIGNING_KEY_PASSWORD")
+    val releaseSigning = if (
+        !releaseStorePath.isNullOrBlank() &&
+        !releaseStorePassword.isNullOrBlank() &&
+        !releaseKeyAlias.isNullOrBlank() &&
+        !releaseKeyPassword.isNullOrBlank() &&
+        file(releaseStorePath).isFile
+    ) {
+        signingConfigs.create("releaseProvided") {
+            storeFile = file(releaseStorePath)
+            storePassword = releaseStorePassword
+            keyAlias = releaseKeyAlias
+            keyPassword = releaseKeyPassword
+        }
+    } else {
+        null
     }
 
     buildTypes {
-        forEach { it.signingConfig = commonSigning }
         release {
+            signingConfig = releaseSigning
             isMinifyEnabled = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
