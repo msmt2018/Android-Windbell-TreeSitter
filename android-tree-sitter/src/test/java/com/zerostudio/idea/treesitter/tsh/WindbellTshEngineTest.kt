@@ -1626,5 +1626,63 @@ class WindbellTshLinkageTest {
             engine.closeNativeDocument(handle)
         }
     }
+    @Test
+    fun denseNativeQueryReturnsEveryCaptureWithoutArtificialWorkOrSpanCaps() {
+        val engine = WindbellTshEngine.instance
+        val extension = "dense-query-completeness"
+        val dsl = """
+            tsh 2 {
+                language { id: "dense-query-completeness" extensions: [".dqc"] }
+                styles { token { scope: "entity.name.type" } }
+                treeSitter {
+                    queries: [
+                        {
+                            id: "complete-class-captures"
+                            priority: 20
+                            source: `(class_declaration name: (identifier) @name body: (class_body) @body) @whole`
+                            captures: { whole: token, name: token, body: token }
+                        }
+                    ]
+                }
+            }
+        """.trimIndent()
+        assertTrue(
+            "Dense-query TSH DSL must compile: ${engine.lastCompileDiagnostics}",
+            engine.loadTshSource(extension, dsl, TSLanguageJava.getInstance())
+        )
+
+        // Three captures per declaration deliberately exceed the former
+        // 500,000-span render cap. The query also traverses enough AST nodes to
+        // pass the former fixed 1,024-callback progress cutoff.
+        val declarationCount = 200_000
+        val source = buildString(declarationCount * 24) {
+            append("package dense;\n")
+            repeat(declarationCount) { index ->
+                append("class DenseType")
+                append(index)
+                append(" {}\n")
+            }
+        }
+        val parser = TSParser.create().apply { language = TSLanguageJava.getInstance() }
+        val tree = parser.parseString(source)
+        assertNotNull(tree)
+        try {
+            assertFalse(
+                tree!!.rootNode.hasErrors(),
+                "Large full-document ATS tree must not contain ERROR or MISSING descendants"
+            )
+            val diagnostics = engine.computePipelineDiagnostics(tree, source, extension)
+            val queryCaptures = diagnostics.captures.count { it.source == 3 }
+            assertEquals(
+                declarationCount * 3,
+                queryCaptures,
+                "Every declaration must retain its whole-node, name, and body captures"
+            )
+        } finally {
+            tree?.close()
+            parser.close()
+        }
+    }
+
 
 }
