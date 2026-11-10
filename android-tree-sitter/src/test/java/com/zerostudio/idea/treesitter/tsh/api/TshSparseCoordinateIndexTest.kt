@@ -41,7 +41,7 @@ class TshSparseCoordinateIndexTest {
     @Test
     fun retainsSnapshotIndependentlyFromCallersLease() {
         val releases = AtomicInteger()
-        val callerLease = lease("A𠮷B", releases::incrementAndGet)
+        val callerLease = lease("A𠮷B") { releases.incrementAndGet(); Unit }
         val index = (TshSparseCoordinateIndex.build(
             callerLease, chunkSizeUtf16 = 256, checkpointStrideUtf16 = 256
         ) as TshResult.Success).value
@@ -124,6 +124,24 @@ class TshSparseCoordinateIndexTest {
         assertEquals(40_000L, (index.convert(
             60_000L, TshCoordinateSystem.UTF16_CODE_UNIT, TshCoordinateSystem.UNICODE_CODE_POINT
         ) as TshResult.Success).value)
+        index.close()
+        sourceLease.close()
+    }
+
+    @Test
+    fun preservesSurrogatePairAcrossSnapshotChunkAndCheckpointBoundary() {
+        val text = "a".repeat(255) + "𠮷" + "z".repeat(600)
+        val sourceLease = lease(text)
+        val index = (TshSparseCoordinateIndex.build(
+            sourceLease, chunkSizeUtf16 = 256, checkpointStrideUtf16 = 256
+        ) as TshResult.Success).value
+
+        assertEquals(259L, (index.convert(
+            257L, TshCoordinateSystem.UTF16_CODE_UNIT, TshCoordinateSystem.UTF8_BYTE
+        ) as TshResult.Success).value)
+        assertTrue(index.convert(
+            256L, TshCoordinateSystem.UTF16_CODE_UNIT, TshCoordinateSystem.UTF8_BYTE
+        ) is TshResult.Failure)
         index.close()
         sourceLease.close()
     }
