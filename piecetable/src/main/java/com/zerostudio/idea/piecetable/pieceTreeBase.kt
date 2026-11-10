@@ -557,8 +557,8 @@ internal class PieceTreeBase {
         return PieceTreeSnapshot(
             Array(sources.size) { sources[it] ?: typedText },
             starts,
-            pieceStarts.toIntArray(),
             coordinateStarts,
+            pieceStarts.toIntArray(),
             pieceLineStarts,
             pieceStartLineIndices.toIntArray(),
             pieceStartColumnValues.toIntArray(),
