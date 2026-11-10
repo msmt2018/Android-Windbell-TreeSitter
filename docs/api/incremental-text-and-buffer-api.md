@@ -63,7 +63,7 @@ Tree-sitter 分块输入已经具备首版源码契约。项目现有 PieceTreeT
 
 `PieceTreeSnapshot` 现在固定每个 Piece 的文档起始偏移、源缓冲区偏移、源缓冲区 lineStarts 引用快照、Piece 起始行列，以及 Piece 之前的 line-feed prefix。对坐标请求先二分定位 Piece，再在其 backing buffer 的 lineStarts 中二分定位行；不建立与整个文档行数成比例的新 line-start 数组，也不扫描 Piece 前面的文档内容。对于活动 change buffer，Snapshot 复制当前有效文本；其 lineStarts 通过 `IntList.snapshotView()` 以 O(1) copy-on-write 方式固定，后续编辑第一次修改该 IntList 时才分离底层数组，旧 Snapshot 继续读取原索引。查询复杂度为 O(log(piece count) + log(lines in backing buffer))，新增坐标元数据空间为 O(piece count + backing buffers)；原始与 change-buffer lineStarts 都通过每个 backing buffer 的不可变视图共享，不在每次 Snapshot 创建时复制整份行索引。
 
-`TshTextSnapshot.lineColumnAtUtf16(offset)` 是可选宿主能力，返回零基 Tree-sitter row 和 UTF-16 column。`TshPieceTreeTextAccessProvider` 将其映射到 `PieceTreeSnapshot.getTreeSitterPositionAt`；`TshTreeSitterEditCompiler` 对所有端点优先使用该索引。只有宿主未提供索引、坐标语义不兼容或端点无法确认时，才退回有界分块全文扫描。PieceTreeSnapshot 的快速路径仅在宿主确认换行归一化且没有 unusual line terminators 时启用；CR-only/异常换行继续走正确性优先的扫描路径。跨 surrogate pair 中间的端点返回不可用，由扫描路径给出既有非法边界诊断。
+`TshTextSnapshot.supportsLineColumnLookup` 与 `lineColumnAtUtf16(offset)` 共同构成可选宿主能力：能力为 true 时，返回零基 Tree-sitter row 和 UTF-16 column；返回 null 表示该端点非法，编译器直接报告坐标边界错误，不会再扫描全文。能力为 false 时表示宿主未提供兼容索引或当前换行语义不兼容，编译器才退回有界分块全文扫描。`TshPieceTreeTextAccessProvider` 将其映射到 `PieceTreeSnapshot.getTreeSitterPositionAt`。PieceTreeSnapshot 的快速路径仅在宿主确认换行归一化且没有 unusual line terminators 时启用；CR-only/异常换行继续走正确性优先的扫描路径。跨 surrogate pair 中间的端点返回不可用，由扫描路径给出既有非法边界诊断。
 
 该实现是利用 Piece Tree 现有节点/源缓冲区元数据的 Snapshot 坐标查询，不是独立 Rope Provider，也不表示编辑后可跨版本复用旧 Snapshot 坐标数据。每个新版本 Snapshot 仍需按当前 Piece 数量固定元数据；进一步减少快照创建成本及构建可编辑增量索引仍是后续工作。
 
