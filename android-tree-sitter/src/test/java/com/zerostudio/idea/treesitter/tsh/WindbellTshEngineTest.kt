@@ -109,6 +109,73 @@ class WindbellTshLinkageTest {
     }
 
     @Test
+    fun testLargeTextSourceQueryPredicateDoesNotMaterializeHugeCaptureForEquality() {
+        val engine = WindbellTshEngine.instance
+        val extension = "large-query-predicate"
+        val dsl = """
+            tsh 2 {
+                language { id: "large-query-predicate" extensions: [".large-query-predicate"] }
+                styles { comment { scope: "comment.block" } }
+                treeSitter {
+                    queries: [
+                        {
+                            id: "large-comment-not-equal"
+                            priority: 25
+                            source: `(block_comment) @comment (#not-eq? @comment "x")`
+                        }
+                    ]
+                }
+            }
+        """.trimIndent()
+        assertTrue(engine.loadTshSource(extension, dsl, TSLanguageJava.getInstance()))
+
+        // One enormous AST capture, but a tiny predicate literal. The old
+        // evaluator copied the complete capture into a temporary vector for
+        // every match. The range comparator must reject by length without
+        // materializing that 32 MiB capture.
+        val totalBytes = 32L * 1024L * 1024L + 128L * 1024L
+        val directory = File(System.getProperty("java.io.tmpdir"))
+        val reader = NativeTextWindowReader { offset, requested ->
+            val bytes = ByteArray(requested)
+            for (i in 0 until requested step 2) {
+                val charIndex = (offset + i) / 2L
+                val value = when {
+                    charIndex == 0L -> '/'
+                    charIndex == 1L -> '*'
+                    charIndex == totalBytes / 2L - 2L -> '*'
+                    charIndex == totalBytes / 2L - 1L -> '/'
+                    else -> 'a'
+                }.code
+                bytes[i] = (value and 0xFF).toByte()
+                bytes[i + 1] = ((value ushr 8) and 0xFF).toByte()
+            }
+            bytes
+        }
+        val handle = engine.createNativeDocument(
+            TSLanguageJava.getInstance(), extension, totalBytes, directory, reader
+        )
+        try {
+            val start = totalBytes - 128L
+            val encoded = engine.highlightNativeDocument(handle, start, totalBytes, false)
+            assertNotNull(encoded)
+            val values = encoded!!
+            val commentStyle = engine.getStyleCatalog(extension)
+                .first { it.name == "comment" }.styleId
+            assertTrue(
+                (0 until values.size / 6).any { index ->
+                    val base = index * 6
+                    values[base] <= start.toInt() &&
+                        values[base + 1] >= start.toInt() &&
+                        values[base + 2] == commentStyle.toInt()
+                },
+                "The large block-comment capture must survive #not-eq? and produce a clipped style span"
+            )
+        } finally {
+            engine.closeNativeDocument(handle)
+        }
+    }
+
+    @Test
     fun testOverlappingForegroundSpansCarryDeterministicPrecedence() {
         val engine = WindbellTshEngine.instance
         val source = """
