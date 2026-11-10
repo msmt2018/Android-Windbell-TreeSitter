@@ -107,7 +107,7 @@ class TSParserWindowedInputTest {
             assertFalse(first!!.rootNode.hasErrors(),
                 "Large String parse must retain a valid complete ATS tree")
 
-            reparsed = parser.parseString(first, source)
+            reparsed = parser.parseString(first!!, source)
             assertNotNull(reparsed)
             assertFalse(reparsed!!.rootNode.hasErrors(),
                 "Incremental String reparse must not damage the existing ATS tree")
