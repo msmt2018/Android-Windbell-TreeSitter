@@ -2734,7 +2734,7 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                                                 &maximum_width_units) &&
                                             maximum_width_units > 0 &&
                                             maximum_width_units <=
-                                                std::numeric_limits<uint64_t>::max() / sizeof(uint16_t)) {
+                                                (8u * 1024u * 1024u) / sizeof(uint16_t)) {
                                             entry.execution_capability =
                                                 RegexExecutionCapability::BOUNDED_WINDOW;
                                             entry.maximum_match_bytes =
