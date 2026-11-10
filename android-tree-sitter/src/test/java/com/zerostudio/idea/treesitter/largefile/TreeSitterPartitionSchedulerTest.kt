@@ -95,6 +95,43 @@ class TreeSitterPartitionSchedulerTest {
         scheduler.close()
     }
 
+    @Test fun failedViewportPlanningRollsBackPreviouslyStagedTasks() {
+        val text = ("line\n").repeat(600)
+        val failReads = AtomicBoolean(true)
+        val reads = AtomicInteger()
+        val source = object : Utf16DocumentSource {
+            override val length = text.length.toLong()
+            override val version = 82L
+            override fun get(offset: Long) = text[offset.toInt()]
+            override fun readChunk(offset: Long, maxChars: Int): CharSequence {
+                if (failReads.get() && reads.incrementAndGet() >= 2) {
+                    throw IllegalStateException("synthetic source read failure")
+                }
+                if (offset >= length) return ""
+                return text.substring(offset.toInt(), minOf(text.length, offset.toInt() + maxChars))
+            }
+        }
+        val manager = DocumentPartitionManager(256, prefetchPartitions = 0)
+        val cache = PartitionAstCache(1024) { 1L }
+        val scheduler = TreeSitterPartitionScheduler(manager, cache, contextChars = 8)
+
+        assertThrows(IllegalStateException::class.java) {
+            scheduler.requestViewport(source, 100, 700, 1) { null }
+        }
+
+        failReads.set(false)
+        reads.set(0)
+        val parsed = CountDownLatch(1)
+        val keys = scheduler.requestViewport(source, 100, 700, 1) {
+            parsed.countDown()
+            null
+        }
+        assertTrue(keys.isNotEmpty())
+        assertTrue(parsed.await(2, TimeUnit.SECONDS),
+            "tasks staged before the failed read must be eligible for a later request")
+        scheduler.close()
+    }
+
     @Test fun windowedCallbackKeepsUtf16SurrogatePairsInsideChunkBoundaries() {
         val text = "aaaaa😀b"
         val callback = CharSequenceParseWindowCallback(text)
