@@ -1,9 +1,7 @@
 package com.zerostudio.idea.treesitter.tsh.api
 
-import com.zerostudio.idea.treesitter.TSInput
-
 /**
- * Streams one immutable TSH Snapshot through Tree-sitter's UTF-16LE TSInput callback.
+ * Reads bounded UTF-16LE windows from one immutable TSH Snapshot for Tree-sitter.
  *
  * The callback validates the complete provider response, not just its start offset. This is
  * important because custom Piece Tree/Rope providers may override readChunk().
@@ -11,13 +9,17 @@ import com.zerostudio.idea.treesitter.TSInput
 class TshSnapshotTreeSitterInput(
     private val textProvider: TshTextAccessProvider,
     private val snapshotLease: TshTextSnapshotLease
-) : TSInput {
-    override fun read(
-        byteOffset: Long,
-        row: Int,
-        column: Int,
-        destination: ByteArray
-    ): Int {
+) {
+    fun read(byteOffset: Long, maxBytes: Int): ByteArray {
+        if (maxBytes <= 0 || (maxBytes and 1) != 0) {
+            throw TshTextInputException("Tree-sitter input window must have a positive even byte capacity")
+        }
+        val destination = ByteArray(maxBytes)
+        val byteCount = readInto(byteOffset, destination)
+        return if (byteCount == destination.size) destination else destination.copyOf(byteCount)
+    }
+
+    private fun readInto(byteOffset: Long, destination: ByteArray): Int {
         if (snapshotLease.isClosed) {
             throw TshTextInputException("Snapshot lease closed during Tree-sitter parse")
         }
@@ -26,9 +28,6 @@ class TshSnapshotTreeSitterInput(
         }
         if (byteOffset < 0L || (byteOffset and 1L) != 0L) {
             throw TshTextInputException("Tree-sitter requested a byte offset inside a UTF-16 code unit")
-        }
-        if (row < 0 || column < 0) {
-            throw TshTextInputException("Tree-sitter input point exceeds the supported signed coordinate range")
         }
         if (destination.isEmpty() || (destination.size and 1) != 0) {
             throw TshTextInputException("Tree-sitter input buffer must have a positive even byte capacity")
