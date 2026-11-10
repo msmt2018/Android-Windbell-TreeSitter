@@ -226,11 +226,10 @@ static bool tshSourceRegexMatchesBounded(
             window_bytes > static_cast<uint64_t>(std::numeric_limits<size_t>::max()))
             return false;
         std::vector<UChar> window;
-        // TextSource offsets and lengths are bytes; Oniguruma's UChar
-        // buffer is measured in 16-bit code units. Resizing by bytes here
-        // doubled the logical input length and made the scanner read beyond
-        // the initialized UTF-16 window.
-        try { window.resize(static_cast<size_t>(window_bytes / sizeof(UChar))); }
+        // Oniguruma's UChar is an 8-bit storage byte in this UTF-16LE
+        // adapter. The window length is therefore already the element count;
+        // do not divide by sizeof(UChar) or reinterpret it as native uint16_t.
+        try { window.resize(static_cast<size_t>(window_bytes)); }
         catch (...) { return false; }
         if (!windbell::largefile::copyTextRange(
                 source, core_start, window_bytes, window.data())) return false;
