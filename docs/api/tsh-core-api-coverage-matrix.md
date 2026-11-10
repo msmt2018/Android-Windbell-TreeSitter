@@ -42,3 +42,8 @@
 7. Kotlin/JNI/C++ 同步：`native-jni-cpp-completeness-api.md`。
 
 对每项能力，发布状态需分别记录：DSL 语法、Parser、Schema、Compiler lowering、Runtime consumer、Native bridge、Render consumer、单元测试、集成测试、设备验证。任一环节缺失都不能标为完整支持。
+
+
+## 当前 Regex 窗口 API 的实现边界
+
+`TshRegexWindowLease` / `TshRegexWindowSequence` 已提供有界连续输入资源、core ownership、UTF-16 边界和预算生命周期，但 Runtime Consumer/Oniguruma Adapter 尚未接线。旧 `WindbellTshEngine.computeHighlights(tree, text, extension)` 仍使用完整 String JNI 路径。因此 Regex 行在本矩阵中仍不能标记为执行实现完成。
