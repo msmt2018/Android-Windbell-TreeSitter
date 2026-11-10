@@ -12,6 +12,18 @@ The owner acquires a Native resource lease before requesting cancellation. For a
 
 Do not call the blocking wait method from the parse callback or from the thread that must return from the parse operation; doing so can deadlock.
 
+## Parse progress callback
+
+The Java binding's streaming API accepts `TSParser.ProgressCallback`; TSH exposes the platform-neutral `TshParseProgressCallback` through the snapshot-backed parser-owner overload.
+
+- The callback receives a coarse-grained current source offset and `hasError`.
+- The Java binding reports the Tree-sitter input byte offset. The TSH adapter divides by two because this binding parses UTF-16LE, and exposes UTF-16 code-unit offsets.
+- Return `true` to stop the parse. The callback runs synchronously on the parsing thread and must be fast, non-blocking, and thread-safe.
+- `TSH-PARSER-OWNER-039` identifies callback-requested cancellation; `TSH-PARSER-OWNER-040` reports a callback exception.
+- A callback exception is captured by the TSH adapter, requests Native stop, and is returned as a structured diagnostic after the parser unwinds.
+
+The Tree-sitter core progress callback is coarse-grained (operation-count based), not a per-token or wall-clock ticker. Native cancellation and timeout checks run before the user callback.
+
 ## Native timeout
 
 - `setTimeoutMicros(value)` configures Tree-sitter's timeout in microseconds; zero disables it.
@@ -31,4 +43,4 @@ Callback/provider exceptions and Native linkage failures retain their own diagno
 
 ## Limitations
 
-This API cancels an active synchronous parse; it does not introduce an asynchronous parser task/future abstraction. A cancellation request made while no Native parse is active is rejected rather than queued for a future parse. Native cancellation is cooperative and may not be immediate.
+This API cancels an active synchronous parse; it does not introduce an asynchronous parser task/future abstraction. A cancellation request made while no Native parse is active is rejected rather than queued for a future parse. Native cancellation is cooperative and may not be immediate. The TSH owner resets the resumable Native parser state under its parse lock after cancellation, timeout, callback stop, or parse failure, so the next document/revision does not accidentally continue the interrupted parse.
