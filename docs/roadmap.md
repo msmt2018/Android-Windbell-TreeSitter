@@ -189,3 +189,13 @@
 - [x] Snapshot-backed Parser 输入回调可选接入 PARSER_INPUT reservation：按请求 chunk 上限预留临时 UTF-16 数据估算，回调结束在 finally 释放；Native destination 与 Tree-sitter 内部 Native 分配不计入此账本。
 - [ ] Native Tree、Regex Window 尚未接入统一 reservation；Tree-sitter 内部 Native 分配不可由此账本精确计量。
 - [ ] 本轮新增 JUnit 测试源码待 CI 执行；未声称构建或设备压力测试通过。
+
+
+### 2026-11-10：统一 MatchSet 合并内存上限（SOURCE_PARTIAL）
+
+- [x] `TshMatchMerger` 新增 `TshMatchMergeBudget`，默认最多保留 250,000 个候选 Match，默认估算工作集上限 64 MiB。
+- [x] 合并过程改为单次流式遍历，不再通过 filter/groupBy/map 多次复制全部输入集合；先校验版本/管线，再进行 ID 冲突检查和语义去重。
+- [x] 估算包含 Match/Provenance、Capture 名称与文本、Scope Assignment/Path payload，以及哈希表和排序列表固定开销；达到限制返回 TRUNCATED 与 MEMORY warning。
+- [x] 限制合并诊断累计最多 4,096 条，避免 stale 输入造成诊断列表无限增长。
+- [ ] 上限只约束合并器新增的候选/工作集估算；输入 Collection 由上游提供且其既有内存不计入本次合并预算。该估算不是 JVM heap 精确测量，也不替代上游 Regex/Tree-sitter 执行限额。
+- [ ] 新增测试源码待最新 CI 验证。
