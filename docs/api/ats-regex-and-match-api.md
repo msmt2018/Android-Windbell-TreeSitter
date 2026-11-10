@@ -19,8 +19,9 @@ TextMate/Monarch 的设计思想可以作为配置组织、作用域命名、优
 | TshGrammarRegistry | Grammar 注册、版本和语言映射 |
 | TshAtsCompiler | ATS/SCM 简化语法编译 |
 | TshAtsQuery | 结构查询及捕获定义 |
-| TshRegexCompiler | Regex 编译与引擎能力检查 |
+| TshRegexCompiler / `TshOnigurumaRegex.compile` | 独立 Regex 编译、Native Handle 生命周期与显式窗口能力声明 |
 | TshRegexQuery | Regex 规则及 flags、region、timeout |
+| TshRegexExecutor / `TshOnigurumaRegex.execute` | 消费有界 Regex WindowSequence 并生成统一 MatchSet |
 | TshMatchEngine | 两条管道调度和结果汇总 |
 | TshMatch | 统一范围、来源、规则、capture 和优先级 |
 | TshConflictResolver | 重叠范围、优先级和合并策略 |
@@ -57,3 +58,8 @@ Regex 必须定义字符编码、flags、region、最大输入范围、超时/�
 - 统一 Match/Scope 与冲突：见 [unified-match-scope-api.md](unified-match-scope-api.md)。
 
 两管线只在 Match 结果层汇合，不共享或混淆底层执行器。
+
+
+## 当前 Regex Native 首版源码状态
+
+`TshOnigurumaRegex` 已提供独立 Native compile/release/window execute 与 WindowSequence 扫描入口，并通过 `TshRegexMatchAdapter` 汇入统一 MatchSet。窗口能力参数仍由调用方声明，尚未实现 Regex 静态能力分析、命名捕获名称映射、BLOCK 状态机、超时/强制取消或旧 DSL/legacy highlight 接线。详见 [Regex 独立执行与窗口 API](regex-window-execution-api.md)。
