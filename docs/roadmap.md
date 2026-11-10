@@ -202,7 +202,8 @@
 - [x] MatchMerger 支持两来源汇合、去重、稳定排序、stale Match 排除和 partial 状态。
 - [x] 新增 `TshTreeSitterMatchAdapter`：校验 query/tree/document/grammar revisions，将 UTF-8 byte 或 UTF-16LE/BE byte range 正确映射为 canonical UTF-16 Match；保留 UTF-8 rawRange、capture/pattern/node provenance、确定性 Match ID/排序，并传播 TRUNCATED 状态（源码与 JUnit 测试已提交，待 CI 验证）。
 - [x] 新增 `TshRegexMatchAdapter`：把独立 Regex result 的绝对 UTF-16 范围与捕获组映射为 REGEX `TshMatchSet`，校验文档版本/范围/捕获坐标，保留 Regex provenance、TRUNCATED/diagnostics，并在适配阶段限制 Match count 与 estimated-byte 工作集（源码与 JUnit 测试已提交，待 CI）。
-- [ ] Regex Oniguruma Executor 尚未产出 `TshRegexResult`；窗口本身未执行正则，不能将 Match adapter 标记为 Regex 执行完成。ATS 前端完成后复用 Tree-sitter 结果适配路径。
+- [x] `TshOnigurumaRegex.execute(sequence)` 已将独立 Oniguruma 窗口结果产出为 `TshRegexResult` 并接入 Match adapter（源码已提交，待 Native/JUnit 验证）。
+- [ ] 旧 DSL Regex MATCH/BLOCK 和 `WindbellTshEngine.nativeHighlight(String)` 尚未迁移到该 Executor；Regex 不能标记为完整接入。
 - [x] 首版 ScopeSelector AST、exact/suffix path 匹配、StyleRule priority/specificity merge、MatchSet→RenderPlan resolver 源码与测试源码。
 - [ ] Scope parser/stack/assignment pipeline、DSL Selector parser/compiler/specificity 与高级冲突策略尚未完成。
 - [ ] 完整重叠/包含/交叉冲突策略与跨管线一致性测试尚未完成。
