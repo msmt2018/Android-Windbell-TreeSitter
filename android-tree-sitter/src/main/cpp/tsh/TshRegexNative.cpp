@@ -20,7 +20,7 @@ uint64_t TshRegexNativeRegistry::compile(
     constexpr size_t kMaxPatternUtf16 = 1024u * 1024u;
     if ((!pattern && pattern_bytes != 0) || (pattern_bytes & 1u) != 0 ||
         pattern_bytes / 2u > kMaxPatternUtf16 ||
-        pattern_bytes > static_cast<size_t>(std::numeric_limits<ptrdiff_t>::max())) {
+        pattern_bytes > static_cast<size_t>(std::numeric_limits<std::ptrdiff_t>::max())) {
         error = "Regex pattern has an invalid or oversized UTF-16LE buffer";
         return 0;
     }
@@ -71,6 +71,11 @@ uint64_t TshRegexNativeRegistry::compile(
     }
 
     std::lock_guard<std::mutex> lock(mutex_);
+    constexpr size_t kMaxActiveRegexHandles = 4096;
+    if (entries_.size() >= kMaxActiveRegexHandles) {
+        error = "Active Regex handle limit (4096) has been reached";
+        return 0;
+    }
     if (next_handle_ == 0 || next_handle_ == std::numeric_limits<uint64_t>::max()) {
         error = "Regex native handle space is exhausted";
         return 0;
