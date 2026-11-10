@@ -16,7 +16,7 @@ Do not call the blocking wait method from the parse callback or from the thread 
 
 - `setTimeoutMicros(value)` configures Tree-sitter's timeout in microseconds; zero disables it.
 - `timeoutMicros()` reads the current configured value.
-- Timeout changes are serialized with the owner's parse lock so they do not mutate the parser while a parse is in flight.
+- Timeout changes and reads use a non-blocking owner parse-lock admission check. They return `TSH-PARSER-OWNER-038` while a parse is active instead of blocking the caller or mutating Native parser state concurrently.
 
 ## Null-tree diagnostics
 
