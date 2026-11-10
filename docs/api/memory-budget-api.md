@@ -12,7 +12,7 @@ It is not a process-RSS monitor and does not measure allocations made internally
 - Absolute hard limit: 512 MiB.
 - A caller may provide `availableMemoryBytes`; by default the effective limit is the minimum of target, hard limit, and one quarter of supplied available memory.
 - The API does not probe Android or operating-system memory. The host supplies the available-memory value.
-- Every configured limit must be positive; target cannot exceed hard limit; hard limit cannot exceed 512 MiB.
+- Every configured byte limit must be positive; target cannot exceed hard limit; hard limit cannot exceed 512 MiB. The reservation ledger is also count-bounded (65,536 active reservations by default, 262,144 absolute maximum) so a flood of tiny reservations cannot exhaust memory through ledger metadata.
 
 ## Categories
 
