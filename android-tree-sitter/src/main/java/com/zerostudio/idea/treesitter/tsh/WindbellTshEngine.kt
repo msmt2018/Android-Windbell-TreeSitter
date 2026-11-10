@@ -49,15 +49,19 @@ class WindbellTshEngine private constructor() {
         private set
 
     data class HighlightSpan(
-        val startByte: Long,
-        val endByte: Long,
+        val startByte: Int,
+        val endByte: Int,
         val styleId: Int,
         val fontFlags: Int,
         val priority: Int,
         val declarationOrder: Int,
         /** Native HighlightSource ordinal (ONIG_REGEX, REGEX_STATE, AST_SELECTOR, NATIVE_QUERY). */
         val source: Int = 255
-    )
+    ) {
+        /** Unsigned Tree-sitter byte offsets (the Int fields retain their ABI bit pattern). */
+        val startByteUnsigned: Long get() = Integer.toUnsignedLong(startByte)
+        val endByteUnsigned: Long get() = Integer.toUnsignedLong(endByte)
+    }
 
     data class AutoClosingPair(
         val open: String,
@@ -578,8 +582,8 @@ class WindbellTshEngine private constructor() {
                 .toMap()
 
             for (span in spans) {
-                val globalStart = span.startByte ushr 1
-                val globalEnd = span.endByte ushr 1
+                val globalStart = span.startByteUnsigned ushr 1
+                val globalEnd = span.endByteUnsigned ushr 1
                 val localStart = globalStart - documentOffset.toLong()
                 val localEnd = globalEnd - documentOffset.toLong()
                 val charStart = maxOf(localStart, visibleStart.toLong())
@@ -671,8 +675,8 @@ class WindbellTshEngine private constructor() {
         val count = flatData.size / 6
         val result = ArrayList<HighlightSpan>(count)
         for (i in 0 until count) {
-            val start = Integer.toUnsignedLong(flatData[i * 6])
-            val end = Integer.toUnsignedLong(flatData[i * 6 + 1])
+            val start = flatData[i * 6]
+            val end = flatData[i * 6 + 1]
             val packedMeta = flatData[i * 6 + 2]
             val styleId = packedMeta and 0xFFFF
             val flags = (packedMeta ushr 16) and 0xFFFF
@@ -710,8 +714,8 @@ class WindbellTshEngine private constructor() {
             val offset = 4 + i * 6
             val packedMeta = flatData[offset + 2]
             captures.add(HighlightSpan(
-                startByte = Integer.toUnsignedLong(flatData[offset]),
-                endByte = Integer.toUnsignedLong(flatData[offset + 1]),
+                startByte = flatData[offset],
+                endByte = flatData[offset + 1],
                 styleId = packedMeta and 0xFFFF, fontFlags = (packedMeta ushr 16) and 0xFFFF,
                 priority = flatData[offset + 3], declarationOrder = flatData[offset + 4],
                 source = flatData[offset + 5]
