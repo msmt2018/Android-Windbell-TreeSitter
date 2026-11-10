@@ -18,6 +18,9 @@
 #include <atomic>
 #include <chrono>
 #include <iostream>
+#include <vector>
+#include <new>
+#include <limits>
 #include <memory>
 
 #include "utf16str/UTF16String.h"
@@ -205,30 +208,72 @@ TSParser_setIncludedRanges(
     jclass self,
     jlong parser,
     jobjectArray ranges) {
-  req_nnp(env, parser);
-  int count = env->GetArrayLength(ranges);
-  TSRange tsRanges[count];
-  for (int i = 0; i < count; i++) {
+  if (parser == 0) {
+    throw_npe(env, "parser == nullptr");
+    return JNI_FALSE;
+  }
+  if (ranges == nullptr) {
+    throw_npe(env, "ranges == nullptr");
+    return JNI_FALSE;
+  }
+
+  auto *internal = reinterpret_cast<TSParserInternal *>(parser);
+  TSParser *native_parser = internal->getParser(env);
+  if (native_parser == nullptr || env->ExceptionCheck()) {
+    return JNI_FALSE;
+  }
+
+  const jsize count = env->GetArrayLength(ranges);
+  if (env->ExceptionCheck()) {
+    return JNI_FALSE;
+  }
+
+  // The number of ranges is controlled by the Java caller. Do not allocate a
+  // variable-length array on the native stack: large arrays can exhaust the
+  // thread stack, and VLAs are not part of standard C++.
+  std::vector<TSRange> native_ranges;
+  try {
+    native_ranges.resize(static_cast<size_t>(count));
+  } catch (const std::bad_alloc &) {
+    throw_exception(env, "java/lang/OutOfMemoryError",
+                    "Unable to allocate Tree-sitter included ranges");
+    return JNI_FALSE;
+  }
+
+  for (jsize i = 0; i < count; ++i) {
     jobject range = env->GetObjectArrayElement(ranges, i);
-    std::string msg = std::string("ranges[") + std::to_string(i) + "]";
-    req_nnp(env, range, msg);
-    tsRanges[i] = _unmarshalRange(env, range);
+    if (env->ExceptionCheck()) {
+      if (range != nullptr) env->DeleteLocalRef(range);
+      return JNI_FALSE;
+    }
+    if (range == nullptr) {
+      const std::string error = "ranges[" + std::to_string(i) + "] == nullptr";
+      throw_npe(env, error.c_str());
+      return JNI_FALSE;
+    }
+
+    native_ranges[static_cast<size_t>(i)] = _unmarshalRange(env, range);
+    env->DeleteLocalRef(range);
+    if (env->ExceptionCheck()) {
+      return JNI_FALSE;
+    }
 
     // This binding always supplies TSInputEncodingUTF16LE. Tree-sitter byte
     // ranges therefore must begin and end on a two-byte UTF-16 code-unit
     // boundary. Do not let the runtime silently reinterpret an odd offset.
-    if ((tsRanges[i].start_byte & 1u) != 0 ||
-        (tsRanges[i].end_byte & 1u) != 0) {
-      const std::string error = std::string("ranges[") + std::to_string(i) +
+    const TSRange &native_range = native_ranges[static_cast<size_t>(i)];
+    if ((native_range.start_byte & 1u) != 0 ||
+        (native_range.end_byte & 1u) != 0) {
+      const std::string error = "ranges[" + std::to_string(i) +
           "] has a byte offset in the middle of a UTF-16 code unit";
       throw_illegal_args(env, error.c_str());
       return JNI_FALSE;
     }
   }
 
-  const TSRange *r = tsRanges;
-  return (jboolean) ts_parser_set_included_ranges(((TSParserInternal *) parser)->getParser(
-      env), r, count);
+  const TSRange *range_data = native_ranges.empty() ? nullptr : native_ranges.data();
+  return static_cast<jboolean>(ts_parser_set_included_ranges(
+      native_parser, range_data, static_cast<uint32_t>(native_ranges.size())));
 }
 
 static jobjectArray
@@ -236,17 +281,43 @@ TSParser_getIncludedRanges(
     JNIEnv *env,
     jclass self,
     jlong parser) {
-  req_nnp(env, parser);
-  jint count;
-  const TSRange *ranges =
-      ts_parser_included_ranges(((TSParserInternal *) parser)->getParser(env),
-                                reinterpret_cast<uint32_t *>(&count));
-  jobjectArray result = createRangeArr(env, count);
-  req_nnp(env, result, "TSRange[] from factory");
+  if (parser == 0) {
+    throw_npe(env, "parser == nullptr");
+    return nullptr;
+  }
 
-  for (uint32_t i = 0; i < count; i++) {
-    const TSRange *r = (ranges + i);
-    env->SetObjectArrayElement(result, (jint) i, _marshalRange(env, *r));
+  auto *internal = reinterpret_cast<TSParserInternal *>(parser);
+  TSParser *native_parser = internal->getParser(env);
+  if (native_parser == nullptr || env->ExceptionCheck()) {
+    return nullptr;
+  }
+
+  uint32_t count = 0;
+  const TSRange *ranges = ts_parser_included_ranges(native_parser, &count);
+  if (env->ExceptionCheck()) {
+    return nullptr;
+  }
+  if (count > static_cast<uint32_t>(std::numeric_limits<jint>::max())) {
+    throw_illegal_state(env, "Tree-sitter included range count exceeds Java array limits");
+    return nullptr;
+  }
+
+  jobjectArray result = createRangeArr(env, static_cast<jint>(count));
+  if (result == nullptr || env->ExceptionCheck()) {
+    return nullptr;
+  }
+
+  for (uint32_t i = 0; i < count; ++i) {
+    jobject range = _marshalRange(env, ranges[i]);
+    if (range == nullptr || env->ExceptionCheck()) {
+      if (range != nullptr) env->DeleteLocalRef(range);
+      return nullptr;
+    }
+    env->SetObjectArrayElement(result, static_cast<jsize>(i), range);
+    env->DeleteLocalRef(range);
+    if (env->ExceptionCheck()) {
+      return nullptr;
+    }
   }
   return result;
 }
@@ -256,21 +327,72 @@ static jlong TSParser_parse(JNIEnv *env,
                             jlong parser,
                             jlong tree_pointer,
                             jlong str_pointer) {
-  req_nnp(env, parser);
-  req_nnp(env, str_pointer, "string");
-  auto *ts_parser_internal = (TSParserInternal *) parser;
+  if (parser == 0) {
+    throw_npe(env, "parser == nullptr");
+    return 0;
+  }
+  if (str_pointer == 0) {
+    throw_npe(env, "string == nullptr");
+    return 0;
+  }
+
+  auto *ts_parser_internal = reinterpret_cast<TSParserInternal *>(parser);
   TSParser *ts_parser = ts_parser_internal->getParser(env);
-  TSTree *old_tree = tree_pointer == 0 ? nullptr : (TSTree *) tree_pointer;
+  if (ts_parser == nullptr || env->ExceptionCheck()) {
+    return 0;
+  }
+
+  TSTree *old_tree = tree_pointer == 0
+      ? nullptr
+      : reinterpret_cast<TSTree *>(tree_pointer);
   auto *source = as_str(env, str_pointer);
+  if (source == nullptr || env->ExceptionCheck()) {
+    return 0;
+  }
+
+  // UTF16String exposes a signed jint byte length. Reject an overflowed or
+  // malformed length before narrowing it to Tree-sitter's uint32 byte ABI.
+  const jint source_byte_length = source->byte_length();
+  if (source_byte_length < 0 || (source_byte_length & 1) != 0) {
+    throw_illegal_args(env,
+        "UTF-16LE source byte length must be non-negative and even");
+    return 0;
+  }
+  if (static_cast<uint64_t>(source_byte_length) >
+      static_cast<uint64_t>(std::numeric_limits<uint32_t>::max())) {
+    throw_illegal_args(env, "Source exceeds Tree-sitter's uint32 byte-offset limit");
+    return 0;
+  }
+
+  // Keep the existing owned snapshot copy. UTF16String is mutable and does not
+  // expose a read lease, so borrowing its vector storage here would permit a
+  // concurrent mutation to invalidate the pointer during parsing.
+  std::unique_ptr<const char[]> source_bytes;
+  try {
+    source_bytes.reset(source->to_cstring());
+  } catch (const std::length_error &error) {
+    throw_illegal_args(env, error.what());
+    return 0;
+  } catch (const std::bad_alloc &) {
+    throw_exception(env, "java/lang/OutOfMemoryError",
+                    "Unable to copy UTF-16LE parser input");
+    return 0;
+  }
 
   if (!ts_parser_internal->beginRound(env)) {
     return 0;
   }
 
-  const char *src_cstring = source->to_cstring();
+  struct ParseRoundGuard {
+    TSParserInternal *parser;
+    ~ParseRoundGuard() {
+      if (parser != nullptr) parser->endRound();
+    }
+  } round_guard{ts_parser_internal};
+
   TSParserInput inputPayload{
-      src_cstring,
-      static_cast<uint32_t>(source->byte_length()),
+      source_bytes.get(),
+      static_cast<uint32_t>(source_byte_length),
   };
   TSInput input{
       &inputPayload,
@@ -283,14 +405,9 @@ static jlong TSParser_parse(JNIEnv *env,
       TSParser_progressCallback,
   };
 
-  // Tree-sitter 0.26 replaces timeout and cancellation-flag APIs with a
-  // progress callback. It returns nullptr when that callback cancels parsing.
   ts_parser_internal->markParseStart();
-  auto tree = ts_parser_parse_with_options(ts_parser, old_tree, input, options);
-
-  ts_parser_internal->endRound();
-  delete[] src_cstring;
-  return (jlong) tree;
+  TSTree *tree = ts_parser_parse_with_options(ts_parser, old_tree, input, options);
+  return reinterpret_cast<jlong>(tree);
 }
 
 static jboolean

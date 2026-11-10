@@ -19,6 +19,7 @@
 #include <sstream>
 #include <cstring>
 #include <utility>
+#include <stdexcept>
 #include <iostream>
 
 #include "UTF16String.h"
@@ -208,9 +209,18 @@ jstring UTF16String::to_jstring(JNIEnv *env) {
 }
 
 const char *UTF16String::to_cstring() {
-    char *chars = new char[byte_length()];
-    for (jint i = 0; i < byte_length(); ++i) {
-        *(chars + i) = _string.at(i);
+    const jint length = byte_length();
+    if (length < 0) {
+        throw std::length_error("UTF16String byte length exceeds the JNI int range");
+    }
+
+    // The vector is already stored as the exact UTF-16LE byte sequence consumed
+    // by Tree-sitter. Copy it in one operation instead of calling vector::at()
+    // for every byte; this keeps the owned snapshot semantics while avoiding
+    // per-byte bounds checks and repeated byte_length() conversions.
+    char *chars = new char[static_cast<size_t>(length)];
+    if (length > 0) {
+        std::memcpy(chars, _string.data(), static_cast<size_t>(length));
     }
     return chars;
 }
