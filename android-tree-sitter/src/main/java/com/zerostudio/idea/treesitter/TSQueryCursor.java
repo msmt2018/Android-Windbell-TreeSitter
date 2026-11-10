@@ -41,7 +41,7 @@ public class TSQueryCursor extends TSNativeObject implements Iterable<TSQueryMat
   private boolean predicateEvaluationEnabled = true;
   protected TSNode targetNode = null;
   protected TSQuery execQuery = null;
-  protected final Set<TSPredicateHandler> predicateHandlers = new HashSet<>();
+  protected final Set<TSPredicateHandler> predicateHandlers = new LinkedHashSet<>();
 
   protected TSQueryCursor() {
     this(Native.newCursor());
