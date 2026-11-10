@@ -512,7 +512,7 @@ internal class PieceTreeBase {
         val pieceStarts = IntList()
         val pieceBufferIndices = IntList()
         val pieceStartLineIndices = IntList()
-        val pieceStartColumns = IntList()
+        val pieceStartColumnValues = IntList()
         val pieceLineFeedPrefixes = IntList()
         var lineFeedPrefix = 0
         var length = 0
@@ -524,7 +524,7 @@ internal class PieceTreeBase {
                 pieceStarts.add(length)
                 pieceBufferIndices.add(piece.bufferIndex)
                 pieceStartLineIndices.add(piece.start.line)
-                pieceStartColumns.add(piece.start.column)
+                pieceStartColumnValues.add(piece.start.column)
                 pieceLineFeedPrefixes.add(lineFeedPrefix)
                 lineFeedPrefix = Math.addExact(lineFeedPrefix, piece.lineFeedCnt)
                 if (piece.bufferIndex == 0) {
@@ -568,7 +568,7 @@ internal class PieceTreeBase {
                 pieceStartColumns[index] = starts[index] - startsForBuffer[low]
             } else {
                 pieceStartLines[index] = pieceStartLineIndices[index]
-                pieceStartColumns[index] = this.pieceStartColumns[index]
+                pieceStartColumns[index] = pieceStartColumnValues[index]
             }
         }
         return PieceTreeSnapshot(
