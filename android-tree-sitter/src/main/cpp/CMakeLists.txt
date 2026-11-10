@@ -110,6 +110,7 @@ add_library(android-tree-sitter SHARED
     # Windbell-TSH 核心实现
     tsh/WindbellTshCompiler.cpp
     tsh/WindbellTshCore.cpp
+    tsh/TshRegexNative.cpp
     ts_windbell_jni.cpp
 )
 
