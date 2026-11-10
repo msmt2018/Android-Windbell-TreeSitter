@@ -500,13 +500,22 @@ internal class PieceTreeBase {
      * ones). The change buffer is appended to by every edit and its line starts lose their last
      * entry when a "\r\n" is joined, so its text is copied, piece by piece.
      */
-    fun createSnapshot(BOM: String): PieceTreeSnapshot {
+    fun createSnapshot(
+        BOM: String,
+        supportsTreeSitterLineCoordinates: Boolean = true
+    ): PieceTreeSnapshot {
         val changeBuffer = this._buffers[0].buffer
         val typed = StringBuilder()
         // null: the piece lies in `typed`, filled in once `typed` is complete
         val sources = ArrayList<CharSequence?>()
         val sourceStarts = IntList()
         val pieceStarts = IntList()
+        val pieceBufferIndices = IntList()
+        val pieceCoordinateStarts = IntList()
+        val pieceStartLineIndices = IntList()
+        val pieceStartColumnValues = IntList()
+        val pieceLineFeedPrefixes = IntList()
+        var lineFeedPrefix = 0
         var length = 0
 
         this.iterate(this.root) { node ->
@@ -514,6 +523,12 @@ internal class PieceTreeBase {
             if (node !== sentinel && piece.length > 0) {
                 val start = this.offsetInBuffer(piece.bufferIndex, piece.start)
                 pieceStarts.add(length)
+                pieceBufferIndices.add(piece.bufferIndex)
+                pieceCoordinateStarts.add(start)
+                pieceStartLineIndices.add(piece.start.line)
+                pieceStartColumnValues.add(piece.start.column)
+                pieceLineFeedPrefixes.add(lineFeedPrefix)
+                lineFeedPrefix = Math.addExact(lineFeedPrefix, piece.lineFeedCnt)
                 if (piece.bufferIndex == 0) {
                     sources.add(null)
                     sourceStarts.add(typed.length)
@@ -529,10 +544,28 @@ internal class PieceTreeBase {
         pieceStarts.add(length)
 
         val typedText: CharSequence = typed.toString()
+        val starts = sourceStarts.toIntArray()
+        val coordinateStarts = pieceCoordinateStarts.toIntArray()
+        val buffers = pieceBufferIndices.toIntArray()
+        val lineStartsCache = arrayOfNulls<IntListSnapshot>(this._buffers.size)
+        val pieceLineStarts = Array(sources.size) { index ->
+            val bufferIndex = buffers[index]
+            lineStartsCache[bufferIndex] ?: run {
+                val view = this._buffers[bufferIndex].lineStarts.snapshotView()
+                lineStartsCache[bufferIndex] = view
+                view
+            }
+        }
         return PieceTreeSnapshot(
             Array(sources.size) { sources[it] ?: typedText },
-            sourceStarts.toIntArray(),
+            starts,
+            coordinateStarts,
             pieceStarts.toIntArray(),
+            pieceLineStarts,
+            pieceStartLineIndices.toIntArray(),
+            pieceStartColumnValues.toIntArray(),
+            pieceLineFeedPrefixes.toIntArray(),
+            supportsTreeSitterLineCoordinates,
             this._versionId,
             this._lineCnt,
             this._EOL,
@@ -1173,10 +1206,12 @@ internal class PieceTreeBase {
             val buffer = this._buffers[nodePos.node.piece.bufferIndex]
             val startOffset = this.offsetInBuffer(nodePos.node.piece.bufferIndex, nodePos.node.piece.start)
             val targetOffset = startOffset + nodePos.remainder
-            val pieceEnd = startOffset + nodePos.node.piece.length
-            val requestedLength = Math.max(1, maxLength)
-            val targetEnd = targetOffset + Math.min(pieceEnd - targetOffset, requestedLength)
-            return buffer.buffer.substring(targetOffset, targetEnd)
+            // Bound the requested length before adding it to targetOffset. With the default
+            // Int.MAX_VALUE request, targetOffset + maxLength can overflow and produce a
+            // negative substring end while readers race with edits on immutable snapshots.
+            val remaining = startOffset + nodePos.node.piece.length - targetOffset
+            val chunkLength = Math.min(remaining, maxLength.coerceAtLeast(1))
+            return buffer.buffer.substring(targetOffset, targetOffset + chunkLength)
         }
     }
 
