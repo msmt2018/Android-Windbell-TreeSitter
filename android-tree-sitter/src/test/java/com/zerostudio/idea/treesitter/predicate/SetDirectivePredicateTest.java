@@ -26,6 +26,7 @@ import com.zerostudio.idea.treesitter.TSQueryError;
 import com.zerostudio.idea.treesitter.TreeSitterTest;
 import com.zerostudio.idea.treesitter.java.TSLanguageJava;
 import org.junit.Test;
+import java.util.List;
 import org.junit.runner.RunWith;
 import org.robolectric.RobolectricTestRunner;
 
@@ -182,4 +183,39 @@ public class SetDirectivePredicateTest extends TreeSitterTest {
       }
     }
   }
+  @Test
+  public void test_declaredButUnhandledPredicateFailsExplicitly() {
+    final var lang = TSLanguageJava.getInstance();
+    try (final var parser = TSParser.create()) {
+      parser.setLanguage(lang);
+      final String source = "public class Main { void a() {} }";
+      final String querySource =
+        "(method_declaration name: (identifier) @method_name (#custom-check? @method_name))";
+
+      try (final var tree = parser.parseString(source);
+           final var query = TSQuery.create(lang, querySource);
+           final var cursor = TSQueryCursor.create()) {
+        cursor.addPredicateHandler(new TSPredicateHandler() {
+          @Override
+          public String[] getSupportedPredicates() {
+            return new String[] {"custom-check?"};
+          }
+
+          @Override
+          public Result handle(TSQuery query, TSQueryMatch match, List<PredicateStep> args) {
+            return Result.UNHANDLED;
+          }
+        });
+        cursor.exec(query, tree.getRootNode());
+
+        try {
+          cursor.nextMatch();
+          throw new AssertionError("An unhandled predicate must not silently discard matches");
+        } catch (IllegalStateException expected) {
+          assertThat(expected.getMessage()).contains("custom-check?");
+        }
+      }
+    }
+  }
+
 }
