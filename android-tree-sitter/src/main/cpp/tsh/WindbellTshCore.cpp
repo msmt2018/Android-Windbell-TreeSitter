@@ -1094,6 +1094,19 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
             next_checkpoint =
                 ((static_cast<uint64_t>(position) / (64u * 1024u)) + 1u) *
                 (64u * 1024u);
+            // A mismatching stale checkpoint is discarded above, but later
+            // stale candidates may still converge. Re-arm the exact next
+            // candidate after every checkpoint, not only at scan startup;
+            // otherwise the regular stride can jump over an unaligned one.
+            if (regex_state_checkpoints) {
+                for (const auto& candidate : *regex_state_checkpoints) {
+                    if (candidate.source_version != source_version &&
+                        candidate.byte_offset > position) {
+                        next_checkpoint = std::min(
+                            next_checkpoint, candidate.byte_offset);
+                    }
+                }
+            }
         };
         OnigRegion* state_region = onig_region_new();
         OnigRegion* state_case_region = onig_region_new();
