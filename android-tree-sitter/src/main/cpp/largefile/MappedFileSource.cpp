@@ -4,6 +4,7 @@
 #include <limits>
 #include <new>
 #include <cerrno>
+#include <cstdlib>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <fcntl.h>
