@@ -671,7 +671,19 @@ class TshSyntaxHighlighter(
                 throw cancelled
             } catch (error: Throwable) {
                 Log.e(TAG, "Native incremental edit failed; rebuilding the native session", error)
-                if (generation.get() == active.ticket) host?.buffer?.let(::scheduleParse)
+                // A batch may have applied earlier edits before a later transaction
+                // failed. Invalidate this session immediately so queued successor
+                // batches cannot mutate its partially-updated tree. Rebuild on the
+                // editor thread from one authoritative snapshot; edits queued before
+                // that snapshot are discarded, later edits are queued for replay.
+                if (generation.compareAndSet(active.ticket, active.ticket + 1L)) {
+                    scope.launch(Dispatchers.Main.immediate) {
+                        if (generation.get() == active.ticket + 1L && largeSession === active) {
+                            synchronized(nativeEditLock) { pendingNativeEdits.clear() }
+                            host?.buffer?.let(::scheduleParse)
+                        }
+                    }
+                }
             }
             }.also { nativeEditJob = it }
         }
