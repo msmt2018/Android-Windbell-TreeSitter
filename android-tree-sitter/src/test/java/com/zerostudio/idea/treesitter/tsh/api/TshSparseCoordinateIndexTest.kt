@@ -26,7 +26,7 @@ class TshSparseCoordinateIndexTest {
 
         assertEquals(3L, (value.convert(5L, TshCoordinateSystem.UTF8_BYTE,
             TshCoordinateSystem.UTF16_CODE_UNIT) as TshResult.Success).value)
-        assertEquals(2L, (value.convert(2L, TshCoordinateSystem.UNICODE_CODE_POINT,
+        assertEquals(3L, (value.convert(2L, TshCoordinateSystem.UNICODE_CODE_POINT,
             TshCoordinateSystem.UTF16_CODE_UNIT) as TshResult.Success).value)
         assertEquals(6L, (value.convert(4L, TshCoordinateSystem.UTF16_CODE_UNIT,
             TshCoordinateSystem.UTF8_BYTE) as TshResult.Success).value)
