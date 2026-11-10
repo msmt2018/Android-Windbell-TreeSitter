@@ -58,10 +58,15 @@ class TshRegexWindowLease private constructor(
     val coreStartInWindow: Int get() = (coreStartUtf16 - windowStartUtf16).toInt()
     val coreEndInWindow: Int get() = (coreEndUtf16 - windowStartUtf16).toInt()
 
-    /** Emit a match from this window only when its absolute start belongs to the core interval. */
+    /**
+     * Emit a match only when its absolute start belongs to this core interval. The final document
+     * boundary is included by the last window so zero-width EOF matches are not lost.
+     */
     fun ownsMatchStart(absoluteStartUtf16: Long): Boolean =
         !closed.get() && absoluteStartUtf16 >= coreStartUtf16 &&
-            absoluteStartUtf16 < coreEndUtf16
+            (absoluteStartUtf16 < coreEndUtf16 ||
+                (isDocumentEnd && coreEndUtf16 == documentLengthUtf16 &&
+                    absoluteStartUtf16 == documentLengthUtf16))
 
     fun absoluteUtf16Offset(windowOffsetUtf16: Int): Long? {
         if (closed.get() || windowOffsetUtf16 < 0 || windowOffsetUtf16 > lengthUtf16) return null
