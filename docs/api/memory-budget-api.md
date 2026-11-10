@@ -40,6 +40,6 @@ The capture estimate accounts for UTF-16 string payload lengths and a fixed per-
 ## Current limitations
 
 - Query result limits do not yet retain a `TshMemoryReservation` for the full lifetime of `TshQueryResult`.
-- Parser input, Native syntax-tree internals, Regex windows, RenderPlan, and coordinate-index allocations are not yet comprehensively wired to this ledger.
+- Sparse coordinate-index checkpoints can optionally reserve an estimated budget before allocation; the reservation is held until the index closes. Parser input, Native syntax-tree internals, Regex windows, and RenderPlan are not yet comprehensively wired to this ledger.
 - Tree-sitter Native allocation size is not precisely observable through the current public binding; the ledger must not be presented as a guarantee over those opaque allocations.
 - The API does not itself implement eviction, task scheduling, cancellation, or process-wide memory-pressure callbacks. Callers must react to reservation failures by reducing work, deferring, cancelling safely, or using bounded windows.
