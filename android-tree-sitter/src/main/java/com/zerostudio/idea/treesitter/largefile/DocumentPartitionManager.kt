@@ -44,31 +44,75 @@ data class DocumentPartition(
 
 /** Primitive parallel-array index: no per-checkpoint heap objects or references. */
 private class CompactPointCheckpointIndex(initialCapacity: Int = 256) {
-    private var offsets = LongArray(initialCapacity.coerceAtLeast(1))
-    private var rows = LongArray(initialCapacity.coerceAtLeast(1))
-    private var columns = LongArray(initialCapacity.coerceAtLeast(1))
+    private var offsets32 = IntArray(initialCapacity.coerceAtLeast(1))
+    private var rows32 = IntArray(initialCapacity.coerceAtLeast(1))
+    private var columns32 = IntArray(initialCapacity.coerceAtLeast(1))
+    private var offsets64: LongArray? = null
+    private var rows64: LongArray? = null
+    private var columns64: LongArray? = null
     var size: Int = 0
         private set
+
+    val uses64BitStorage: Boolean get() = offsets64 != null
+
     fun add(offset: Long, row: Long, column: Long) {
-        if (size == offsets.size) {
-            val next = if (size < 1024) size * 2 else size + (size ushr 1)
-            val capacity = next.coerceAtLeast(size + 1)
-            offsets = offsets.copyOf(capacity); rows = rows.copyOf(capacity); columns = columns.copyOf(capacity)
+        if (offset < 0L || row < 0L || column < 0L) {
+            throw IllegalArgumentException("Checkpoint coordinates must be non-negative")
         }
-        offsets[size] = offset; rows[size] = row; columns[size] = column; size++
+        if (offsets64 == null &&
+            (offset > Int.MAX_VALUE || row > Int.MAX_VALUE || column > Int.MAX_VALUE)) {
+            promoteTo64Bit()
+        }
+        ensureCapacity()
+        val wideOffsets = offsets64
+        if (wideOffsets != null) {
+            wideOffsets[size] = offset
+            rows64!![size] = row
+            columns64!![size] = column
+        } else {
+            offsets32[size] = offset.toInt()
+            rows32[size] = row.toInt()
+            columns32[size] = column.toInt()
+        }
+        size++
     }
+
+    private fun ensureCapacity() {
+        if (size < offsets32.size) return
+        val next = if (size < 1024) size * 2 else size + (size ushr 1)
+        val capacity = next.coerceAtLeast(size + 1)
+        offsets32 = offsets32.copyOf(capacity)
+        rows32 = rows32.copyOf(capacity)
+        columns32 = columns32.copyOf(capacity)
+        offsets64 = offsets64?.copyOf(capacity)
+        rows64 = rows64?.copyOf(capacity)
+        columns64 = columns64?.copyOf(capacity)
+    }
+
+    private fun promoteTo64Bit() {
+        offsets64 = LongArray(offsets32.size) { offsets32[it].toLong() }
+        rows64 = LongArray(rows32.size) { rows32[it].toLong() }
+        columns64 = LongArray(columns32.size) { columns32[it].toLong() }
+        offsets32 = IntArray(0)
+        rows32 = IntArray(0)
+        columns32 = IntArray(0)
+    }
+
     fun floorIndex(offset: Long): Int {
-        var low = 0; var high = size - 1; var best = 0
+        var low = 0
+        var high = size - 1
+        var best = 0
         while (low <= high) {
             val middle = (low + high) ushr 1
-            if (offsets[middle] <= offset) { best = middle; low = middle + 1 }
+            if (offsetAt(middle) <= offset) { best = middle; low = middle + 1 }
             else high = middle - 1
         }
         return best
     }
-    fun offsetAt(index: Int): Long = offsets[index]
-    fun rowAt(index: Int): Long = rows[index]
-    fun columnAt(index: Int): Long = columns[index]
+
+    fun offsetAt(index: Int): Long = offsets64?.get(index)?.toLong() ?: offsets32[index].toLong()
+    fun rowAt(index: Int): Long = rows64?.get(index)?.toLong() ?: rows32[index].toLong()
+    fun columnAt(index: Int): Long = columns64?.get(index)?.toLong() ?: columns32[index].toLong()
 }
 
 /** Growable primitive buffer; avoids boxed Longs during sparse-index construction. */
@@ -266,13 +310,15 @@ class DocumentPartitionManager(
     }
 
     private fun pointAt(source: Utf16DocumentSource, offset: Long): TSPoint {
-        val checkpoint = lock.read {
+        var index = 0L
+        var row = 0L
+        var column = 0L
+        lock.read {
             val best = pointCheckpoints.floorIndex(offset)
-            longArrayOf(pointCheckpoints.offsetAt(best), pointCheckpoints.rowAt(best), pointCheckpoints.columnAt(best))
+            index = pointCheckpoints.offsetAt(best)
+            row = pointCheckpoints.rowAt(best)
+            column = pointCheckpoints.columnAt(best)
         }
-        var index = checkpoint[0]
-        var row = checkpoint[1]
-        var column = checkpoint[2]
         while (index < offset) {
             val chunk = source.readChunk(
                 index,
