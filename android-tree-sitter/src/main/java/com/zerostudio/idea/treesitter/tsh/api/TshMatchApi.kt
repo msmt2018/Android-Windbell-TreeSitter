@@ -120,25 +120,35 @@ data class TshMatchSet(
 ) {
     init {
         require(documentVersion >= 0L)
-        require(matches.all { it.documentId == documentId && it.documentVersion == documentVersion })
-        require(matches.map { it.id }.distinct().size == matches.size)
-        require(matches.none { it.source == TshMatchSource.TREE_SITTER_ATS } || treeSitterRevision != null) {
-            "Tree-sitter matches require a Tree-sitter pipeline revision"
-        }
-        require(matches.filter { it.source == TshMatchSource.TREE_SITTER_ATS }
-            .all { it.pipelineRevision == treeSitterRevision }) {
-            "Tree-sitter Match pipeline revision does not match the MatchSet"
-        }
-        require(matches.none { it.source == TshMatchSource.REGEX } || regexRevision != null) {
-            "Regex matches require a Regex pipeline revision"
-        }
-        require(matches.filter { it.source == TshMatchSource.REGEX }
-            .all { it.pipelineRevision == regexRevision }) {
-            "Regex Match pipeline revision does not match the MatchSet"
-        }
         require(treeSitterRevision == null || treeSitterRevision.isNotBlank())
         require(regexRevision == null || regexRevision.isNotBlank())
         require(configRevision == null || configRevision.isNotBlank())
+
+        // Validate all MatchSet invariants in one pass. The previous filter/map/distinct chain
+        // created several full-size temporary collections for large result sets.
+        val ids = HashSet<TshMatchId>(matches.size)
+        for (match in matches) {
+            require(match.documentId == documentId && match.documentVersion == documentVersion)
+            require(ids.add(match.id)) { "Match ids must be unique within a MatchSet" }
+            when (match.source) {
+                TshMatchSource.TREE_SITTER_ATS -> {
+                    require(treeSitterRevision != null) {
+                        "Tree-sitter matches require a Tree-sitter pipeline revision"
+                    }
+                    require(match.pipelineRevision == treeSitterRevision) {
+                        "Tree-sitter Match pipeline revision does not match the MatchSet"
+                    }
+                }
+                TshMatchSource.REGEX -> {
+                    require(regexRevision != null) {
+                        "Regex matches require a Regex pipeline revision"
+                    }
+                    require(match.pipelineRevision == regexRevision) {
+                        "Regex Match pipeline revision does not match the MatchSet"
+                    }
+                }
+            }
+        }
     }
 
     fun isCurrentFor(
