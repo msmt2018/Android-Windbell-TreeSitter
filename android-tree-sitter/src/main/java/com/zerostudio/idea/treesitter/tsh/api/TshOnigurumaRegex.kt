@@ -300,6 +300,7 @@ class TshOnigurumaRegex private constructor(
         private const val MAX_CAPTURE_GROUPS = 256
         private const val DEFAULT_MAX_CAPTURE_GROUPS = 32
         private const val DEFAULT_MAX_MATCHES = 250_000
+        private const val MAX_PATTERN_UTF16 = 64 * 1024
 
         @JvmStatic
         fun compile(
@@ -309,6 +310,12 @@ class TshOnigurumaRegex private constructor(
             pipelineRevision: String,
             windowConstraints: TshRegexWindowConstraints
         ): TshResult<TshOnigurumaRegex> {
+            if (pattern.length > MAX_PATTERN_UTF16) {
+                return failure(
+                    "TSH-REGEX-NATIVE-024",
+                    "Regex pattern exceeds the 64 Ki UTF-16 code-unit compile limit"
+                )
+            }
             if (regexId.isBlank() || regexRevision.isBlank() || pipelineRevision.isBlank()) {
                 return failure("TSH-REGEX-NATIVE-018", "Regex identity and revisions must not be blank")
             }
