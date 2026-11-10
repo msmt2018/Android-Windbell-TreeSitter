@@ -12,6 +12,7 @@ import com.zerostudio.idea.treesitter.tsh.api.TshSourcePosition
 import com.zerostudio.idea.treesitter.tsh.api.TshSourceRange
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class TshRenderPlanSyntaxHighlighterTest {
@@ -65,4 +66,15 @@ class TshRenderPlanSyntaxHighlighterTest {
         assertTrue(result is TshResult.Failure)
         assertEquals("TSH-EDITOR-RENDER-001", (result as TshResult.Failure).diagnostics.single().code)
     }
+    @Test
+    fun dropsPreviouslyInstalledPlanWhenDocumentVersionAdvances() {
+        var version = 7L
+        val highlighter = TshRenderPlanSyntaxHighlighter(documentId) { version }
+        assertTrue(highlighter.updateRenderPlan(plan(7L)) is TshResult.Success)
+        assertTrue(highlighter.isStyleReady(1, 0, 0, 1))
+
+        version = 8L
+        assertFalse(highlighter.isStyleReady(1, 0, 0, 1))
+    }
+
 }
