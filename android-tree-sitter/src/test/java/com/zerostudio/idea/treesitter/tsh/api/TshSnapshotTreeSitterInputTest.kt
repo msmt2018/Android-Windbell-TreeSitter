@@ -28,21 +28,15 @@ class TshSnapshotTreeSitterInputTest {
         val provider = Provider()
         val lease = (provider.acquireSnapshot(Any()) as TshResult.Success).value
         val input = TshSnapshotTreeSitterInput(provider, lease)
-        val buffer = ByteArray(4)
+        val first = input.read(0L, 4)
+        assertArrayEquals(byteArrayOf(0x41, 0x00), first)
 
-        val first = input.read(0L, 0, 0, buffer)
-        assertEquals(2, first)
-        assertArrayEquals(byteArrayOf(0x41, 0x00, 0x00, 0x00), buffer)
+        val emoji = input.read(2L, 4)
+        assertArrayEquals(byteArrayOf(0x3D, 0xD8.toByte(), 0x00, 0xDE.toByte()), emoji)
 
-        val emoji = input.read(2L, 0, 1, buffer)
-        assertEquals(4, emoji)
-        assertArrayEquals(byteArrayOf(0x3D, 0xD8.toByte(), 0x00, 0xDE.toByte()), buffer)
-
-        val finalChar = input.read(6L, 0, 3, buffer)
-        assertEquals(2, finalChar)
-        assertEquals(0xE9.toByte(), buffer[0])
-        assertEquals(0x00.toByte(), buffer[1])
-        assertEquals(0, input.read(8L, 0, 4, buffer))
+        val finalChar = input.read(6L, 4)
+        assertArrayEquals(byteArrayOf(0xE9.toByte(), 0x00), finalChar)
+        assertArrayEquals(byteArrayOf(), input.read(8L, 4))
         lease.close()
     }
 
@@ -65,7 +59,7 @@ class TshSnapshotTreeSitterInputTest {
         val lease = (provider.acquireSnapshot(Any()) as TshResult.Success).value
         val input = TshSnapshotTreeSitterInput(provider, lease)
         assertThrows(TshTextInputException::class.java) {
-            input.read(0L, 0, 0, ByteArray(4))
+            input.read(0L, 4)
         }
         lease.close()
     }
@@ -89,7 +83,7 @@ class TshSnapshotTreeSitterInputTest {
         val lease = (provider.acquireSnapshot(Any()) as TshResult.Success).value
         val input = TshSnapshotTreeSitterInput(provider, lease)
         assertThrows(TshTextInputException::class.java) {
-            input.read(0L, 0, 0, ByteArray(8))
+            input.read(0L, 8)
         }
         lease.close()
     }
@@ -100,7 +94,7 @@ class TshSnapshotTreeSitterInputTest {
         val lease = (provider.acquireSnapshot(Any()) as TshResult.Success).value
         val input = TshSnapshotTreeSitterInput(provider, lease)
         assertThrows(TshTextInputException::class.java) {
-            input.read(1L, 0, 0, ByteArray(8))
+            input.read(1L, 8)
         }
         lease.close()
     }
