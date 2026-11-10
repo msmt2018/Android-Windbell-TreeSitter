@@ -54,6 +54,35 @@ class PartitionCacheTest {
         parser.close()
     }
 
+
+    @Test fun byteLruUsesFrozenWeightsAndDoesNotOverflow() {
+        data class Weighted(var bytes: Long)
+        val evicted = mutableListOf<Weighted>()
+        val cache = ByteBudgetLruCache<String, Weighted>(
+            Long.MAX_VALUE,
+            { it.bytes },
+            { evicted += it }
+        )
+
+        val huge = Weighted(Long.MAX_VALUE)
+        cache.put("huge", huge)
+        assertEquals(Long.MAX_VALUE, cache.bytesUsed)
+
+        // This admission must evict before adding; Long.MAX_VALUE + 1 must
+        // never wrap negative and accidentally bypass the budget.
+        val small = Weighted(1L)
+        cache.put("small", small)
+        assertEquals(1L, cache.bytesUsed)
+        assertNull(cache.get("huge"))
+        assertSame(huge, evicted.single())
+
+        // Mutating a cached value cannot change the weight charged at admission.
+        small.bytes = Long.MAX_VALUE
+        assertSame(small, cache.remove("small"))
+        assertEquals(0L, cache.bytesUsed)
+        cache.close()
+    }
+
     @Test fun capturePagesAreVersionedAndBudgeted() {
         val cache = CapturePageCache<String>(300) { it.length.toLong() }
         val identity = CaptureCacheKey(1, 0, 0, 100, 2, 3)
