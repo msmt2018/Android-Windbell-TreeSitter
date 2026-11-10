@@ -221,13 +221,6 @@ object TshMatchMerger {
         budget: TshMatchMergeBudget
     ): TshResult<TshMatchSet> {
         if (documentVersion < 0L) return failure("TSH-MATCH-001", "Document version must be non-negative")
-        if (input.any { it.source == TshMatchSource.TREE_SITTER_ATS } && treeSitterRevision == null) {
-            return failure("TSH-MATCH-003", "Tree-sitter revision is required when Tree-sitter matches are supplied")
-        }
-        if (input.any { it.source == TshMatchSource.REGEX } && regexRevision == null) {
-            return failure("TSH-MATCH-004", "Regex revision is required when Regex matches are supplied")
-        }
-
         // Keep only bounded diagnostics from caller and stale-input filtering. Reserve one slot
         // for the diagnostic that reports diagnostic truncation itself.
         val outputDiagnostics = ArrayList<TshDiagnostic>(minOf(diagnostics.size + 8, MAX_DIAGNOSTICS))
@@ -248,6 +241,12 @@ object TshMatchMerger {
         }
 
         for (match in input) {
+            if (match.source == TshMatchSource.TREE_SITTER_ATS && treeSitterRevision == null) {
+                return failure("TSH-MATCH-003", "Tree-sitter revision is required when Tree-sitter matches are supplied")
+            }
+            if (match.source == TshMatchSource.REGEX && regexRevision == null) {
+                return failure("TSH-MATCH-004", "Regex revision is required when Regex matches are supplied")
+            }
             val expectedPipelineRevision = when (match.source) {
                 TshMatchSource.TREE_SITTER_ATS -> treeSitterRevision
                 TshMatchSource.REGEX -> regexRevision
