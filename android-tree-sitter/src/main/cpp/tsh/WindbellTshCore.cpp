@@ -1789,7 +1789,7 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
     // Establish a total, reproducible precedence order. The final tie-breakers
     // deliberately use range and style identity rather than unordered-map
     // iteration/insertion order from capture-group maps.
-    std::stable_sort(final_spans.begin(), final_spans.end(),
+    std::sort(final_spans.begin(), final_spans.end(),
         [](const HighlightSpan& a, const HighlightSpan& b) {
             if (a.priority != b.priority) return a.priority > b.priority;
             if (a.declaration_order != b.declaration_order)
@@ -1882,7 +1882,7 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
     }
 
     // Rejoin adjacent fragments when every semantic attribute is identical.
-    std::stable_sort(resolved_spans.begin(), resolved_spans.end(),
+    std::sort(resolved_spans.begin(), resolved_spans.end(),
         [](const HighlightSpan& a, const HighlightSpan& b) {
             if (a.start_byte != b.start_byte) return a.start_byte < b.start_byte;
             if (a.end_byte != b.end_byte) return a.end_byte < b.end_byte;
@@ -1921,7 +1921,7 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
     resolved_spans.resize(write_index);
     final_spans = std::move(resolved_spans);
 
-    std::stable_sort(final_spans.begin(), final_spans.end(), [](const HighlightSpan& a, const HighlightSpan& b) {
+    std::sort(final_spans.begin(), final_spans.end(), [](const HighlightSpan& a, const HighlightSpan& b) {
         if (a.start_byte != b.start_byte) return a.start_byte < b.start_byte;
         // Apply outer captures first, then inner/high-priority captures.
         if (a.end_byte != b.end_byte) return a.end_byte > b.end_byte;
@@ -1930,6 +1930,7 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
             return a.declaration_order < b.declaration_order;
         if (a.source != b.source) return a.source < b.source;
         if (a.style_id != b.style_id) return a.style_id < b.style_id;
+        if (a.allow_overlap != b.allow_overlap) return a.allow_overlap < b.allow_overlap;
         return a.flags < b.flags;
     });
 
