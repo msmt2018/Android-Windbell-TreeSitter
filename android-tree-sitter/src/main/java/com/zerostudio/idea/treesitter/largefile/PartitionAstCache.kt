@@ -139,7 +139,7 @@ class PartitionAstCache(
             iterator.remove()
             if (entry.leases == 0) {
                 usedBytes -= entry.weight
-                entry.tree.close()
+                closeTree(entry.tree)
             } else {
                 // A leased tree cannot be reclaimed yet. Its bytes remain in
                 // usedBytes until the final lease closes, preventing over-admission.
@@ -167,7 +167,7 @@ class PartitionAstCache(
             // Retired entries were removed from the map at invalidation/eviction.
             // Their retained weight is charged until this exact point.
             usedBytes -= entry.weight
-            entry.tree.close()
+            closeTree(entry.tree)
         }
     }
 
