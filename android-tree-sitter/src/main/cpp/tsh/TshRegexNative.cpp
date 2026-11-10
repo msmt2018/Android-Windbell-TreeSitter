@@ -19,7 +19,7 @@ uint64_t TshRegexNativeRegistry::compile(
     constexpr size_t kMaxPatternUtf16 = 1024u * 1024u;
     if ((!pattern && pattern_bytes != 0) || (pattern_bytes & 1u) != 0 ||
         pattern_bytes / 2u > kMaxPatternUtf16 ||
-        pattern_bytes > static_cast<size_t>(std::numeric_limits<OnigLen>::max())) {
+        pattern_bytes > static_cast<size_t>(std::numeric_limits<ptrdiff_t>::max())) {
         error = "Regex pattern has an invalid or oversized UTF-16LE buffer";
         return 0;
     }
@@ -151,7 +151,7 @@ bool TshRegexNativeRegistry::execute(
     if (!document_end) options |= ONIG_OPTION_NOTEOL;
 
     while (current <= end) {
-        const int hit = onig_search(
+        const OnigPosition hit = onig_search(
             entry->regex, begin, end, current, search_range, region.value, options
         );
         if (hit < 0) {
@@ -162,13 +162,16 @@ bool TshRegexNativeRegistry::execute(
             break;
         }
 
-        const int32_t start_byte = region.value->beg[0];
-        const int32_t end_byte = region.value->end[0];
-        if (start_byte < 0 || end_byte < start_byte ||
-            (start_byte & 1) != 0 || (end_byte & 1) != 0) {
+        const OnigPosition start_byte_position = region.value->beg[0];
+        const OnigPosition end_byte_position = region.value->end[0];
+        if (start_byte_position < 0 || end_byte_position < start_byte_position ||
+            end_byte_position > static_cast<OnigPosition>(text_bytes) ||
+            (start_byte_position & 1) != 0 || (end_byte_position & 1) != 0) {
             error = "Oniguruma returned a malformed UTF-16 match range";
             return false;
         }
+        const int32_t start_byte = static_cast<int32_t>(start_byte_position);
+        const int32_t end_byte = static_cast<int32_t>(end_byte_position);
         const int32_t start = start_byte / 2;
         const int32_t finish = end_byte / 2;
 
