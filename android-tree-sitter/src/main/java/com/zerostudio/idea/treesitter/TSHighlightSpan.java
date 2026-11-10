@@ -34,8 +34,8 @@ public final class TSHighlightSpan {
     this.matchId = matchId;
   }
 
-  public long getStartByte() { return Integer.toUnsignedLong(startByte); }
-  public long getEndByte() { return Integer.toUnsignedLong(endByte); }
+  public long getStartByte() { return ((long) startByte) & 0xFFFF_FFFFL; }
+  public long getEndByte() { return ((long) endByte) & 0xFFFF_FFFFL; }
   public int getCaptureId() { return captureId; }
   public int getPatternIndex() { return patternIndex; }
   public int getStyleId() { return styleId; }
