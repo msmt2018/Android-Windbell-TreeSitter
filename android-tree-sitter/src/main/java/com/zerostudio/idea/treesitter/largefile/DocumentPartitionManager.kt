@@ -42,6 +42,41 @@ data class DocumentPartition(
     }
 }
 
+/**
+ * Primitive monotonic offset index used for sparse line-start checkpoints.
+ * It deliberately stores offsets only; syntax trees and ATS nodes are never
+ * partitioned or rewritten by this metadata index.
+ */
+internal class CompactOffsetIndex(initialCapacity: Int = 256) {
+    private var values = LongArray(initialCapacity.coerceAtLeast(1))
+    var size: Int = 0
+        private set
+
+    fun add(offset: Long) {
+        require(offset >= 0L) { "Checkpoint offsets must be non-negative" }
+        if (size > 0) {
+            require(offset >= values[size - 1]) {
+                "Checkpoint offsets must be monotonic"
+            }
+        }
+        if (size == values.size) {
+            if (size == Int.MAX_VALUE) throw OutOfMemoryError("Offset index capacity exhausted")
+            val next = when {
+                size < 1024 -> size * 2
+                size <= Int.MAX_VALUE - (size ushr 1) -> size + (size ushr 1)
+                else -> Int.MAX_VALUE
+            }.coerceAtLeast(size + 1)
+            values = values.copyOf(next)
+        }
+        values[size++] = offset
+    }
+
+    operator fun get(index: Int): Long {
+        if (index < 0 || index >= size) throw IndexOutOfBoundsException("index=$index, size=$size")
+        return values[index]
+    }
+}
+
 /** Primitive parallel-array index: no per-checkpoint heap objects or references. */
 internal class CompactPointCheckpointIndex(initialCapacity: Int = 256) {
     private var offsets32 = IntArray(initialCapacity.coerceAtLeast(1))
