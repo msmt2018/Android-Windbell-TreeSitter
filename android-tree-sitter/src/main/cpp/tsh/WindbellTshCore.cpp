@@ -1720,9 +1720,11 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
     retain_requested_range(macro_spans);
 
     // Keep the public range API's output bounded to the requested document
-    // window. Ordinary bounded Regex and native Tree-sitter queries can operate
-    // on TextSource windows/ranges. Regex State still needs a source-window
-    // tokenizer path before it can claim equivalent large-document behavior.
+    // window. Ordinary bounded Regex, bounded Regex State graphs, and native
+    // Tree-sitter queries can operate on TextSource windows/ranges. Context-
+    // dependent Regex State graphs retain whole-source semantics only through
+    // the explicitly capped contiguous fallback above; larger sources require
+    // a future context-aware streaming strategy and are not reinterpreted.
     auto clip_to_requested_range = [&](std::vector<HighlightSpan>& candidates) {
         for (auto& span : candidates) {
             span.start_byte = std::max(span.start_byte, range_start_byte);
