@@ -46,7 +46,8 @@ The executor must not interpret an interior window start/end as the document's b
 
 ## Limitations
 
-- The lease does not run Oniguruma or any other Regex engine.
+- The lease does not run Oniguruma or any other Regex engine. The existing legacy path `WindbellTshEngine.computeHighlights(tree, text, extension)` still calls JNI `nativeHighlight` with a complete String, and C++ `WindbellEngine::highlightHybrid` still receives one contiguous document buffer. This new window contract has not yet replaced that path.
+- Existing TSH Regex MATCH rules do not yet publish finite maximum match/lookaround metadata, and BLOCK rules need a cross-window state machine before they can be executed safely.
 - It does not carry engine match state between windows.
 - It does not solve unbounded patterns; those are rejected.
 - The executor must still implement cancellation, match/capture count limits, empty-match progress, and cross-window correctness tests.
