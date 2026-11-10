@@ -83,6 +83,19 @@ class TshRegexWindowLease private constructor(
         return local in 0L..Int.MAX_VALUE.toLong() && isCodePointBoundary(local.toInt())
     }
 
+    /**
+     * Validates an absolute match range. The start must belong to this core interval; the end may
+     * extend into right-hand context but must remain inside the window and on a code-point boundary.
+     */
+    fun ownsMatchRange(absoluteStartUtf16: Long, absoluteEndUtf16: Long): Boolean {
+        if (closed.get() || absoluteEndUtf16 < absoluteStartUtf16 ||
+            absoluteEndUtf16 > windowEndUtf16 || !ownsMatchStart(absoluteStartUtf16)) {
+            return false
+        }
+        val localEnd = absoluteEndUtf16 - windowStartUtf16
+        return localEnd in 0L..Int.MAX_VALUE.toLong() && isCodePointBoundary(localEnd.toInt())
+    }
+
     /** Maps a local code-point boundary to the source snapshot's absolute UTF-16 offset. */
     fun absoluteUtf16Offset(windowOffsetUtf16: Int): Long? {
         if (!isCodePointBoundary(windowOffsetUtf16)) return null
