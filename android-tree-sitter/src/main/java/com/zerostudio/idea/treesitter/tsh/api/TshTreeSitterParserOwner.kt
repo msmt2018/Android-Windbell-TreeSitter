@@ -41,7 +41,8 @@ class TshTreeSitterParserOwner private constructor(
     private val parserLanguageLease: TshNativeResourceLeaseStore.Lease<TSLanguage>,
     private val grammar: TshGrammarDescriptor,
     private val parser: TshNativeResourceRegistry.Registration<TSParser>,
-    private val memoryBudget: TshMemoryBudget?
+    private val memoryBudget: TshMemoryBudget?,
+    private val nativeTreeMemoryEstimator: TshNativeTreeMemoryEstimator?
 ) : AutoCloseable {
     /** TSParser is mutable Native state and cannot parse two documents concurrently. */
     private val parseLock = ReentrantLock()
@@ -250,6 +251,41 @@ class TshTreeSitterParserOwner private constructor(
         }
     }
 
+    private fun reserveTreeMemory(
+        documentId: String,
+        documentVersion: Long,
+        treeRevision: Long,
+        sourceLengthUtf16: Long,
+        incremental: Boolean
+    ): TshResult<TshMemoryReservation?> {
+        val estimator = nativeTreeMemoryEstimator ?: return TshResult.Success(null)
+        val budget = memoryBudget ?: return failure(
+            "TSH-PARSER-OWNER-041",
+            "A Native syntax-tree estimator requires a shared memory budget",
+            TshDiagnosticStage.MEMORY
+        )
+        val request = try {
+            TshNativeTreeMemoryRequest(
+                documentId = documentId,
+                documentVersion = documentVersion,
+                treeRevision = treeRevision,
+                sourceLengthUtf16 = sourceLengthUtf16,
+                grammarLanguageId = grammar.languageId,
+                grammarFingerprint = grammar.fingerprint,
+                incremental = incremental
+            )
+        } catch (error: IllegalArgumentException) {
+            return failure(
+                "TSH-PARSER-OWNER-042",
+                "Cannot create Native syntax-tree memory estimate request: ${error.message}",
+                TshDiagnosticStage.MEMORY,
+                parser.descriptor.id,
+                error
+            )
+        }
+        return TshNativeTreeMemoryReservations.reserve(budget, estimator, request)
+    }
+
     private fun nullTreeFailure(
         nativeParser: TSParser,
         parseStartedAtNanos: Long,
@@ -314,8 +350,15 @@ class TshTreeSitterParserOwner private constructor(
             }
 
         var tree: TSTree? = null
-        var languageLeaseTransferred = false
+        var treeMemoryReservation: TshMemoryReservation? = null
+        var dependenciesTransferred = false
         try {
+            when (val reserved = reserveTreeMemory(
+                documentId, documentVersion, treeRevision, source.length.toLong(), incremental = false
+            )) {
+                is TshResult.Success -> treeMemoryReservation = reserved.value
+                is TshResult.Failure -> return reserved
+            }
             var parseStartedAtNanos = 0L
             val parsedTree = parseLock.withLock {
                 parseStartedAtNanos = System.nanoTime()
@@ -375,9 +418,9 @@ class TshTreeSitterParserOwner private constructor(
                     "treeRevision" to treeRevision.toString(),
                     "grammarFingerprint" to grammar.fingerprint
                 ),
-                dependencies = listOf(languageLease)
+                dependencies = listOfNotNull(languageLease, treeMemoryReservation)
             )
-            languageLeaseTransferred = true
+            dependenciesTransferred = true
             tree = null
             val snapshot = TshSyntaxTreeSnapshot(
                 documentId = documentId,
@@ -407,7 +450,10 @@ class TshTreeSitterParserOwner private constructor(
             )
         } finally {
             tree?.let { runCatching { it.close() } }
-            if (!languageLeaseTransferred) languageLease.close()
+            if (!dependenciesTransferred) {
+                treeMemoryReservation?.close()
+                languageLease.close()
+            }
             parserLease.close()
         }
     }
@@ -821,8 +867,16 @@ class TshTreeSitterParserOwner private constructor(
         } else null
 
         var tree: TSTree? = null
-        var languageLeaseTransferred = false
+        var treeMemoryReservation: TshMemoryReservation? = null
+        var dependenciesTransferred = false
         try {
+            when (val reserved = reserveTreeMemory(
+                snapshot.documentId, snapshot.version, treeRevision,
+                snapshot.lengthUtf16, incremental = oldTree != null
+            )) {
+                is TshResult.Success -> treeMemoryReservation = reserved.value
+                is TshResult.Failure -> return reserved
+            }
             val progressCancelled = AtomicBoolean(false)
             val progressFailure = AtomicReference<Exception?>(null)
             val nativeProgressCallback = progressCallback?.let { callback ->
@@ -923,9 +977,9 @@ class TshTreeSitterParserOwner private constructor(
                     "inputMode" to "chunked-utf16le",
                     "treeState" to "READY"
                 ),
-                dependencies = listOf(languageLease)
+                dependencies = listOfNotNull(languageLease, treeMemoryReservation)
             )
-            languageLeaseTransferred = true
+            dependenciesTransferred = true
             tree = null
             val syntaxSnapshot = TshSyntaxTreeSnapshot(
                 documentId = snapshot.documentId,
@@ -967,7 +1021,10 @@ class TshTreeSitterParserOwner private constructor(
         } finally {
             tree?.let { runCatching { it.close() } }
             oldTreeLease?.close()
-            if (!languageLeaseTransferred) languageLease.close()
+            if (!dependenciesTransferred) {
+                treeMemoryReservation?.close()
+                languageLease.close()
+            }
             parserLease.close()
         }
     }
@@ -988,8 +1045,16 @@ class TshTreeSitterParserOwner private constructor(
             resources: TshNativeResourceRegistry,
             languageHandle: TshNativeResourceLeaseStore.Handle<TSLanguage>,
             grammar: TshGrammarDescriptor,
-            memoryBudget: TshMemoryBudget? = null
+            memoryBudget: TshMemoryBudget? = null,
+            nativeTreeMemoryEstimator: TshNativeTreeMemoryEstimator? = null
         ): TshResult<TshTreeSitterParserOwner> {
+            if (nativeTreeMemoryEstimator != null && memoryBudget == null) {
+                return failure(
+                    "TSH-PARSER-OWNER-041",
+                    "A Native syntax-tree estimator requires a shared memory budget",
+                    TshDiagnosticStage.MEMORY
+                )
+            }
             val languageLease = resources.acquire(languageHandle)
                 ?: return failure(
                     "TSH-PARSER-OWNER-008",
@@ -1014,7 +1079,10 @@ class TshTreeSitterParserOwner private constructor(
                 )
                 ownershipTransferred = true
                 return TshResult.Success(
-                    TshTreeSitterParserOwner(resources, languageLease, grammar, registration, memoryBudget)
+                    TshTreeSitterParserOwner(
+                        resources, languageLease, grammar, registration, memoryBudget,
+                        nativeTreeMemoryEstimator
+                    )
                 )
             } catch (error: Throwable) {
                 return failure(
