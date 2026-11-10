@@ -48,6 +48,7 @@ class TshRegexWindowLease private constructor(
     val windowEndUtf16: Long,
     val coreStartUtf16: Long,
     val coreEndUtf16: Long,
+    val constraints: TshRegexWindowConstraints,
     private var content: String?,
     private val reservation: TshMemoryReservation?
 ) : AutoCloseable {
@@ -220,7 +221,7 @@ class TshRegexWindowLease private constructor(
                 }
                 val window = TshRegexWindowLease(
                     snapshot.documentId, snapshot.version, length, windowStart, windowEnd,
-                    coreStartUtf16, coreEnd, source.toString(), reservation
+                    coreStartUtf16, coreEnd, constraints, source.toString(), reservation
                 )
                 transferred = true
                 return TshResult.Success(window)
