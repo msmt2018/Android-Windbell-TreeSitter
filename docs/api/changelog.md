@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Fixed
+- Tree-sitter QueryExecutor 不再依赖构建变体中可能缺失的 `TSQuery.predicatesFor(UInt)` 二进制 API；改为对已由 Native `TSQuery.create` 验证的 S-expression 源码做轻量谓词名称扫描，跳过字符串字面量与 `;` 行注释，并仅要求自定义 predicate handler；补充字符串转义/注释回归测试源码。
+
+
 ### Added
 - editor 模块新增 TshPieceTreeDocument/TshPieceTreeTextAccessProvider，直接适配仓库现有 PieceTreeTextBuffer/PieceTreeSnapshot；按 UTF-16 范围读取，不调用全文 toString；使用不可变快照持有原始 chunk 引用并保留旧版本读取能力；新增 PieceTree 适配测试源码，editor 模块接入 android-tree-sitter API 依赖。
 - TextAccessProvider 默认 Snapshot acquisition 增加 documentId/version/length 校验；Provider snapshot 获取异常与 LinkageError 转为结构化诊断，避免异常穿透绑定层；新增非法 Snapshot 与 final release failure 测试源码。
