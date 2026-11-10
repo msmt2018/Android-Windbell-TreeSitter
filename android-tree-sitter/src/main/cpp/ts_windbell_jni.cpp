@@ -1372,9 +1372,17 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
         diagnostics == JNI_TRUE
     };
     if (const auto *cached = document->highlight_cache.find(cache_key)) {
-        return encodeNativeHighlightResult(
-            env, cached->spans, cached->match_counts,
-            diagnostics == JNI_TRUE);
+        try {
+            return encodeNativeHighlightResult(
+                env, cached->spans, cached->match_counts,
+                diagnostics == JNI_TRUE);
+        } catch (const std::bad_alloc&) {
+            throwNativeAllocationFailure(env, "Unable to allocate cached JNI highlight result");
+            return nullptr;
+        } catch (const std::exception& error) {
+            throwNativeHighlightFailure(env, error.what());
+            return nullptr;
+        }
     }
     windbell::largefile::TextChunkView view{};
     const uint16_t *input = nullptr;
