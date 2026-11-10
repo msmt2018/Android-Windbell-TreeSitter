@@ -2686,7 +2686,19 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                                         op == "any-eq?" || op == "any-not-eq?";
                                     const bool membership = op == "any-of?" || op == "not-any-of?";
                                     const bool regex_match = op == "match?" || op == "not-match?";
-                                    const bool supported = equality || membership || regex_match;
+                                    const bool contains = op == "contains?" || op == "not-contains?" ||
+                                        op == "any-contains?" || op == "any-not-contains?";
+                                    const bool has_ancestor = op == "has-ancestor?" ||
+                                        op == "not-has-ancestor?" || op == "any-has-ancestor?" ||
+                                        op == "any-not-has-ancestor?";
+                                    const bool has_parent = op == "has-parent?" ||
+                                        op == "not-has-parent?" || op == "any-has-parent?" ||
+                                        op == "any-not-has-parent?";
+                                    const bool kind_eq = op == "kind-eq?" || op == "not-kind-eq?" ||
+                                        op == "any-kind-eq?" || op == "any-not-kind-eq?";
+                                    const bool structural = has_ancestor || has_parent || kind_eq;
+                                    const bool supported = equality || membership || regex_match ||
+                                        contains || structural;
                                     const bool fixed_arity = equality || regex_match;
                                     bool valid = predicate.size() >= 3 &&
                                         predicate[1].type == TSQueryPredicateStepTypeCapture &&
