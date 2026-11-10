@@ -1350,12 +1350,27 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
     }
     std::lock_guard<std::mutex> lock(document->mutex);
     const uint64_t total_bytes = document->source->sizeBytes();
+    // Tree-sitter's public TSNode/TSPoint byte coordinates are uint32_t in the
+    // vendored ABI. The TextSource itself is 64-bit, but this JNI highlighter
+    // still crosses that narrower AST/span boundary. Reject an unrepresentable
+    // document/range here instead of truncating jlong values in the cache key
+    // and highlightHybrid() call below (which can alias unrelated viewports).
+    constexpr uint64_t kTreeSitterMaximumDocumentBytes =
+        static_cast<uint64_t>(std::numeric_limits<uint32_t>::max());
+    if (total_bytes > kTreeSitterMaximumDocumentBytes) {
+        throw_illegal_state(env,
+            "Native TSH document exceeds the current Tree-sitter 32-bit byte-offset limit");
+        return nullptr;
+    }
     if (range_start_byte < 0 || range_end_byte < 0 ||
+        static_cast<uint64_t>(range_start_byte) > kTreeSitterMaximumDocumentBytes ||
+        static_cast<uint64_t>(range_end_byte) > kTreeSitterMaximumDocumentBytes ||
         static_cast<uint64_t>(range_start_byte) > total_bytes ||
         static_cast<uint64_t>(range_end_byte) > total_bytes ||
         (range_start_byte & 1LL) || (range_end_byte & 1LL) ||
         range_start_byte > range_end_byte) {
-        throw_illegal_args(env, "Native TSH range must be ordered UTF-16LE byte offsets");
+        throw_illegal_args(env,
+            "Native TSH range must be ordered UTF-16LE byte offsets within the Tree-sitter 32-bit limit");
         return nullptr;
     }
     const auto grammar = WindbellEngine::getInstance().getGrammarByExtension(document->extension);
