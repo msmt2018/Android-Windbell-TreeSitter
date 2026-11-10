@@ -828,28 +828,29 @@ class WindbellTshLinkageTest {
                     different { scope: "entity.name.function.different" }
                     anyEqual { scope: "entity.name.function.anyEqual" }
                     anyDifferent { scope: "entity.name.function.anyDifferent" }
+                    right { scope: "variable.parameter" }
                 }
                 treeSitter {
                     queries: [
                         {
                             id: "equal-captures"
                             priority: 20
-                            source: `(method_declaration name: (identifier) @left parameters: (formal_parameters (formal_parameter name: (identifier) @right)) (#eq? @left @right))`
+                            source: `(method_declaration name: (identifier) @equal parameters: (formal_parameters (formal_parameter name: (identifier) @right)) (#eq? @equal @right))`
                         },
                         {
                             id: "different-captures"
                             priority: 21
-                            source: `(method_declaration name: (identifier) @left parameters: (formal_parameters (formal_parameter name: (identifier) @right)) (#not-eq? @left @right))`
+                            source: `(method_declaration name: (identifier) @different parameters: (formal_parameters (formal_parameter name: (identifier) @right)) (#not-eq? @different @right))`
                         },
                         {
                             id: "any-equal-captures"
                             priority: 22
-                            source: `(method_declaration name: (identifier) @left parameters: (formal_parameters (formal_parameter name: (identifier) @right)) (#any-eq? @left @right))`
+                            source: `(method_declaration name: (identifier) @anyEqual parameters: (formal_parameters (formal_parameter name: (identifier) @right)) (#any-eq? @anyEqual @right))`
                         },
                         {
                             id: "any-different-captures"
                             priority: 23
-                            source: `(method_declaration name: (identifier) @left parameters: (formal_parameters (formal_parameter name: (identifier) @right)) (#any-not-eq? @left @right))`
+                            source: `(method_declaration name: (identifier) @anyDifferent parameters: (formal_parameters (formal_parameter name: (identifier) @right)) (#any-not-eq? @anyDifferent @right))`
                         }
                     ]
                 }
