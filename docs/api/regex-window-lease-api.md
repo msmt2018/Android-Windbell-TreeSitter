@@ -25,7 +25,7 @@ The lease exposes:
 - local core start/end inside the window;
 - document length and whether the window touches the true document start/end.
 
-A Regex executor should emit a match from this window only when the match's absolute start is in `[coreStartUtf16, coreEndUtf16)`. The final window additionally owns a zero-width match exactly at document EOF, so empty matches at the terminal boundary are not lost. Adjacent windows may include overlapping context, but their core intervals must partition the document. This gives each match start exactly one owning window.
+A Regex executor should emit a match from this window only when the match's absolute start is in `[coreStartUtf16, coreEndUtf16)`. The final window additionally owns a zero-width match exactly at document EOF, so empty matches at the terminal boundary are not lost. Adjacent windows may include overlapping context, but their core intervals must partition the document. An empty document still yields one empty first/last window, allowing zero-width matches at offset zero. This gives each match start exactly one owning window.
 
 The window includes:
 - finite lookbehind before the core;
