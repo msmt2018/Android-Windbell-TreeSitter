@@ -209,7 +209,7 @@ class JavaTshFullTest {
                 val start = maxOf(span.startByte, startByte)
                 val end = minOf(span.endByte, endByte)
                 if (start < end) {
-                    listOf(start, end, span.styleId.toLong(), span.priority.toLong(),
+                    listOf(start.toLong(), end.toLong(), span.styleId.toLong(), span.priority.toLong(),
                         span.declarationOrder.toLong())
                 } else null
             }.sortedWith(compareBy<List<Long>> { it[0] }.thenBy { it[1] }.thenBy { it[2] })
