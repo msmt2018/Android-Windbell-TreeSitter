@@ -103,6 +103,7 @@ class IntList {
         if (delta == 0) {
             return
         }
+        ensureWritable()
         for (i in 0 until this.length) {
             this.data[i] += delta
         }
