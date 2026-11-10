@@ -492,14 +492,14 @@ internal fun extractTreeSitterPredicateNames(source: String): Set<String> {
     while (index < source.length) {
         val character = source[index]
         if (inComment) {
-            if (character == '\\n') inComment = false
+            if (character == '\n') inComment = false
             index++
             continue
         }
         if (inString) {
             when {
                 escaped -> escaped = false
-                character == '\\\\' -> escaped = true
+                character == '\\' -> escaped = true
                 character == '"' -> inString = false
             }
             index++
