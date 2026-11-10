@@ -32,6 +32,7 @@ public:
 
     uint64_t sizeBytes() const noexcept override;
     bool read(uint64_t offset, uint32_t maxBytes, TextChunkView *out) const noexcept override;
+    bool contiguousData(const char **data, uint64_t *sizeBytes) const noexcept override;
 
 private:
     void *mapping_ = nullptr;
