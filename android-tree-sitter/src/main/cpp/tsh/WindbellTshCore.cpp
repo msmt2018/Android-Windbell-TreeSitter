@@ -656,8 +656,6 @@ static TshPredicateResult tshEvaluateNativePredicates(const NativeQueryProgram& 
         std::vector<std::vector<UChar>> expected;
         std::vector<std::string> expected_types;
         std::vector<std::vector<UChar>> actual;
-        const bool equality_operator = op == "eq?" || op == "not-eq?" ||
-            op == "any-eq?" || op == "any-not-eq?";
         const bool contains_operator = op == "contains?" || op == "not-contains?" ||
             op == "any-contains?" || op == "any-not-contains?";
         const bool ancestry_operator = op == "has-ancestor?" || op == "not-has-ancestor?" ||
