@@ -134,3 +134,34 @@ Tree-sitter Query 仍对完整 TSTree 执行；范围参数只限制输出/查�
 **已完成：** 备份分支的常规 Java/JNI Parser 基线、TSH 双管线连续输入初始实现、Activity/高亮器的完整文本快照链路、首批 JNI 内存/生命周期缺陷修复，以及基础回归测试。
 
 **尚未完成：** 最新 TSH 功能回迁、完整 API/Renderer 对齐、Native/JVM/Android 全量测试和真实设备绘制验收。
+
+## 7. Tree-sitter 0.28 QueryCursor API 已补齐
+
+后续补充提交：
+
+- `c733cca08350381ff3e8fc55369718fb4fd0d931`
+- `9062edeed46f6d6f3b061376873dd5bd29a3b552`
+- `a2f8976e119a3d070cfd88352adce8770d6d217c`
+
+已将当前 main 的纯 QueryCursor 0.28 绑定能力迁入：
+
+- `TSQueryCursor.ProgressCallback` 和 `exec(query, node, callback)`。
+- Native `TSQueryCursorOptions`、`ts_query_cursor_exec_with_options`。
+- callback GlobalRef / options payload 的生命周期管理。
+- callback 执行期间禁止同一 cursor 重入、close 或其他访问。
+- 普通 exec、再次 exec 和 close 时释放此前 retained callback state。
+- CMake 使用真实编译探测验证 0.28 QueryCursor options ABI；仅在签名匹配时定义 `TSH_TREE_SITTER_HAS_QUERY_CURSOR_OPTIONS`。
+
+TSH Native Query 执行也已启用 0.28 options API，并将 Match Limit 设置为 `UINT32_MAX`。Query 执行完成后检查 `ts_query_cursor_did_exceed_match_limit`；若发生结果上限截断，Native TSH 抛出错误并由 JNI 转换为 Java `IllegalStateException`，不返回貌似完整的部分高亮结果。
+
+新增 `ParserTest.testQueryCursorProgressCallbackCanCancelExecution`，用大规模 Java AST 验证进度回调确实被执行并可协作取消查询。该测试尚待 CI 最终结果确认。
+
+## 8. 最新 CI 运行
+
+- Run ID：`42913706789`
+- Commit：`a2f8976e119a3d070cfd88352adce8770d6d217c`
+- URL：<https://github.com/msmt2018/Android-Windbell-TreeSitter/actions/runs/42913706789>
+- Build Release APK：运行中。
+- Run local tests：排队中。
+
+本次记录没有把运行中状态当作通过。
