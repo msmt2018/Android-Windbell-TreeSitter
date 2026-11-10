@@ -48,8 +48,8 @@ Handle table 保存 kind、generation、owner runtime、refcount/lease 和 close
 - 每次 parse 只创建一个可复用的 Java `byte[]`。JNI 在一次 read 回调返回后保留当前 `GetByteArrayElements` 指针，直到下一次 read 回调或 parse 结束，再以 `JNI_ABORT` 释放。
 - 回调必须返回 0..destination.length 内的偶数 byte count；奇数 byte offset、超出 Java signed point 范围、负数/超容量/奇数长度均拒绝。
 - Parser Owner 在 Native parse 前对可复用 Java byte[] 和可能的 JNI copy 预留整次 parse 的输入预算；每次 provider 返回的 UTF-16 临时 chunk 另行按回调生命周期预留。
-- Java read/progress callback 异常必须让 parse 停止；若 Native 已产生部分 Tree，JNI 在异常返回 Java 前删除该 Tree，避免把半成品发布给调用方。
-- `GetByteArrayElements` 失败且 JNI 没有 pending exception 时显式抛出 `OutOfMemoryError`，不得把内存分配失败误判为 EOF。
+- Java read/progress callback 异常必须让 parse 停止；一旦 JNI exception pending，后续 read/progress callback 不再进入 JVM。若 Native 已产生部分 Tree，JNI 在异常返回 Java 前删除该 Tree，避免把半成品发布给调用方。
+- `GetByteArrayElements` 失败且 JNI 没有 pending exception 时显式抛出 `OutOfMemoryError`，不得把内存分配失败误判为 EOF。JNI 测试覆盖 read callback 异常传播及奇数 byte count 拒绝。
 - Tree-sitter parser/tree 内部 allocator 的实际占用仍不由这组输入缓冲区 reservation 覆盖；Native Tree 只能使用宿主估算器进行 admission accounting。
 
 ## 5. 注解与生成同步
