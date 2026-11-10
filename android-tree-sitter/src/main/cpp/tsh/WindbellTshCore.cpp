@@ -583,11 +583,14 @@ static TshPredicateResult tshEvaluateNativePredicates(const NativeQueryProgram& 
         std::string op(op_text, op_length);
         if (!op.empty() && op.front() == '#') op.erase(op.begin());
 
-        std::vector<std::vector<UChar>> actual;
         std::vector<std::vector<UChar>> expected;
         try {
             for (size_t i = 2; i < predicate.size(); ++i) {
-                if (predicate[i].type != TSQueryPredicateStepTypeString) return TshPredicateResult::REJECT;
+                if (predicate[i].type == TSQueryPredicateStepTypeCapture &&
+                    (op == "eq?" || op == "not-eq?" ||
+                     op == "any-eq?" || op == "any-not-eq?")) continue;
+                if (predicate[i].type != TSQueryPredicateStepTypeString)
+                    return TshPredicateResult::REJECT;
                 uint32_t length = 0;
                 const char* value = ts_query_string_value_for_id(query, predicate[i].value_id, &length);
                 std::vector<UChar> converted;
@@ -598,27 +601,65 @@ static TshPredicateResult tshEvaluateNativePredicates(const NativeQueryProgram& 
         } catch (const std::bad_alloc&) {
             return TshPredicateResult::ERROR;
         }
-        if (expected.empty()) return TshPredicateResult::REJECT;
 
         bool accepted = false;
-        if (op == "eq?" || op == "not-eq?") {
+        const bool equality_predicate = op == "eq?" || op == "not-eq?" ||
+            op == "any-eq?" || op == "any-not-eq?";
+        if (equality_predicate && predicate.size() == 3 &&
+            predicate[2].type == TSQueryPredicateStepTypeCapture) {
+            const bool any = op == "any-eq?" || op == "any-not-eq?";
+            const bool positive = op == "eq?" || op == "any-eq?";
+            bool has_left = false;
+            bool has_right = false;
+            bool all_left_satisfied = true;
+            bool any_pair_satisfied = false;
+            bool any_pair_different = false;
+            for (uint32_t i = 0; i < match.capture_count; ++i) {
+                if (match.captures[i].index != predicate[1].value_id) continue;
+                has_left = true;
+                bool left_satisfied = false;
+                bool compared_any = false;
+                for (uint32_t j = 0; j < match.capture_count; ++j) {
+                    if (match.captures[j].index != predicate[2].value_id) continue;
+                    has_right = true;
+                    const int comparison = tshPredicateNodesEqual(
+                        match.captures[i].node, match.captures[j].node,
+                        utf16_source, text_source, source_bytes);
+                    if (comparison < 0) return TshPredicateResult::ERROR;
+                    compared_any = true;
+                    if (comparison == (positive ? 1 : 0)) {
+                        left_satisfied = true;
+                        any_pair_satisfied = true;
+                    }
+                    if (comparison == 0) any_pair_different = true;
+                }
+                if (!compared_any) all_left_satisfied = false;
+                else all_left_satisfied = all_left_satisfied && left_satisfied;
+            }
+            if (!has_left) accepted = !positive;
+            else if (!has_right) accepted = !positive;
+            else accepted = any ? any_pair_satisfied : all_left_satisfied;
+            (void)any_pair_different;
+        } else if (equality_predicate) {
             if (expected.size() != 1) return TshPredicateResult::REJECT;
+            const bool any = op == "any-eq?" || op == "any-not-eq?";
+            const bool positive = op == "eq?" || op == "any-eq?";
             bool has_capture = false;
-            bool all_equal = true;
-            bool all_not_equal = true;
+            bool all_satisfied = true;
+            bool any_satisfied = false;
             for (uint32_t i = 0; i < match.capture_count; ++i) {
                 if (match.captures[i].index != predicate[1].value_id) continue;
                 has_capture = true;
                 const int comparison = tshPredicateCaptureEquals(match.captures[i].node,
                     expected.front(), utf16_source, text_source, source_bytes);
                 if (comparison < 0) return TshPredicateResult::ERROR;
-                const bool equal = comparison == 1;
-                all_equal = all_equal && equal;
-                all_not_equal = all_not_equal && !equal;
-                if (!all_equal && !all_not_equal) break;
+                const bool satisfied = (comparison == 1) == positive;
+                all_satisfied = all_satisfied && satisfied;
+                any_satisfied = any_satisfied || satisfied;
             }
-            accepted = op == "eq?" ? (has_capture && all_equal) : all_not_equal;
+            accepted = any ? (has_capture && any_satisfied) : (!has_capture ? !positive : all_satisfied);
         } else if (op == "any-of?" || op == "not-any-of?") {
+            if (expected.empty()) return TshPredicateResult::REJECT;
             bool all_in_set = true;
             bool any_in_set = false;
             for (uint32_t i = 0; i < match.capture_count; ++i) {
