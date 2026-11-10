@@ -24,6 +24,7 @@
 #include <cerrno>
 #include <cstdlib>
 #include <memory>
+#include <unordered_map>
 #include <mutex>
 #include <string>
 #include <sys/types.h>
@@ -69,6 +70,53 @@ struct NativeTshDocument {
         if (parser) ts_parser_delete(parser);
     }
 };
+
+class NativeDocumentRegistry final {
+public:
+    jlong insert(std::shared_ptr<NativeTshDocument> document) noexcept {
+        if (!document) return 0;
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (next_handle_ == 0 || next_handle_ > static_cast<uint64_t>(INT64_MAX)) return 0;
+        const uint64_t handle = next_handle_++;
+        try {
+            documents_.emplace(handle, std::move(document));
+        } catch (...) {
+            return 0;
+        }
+        return static_cast<jlong>(handle);
+    }
+
+    std::shared_ptr<NativeTshDocument> acquire(jlong handle) noexcept {
+        if (handle <= 0) return {};
+        std::lock_guard<std::mutex> lock(mutex_);
+        auto found = documents_.find(static_cast<uint64_t>(handle));
+        return found == documents_.end() ? std::shared_ptr<NativeTshDocument>{} : found->second;
+    }
+
+    void close(jlong handle) noexcept {
+        if (handle <= 0) return;
+        std::shared_ptr<NativeTshDocument> retired;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            auto found = documents_.find(static_cast<uint64_t>(handle));
+            if (found == documents_.end()) return;
+            retired = std::move(found->second);
+            documents_.erase(found);
+        }
+        // Destruction occurs after releasing the registry lock. In-flight JNI
+        // calls hold their own shared lease and finish before the document dies.
+    }
+
+private:
+    std::mutex mutex_;
+    uint64_t next_handle_ = 1;
+    std::unordered_map<uint64_t, std::shared_ptr<NativeTshDocument>> documents_;
+};
+
+static NativeDocumentRegistry &nativeDocumentRegistry() {
+    static NativeDocumentRegistry registry;
+    return registry;
+}
 
 struct NativeDocumentInput {
     const windbell::largefile::TextSource *source = nullptr;
@@ -1003,7 +1051,7 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeCreateDocument(
         return 0;
     }
 
-    auto document = std::make_unique<NativeTshDocument>();
+    auto document = std::make_shared<NativeTshDocument>();
     // Use a fixed 64 KiB pread window instead of mapping the complete
     // document. This keeps native virtual-address usage bounded on 32-bit and
     // memory-constrained devices; the document mutex serializes window reads.
@@ -1045,7 +1093,12 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeCreateDocument(
             "Tree-sitter input failed or did not cover the complete native document");
         return 0;
     }
-    return reinterpret_cast<jlong>(document.release());
+    const jlong handle = nativeDocumentRegistry().insert(std::move(document));
+    if (handle == 0) {
+        throw_illegal_state(env, "Unable to register native document handle");
+        return 0;
+    }
+    return handle;
 }
 
 /**
@@ -1058,7 +1111,7 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeApplyDocumentEdi
     JNIEnv *env, jobject, jlong document_pointer,
     jlong start_byte, jlong old_end_byte, jbyteArray inserted_bytes
 ) {
-    auto *document = reinterpret_cast<NativeTshDocument *>(document_pointer);
+    auto document = nativeDocumentRegistry().acquire(document_pointer);
     if (!document || !inserted_bytes) {
         throw_npe(env, "Native document and inserted UTF-16LE bytes are required");
         return JNI_FALSE;
@@ -1290,7 +1343,7 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
     JNIEnv *env, jobject, jlong document_pointer, jboolean diagnostics,
     jlong range_start_byte, jlong range_end_byte
 ) {
-    auto *document = reinterpret_cast<NativeTshDocument *>(document_pointer);
+    auto document = nativeDocumentRegistry().acquire(document_pointer);
     if (!document) {
         throw_npe(env, "Native document handle cannot be null");
         return nullptr;
@@ -1402,7 +1455,7 @@ JNIEXPORT void JNICALL
 Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeCloseDocument(
     JNIEnv *, jobject, jlong document_pointer
 ) {
-    delete reinterpret_cast<NativeTshDocument *>(document_pointer);
+    nativeDocumentRegistry().close(document_pointer);
 }
 
 } // extern "C"
