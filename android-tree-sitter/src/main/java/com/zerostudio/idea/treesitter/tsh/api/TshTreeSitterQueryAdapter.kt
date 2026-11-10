@@ -371,7 +371,15 @@ class TshTreeSitterQueryExecutor(
                 if (cancellation.isCancelled()) {
                     return failure("TSH-QUERY-EXEC-012", "Query cancelled between native match retrievals")
                 }
-                val match = cursor.nextMatch() ?: break
+                val match = try {
+                    cursor.nextMatch()
+                } catch (error: Throwable) {
+                    return failure(
+                        "TSH-QUERY-EXEC-032",
+                        "Tree-sitter predicate evaluation failed: ${error.message}",
+                        cause = error
+                    )
+                } ?: break
                 if (matchesSeen >= budget.maxMatches) {
                     truncated = true
                     break
