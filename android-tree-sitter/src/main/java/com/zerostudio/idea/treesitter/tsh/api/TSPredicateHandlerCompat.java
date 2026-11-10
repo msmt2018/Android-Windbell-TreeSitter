@@ -9,10 +9,10 @@ import com.zerostudio.idea.treesitter.predicate.TSPredicateHandler;
  * and source-set configuration; keeping the invocation in Java makes the
  * interface contract explicit without reflection.
  */
-final class TSPredicateHandlerCompat {
+public final class TSPredicateHandlerCompat {
     private TSPredicateHandlerCompat() {}
 
-    static String[] supportedPredicates(TSPredicateHandler handler) {
+    public static String[] supportedPredicates(TSPredicateHandler handler) {
         return handler.getSupportedPredicates();
     }
 }
