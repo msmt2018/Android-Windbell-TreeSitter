@@ -117,7 +117,7 @@ object TshTreeSitterMatchAdapter {
             val occurrence = occurrenceByIdentity[identity] ?: 0
             occurrenceByIdentity[identity] = occurrence + 1
             val matchId = stableId(
-                tree.documentId, tree.documentVersion, query.queryId, query.revision,
+                tree.documentId, tree.documentVersion.toString(), query.queryId, query.revision,
                 pipelineRevision, identity, occurrence.toString()
             )
             val provenance = TshMatchProvenance(
