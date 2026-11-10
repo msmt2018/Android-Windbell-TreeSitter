@@ -831,7 +831,11 @@ class TshTreeSitterParserOwner private constructor(
                         check(byteOffset >= 0L && byteOffset % 2L == 0L) {
                             "Tree-sitter UTF-16LE progress offset is not an even non-negative byte offset"
                         }
-                        val shouldCancel = callback.shouldCancel(byteOffset / 2L, hasError)
+                        val utf16Offset = byteOffset / 2L
+                        check(utf16Offset <= snapshot.lengthUtf16) {
+                            "Tree-sitter progress offset exceeds the pinned snapshot length"
+                        }
+                        val shouldCancel = callback.shouldCancel(utf16Offset, hasError)
                         if (shouldCancel) progressCancelled.set(true)
                         shouldCancel
                     } catch (error: Exception) {
