@@ -528,6 +528,11 @@ internal class PieceTreeBase {
                 pieceBufferIndices.add(piece.bufferIndex)
                 pieceCoordinateStarts.add(start)
                 pieceStartLineIndices.add(piece.start.line)
+                if (length == 0) {
+                    // The first visible piece may begin in the middle of a backing-buffer line
+                    // after a prefix deletion; preserve that source column as the document start.
+                    documentColumn = piece.start.column
+                }
                 pieceStartColumnValues.add(documentColumn)
                 pieceLineFeedPrefixes.add(lineFeedPrefix)
                 lineFeedPrefix = Math.addExact(lineFeedPrefix, piece.lineFeedCnt)
