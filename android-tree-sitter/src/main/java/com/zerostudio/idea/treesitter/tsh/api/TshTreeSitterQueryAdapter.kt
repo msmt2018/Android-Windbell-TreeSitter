@@ -276,13 +276,11 @@ class TshTreeSitterQueryExecutor(
 
         if (!nativeQuery.canAccess()) return failure("TSH-QUERY-EXEC-006", "Native query has been closed")
 
-        val hasPredicates = try {
-            (0U until nativeQuery.patternCount).any { pattern ->
-                nativeQuery.predicatesFor(pattern).isNotEmpty()
-            }
-        } catch (error: Throwable) {
-            return failure("TSH-QUERY-EXEC-018", "Cannot inspect query predicates: ${error.message}", cause = error)
-        }
+        // Inspect the original S-expression source instead of depending on optional
+        // TSQuery predicate-introspection methods that are not present in every supported
+        // Tree-sitter binding artifact. The scanner ignores strings and ';' comments.
+        val predicateNames = extractTreeSitterPredicateNames(query.source.text)
+        val hasPredicates = predicateNames.isNotEmpty()
         if (hasPredicates && query.options.enablePredicates) {
             val declared = LinkedHashSet<String>()
             for (handler in predicateHandlers) {
@@ -307,14 +305,7 @@ class TshTreeSitterQueryExecutor(
                 "match?", "not-match?", "any-match?", "any-not-match?",
                 "any-of?", "not-any-of?", "is?", "is-not?", "set!"
             )
-            val required = buildSet {
-                for (pattern in 0U until nativeQuery.patternCount) {
-                    nativeQuery.predicatesFor(pattern).forEach { predicate ->
-                        val name = predicate.name.removePrefix("#")
-                        if (name !in builtInPredicates) add(name)
-                    }
-                }
-            }
+            val required = predicateNames - builtInPredicates
             val missing = required - declared
             if (missing.isNotEmpty()) {
                 return failure(
@@ -469,3 +460,61 @@ private fun diagnostic(
     stage = TshDiagnosticStage.ATS,
     message = message
 )
+
+
+/**
+ * Reads Tree-sitter predicate identifiers from query source without matching text inside
+ * string literals or line comments. Native TSQuery compilation remains the syntax authority.
+ */
+internal fun extractTreeSitterPredicateNames(source: String): Set<String> {
+    val names = LinkedHashSet<String>()
+    var index = 0
+    var inString = false
+    var escaped = false
+    var inComment = false
+
+    while (index < source.length) {
+        val character = source[index]
+        if (inComment) {
+            if (character == '\\n') inComment = false
+            index++
+            continue
+        }
+        if (inString) {
+            when {
+                escaped -> escaped = false
+                character == '\\\\' -> escaped = true
+                character == '"' -> inString = false
+            }
+            index++
+            continue
+        }
+
+        when (character) {
+            ';' -> {
+                inComment = true
+                index++
+            }
+            '"' -> {
+                inString = true
+                index++
+            }
+            '#' -> {
+                val start = index + 1
+                var end = start
+                while (end < source.length) {
+                    val next = source[end]
+                    if (next.isLetterOrDigit() || next == '_' || next == '-' || next == '?' || next == '!') {
+                        end++
+                    } else {
+                        break
+                    }
+                }
+                if (end > start) names += source.substring(start, end)
+                index = end.coerceAtLeast(index + 1)
+            }
+            else -> index++
+        }
+    }
+    return names
+}
