@@ -135,7 +135,7 @@ class TshSnapshotTreeSitterInputTest {
                 maxUtf16Length: Int
             ): TshResult<TshTextChunk> {
                 reads++
-                return super.readChunk(lease, startUtf16, maxUtf16Length)
+                return super<TshTextAccessProvider>.readChunk(lease, startUtf16, maxUtf16Length)
             }
         }
         val lease = (provider.acquireSnapshot(Any()) as TshResult.Success).value
