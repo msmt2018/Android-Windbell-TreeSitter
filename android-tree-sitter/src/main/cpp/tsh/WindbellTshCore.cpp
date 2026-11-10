@@ -1597,14 +1597,23 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
             // still evaluating the ancestor nodes needed by parent/ancestor
             // selectors. Once inside the partition, ordinary DFS visits all
             // overlapping descendants and following siblings only.
-            if (current_start_byte < range_start_byte &&
+            // A subtree ending at/before the viewport start cannot contribute
+            // any capture to this render. Skip it as a whole: descending into
+            // its children would still make a late-file viewport O(all preceding
+            // AST nodes), despite the containing-node jump below.
+            const bool subtree_before_viewport =
+                current_end_byte <= range_start_byte;
+            if (!subtree_before_viewport &&
+                current_start_byte < range_start_byte &&
                 current_end_byte > range_start_byte &&
                 ts_tree_cursor_goto_first_child_for_byte(&cursor, range_start_byte)) {
                 continue;
             }
-            if (ts_tree_cursor_goto_first_child(&cursor)) continue;
+            if (!subtree_before_viewport && ts_tree_cursor_goto_first_child(&cursor)) continue;
             if (ts_tree_cursor_goto_next_sibling(&cursor)) continue;
-            
+
+            // Advance to the next sibling of the nearest ancestor. This is
+            // shared by normal DFS completion and whole-subtree viewport skips.
             bool retraced = false;
             while (ts_tree_cursor_goto_parent(&cursor)) {
                 if (ts_tree_cursor_goto_next_sibling(&cursor)) {
