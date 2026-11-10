@@ -59,8 +59,8 @@ class WindbellTshEngine private constructor() {
         val source: Int = 255
     ) {
         /** Unsigned Tree-sitter byte offsets (the Int fields retain their ABI bit pattern). */
-        val startByteUnsigned: Long get() = Integer.toUnsignedLong(startByte)
-        val endByteUnsigned: Long get() = Integer.toUnsignedLong(endByte)
+        val startByteUnsigned: Long get() = startByte.toLong() and 0xFFFF_FFFFL
+        val endByteUnsigned: Long get() = endByte.toLong() and 0xFFFF_FFFFL
     }
 
     data class AutoClosingPair(
