@@ -1,0 +1,155 @@
+package com.zerostudio.idea.treesitter.tsh.api
+
+import com.zerostudio.idea.treesitter.TSQuery
+import org.junit.Assert.*
+import org.junit.Test
+
+class TshNativeQueryLeaseStoreTest {
+    private class FakeQuery : TSQuery(1L) {
+        var closeCalls = 0
+        override fun close() {
+            closeCalls++
+        }
+    }
+
+    @Test
+    fun retirementDefersNativeCloseUntilLastLeaseIsReleased() {
+        val store = TshNativeQueryLeaseStore()
+        val query = FakeQuery()
+        val id = TshObjectId(1L)
+        store.register("q", id, query)
+
+        val lease = store.acquire(id)!!
+        assertEquals(1, store.activeLeaseCount(id))
+
+        assertTrue(store.retire("q"))
+        assertNull(store.acquire(id))
+        assertEquals(0, query.closeCalls)
+
+        lease.close()
+        lease.close()
+
+        assertEquals(1, query.closeCalls)
+        assertEquals(0, store.activeLeaseCount(id))
+    }
+
+    @Test
+    fun replacementRetiresOldRevisionWithoutClosingItsActiveLease() {
+        val store = TshNativeQueryLeaseStore()
+        val oldQuery = FakeQuery()
+        val newQuery = FakeQuery()
+        val oldId = TshObjectId(10L)
+        val newId = TshObjectId(11L)
+
+        store.register("same-query", oldId, oldQuery)
+        val oldLease = store.acquire(oldId)!!
+        store.register("same-query", newId, newQuery)
+
+        assertNull(store.acquire(oldId))
+        val newLease = store.acquire(newId)!!
+        assertNotNull(newLease)
+        assertEquals(0, oldQuery.closeCalls)
+
+        newLease.close()
+        oldLease.close()
+        assertEquals(1, oldQuery.closeCalls)
+        assertEquals(0, newQuery.closeCalls)
+    }
+
+    @Test
+    fun retireAllClosesUnleasedQueriesAndDefersLeasedOnes() {
+        val store = TshNativeQueryLeaseStore()
+        val leased = FakeQuery()
+        val idle = FakeQuery()
+        val leasedId = TshObjectId(20L)
+        val idleId = TshObjectId(21L)
+        store.register("leased", leasedId, leased)
+        store.register("idle", idleId, idle)
+        val lease = store.acquire(leasedId)!!
+
+        assertEquals(2, store.retireAll())
+        assertEquals(0, leased.closeCalls)
+        assertEquals(1, idle.closeCalls)
+
+        lease.close()
+        assertEquals(1, leased.closeCalls)
+    }
+
+    @Test
+    fun dependentLanguageLeaseLivesUntilRetiredQueryAndExecutionsClose() {
+        val store = TshNativeQueryLeaseStore()
+        val query = FakeQuery()
+        var languageLeaseCloseCalls = 0
+        val dependency = AutoCloseable { languageLeaseCloseCalls++ }
+        val id = TshObjectId(30L)
+        store.register("query-with-language", id, query, dependencies = listOf(dependency))
+
+        val execution = store.acquire(id)!!
+        assertTrue(store.retire("query-with-language"))
+        assertEquals(0, query.closeCalls)
+        assertEquals(0, languageLeaseCloseCalls)
+
+        execution.close()
+        assertEquals(1, query.closeCalls)
+        assertEquals(1, languageLeaseCloseCalls)
+    }
+    @Test
+    fun deferredRetirementDoesNotCloseUntilCallerRunsAction() {
+        val store = TshNativeQueryLeaseStore()
+        val oldQuery = FakeQuery()
+        val newQuery = FakeQuery()
+        val oldId = TshObjectId(40L)
+        val newId = TshObjectId(41L)
+
+        store.register("deferred", oldId, oldQuery)
+        val closeOld = store.registerDeferred("deferred", newId, newQuery)
+        assertEquals(0, oldQuery.closeCalls)
+        closeOld?.close()
+        assertEquals(1, oldQuery.closeCalls)
+
+        val closeNew = store.retireDeferred("deferred")
+        assertTrue(closeNew.first)
+        assertEquals(0, newQuery.closeCalls)
+        closeNew.second?.close()
+        assertEquals(1, newQuery.closeCalls)
+    }
+
+
+    @Test
+    fun closePermanentlyRejectsNewQueryRegistration() {
+        val store = TshNativeQueryLeaseStore()
+        store.close()
+        val query = FakeQuery()
+        try {
+            store.register("after-close", TshObjectId(501L), query)
+            fail("Expected a closed Native query store to reject registration")
+        } catch (_: IllegalStateException) {
+            // The caller retains ownership when publication is rejected.
+            query.close()
+        }
+        assertEquals(1, query.closeCalls)
+    }
+
+    @Test
+    fun closeDefersQueryAndGrammarDependencyUntilActiveLeaseEnds() {
+        val store = TshNativeQueryLeaseStore()
+        val query = FakeQuery()
+        var languageLeaseCloseCalls = 0
+        store.register(
+            "engine-close",
+            TshObjectId(502L),
+            query,
+            dependencies = listOf(AutoCloseable { languageLeaseCloseCalls++ })
+        )
+        val active = store.acquire(TshObjectId(502L))!!
+
+        store.close()
+        assertEquals(0, query.closeCalls)
+        assertEquals(0, languageLeaseCloseCalls)
+        assertNull(store.acquire(TshObjectId(502L)))
+
+        active.close()
+        assertEquals(1, query.closeCalls)
+        assertEquals(1, languageLeaseCloseCalls)
+    }
+}
