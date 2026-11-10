@@ -787,7 +787,7 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
     // for large files without rebuilding a 32 MiB+ compatibility buffer.
     // Anchors, block rules, and stateful tokenizers remain on their dedicated
     // context-aware paths; they are never silently reinterpreted as window-local.
-    if (!input_chars && text_source) {
+    if (text_source) {
         constexpr uint64_t kRegexCoreWindowBytes = 256u * 1024u;
         for (const auto& rule : grammar->regex_rules) {
             if (!rule.enabled || rule.type != RegexRuleType::MATCH ||
@@ -901,6 +901,14 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
 
     if (input_chars) for (const auto& rule : grammar->regex_rules) {
         if (!rule.enabled) continue;
+        // Compiler-proven finite-width MATCH rules have already run against
+        // bounded TextSource windows above. Do not rescan the entire mapped
+        // document for every viewport request merely because a contiguous
+        // mmap view is available for context-dependent rules.
+        if (text_source && rule.type == RegexRuleType::MATCH &&
+            rule.execution_capability == RegexExecutionCapability::BOUNDED_WINDOW) {
+            continue;
+        }
         if (rule.type == RegexRuleType::BLOCK && rule.onig_start && rule.onig_end) {
             matchBlockRecursive(rule, text_start, text_end, text_start, text_end, range_start_byte, range_end_byte, micro_spans,
                 diagnostic_match_counts ? &diagnostic_match_counts[0] : nullptr);
