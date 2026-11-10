@@ -168,4 +168,16 @@ class DocumentPartitionManagerTest {
         assertEquals(5L, index.columnAt(2))
     }
 
+
+    @Test fun tokenizerCheckpointCacheEvictsByBytesNotOnlyEntryCount() {
+        val store = TokenizerCheckpointStore(maxEntries = 100, maxBytes = 200L)
+        store.put(TokenizerCheckpoint(1L, 1L, 10L, listOf("root")))
+        store.put(TokenizerCheckpoint(1L, 2L, 20L, listOf("string")))
+        assertTrue(store.bytesUsed in 1L..200L)
+        assertEquals(2L, store.nearest(10L, 1L)?.line)
+        store.invalidateFrom(2L)
+        assertEquals(0L, store.bytesUsed)
+        assertNull(store.nearest(10L, 1L))
+    }
+
 }
