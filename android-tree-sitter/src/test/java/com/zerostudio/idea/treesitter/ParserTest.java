@@ -83,6 +83,16 @@ public class ParserTest extends TreeSitterTest {
   }
 
   @Test
+  public void testParserCloseIsIdempotent() {
+    final TSParser parser = TSParser.create();
+    assertThat(parser.canAccess()).isTrue();
+    parser.close();
+    assertThat(parser.canAccess()).isFalse();
+    parser.close();
+    assertThat(parser.canAccess()).isFalse();
+  }
+
+  @Test
   public void testSetEmptyIncludedRangesRestoresFullDocumentParsing() {
     try (TSParser parser = TSParser.create()) {
       parser.setLanguage(TSLanguageJava.getInstance());

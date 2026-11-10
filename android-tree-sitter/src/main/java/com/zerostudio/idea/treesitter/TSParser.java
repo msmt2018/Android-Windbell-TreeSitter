@@ -37,6 +37,7 @@ public class TSParser extends TSNativeObject {
   protected final Condition parseCondition = parseLock.newCondition();
   protected final AtomicBoolean isParsing = new AtomicBoolean(false);
   protected final AtomicBoolean isCancellationRequested = new AtomicBoolean(false);
+  private final AtomicBoolean closeRequested = new AtomicBoolean(false);
 
   protected TSParser(long pointer) {
     super(pointer);
@@ -174,6 +175,9 @@ public class TSParser extends TSNativeObject {
    * @throws ParseInProgressException If the parser is currently parsing another syntax tree.
    */
   public TSTree parseString(TSTree oldTree, UTF16String source) {
+    if (closeRequested.get()) {
+      throw new IllegalStateException("Cannot parse with a closing or closed TSParser");
+    }
     checkAccess();
 
     // Check for reentrancy (same thread calling this method again, before the previous call returned)
@@ -188,9 +192,15 @@ public class TSParser extends TSNativeObject {
     // acquire the lock
     // this will wait until the cancelled parse call returns
     parseLock.lock();
-    setCancellationRequested(false);
-    setParsingFlag();
     try {
+      // close() may win the lock after the optimistic access check above.
+      // Revalidate under the same lock used by close() before touching JNI.
+      if (closeRequested.get()) {
+        throw new IllegalStateException("Cannot parse with a closing or closed TSParser");
+      }
+      checkAccess();
+      setCancellationRequested(false);
+      setParsingFlag();
       final var strPointer = source.getNativeObject();
       final var oldTreePointer = oldTree != null ? oldTree.getNativeObject() : 0;
       final var tree = Native.parse(this.getNativeObject(), oldTreePointer, strPointer);
@@ -258,6 +268,9 @@ public class TSParser extends TSNativeObject {
    * otherwise.
    */
   public boolean requestCancellationAsync() {
+    if (closeRequested.get() || !canAccess()) {
+      return false;
+    }
     final var requested = Native.requestCancellation(getNativeObject());
     setCancellationRequested(requested);
     return requested;
@@ -330,6 +343,30 @@ public class TSParser extends TSNativeObject {
   public void reset() {
     checkAccess();
     Native.reset(getNativeObject());
+  }
+
+  @Override
+  public void close() {
+    if (!closeRequested.compareAndSet(false, true)) {
+      return;
+    }
+
+    // Ask an active parse to stop before waiting for its Java-side lock. If a
+    // parse has passed its first access check but has not acquired the lock,
+    // the under-lock check in parseString() will reject it after close wins.
+    try {
+      if (canAccess()) {
+        final var requested = Native.requestCancellation(getNativeObject());
+        setCancellationRequested(requested);
+      }
+    } finally {
+      parseLock.lock();
+      try {
+        super.close();
+      } finally {
+        parseLock.unlock();
+      }
+    }
   }
 
   @Override

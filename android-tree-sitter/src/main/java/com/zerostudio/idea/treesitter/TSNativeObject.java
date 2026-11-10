@@ -84,7 +84,7 @@ public abstract class TSNativeObject implements TSClosable {
   }
 
   @Override
-  public void close() {
+  public synchronized void close() {
     if (getNativeObject() != 0) {
       closeNativeObj();
     }
