@@ -40,9 +40,17 @@ class TshSparseCoordinateIndex private constructor(
             "TSH-COORD-INDEX-003", "Offset is outside the indexed snapshot"
         )
         if (from == to) {
-            if (from == TshCoordinateSystem.UTF16_CODE_UNIT &&
-                !isUtf16Boundary(offset)) return failure(
-                "TSH-COORD-INDEX-004", "UTF-16 offset splits a surrogate pair"
+            val valid = when (from) {
+                TshCoordinateSystem.UTF16_CODE_UNIT -> isUtf16Boundary(offset)
+                TshCoordinateSystem.UTF8_BYTE -> {
+                    val checkpoint = findCheckpoint(from, offset)
+                    scanFrom(checkpoint, offset, from, TshCoordinateSystem.UTF16_CODE_UNIT) != null
+                }
+                TshCoordinateSystem.UNICODE_CODE_POINT -> true
+                else -> false
+            }
+            if (!valid) return failure(
+                "TSH-COORD-INDEX-004", "Offset splits an encoded character or is invalid"
             )
             return TshResult.Success(offset)
         }
