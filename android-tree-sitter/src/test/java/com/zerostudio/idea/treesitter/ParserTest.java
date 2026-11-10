@@ -129,6 +129,30 @@ public class ParserTest extends TreeSitterTest {
   }
 
   @Test
+  public void testParseInputPropagatesCallbackFailureWithoutPublishingPartialTree() {
+    try (TSParser parser = TSParser.create()) {
+      parser.setLanguage(TSLanguageJava.getInstance());
+      TSInput failingInput = (byteOffset, row, column, destination) -> {
+        throw new IllegalStateException("synthetic TSInput failure");
+      };
+      try {
+        parser.parseInput(null, failingInput, 128, null);
+        throw new AssertionError("Expected TSInput callback failure");
+      } catch (IllegalStateException expected) {
+        assertThat(expected).hasMessageThat().contains("synthetic TSInput failure");
+      }
+
+      TSInput invalidCountInput = (byteOffset, row, column, destination) -> 3;
+      try {
+        parser.parseInput(null, invalidCountInput, 128, null);
+        throw new AssertionError("Expected odd UTF-16 byte count rejection");
+      } catch (IllegalArgumentException expected) {
+        assertThat(expected).hasMessageThat().contains("even byte count");
+      }
+    }
+  }
+
+  @Test
   public void testCodeEditor() throws Throwable {
     final long start = System.currentTimeMillis();
     try (TSParser parser = TSParser.create()) {
