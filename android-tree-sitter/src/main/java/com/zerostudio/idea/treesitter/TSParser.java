@@ -341,7 +341,7 @@ public class TSParser extends TSNativeObject {
     this.isCancellationRequested.set(isRequested);
   }
 
-  /** Returns whether the most recent parse stopped after an accepted cancellation request. */
+  /** Returns whether a Native cancellation request was accepted; the flag resets when the next parse starts. */
   public synchronized boolean isCancellationRequested() {
     return this.isCancellationRequested.get();
   }
