@@ -13,6 +13,7 @@
 #include <iterator>
 #include <unordered_set>
 #include <string_view>
+#include <stdexcept>
 #include "ts__log.h"
 #include "../largefile/TextSource.h"
 
@@ -1102,10 +1103,7 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
     // Stateful Regex rules run inside the same Regex pipeline and emit the same
     // capture ABI as ordinary Regex rules; there is no separate token model.
     constexpr uint64_t kMaxRegexStateContextFallbackBytes = 50ull * 1024ull * 1024ull;
-    if ((input_chars ||
-        (text_source && (grammar->regex_state_graph_bounded ||
-            static_cast<uint64_t>(total_bytes) <= kMaxRegexStateContextFallbackBytes))) &&
-        !grammar->regex_states.empty()) {
+    if (!grammar->regex_states.empty()) {
         std::vector<std::string> state_stack{grammar->regex_start_state};
         uint32_t position = 0;
         uint64_t next_checkpoint = 64u * 1024u;
@@ -1289,7 +1287,17 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
         // state transitions), but the next iteration must not scan the tail of
         // a multi-hundred-megabyte document merely to answer one viewport.
         while (position < total_bytes && position < range_end_byte) {
-            if (!ensure_state_window()) break;
+            if (!ensure_state_window()) {
+                // Never return a seemingly successful but incomplete highlight
+                // result when a context-sensitive state graph cannot be backed
+                // by a complete source buffer. Bounded graphs use source windows;
+                // unbounded graphs retain whole-document Oniguruma semantics.
+                // The caller must see an explicit failure rather than silently
+                // losing every stateful capture after an arbitrary size limit.
+                throw std::runtime_error(
+                    "TSH Regex State execution requires whole-document context, "
+                    "but a complete compatible input buffer could not be provided");
+            }
             const UChar* state_text_start = input_chars ? text_start : state_window.data();
             const UChar* state_text_end = input_chars ? text_end : state_window.data() + state_window.size();
             const uint32_t local_position = position - state_window_start;
