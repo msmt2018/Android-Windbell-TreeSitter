@@ -83,6 +83,18 @@ class PartitionCacheTest {
         cache.close()
     }
 
+    @Test fun astAdmissionEstimatorFailureRejectsOwnedTreeWithoutChargingBudget() {
+        val parser = TSParser.create().apply { setLanguage(TSLanguageJava.getInstance()) }
+        val tree = parser.parseString("class EstimatorFailure {}")!!
+        val cache = PartitionAstCache(1024) { throw IllegalStateException("estimator failed") }
+
+        assertFalse(cache.put(key(), tree, 10L))
+        assertEquals(0L, cache.bytesUsed)
+        assertEquals(0, cache.size)
+        cache.close()
+        parser.close()
+    }
+
     @Test fun capturePagesAreVersionedAndBudgeted() {
         val cache = CapturePageCache<String>(300) { it.length.toLong() }
         val identity = CaptureCacheKey(1, 0, 0, 100, 2, 3)
