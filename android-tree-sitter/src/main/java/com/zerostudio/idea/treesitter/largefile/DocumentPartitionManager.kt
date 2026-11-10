@@ -506,7 +506,8 @@ class TokenizerCheckpointStore(
 ) {
     private val entries = object : LinkedHashMap<Long, TokenizerCheckpoint>(16, 0.75f, true) {}
     private var usedBytes = 0L
-    val bytesUsed: Long @Synchronized get() = usedBytes
+    @get:Synchronized
+    val bytesUsed: Long get() = usedBytes
 
     init {
         require(maxEntries > 0)
