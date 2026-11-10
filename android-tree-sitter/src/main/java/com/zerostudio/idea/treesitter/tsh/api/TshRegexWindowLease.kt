@@ -24,7 +24,7 @@ data class TshRegexWindowConstraints(
             val matchContext = matchLength.toLong() - 1L
             val required = coreWindowUtf16.toLong() +
                 matchContext * 2L + maxLookbehindUtf16.toLong() +
-                maxLookaheadUtf16.toLong() + 2L
+                maxLookaheadUtf16.toLong() + 4L
             require(required <= maxWindowUtf16.toLong()) {
                 "Configured core and Regex context exceed maxWindowUtf16"
             }
