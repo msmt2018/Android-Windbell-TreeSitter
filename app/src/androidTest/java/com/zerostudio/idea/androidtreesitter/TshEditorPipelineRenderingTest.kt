@@ -16,6 +16,7 @@ import com.zerostudio.idea.treesitter.TreeSitter
 import com.zerostudio.idea.treesitter.java.TSLanguageJava
 import com.zerostudio.idea.treesitter.tsh.WindbellTshEngine
 import com.zerostudio.idea.piecetable.PieceTreeTextBufferBuilder
+import com.zerostudio.idea.piecetable.common.Range
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import org.junit.Assert.assertEquals
@@ -692,6 +693,47 @@ class TshEditorPipelineRenderingTest {
             assertTrue(
                 "Distant large-file TSH type color must reach actual Canvas pixels; pixels=$matchingPixels",
                 matchingPixels > 0
+            )
+
+            // End-to-end incremental regression: replace the class identifier in
+            // the already-open large Piece Tree. The previous partition cache must
+            // not be mistaken for the new revision; the new token must be queried,
+            // converted to a span and painted by EditorView again.
+            val editedLine = "class DistantEditedRenderProbe { int value; }"
+            InstrumentationRegistry.getInstrumentation().runOnMainSync {
+                editor.replace(
+                    editedLine,
+                    Range(targetLineNumber, 1, targetLineNumber, targetLine.length + 1)
+                )
+            }
+            val editedNameStart = editedLine.indexOf("DistantEditedRenderProbe")
+            val editedNameEnd = editedNameStart + "DistantEditedRenderProbe".length
+            var editedColor: Int? = null
+            val editDeadline = SystemClock.uptimeMillis() + 30_000L
+            while (editedColor == null && SystemClock.uptimeMillis() < editDeadline) {
+                InstrumentationRegistry.getInstrumentation().runOnMainSync {
+                    val styled = highlighter.styleLine(
+                        editedLine, targetLineNumber, targetStart, 0, editedLine.length
+                    )
+                    val span = styled?.getSpans(
+                        editedNameStart, editedNameEnd, ForegroundColorSpan::class.java
+                    )?.firstOrNull {
+                        styled.getSpanStart(it) <= editedNameStart &&
+                            styled.getSpanEnd(it) >= editedNameEnd
+                    }
+                    editedColor = span?.foregroundColor
+                    editor.draw(Canvas(bitmap))
+                }
+                if (editedColor == null) SystemClock.sleep(20L)
+            }
+            assertNotNull(
+                "Incremental edit must refresh the distant ATS class-name capture",
+                editedColor
+            )
+            assertEquals(
+                "Incremental edit must preserve the active TSH palette",
+                expected.lightColor,
+                editedColor
             )
         } finally {
             InstrumentationRegistry.getInstrumentation().runOnMainSync {
