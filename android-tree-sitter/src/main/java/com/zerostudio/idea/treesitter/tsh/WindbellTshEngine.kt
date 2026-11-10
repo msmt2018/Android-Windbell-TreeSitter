@@ -49,8 +49,8 @@ class WindbellTshEngine private constructor() {
         private set
 
     data class HighlightSpan(
-        val startByte: Int,
-        val endByte: Int,
+        val startByte: Long,
+        val endByte: Long,
         val styleId: Int,
         val fontFlags: Int,
         val priority: Int,
@@ -578,13 +578,15 @@ class WindbellTshEngine private constructor() {
                 .toMap()
 
             for (span in spans) {
-                val globalStart = span.startByte shr 1
-                val globalEnd = span.endByte shr 1
-                val localStart = globalStart - documentOffset
-                val localEnd = globalEnd - documentOffset
-                val charStart = maxOf(localStart, visibleStart)
-                val charEnd = minOf(localEnd, visibleEnd)
+                val globalStart = span.startByte ushr 1
+                val globalEnd = span.endByte ushr 1
+                val localStart = globalStart - documentOffset.toLong()
+                val localEnd = globalEnd - documentOffset.toLong()
+                val charStart = maxOf(localStart, visibleStart.toLong())
+                val charEnd = minOf(localEnd, visibleEnd.toLong())
                 if (charStart >= charEnd) continue
+                val localCharStart = charStart.toInt()
+                val localCharEnd = charEnd.toInt()
 
                 val colorDef = palette[span.styleId]
                 // One native rule precedence must govern every visual property,
@@ -608,36 +610,36 @@ class WindbellTshEngine private constructor() {
                     colorDef?.lightBackground ?: 0
                 }
                 if (hasBackground) {
-                    spannable.setSpan(BackgroundColorSpan(background), charStart, charEnd, spanFlags)
+                    spannable.setSpan(BackgroundColorSpan(background), localCharStart, localCharEnd, spanFlags)
                 }
 
                 // Missing colors leave the editor's base foreground untouched.
                 val hasColor = if (darkMode) colorDef?.hasDarkColor == true else colorDef?.hasLightColor == true
                 val color = if (darkMode) colorDef?.darkColor ?: 0 else colorDef?.lightColor ?: 0
                 if (hasColor) {
-                    spannable.setSpan(ForegroundColorSpan(color), charStart, charEnd, spanFlags)
+                    spannable.setSpan(ForegroundColorSpan(color), localCharStart, localCharEnd, spanFlags)
                 }
 
                 val schemeFlags = if (darkMode) colorDef?.darkFontFlags ?: 0 else colorDef?.lightFontFlags ?: 0
                 val flags = span.fontFlags or schemeFlags
                 if ((flags and 0x01) != 0) {
-                    spannable.setSpan(StyleSpan(android.graphics.Typeface.BOLD), charStart, charEnd, spanFlags)
+                    spannable.setSpan(StyleSpan(android.graphics.Typeface.BOLD), localCharStart, localCharEnd, spanFlags)
                 }
                 if ((flags and 0x02) != 0) {
-                    spannable.setSpan(StyleSpan(android.graphics.Typeface.ITALIC), charStart, charEnd, spanFlags)
+                    spannable.setSpan(StyleSpan(android.graphics.Typeface.ITALIC), localCharStart, localCharEnd, spanFlags)
                 }
                 if ((flags and 0x04) != 0) {
-                    spannable.setSpan(UnderlineSpan(), charStart, charEnd, spanFlags)
+                    spannable.setSpan(UnderlineSpan(), localCharStart, localCharEnd, spanFlags)
                 }
                 if ((flags and 0x08) != 0) {
-                    spannable.setSpan(StrikethroughSpan(), charStart, charEnd, spanFlags)
+                    spannable.setSpan(StrikethroughSpan(), localCharStart, localCharEnd, spanFlags)
                 }
                 if ((flags and 0x10) != 0) {
                     spannable.setSpan(object : CharacterStyle() {
                         override fun updateDrawState(textPaint: TextPaint) {
                             textPaint.alpha = minOf(textPaint.alpha, 160)
                         }
-                    }, charStart, charEnd, spanFlags)
+                    }, localCharStart, localCharEnd, spanFlags)
                 }
             }
         }
@@ -669,8 +671,8 @@ class WindbellTshEngine private constructor() {
         val count = flatData.size / 6
         val result = ArrayList<HighlightSpan>(count)
         for (i in 0 until count) {
-            val start = flatData[i * 6]
-            val end = flatData[i * 6 + 1]
+            val start = Integer.toUnsignedLong(flatData[i * 6])
+            val end = Integer.toUnsignedLong(flatData[i * 6 + 1])
             val packedMeta = flatData[i * 6 + 2]
             val styleId = packedMeta and 0xFFFF
             val flags = (packedMeta ushr 16) and 0xFFFF
@@ -708,7 +710,8 @@ class WindbellTshEngine private constructor() {
             val offset = 4 + i * 6
             val packedMeta = flatData[offset + 2]
             captures.add(HighlightSpan(
-                startByte = flatData[offset], endByte = flatData[offset + 1],
+                startByte = Integer.toUnsignedLong(flatData[offset]),
+                endByte = Integer.toUnsignedLong(flatData[offset + 1]),
                 styleId = packedMeta and 0xFFFF, fontFlags = (packedMeta ushr 16) and 0xFFFF,
                 priority = flatData[offset + 3], declarationOrder = flatData[offset + 4],
                 source = flatData[offset + 5]
