@@ -25,7 +25,6 @@
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <sys/types.h>
-#include <climits>
 
 #include "ts_utils.h"
 
@@ -326,175 +325,6 @@ jobject JNICALL parser_parse_function(
 }
 
 
-/*
- * Bounded TSInput bridge. One Java byte[] is reused for every read; its pinned/native view is
- * released only when Tree-sitter asks for the next chunk, because the previous pointer remains
- * valid until that point. This avoids allocating one Java array per chunk and never flattens the
- * complete document in JNI.
- */
-struct InputReadState {
-    JNIEnv *env;
-    jobject input;
-    jmethodID read_method;
-    jbyteArray destination;
-    jbyte *chunk;
-    jint capacity;
-};
-
-static void release_input_chunk(InputReadState *state) {
-    if (state->chunk != nullptr) {
-        state->env->ReleaseByteArrayElements(state->destination, state->chunk, JNI_ABORT);
-        state->chunk = nullptr;
-    }
-}
-
-static const char *parse_input_read_callback(
-    void *payload, uint32_t byte_index, TSPoint point, uint32_t *bytes_read
-) {
-    InputReadState *state = static_cast<InputReadState *>(payload);
-    JNIEnv *env = state->env;
-    release_input_chunk(state);
-    *bytes_read = 0;
-
-    if (env->ExceptionCheck()) return "";
-
-    if (point.row > static_cast<uint32_t>(INT_MAX) ||
-        point.column > static_cast<uint32_t>(INT_MAX)) {
-        THROW(IllegalArgumentException, "Tree-sitter input point exceeds Java signed coordinate capacity");
-        return "";
-    }
-
-    const jint count = env->CallIntMethod(
-        state->input,
-        state->read_method,
-        static_cast<jlong>(byte_index),
-        static_cast<jint>(point.row),
-        static_cast<jint>(point.column),
-        state->destination
-    );
-    if (env->ExceptionCheck()) return "";
-
-    if (count < 0 || count > state->capacity || (count & 1) != 0) {
-        THROW(IllegalArgumentException, "TSInput.read must return an even byte count within destination capacity");
-        return "";
-    }
-    if (count == 0) return "";
-
-    state->chunk = env->GetByteArrayElements(state->destination, nullptr);
-    if (state->chunk == nullptr) {
-        if (!env->ExceptionCheck()) {
-            THROW(OutOfMemoryError, "Cannot pin the bounded Tree-sitter input chunk");
-        }
-        return "";
-    }
-    *bytes_read = static_cast<uint32_t>(count);
-    return reinterpret_cast<const char *>(state->chunk);
-}
-
-struct InputProgressState {
-    JNIEnv *env;
-    jobject callback;
-    jmethodID method;
-};
-
-static bool parse_input_progress_callback(TSParseState *parse_state) {
-    InputProgressState *state = static_cast<InputProgressState *>(parse_state->payload);
-    if (state->env->ExceptionCheck()) return true;
-    const jboolean should_cancel = state->env->CallBooleanMethod(
-        state->callback,
-        state->method,
-        static_cast<jlong>(parse_state->current_byte_offset),
-        static_cast<jboolean>(parse_state->has_error)
-    );
-    return state->env->ExceptionCheck() || should_cancel == JNI_TRUE;
-}
-
-static jlong JNICALL parser_parse_input(
-    JNIEnv *env,
-    jclass,
-    jlong parser_pointer,
-    jlong old_tree_pointer,
-    jobject input,
-    jint chunk_size_bytes,
-    jobject progress_callback
-) {
-    if (parser_pointer == 0) {
-        THROW(IllegalStateException, "Native parser pointer is null");
-        return 0;
-    }
-    if (input == nullptr) {
-        THROW(NullPointerException, "TSInput cannot be null");
-        return 0;
-    }
-    if (chunk_size_bytes < 2 || chunk_size_bytes > 1024 * 1024 ||
-        (chunk_size_bytes & 1) != 0) {
-        THROW(IllegalArgumentException, "chunkSizeBytes must be even and between 2 and 1 MiB");
-        return 0;
-    }
-
-    TSParser *parser = reinterpret_cast<TSParser *>(parser_pointer);
-    if (ts_parser_language(parser) == nullptr) {
-        THROW(IllegalStateException, "The parser has no language assigned");
-        return 0;
-    }
-
-    jclass input_class = env->GetObjectClass(input);
-    if (input_class == nullptr) return 0;
-    const jmethodID read_method = env->GetMethodID(input_class, "read", "(JII[B)I");
-    env->DeleteLocalRef(input_class);
-    if (read_method == nullptr || env->ExceptionCheck()) return 0;
-
-    jbyteArray destination = env->NewByteArray(chunk_size_bytes);
-    if (destination == nullptr) return 0;
-
-    InputReadState read_state = {
-        env, input, read_method, destination, nullptr, chunk_size_bytes
-    };
-    TSInput ts_input = {
-        .payload = &read_state,
-        .read = parse_input_read_callback,
-        .encoding = TSInputEncodingUTF16LE,
-    };
-
-    TSTree *old_tree = old_tree_pointer == 0
-        ? nullptr
-        : reinterpret_cast<TSTree *>(old_tree_pointer);
-    TSTree *new_tree = nullptr;
-
-    InputProgressState progress_state = { env, nullptr, nullptr };
-    if (progress_callback != nullptr) {
-        jclass progress_class = env->GetObjectClass(progress_callback);
-        if (progress_class == nullptr) {
-            env->DeleteLocalRef(destination);
-            return 0;
-        }
-        progress_state.callback = progress_callback;
-        progress_state.method = env->GetMethodID(progress_class, "onProgress", "(JZ)Z");
-        env->DeleteLocalRef(progress_class);
-        if (progress_state.method == nullptr || env->ExceptionCheck()) {
-            env->DeleteLocalRef(destination);
-            return 0;
-        }
-
-        TSParseOptions options = {
-            .payload = &progress_state,
-            .progress_callback = parse_input_progress_callback,
-        };
-        new_tree = ts_parser_parse_with_options(parser, old_tree, ts_input, options);
-    } else {
-        new_tree = ts_parser_parse(parser, old_tree, ts_input);
-    }
-
-    release_input_chunk(&read_state);
-    env->DeleteLocalRef(destination);
-
-    if (env->ExceptionCheck()) {
-        if (new_tree != nullptr) ts_tree_delete(new_tree);
-        return 0;
-    }
-    return reinterpret_cast<jlong>(new_tree);
-}
-
 extern const JNINativeMethod TSParser_methods[] = {
     {"init", "()J", (void *)&parser_init},
     {"delete", "(J)V", (void *)&parser_delete},
@@ -508,8 +338,6 @@ extern const JNINativeMethod TSParser_methods[] = {
     {"parse", "(L" PACKAGE "TSTree;L" PACKAGE "TSInputEncoding;"
         "Lkotlin/jvm/functions/Function2;Lkotlin/jvm/functions/Function2;)L" PACKAGE "TSTree;",
       (void *)&parser_parse_function}
-,    {"parseInput", "(JJL" PACKAGE "TSInput;IL" PACKAGE "TSParser$ProgressCallback;)J",
-      (void *)&parser_parse_input}
 };
 
 extern const size_t TSParser_methods_size = sizeof TSParser_methods / sizeof(JNINativeMethod);
