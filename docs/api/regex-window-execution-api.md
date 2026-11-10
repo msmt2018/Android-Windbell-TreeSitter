@@ -62,3 +62,11 @@ Piece Tree 跨 chunk、emoji/组合字符、超长行、窗口边缘匹配、loo
 - `TshRegexWindowSequence`：独立 Snapshot Lease、自动连续分区、失败不推进、空文档单窗口。
 - `TshRegexNativeRegistry` / `TshOnigurumaRegex`：新增独立 Oniguruma Native Handle Registry、compile/release/find-all JNI 和 Kotlin Executor；opaque handle 由注册表管理，执行期间以 shared ownership 保活，单个 handle 的执行串行化。
 - `executeWindow` 只向 Native 传入一个有界窗口 String，不传整份 Piece Tree/Document；Native 使用 UTF-16LE、region RAII、合成非换行边界 sentinel，防止窗口边界伪装成文档边界并保持 `^`/`$`/`\A`/`\z` 锚点语义、core start 归属、匹配数/捕获组上限。Kotlin 校验返回范围和 Unicode 边界并转换为绝对 UTF-16 范围。当前捕获组用 `group_N` 数字名；Native 对单个 pattern 和单个窗口分别设置 1 Mi UTF-16 code-unit 硬上限与 2 MiB 结果载荷上限。
+
+### 仍未完成 / 不能宣称已验证
+
+- 旧 `WindbellTshEngine.computeHighlights(tree, text, extension)` 仍将完整 String 传入 JNI `nativeHighlight`；新独立 Executor 尚未迁移现有 DSL Regex MATCH/BLOCK 规则，也未替换旧混合高亮入口。
+- `TshRegexWindowConstraints` 是调用方声明，不是 Regex 静态分析器证明。当前明确拒绝 `\\G` 与 `\\K`；其他全局状态及任意 greedy/lazy/lookaround 模式的跨窗口等价尚未验证。
+- 捕获组目前以 `group_N` 数字名暴露，Oniguruma named-capture 名称枚举尚未接入。
+- BLOCK 规则跨窗口状态机、timeout/强制取消、灾难性回溯隔离、增量 dirty range、Native/NDK/JUnit 验证尚未完成。
+- 因此这只是独立 Regex Native Executor 的首个源码切片，不是生产级完整 Regex 管线，也不代表大文本高亮已完成窗口化迁移。
