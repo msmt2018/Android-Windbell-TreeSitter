@@ -57,6 +57,16 @@ Snapshot Lease 必须覆盖同步 parseInput 调用。ParserOwner 的 Snapshot p
 
 Tree-sitter 分块输入已经具备首版源码契约。项目现有 PieceTreeTextBuffer 的宿主适配器已加入 editor 模块：通过宿主提供的 snapshotFactory 创建 PieceTreeSnapshot，并按范围读取，不调用 PieceTreeTextBuffer.toString()。PieceTreeSnapshot 保留原始文本块引用、复制仍在变化的输入缓冲区内容，且可在后续编辑期间独立读取。此前缺少真实 EditorDocument 接线；本轮新增 `TshPieceTreeEditorBinding`，通过 `EditorView.addEditCallback` 在批量编辑前后分别固定快照，并将 `AppliedChange` 转成一次版本化 Change。该回调运行在 EditorView 编辑线程，快照在编辑前/后边界创建，不依赖 TSH 自行 synchronized 猜测宿主写锁。坐标索引 Provider、文件身份切换与宿主永久关闭的自动生命周期接线、Native 构建和设备级大文件验证仍未完成。 当前 `TshSparseCoordinateIndex.build(lease)` 会先 retain 独立 Snapshot Lease，调用方可在构建成功后关闭原始 Lease；索引自身实现 `AutoCloseable`，必须在不再使用时调用 `close()`。该索引仍需扫描整个 Snapshot 建立 checkpoint（O(n)），只是将读取与转换扫描限制在有界 chunk/stride 内，不应描述为 Piece Tree/Rope 原生索引或编辑增量索引。
 
+
+
+### Piece Tree Snapshot 原生坐标查询（SOURCE_PARTIAL）
+
+`PieceTreeSnapshot` 现在固定每个 Piece 的文档起始偏移、源缓冲区偏移、源缓冲区 lineStarts 引用快照、Piece 起始行列，以及 Piece 之前的 line-feed prefix。对坐标请求先二分定位 Piece，再在其 backing buffer 的 lineStarts 中二分定位行；不建立与整个文档行数成比例的新 line-start 数组，也不扫描 Piece 前面的文档内容。对于活动 change buffer，Snapshot 已经复制当前有效文本，因此对应 lineStarts 在 Snapshot 内重新生成并保持不可变。查询复杂度为 O(log(piece count) + log(lines in backing buffer))，坐标元数据空间为 O(piece count + backing buffers)，lineStarts 数组按 backing buffer 共享。
+
+`TshTextSnapshot.lineColumnAtUtf16(offset)` 是可选宿主能力，返回零基 Tree-sitter row 和 UTF-16 column。`TshPieceTreeTextAccessProvider` 将其映射到 `PieceTreeSnapshot.getTreeSitterPositionAt`；`TshTreeSitterEditCompiler` 对所有端点优先使用该索引。只有宿主未提供索引、坐标语义不兼容或端点无法确认时，才退回有界分块全文扫描。PieceTreeSnapshot 的快速路径仅在宿主确认换行归一化且没有 unusual line terminators 时启用；CR-only/异常换行继续走正确性优先的扫描路径。跨 surrogate pair 中间的端点返回不可用，由扫描路径给出既有非法边界诊断。
+
+该实现是利用 Piece Tree 现有节点/源缓冲区元数据的 Snapshot 坐标查询，不是独立 Rope Provider，也不表示编辑后可跨版本复用旧 Snapshot 坐标数据。每个新版本 Snapshot 仍需按当前 Piece 数量固定元数据；进一步减少快照创建成本及构建可编辑增量索引仍是后续工作。
+
 ## 可独立续租的 Snapshot Lease（SOURCE_PARTIAL）
 
 `TshTextSnapshotLease.retain()` 返回独立关闭的 Lease 句柄，不得返回原句柄本身。默认实现返回明确的 unsupported 诊断，避免旧自定义 Lease 在多个任务之间共享关闭状态。
@@ -80,7 +90,7 @@ PieceTreeSnapshot 的创建成本为 O(piece count) 并复制当前仍在 change
 
 - 强制校验 documentId 与 beforeVersion 必须匹配提供的不可变 Snapshot；不允许把其他文档/版本的编辑应用到旧树。
 - 所有偏移均以 UTF-16 code unit 表示，转换为 Tree-sitter UTF-16LE byte offset 时使用 64-bit 中间计算，并在 Native Int 边界显式拒绝溢出。
-- 若 `TshTextEdit` 提供 before-version 行列坐标，直接使用该坐标，不扫描全文；否则通过有界 32K UTF-16 分块单次扫描，仅缓存本批编辑实际请求的端点坐标，不创建全文 String，也不创建与总行数成比例的行索引；扫描同时检查 Snapshot 的 UTF-16 surrogate 完整性。
+- 若 `TshTextEdit` 提供 before-version 行列坐标，直接使用该坐标；否则优先调用 `TshTextSnapshot.lineColumnAtUtf16` 宿主索引（Piece Tree Snapshot 为 Piece 定位 + backing-buffer lineStarts 二分查找）；仅无索引或索引不支持当前换行语义时，才通过有界 32K UTF-16 分块单次扫描。全文扫描不创建全文 String 或全局行表，并检查 Snapshot 的 UTF-16 surrogate 完整性。
 - 编辑范围不得越界或切开 surrogate pair；起点/旧终点/新终点分别转换为 Tree-sitter row/byte-column。
 - 输入编辑按原始文档坐标升序描述，编译结果反向输出为降序；整个批次一次性传给 `TshTreeSitterParserOwner.editTreeBatch`，在一个独占 Native Lease 内依次应用，较高偏移的编辑不会改变较低偏移编辑的坐标。
 - CRLF 中的 CR 计入当前 Tree-sitter byte column，LF 才推进 row；替换文本中的换行也按同一规则计算。
