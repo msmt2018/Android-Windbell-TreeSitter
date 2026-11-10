@@ -61,7 +61,7 @@ Piece Tree 跨 chunk、emoji/组合字符、超长行、窗口边缘匹配、loo
 - `TshRegexWindowConstraints`、`TshRegexWindowLease`：有限 max-match/lookaround 声明、连续 UTF-16 窗口、surrogate-safe 边界、core start 唯一归属、EOF 零宽匹配、可选 REGEX_WINDOW reservation。窗口左侧同时保留 maxMatchLength-1 与 lookbehind，右侧保留 maxMatchLength-1 与 lookahead；容量校验计入两侧上下文和边界扩展。
 - `TshRegexWindowSequence`：独立 Snapshot Lease、自动连续分区、失败不推进、空文档单窗口。
 - `TshRegexNativeRegistry` / `TshOnigurumaRegex`：新增独立 Oniguruma Native Handle Registry、compile/release/find-all JNI 和 Kotlin Executor；opaque handle 由注册表管理，执行期间以 shared ownership 保活，单个 handle 的执行串行化。
-- `executeWindow` 只向 Native 传入一个有界窗口 String，不传整份 Piece Tree/Document；Native 使用 UTF-16LE、region RAII、文档边界 NOTBOL/NOTEOL 选项、core start 归属、匹配数/捕获组上限。Kotlin 校验返回范围和 Unicode 边界并转换为绝对 UTF-16 范围。当前捕获组用 `group_N` 数字名；Native 对单个 pattern 设置 1 Mi UTF-16 code-unit 硬上限。
+- `executeWindow` 只向 Native 传入一个有界窗口 String，不传整份 Piece Tree/Document；Native 使用 UTF-16LE、region RAII、文档边界 NOTBOL/NOTEOL/NOTBOS/NOTEOS 选项、core start 归属、匹配数/捕获组上限。Kotlin 校验返回范围和 Unicode 边界并转换为绝对 UTF-16 范围。当前捕获组用 `group_N` 数字名；Native 对单个 pattern 设置 1 Mi UTF-16 code-unit 硬上限。
 - `execute(sequence)` 顺序消费 WindowSequence，每个窗口执行后立即关闭 Lease，按 Match 数量与估算字节预算限制累积结果，最终调用 `TshRegexMatchAdapter` 输出统一 MatchSet。
 - `TshGrammar` 析构现在递归释放嵌套 BLOCK/MATCH 规则中的 Oniguruma Regex 指针。
 
