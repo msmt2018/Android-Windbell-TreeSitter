@@ -39,7 +39,7 @@ The capture estimate accounts for UTF-16 string payload lengths and a fixed per-
 
 ## Unified MatchSet merge limits
 
-`TshMatchMerger` accepts `TshMatchMergeBudget` (default 250,000 candidate matches and 64 MiB estimated merge working set). It validates and deduplicates in one pass instead of materializing several full-size filter/groupBy/map copies. Its estimate includes Match/provenance fields, nested capture text, scope paths, and fixed map/sort overhead. Reaching either limit returns a `TRUNCATED` MatchSet with a memory warning. Merge diagnostics are capped at 4,096 entries.
+`TshMatchMerger` accepts `TshMatchMergeBudget` (default 250,000 candidate matches and 64 MiB estimated merge working set). It validates and deduplicates in one pass instead of materializing several full-size filter/groupBy/map copies. `TshMatchSet` constructor invariants are also checked in one pass with a single ID set, avoiding repeated `filter`/`map`/`distinct` temporary lists. Its estimate includes Match/provenance fields, nested capture text, scope paths, and fixed map/sort overhead. Reaching either limit returns a `TRUNCATED` MatchSet with a memory warning. Merge diagnostics are capped at 4,096 entries.
 
 These limits account for the merger's additional working set only. The input `Collection` already exists and is not included; upstream Tree-sitter/Regex execution must enforce its own result limits. The estimate is not a JVM heap measurement.
 
