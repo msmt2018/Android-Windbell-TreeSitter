@@ -250,3 +250,11 @@
 - [x] 预算不足时在创建 Native 连续输入副本之前拒绝解析；解析完成、失败或取消后在 `finally` 释放临时 reservation。
 - [x] 保留 Snapshot + TSInput 分块路径：其 reservation 仍按每次最大 callback chunk 申请并在 callback 返回前释放，不因文件总长度而申请全文副本预算。
 - [ ] 该 String 路径无法避免调用方已经持有的 JVM String；200–300 MiB 及更大的宿主文档应优先走 Snapshot/Piece Tree streaming API。
+
+
+### Parser Input Buffer Admission
+
+- [x] Legacy String parse 在创建 Native UTF16String 前预留 sourceLengthUtf16×2 的 Native copy estimate，覆盖整个 parse 调用并在结束后释放。
+- [x] Streaming parse 在 Native 创建可复用 Java byte[] 前预留 chunkSizeBytes×2+overhead，保守覆盖 byte[] 与可能的 JNI `GetByteArrayElements` copy；整个 parse 生命周期持有该 reservation。
+- [x] 每次 TSInput.read 回调另行预留 provider 返回的 UTF-16 chunk payload，回调结束即释放。
+- [ ] 以上均为可控输入缓冲 admission estimate，不覆盖 Tree-sitter 内部 parser stack、lookahead buffer 或其他 Native allocations。
