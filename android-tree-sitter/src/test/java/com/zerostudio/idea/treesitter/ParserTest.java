@@ -83,6 +83,32 @@ public class ParserTest extends TreeSitterTest {
   }
 
   @Test
+  public void testSetEmptyIncludedRangesRestoresFullDocumentParsing() {
+    try (TSParser parser = TSParser.create()) {
+      parser.setLanguage(TSLanguageJava.getInstance());
+      assertThat(parser.setIncludedRanges(new TSRange[0])).isTrue();
+
+      try (TSTree tree = parser.parseString("class EmptyRanges { int value = 1; }")) {
+        assertThat(tree).isNotNull();
+        assertThat(tree.getRootNode().hasErrors()).isFalse();
+      }
+    }
+  }
+
+  @Test
+  public void testParsePreservesUtf16SurrogatePairs() {
+    final String source = "class Emoji { String value = \"👨‍👩‍👧‍👦\"; }";
+    try (TSParser parser = TSParser.create()) {
+      parser.setLanguage(TSLanguageJava.getInstance());
+      try (TSTree tree = parser.parseString(source)) {
+        assertThat(tree).isNotNull();
+        assertThat(tree.getRootNode().hasErrors()).isFalse();
+      }
+    }
+  }
+
+
+  @Test
   public void testCodeEditor() throws Throwable {
     final long start = System.currentTimeMillis();
     try (TSParser parser = TSParser.create()) {
