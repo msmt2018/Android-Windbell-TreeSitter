@@ -144,4 +144,14 @@ class DocumentPartitionManagerTest {
         }
     }
 
+
+    @Test fun sparseLineOffsetsRemainCorrectWithCompactPrimitiveStorage() {
+        val source = Source("x\\n".repeat(300))
+        val manager = DocumentPartitionManager(targetPartitionChars = 1024)
+        manager.rebuild(source)
+        assertEquals(0L, manager.lineCheckpointAtOrBefore(255L))
+        assertEquals(512L, manager.lineCheckpointAtOrBefore(256L))
+        assertEquals(512L, manager.lineCheckpointAtOrBefore(300L))
+    }
+
 }
