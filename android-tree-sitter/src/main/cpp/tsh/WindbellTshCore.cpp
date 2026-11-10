@@ -395,6 +395,11 @@ static bool tshPredicateCaptureTexts(const TSQueryMatch& match, uint32_t capture
     uint32_t source_bytes,
     std::vector<std::vector<UChar>>& texts) {
     texts.clear();
+    // This path is used only when a regex cannot use the bounded-window
+    // TextSource executor. Never materialize an arbitrarily large capture:
+    // fail explicitly instead of allowing a document-sized temporary buffer.
+    constexpr uint64_t kMaxMaterializedCaptureBytes = 8u * 1024u * 1024u;
+    uint64_t materialized_bytes = 0;
     try {
     for (uint32_t i = 0; i < match.capture_count; ++i) {
         if (match.captures[i].index != capture_id) continue;
@@ -402,6 +407,10 @@ static bool tshPredicateCaptureTexts(const TSQueryMatch& match, uint32_t capture
         const uint32_t end = ts_node_end_byte(match.captures[i].node);
         if (start > end || end > source_bytes || (start & 1u) || (end & 1u) ||
             (!utf16_source && !text_source && end != start)) return false;
+        const uint64_t capture_bytes = static_cast<uint64_t>(end) - start;
+        if (capture_bytes > kMaxMaterializedCaptureBytes - materialized_bytes)
+            return false;
+        materialized_bytes += capture_bytes;
         std::vector<UChar> converted;
         if (end > start) {
             converted.resize((end - start) / sizeof(UChar));
