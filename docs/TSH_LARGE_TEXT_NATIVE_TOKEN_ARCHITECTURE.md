@@ -1150,3 +1150,250 @@ M_{regex} + M_{cache} + M_{jni} + M_{reserve}
 3. Tree-sitter Parser API：included ranges 只解析指定范围但保留原文档坐标的契约：  
    https://docs.rs/tree-sitter/latest/tree_sitter/struct.Parser.html
 4. 项目上传的 Tree-sitter 核心源码快照：Parser TokenCache、SubtreePool、默认 allocator 路径（以本项目实际集成版本为准）。
+
+---
+
+## 24. Google 搜索评价整理与工程化补充：Lease、Regex 边界、Revision 事务
+
+> 本节整理用户提供的 Google 搜索结果中的评价与风险提示，并结合当前文档和上游公开 API 补充可执行契约。Google 搜索摘要属于外部评价，不是源码审计或实现证明；本节也不代表以下机制已经落地。
+
+### 24.1 对搜索评价的归纳与校准
+
+搜索结果认可本文的几个核心方向：
+
+1. 将大文本输入、Token/节点管理、结果分页和内存预算下沉到 Native/TSH，而不是要求应用层先 flatten 全文；
+2. 使用单一逻辑 Parser 连续消费多个 ReadWindow，不把窗口边界当成语法边界；
+3. 通过 revision-aware 缓存、Lease 和批量 JNI 结果减少重复工作与 JVM 对象开销；
+4. 保留 Tree-sitter 增量树复用，并让 Regex/Oniguruma 保持独立执行管线。
+
+这些评价与本文既有设计目标一致，但“可行性极高”“理论上完全阻断内存线性增长”等措辞需要收紧：
+
+- TSInput 分块输入只能避免输入侧必须提供一个全文连续缓冲区，不能保证完整 Tree、Parser stack、Query、Regex 或缓存内存不随工作量增长；
+- Lease 和缓存只有在所有权、释放时点、revision 与预算规则真正实现后才产生资源可控性；
+- 批量 JNI 可以降低调用次数和对象分配，但若一次导出全部结果，仍可能制造巨大连续副本；
+- 固定大小 overlap 不是任意 Regex 的通用正确性证明；
+- 增量任务取消不能代替 revision 隔离。旧任务即使无法及时停止，也必须保证其结果不能提交到新 revision。
+
+因此，本节把搜索结果中的三个“深水区”提升为独立工程契约和验收门槛。
+
+### 24.2 TSInput.read：借用缓冲区的所有权与释放协议
+
+Tree-sitter 的公开契约明确指出：Parser 不取得 read callback 返回缓冲区的所有权，而是在完成读取前借用该缓冲区。该描述不应被简化为“回调返回后立即可复用”，也不应在未核对实际集成版本源码前，擅自把某个回调时刻当作所有版本都保证的释放时点。
+
+#### 24.2.1 Lease 状态
+
+每个 ReadWindow 必须具有独立、可检查的状态：
+
+| 状态 | 含义 | 是否允许写入/复用 |
+|---|---|---|
+| FREE | 空闲池中的窗口 | 允许重新初始化 |
+| FILLING | TextSource 正在填充 | 不允许 Parser 读取 |
+| READY | 内容、长度、revision 已固定 | 只读，等待交付 |
+| BORROWED | 已返回给 TSInput，Parser 可能仍在读取 | 禁止覆盖、移动、释放 |
+| RETIRED | 已确认 Parser 不再引用 | 不再交付新读取，可等待回收 |
+| RELEASED | Lease 已归还池 | 允许后续复用 |
+
+状态迁移必须由唯一的 Lease owner 驱动；非法迁移、重复 release、generation 不匹配必须可检测，并在 Debug/测试构建中触发断言或错误记录。
+
+#### 24.2.2 最低所有权契约
+
+- data 指针在 BORROWED 期间地址稳定，底层 allocation 不得 realloc、搬迁、覆盖或释放；
+- Window 的 base_byte、length_bytes、encoding、document id、revision 和 generation 在 BORROWED 期间不可变；
+- bytes_read 必须精确表示本次有效字节数；只有真实文档 EOF 才能返回零长度；
+- 暂时无法读取、快照失效、JNI 异常和 EOF 必须是不同结果，不能都映射成 bytes_read = 0；
+- 同一个 Parser 的 read callback 不得并发改写其活动窗口；
+- 预取线程只能填充另一个 FREE 窗口，不能改写 BORROWED 窗口或推进 Parser 状态；
+- Parser 取消、异常退出、任务关闭和 JNI handle 销毁路径都必须归还仍持有的 Lease；
+- 不允许 Native 保存 Java/Kotlin 临时数组或临时 direct-buffer 地址，并在其 pin/有效期结束后继续访问。
+
+#### 24.2.3 双缓冲/环形缓冲的正确回收条件
+
+双缓冲不是“当前块处理完就随便覆盖”。实现必须存在一个明确的 safe-to-reuse 事件：由所使用的 Tree-sitter 版本及其 Parser 调用路径证明，Parser 已经不再引用上一块内存。
+
+在该事件得到源码审计和测试证明之前，不得仅凭“下一次 read callback 已经开始”或“回调已经返回”推定旧指针安全。可采用保守实现先建立正确性，再依据固定版本的源码和压力测试缩短 Lease 持有期。最终实现应做到：
+
+1. 每个 callback 返回的窗口都有 Lease/generation；
+2. Parser 使用窗口期间 Lease 保持 BORROWED；
+3. 只有到达经过验证的安全释放点，状态才从 BORROWED 转为 RETIRED；
+4. RETIRED 窗口经过引用计数归零后才能回到 FREE；
+5. 任意时刻被 Parser 借用的窗口数量有明确上限，且计入全局预算；
+6. 若所有窗口均被借用，生产者必须等待、取消或返回资源受限状态，不能扩容成无界缓冲池。
+
+注意：不能为了省事把整次超大文件解析期间产生的所有窗口都永久 pin 到 parse 返回，否则虽然避免悬空指针，却会把分块输入重新变成近似全文驻留。Lease 的释放粒度必须由已验证的 Parser 使用周期决定。
+
+#### 24.2.4 必须覆盖的故障测试
+
+- Parser 读取窗口时强制触发预取，确认活动窗口字节不变化；
+- 窗口池容量设为 1、2、3，验证背压和状态迁移；
+- 在 callback、解析取消、异常和 close 的每个边界注入失败；
+- 延迟释放 Lease，同时反复请求新窗口，确认不会覆盖仍被借用的地址；
+- 使用 AddressSanitizer/HWASan（按构建环境可用性）检查 use-after-free、越界和重复释放；
+- 记录 peak borrowed windows、lease duration、等待时间、池命中率和强制扩容次数；强制扩容不得突破预算。
+
+### 24.3 Regex / Oniguruma：窗口边界等价性不是固定 overlap
+
+Oniguruma 的搜索 API 同时接收 subject 的起止地址、搜索起点和搜索范围；它还提供 NOTBOL、NOTEOL、NOT_BEGIN_STRING、NOT_END_STRING、NOT_BEGIN_POSITION 等选项，说明 subject 边界、行边界和搜索起点会影响锚点语义。将一个窗口直接当成完整字符串传入，可能把窗口边缘误当作真实文档边界。
+
+#### 24.3.1 Regex 规则必须先分类
+
+| 规则类别 | 固定 overlap 是否足够 | 执行要求 |
+|---|---|---|
+| 有界最大匹配长度，且前后文依赖有明确上限 | 可能足够 | overlap 覆盖已证明的最大上下文；只提交核心区间内的匹配 |
+| 有界 lookbehind/lookahead | 有条件足够 | 记录上下文上限、编码单位和边界裁剪规则 |
+| 无界重复或匹配长度无上限 | 不足以证明 | 使用专门流式状态机（若规则语义允许）、完整连续区间，或拒绝/降级 |
+| 依赖 ^/$、\A、\z、\G 的规则 | 不能只靠 overlap | 显式维护真实文档边界、行边界和搜索起点语义 |
+| 依赖跨窗口前文状态的规则 | 固定 overlap 未必足够 | 必须有可证明的状态传递协议，否则拒绝窗口化 |
+| 无法静态判定边界依赖的规则 | 不可默认安全 | 标记 NEEDS_FULL_CONTEXT/UNSUPPORTED，禁止伪装 COMPLETE |
+
+这里的“有界”必须是规则编译/分析结果或经过审核的显式元数据，不得凭经验猜测。若当前 Regex 语法子集无法可靠分析某类模式，应将其归入“无法证明”，而不是乐观推断。
+
+#### 24.3.2 窗口执行协议
+
+每次 Regex 执行至少区分：
+
+- subject window：Oniguruma 实际可读取的连续缓冲区；
+- search core range：本窗口负责产生新匹配的绝对范围；
+- left/right context：为有界前后文和跨边界匹配提供的额外上下文；
+- true document boundary：真实文档开头/结尾；
+- line boundary：由原始文本换行语义确定的行边界；
+- commit range：允许向结果页提交的匹配范围，避免 overlap 造成重复结果。
+
+提交规则：匹配的归属由稳定的绝对起点/范围规则确定；仅当匹配满足当前窗口的 commit range 和完整上下文条件时才提交。匹配跨窗口但上下文不足时，不得静默丢弃或截断，应延迟到后续窗口、扩展读取，或返回明确的 PARTIAL/CONTEXT_INCOMPLETE。
+
+#### 24.3.3 Regex 资源和安全边界
+
+- WindowLease 必须保证 Oniguruma 执行期间 subject 地址稳定；
+- str/end/start/range 必须落在同一个有效连续 allocation 内，且指针顺序和编码边界合法；
+- 不得把窗口的 str 起点伪装成文档起点，也不得把窗口 end 伪装成文档 EOF；
+- 搜索范围参数与 subject 可读范围必须分开计算；
+- 记录 Oniguruma retry/match stack 限制、超时/取消和错误状态；不能只限制窗口字节数而忽略灾难性回溯；
+- Regex WindowLease、OnigRegion、匹配栈及临时 subject 副本全部纳入 Memory Governor；
+- Regex 仍是独立管线，不得把 Regex 转换为 Tree-sitter Query，也不得新增第三套执行管线。
+
+#### 24.3.4 必须覆盖的边界对照测试
+
+对每条可窗口化规则，使用同一份文本分别执行“完整连续 subject”与“窗口化 subject”，比较所有匹配的绝对起止位置、捕获组、顺序和错误状态。测试至少包含：
+
+- 匹配恰好从窗口左边界开始、在右边界结束；
+- 匹配跨越一个或多个窗口；
+- 有界 lookbehind/lookahead 的最大边界；
+- 多行模式、CRLF、LF、单独 CR；
+- 文档首尾的 ^/$、\A、\z；
+- 窗口内部的行首/行尾；
+- \G 连续搜索起点变化；
+- 零长度匹配和相邻窗口去重；
+- 超长匹配、无界重复、极端回溯；
+- UTF-8 多字节字符与 UTF-16 surrogate pair 边界。
+
+无法与完整 subject 结果严格等价的规则，必须明确报告不支持窗口化或结果不完整；不能以“绝大多数情况正常”作为正确性标准。
+
+### 24.4 Revision 一致性：把解析与编辑建模为不可变事务
+
+单独给任务附加一个 revision 数字还不够。必须保证任务执行期间读取的文本、Tree 编辑、Parser 状态、Query 结果和最终提交都来自同一个不可变快照。
+
+#### 24.4.1 任务身份
+
+每个解析/查询任务使用不可变身份元组：
+
+    struct DocumentTaskIdentity {
+      uint64_t document_id;
+      uint64_t source_revision;
+      uint64_t edit_sequence;
+      uint64_t parser_generation;
+      uint64_t grammar_fingerprint;
+      uint64_t query_revision;
+      uint64_t task_generation;
+    };
+
+具体字段可与现有 API 合并，但必须能区分文档、文本快照、编辑序列、Parser 生命周期、Grammar/Query 版本和任务代次。revision 不可只依赖一个可能回绕或跨文档复用的裸整数。
+
+#### 24.4.2 编辑事务顺序
+
+对 revision R 到 R+1 的编辑，按以下顺序执行：
+
+1. Host 创建不可变的 R+1 文本快照；旧快照 R 在所有旧任务释放前保持可读；
+2. 构造与这次文本变更严格对应的 TSInputEdit，明确 byte/point 坐标及旧、新结束位置；
+3. 将旧 Tree 的编辑操作与 R+1 快照绑定为同一事务；
+4. Parser 任务只能读取 R+1 快照，不能在回调中动态读取“当前最新文本”；
+5. 任务提交前核对完整身份元组和目标 Tree/Query generation；
+6. 若当前文档已推进到 R+2，R+1 任务结果只能被丢弃或作为明确标记的旧版本缓存，绝不能写入 R+2 的活动结果集；
+7. 旧快照、旧 Tree、窗口 Lease 和结果页在最后一个引用释放后才能回收。
+
+**禁止的实现：** 任务持有 R 的 TSInputEdit，却通过 TextSource 回调读取 R+1 的 Piece Tree 内容；或 Parser 使用 R+1 的文本，却把 R 的旧 Tree 当成与该编辑完全匹配的输入。
+
+#### 24.4.3 Parser 所有权与取消策略
+
+- 同一个可变 Parser 实例的 parse/edit/reset/close 操作必须串行化，除非当前集成版本明确提供并验证了其他并发契约；
+- 新 revision 到来时可以请求旧任务协作式取消，但取消只是节省资源，不是正确性屏障；
+- 旧任务即使在取消响应前完成，也必须在提交阶段因 generation/revision 不匹配而被拒绝；
+- Parser、Tree、TextSnapshot 和 Lease 的销毁顺序必须保证没有任务继续访问已释放对象；
+- 若采用 Parser 实例池，每个实例必须绑定明确的文档/快照状态，不能把一个 Parser 的未完成状态借给另一个 revision；
+- 任务失败后不得将“最后一次成功的旧结果”伪装成当前 revision 的 COMPLETE 结果。
+
+#### 24.4.4 必须覆盖的并发测试
+
+- 连续快速编辑 R→R+1→R+2，故意让 R 的任务最后完成；
+- 在 TSInput.read 期间提交新编辑，确认旧任务始终读取旧快照；
+- 在 Tree edit 后、parse 前、parse 中、Query 中分别触发取消；
+- 任务完成与文档 close、Parser reset、Grammar reload 并发；
+- 让旧 Query 页在新 revision 到来后延迟 Ack；
+- 对同一位置执行插入、删除、替换、CRLF 转换和多字节字符编辑；
+- 对每个任务记录 snapshot revision、edit sequence、parser generation、开始/结束/提交时刻及最终接受/拒绝原因。
+
+### 24.5 统一错误状态与可观测性
+
+以上三类问题不能只靠日志字符串排查。建议在 Native 诊断接口中统一暴露以下事件/计数：
+
+| 领域 | 必须观测的字段 |
+|---|---|
+| ReadWindow Lease | lease id、generation、revision、base、length、state、borrow duration、release reason |
+| Parser | parser generation、snapshot revision、parse start/end、cancel reason、tree revision |
+| Regex | pattern revision、subject range、search core range、context width、anchor mode、fallback reason |
+| Revision | edit sequence、old/new revision、task identity、commit accepted/rejected reason |
+| Memory | active/borrowed/free bytes、peak bytes、allocation failure、budget rejection |
+| Completeness | COMPLETE/PARTIAL/CONTEXT_INCOMPLETE/STALE/CANCELLED/FAILED |
+
+诊断信息必须能区分“没有匹配”“还没处理到”“上下文不足”“资源预算拒绝”“旧 revision 结果过期”和“执行失败”。这些状态不能统一显示为空结果。
+
+### 24.6 新增验收门槛与实施顺序
+
+| 优先级 | 工作项 | 通过条件 |
+|---|---|---|
+| P0 | 固定 Tree-sitter 版本并审计 TSInput 指针消费周期 | Lease 释放点有源码依据和测试，不存在悬空/覆盖 |
+| P0 | 不可变 TextSnapshot 与任务身份 | 任务全程只读同一 revision，旧结果不能提交到新版本 |
+| P0 | Parser 实例串行所有权 | 同一 Parser 不发生并发 parse/edit/reset/close 竞争 |
+| P0 | Regex 完整 subject 对照测试 | 可窗口化规则与完整连续输入结果严格一致 |
+| P1 | Regex 规则能力分类与 fallback | 无法证明边界等价的规则明确降级，不静默截断 |
+| P1 | ReadWindow 池背压和内存计量 | 窗口数量/字节有硬上限，压力下不无界扩容 |
+| P1 | 取消、关闭、异常路径 Lease 清理 | 无泄漏、重复释放、use-after-free |
+| P2 | 性能优化 | 在正确性通过后测量双/三缓冲、预取和批次尺寸收益 |
+
+建议实施顺序：先固定 Tree-sitter/Oniguruma 实际版本并完成源码契约审计；再完成 ReadWindow Lease 和不可变 Snapshot；随后实现 revision 事务与 Parser 串行所有权；最后实现 Regex 规则分类、窗口等价性和性能优化。不能先做多缓冲性能调优，再补指针生命周期和版本一致性。
+
+### 24.7 本节参考资料
+
+1. Tree-sitter C API：TSInput.read 的借用缓冲区、bytes_read 和 EOF 契约：  
+   https://github.com/tree-sitter/tree-sitter/blob/master/lib/include/tree_sitter/api.h
+2. Tree-sitter Basic Parsing：TSInput 分块读取说明：  
+   https://tree-sitter.github.io/tree-sitter/using-parsers/2-basic-parsing.html
+3. Tree-sitter Rust Binding：回调输入的 payload 持有上一次回调结果，作为缓冲区生命周期实现参考；不能代替本项目所用 C 版本的源码审计：  
+   https://github.com/tree-sitter/tree-sitter/blob/master/lib/binding_rust/lib.rs
+4. Oniguruma API：onig_search 的 str/end/start/range 参数与 NOTBOL、NOTEOL、NOT_BEGIN_STRING、NOT_END_STRING、NOT_BEGIN_POSITION 选项：  
+   https://github.com/kkos/oniguruma/blob/master/doc/API.ja
+5. Oniguruma Syntax：\A、\Z、\z 与 \G 锚点语义：  
+   https://github.com/kkos/oniguruma/blob/master/doc/SYNTAX.md
+
+---
+
+## 25. 搜索评价到文档/实现的追踪矩阵
+
+| 搜索评价/风险 | 文档已有基础 | 本次补充 | 后续代码验证 |
+|---|---|---|---|
+| 单 Parser 跨窗口连续解析 | 第 2、9 节 | 明确 Parser 状态不能被预取推进 | 同一 Parser 多窗口对照解析 |
+| TSInput 指针稳定与 Lease | 第 2.1、3.5、6、8 节 | Lease 状态机、safe-to-reuse、背压与故障注入 | ASan/HWASan、窗口池容量 1/2/3 |
+| Regex 无界前后文与 overlap | 第 12 节 | 规则分类、subject/core/context、锚点语义与完整输入对照 | 全量 subject vs windowed exact diff |
+| 增量编辑 revision 对齐 | 第 2.2、6.2、8.3、11 节 | 不可变事务、任务身份、Parser 串行所有权、提交屏障 | R→R+1→R+2 延迟乱序测试 |
+| 批量 JNI 避免对象膨胀 | 第 7.3、11 节 | 强调分页批次不能退化成一次全量导出 | JNI 次数、复制字节、JVM allocation |
+| 内存预算与压力降级 | 第 1、13、23 节 | 将 Lease、Regex 和任务状态纳入统一观测 | allocator 故障注入、预算拒绝测试 |
+
+本追踪矩阵用于把外部评价转成可执行工作项。文档更新完成不等于代码实现完成；只有对应测试在目标构建和 Android 设备环境通过后，才能把相应实现状态更新为 DONE。
