@@ -176,3 +176,13 @@
 - [x] CI 增加 workflow concurrency group，自动取消同分支/PR 的过期运行；移除重复的单 job 取消 action。
 - [x] Debug grammar npm install 与 Release 对齐，均提供 legacy peer dependency fallback。
 - [ ] 最新提交完整 Release + Debug CI 通过后才能升级验证状态。
+
+### 2026-11-10：统一内存预算与 Query 结果硬限制（SOURCE_PARTIAL）
+
+- [x] 新增平台无关的 `TshMemoryBudget` / `TshMemoryReservation`：分类 reservation、并发安全、分类统计、高水位、幂等释放、关闭后拒绝新 reservation。
+- [x] 默认目标预算 100 MiB，绝对硬上限 512 MiB；宿主可传入可用内存，默认按可用内存的 1/4 收紧有效预算，不在公共 API 内部探测 Android/系统内存。
+- [x] 新增 MEMORY 诊断阶段；无效、超预算、关闭后分配均返回结构化诊断。
+- [x] Query 执行预算新增 maxCaptures 与 maxResultBytes，避免只限制 match 数却让单个 match 包含大量 capture 时无界累积；超过限制返回 partial result 与 warning。
+- [ ] Query capture 字节数目前是明确的保留结果估算（字符串 UTF-16 长度 + 每项固定开销），不是 JVM heap 精确测量；尚未与 QueryResult 生命周期 reservation 绑定。
+- [ ] Parser/Native Tree、Regex Window、RenderPlan、CoordinateIndex 尚未全部接入统一 reservation；Tree-sitter 内部 Native 分配不可由此账本精确计量。
+- [ ] 本轮新增 JUnit 测试源码待 CI 执行；未声称构建或设备压力测试通过。
