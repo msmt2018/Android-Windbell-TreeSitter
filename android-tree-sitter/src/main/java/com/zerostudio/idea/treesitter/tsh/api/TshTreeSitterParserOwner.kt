@@ -822,24 +822,24 @@ class TshTreeSitterParserOwner private constructor(
 
         var tree: TSTree? = null
         var languageLeaseTransferred = false
-        val progressCancelled = AtomicBoolean(false)
-        val progressFailure = AtomicReference<Exception?>(null)
-        val nativeProgressCallback = progressCallback?.let { callback ->
-            TSParser.ProgressCallback { byteOffset, hasError ->
-                try {
-                    check(byteOffset >= 0L && byteOffset % 2L == 0L) {
-                        "Tree-sitter UTF-16LE progress offset is not an even non-negative byte offset"
+        try {
+            val progressCancelled = AtomicBoolean(false)
+            val progressFailure = AtomicReference<Exception?>(null)
+            val nativeProgressCallback = progressCallback?.let { callback ->
+                TSParser.ProgressCallback { byteOffset, hasError ->
+                    try {
+                        check(byteOffset >= 0L && byteOffset % 2L == 0L) {
+                            "Tree-sitter UTF-16LE progress offset is not an even non-negative byte offset"
+                        }
+                        val shouldCancel = callback.shouldCancel(byteOffset / 2L, hasError)
+                        if (shouldCancel) progressCancelled.set(true)
+                        shouldCancel
+                    } catch (error: Exception) {
+                        progressFailure.compareAndSet(null, error)
+                        true
                     }
-                    val shouldCancel = callback.shouldCancel(byteOffset / 2L, hasError)
-                    if (shouldCancel) progressCancelled.set(true)
-                    shouldCancel
-                } catch (error: Exception) {
-                    progressFailure.compareAndSet(null, error)
-                    true
                 }
             }
-        }
-        try {
             val input = TshSnapshotTreeSitterInput(textProvider, snapshotLease, memoryBudget)
             var parseStartedAtNanos = 0L
             val parsedTree = parseLock.withLock {
