@@ -415,52 +415,63 @@ class ByteBudgetLruCache<K : Any, V : Any>(
     private val weigh: (V) -> Long,
     private val onEvict: (V) -> Unit = {}
 ) : AutoCloseable {
+    private data class Entry<V>(val value: V, val weight: Long)
+
     private val lock = ReentrantReadWriteLock()
-    private val entries = LinkedHashMap<K, V>(16, 0.75f, true)
+    private val entries = LinkedHashMap<K, Entry<V>>(16, 0.75f, true)
     private var usedBytes = 0L
+
     init { require(maxBytes >= 0L) }
 
     val size: Int get() = lock.read { entries.size }
     val bytesUsed: Long get() = lock.read { usedBytes }
 
-    fun get(key: K): V? = lock.write { entries[key] }
+    fun get(key: K): V? = lock.write { entries[key]?.value }
 
     fun put(key: K, value: V) = lock.write {
+        // Freeze the weight at admission. Re-evaluating a mutable value during
+        // eviction/removal can otherwise corrupt byte accounting.
         val weight = weigh(value).coerceAtLeast(0L)
         val previous = entries.remove(key)
         if (previous != null) {
-            usedBytes -= weigh(previous).coerceAtLeast(0L)
-            if (previous !== value) onEvict(previous)
+            usedBytes -= previous.weight
+            if (previous.value !== value) onEvict(previous.value)
         }
-        if (weight > maxBytes) {
+        if (weight > maxBytes || maxBytes == 0L) {
             onEvict(value)
             return@write
         }
-        entries[key] = value
-        usedBytes += weight
+
+        // Evict before addition so usedBytes + weight can never overflow Long.
         val iterator = entries.entries.iterator()
-        while (usedBytes > maxBytes && iterator.hasNext()) {
+        while (weight > maxBytes - usedBytes && iterator.hasNext()) {
             val eldest = iterator.next().value
-            usedBytes -= weigh(eldest).coerceAtLeast(0L)
             iterator.remove()
-            onEvict(eldest)
+            usedBytes -= eldest.weight
+            onEvict(eldest.value)
         }
+        if (weight > maxBytes - usedBytes) {
+            onEvict(value)
+            return@write
+        }
+        entries[key] = Entry(value, weight)
+        usedBytes += weight
     }
 
     fun remove(key: K): V? = lock.write {
-        val value = entries.remove(key) ?: return@write null
-        usedBytes -= weigh(value).coerceAtLeast(0L)
-        value
+        val entry = entries.remove(key) ?: return@write null
+        usedBytes -= entry.weight
+        entry.value
     }
 
     fun invalidate(predicate: (K, V) -> Boolean) = lock.write {
         val iterator = entries.entries.iterator()
         while (iterator.hasNext()) {
             val entry = iterator.next()
-            if (predicate(entry.key, entry.value)) {
-                usedBytes -= weigh(entry.value).coerceAtLeast(0L)
+            if (predicate(entry.key, entry.value.value)) {
+                usedBytes -= entry.value.weight
                 iterator.remove()
-                onEvict(entry.value)
+                onEvict(entry.value.value)
             }
         }
     }
@@ -471,7 +482,7 @@ class ByteBudgetLruCache<K : Any, V : Any>(
     fun removeIf(predicate: (K) -> Boolean) = invalidate { key, _ -> predicate(key) }
 
     override fun close() = lock.write {
-        entries.values.forEach(onEvict)
+        entries.values.forEach { onEvict(it.value) }
         entries.clear()
         usedBytes = 0L
     }
