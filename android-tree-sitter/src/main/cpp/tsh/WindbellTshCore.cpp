@@ -1342,9 +1342,10 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                     if (text_start > text_end || text_end > total_bytes ||
                         (text_start & 1u) || (text_end & 1u)) continue;
 
-                    // Literal-only selectors are evaluated as a bounded stream.
-                    // text_regex remains on the contiguous Oniguruma adapter until
-                    // a semantics-preserving streaming regex backend is integrated.
+                    // Literal-only selectors and compiler-proven bounded text
+                    // regexes are evaluated directly against TextSource windows.
+                    // Context-dependent regexes use the guarded contiguous adapter
+                    // below and are never reinterpreted as window-local patterns.
                     if (text_source && !ast_rule.text_regex) {
                         if (ast_rule.has_text_equals &&
                             !tshSourceMatchesUtf8Literal(*text_source, text_start, text_end,
@@ -1629,9 +1630,9 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
     retain_requested_range(macro_spans);
 
     // Keep the public range API's output bounded to the requested document
-    // window. Regex and its state-rule mode still evaluate from document start to preserve
-    // multiline matches and state transitions; native Tree-sitter queries
-    // are range-restricted above and do not enumerate unrelated captures.
+    // window. Ordinary bounded Regex and native Tree-sitter queries can operate
+    // on TextSource windows/ranges. Regex State still needs a source-window
+    // tokenizer path before it can claim equivalent large-document behavior.
     auto clip_to_requested_range = [&](std::vector<HighlightSpan>& candidates) {
         for (auto& span : candidates) {
             span.start_byte = std::max(span.start_byte, range_start_byte);
