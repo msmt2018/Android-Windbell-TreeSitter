@@ -26,6 +26,157 @@ static void tshIncrementDiagnostic(uint32_t* value, uint64_t amount = 1u) noexce
         : static_cast<uint32_t>(*value + amount);
 }
 
+class HighlightSpanConflictIndex final {
+public:
+    void add(const HighlightSpan& span, size_t spanIndex,
+             const std::vector<HighlightSpan>& spans) {
+        if (span.allow_overlap) return;
+        const uint64_t key = rangeKey(span.start_byte, span.end_byte);
+        exact_ranges_.try_emplace(key, spanIndex);
+        Node node;
+        node.span_index = spanIndex;
+        node.heap_priority = mix(static_cast<uint64_t>(spanIndex) + 0x9E3779B97F4A7C15ULL);
+        node.min_start = node.max_start = span.start_byte;
+        node.min_end = node.max_end = span.end_byte;
+        nodes_.push_back(node);
+        root_ = insert(root_, nodes_.size() - 1u, spans);
+    }
+
+    void findCrossings(uint32_t start, uint32_t end,
+                       const std::vector<HighlightSpan>& spans,
+                       std::vector<size_t>& output) const {
+        output.clear();
+        if (start >= end) return;
+        const auto exact = exact_ranges_.find(rangeKey(start, end));
+        if (exact != exact_ranges_.end()) output.push_back(exact->second);
+        collect(root_, start, end, spans, output);
+        std::sort(output.begin(), output.end());
+        output.erase(std::unique(output.begin(), output.end()), output.end());
+    }
+
+private:
+    static constexpr size_t kNone = std::numeric_limits<size_t>::max();
+
+    struct Node {
+        size_t span_index = 0;
+        size_t left = kNone;
+        size_t right = kNone;
+        uint64_t heap_priority = 0;
+        uint32_t min_start = 0;
+        uint32_t max_start = 0;
+        uint32_t min_end = 0;
+        uint32_t max_end = 0;
+    };
+
+    static uint64_t rangeKey(uint32_t start, uint32_t end) noexcept {
+        return (static_cast<uint64_t>(start) << 32u) | end;
+    }
+
+    static uint64_t mix(uint64_t value) noexcept {
+        value += 0x9E3779B97F4A7C15ULL;
+        value = (value ^ (value >> 30u)) * 0xBF58476D1CE4E5B9ULL;
+        value = (value ^ (value >> 27u)) * 0x94D049BB133111EBULL;
+        return value ^ (value >> 31u);
+    }
+
+    void update(size_t index, const std::vector<HighlightSpan>& spans) noexcept {
+        Node& node = nodes_[index];
+        const HighlightSpan& span = spans[node.span_index];
+        node.min_start = node.max_start = span.start_byte;
+        node.min_end = node.max_end = span.end_byte;
+        if (node.left != kNone) {
+            const Node& child = nodes_[node.left];
+            node.min_start = std::min(node.min_start, child.min_start);
+            node.max_start = std::max(node.max_start, child.max_start);
+            node.min_end = std::min(node.min_end, child.min_end);
+            node.max_end = std::max(node.max_end, child.max_end);
+        }
+        if (node.right != kNone) {
+            const Node& child = nodes_[node.right];
+            node.min_start = std::min(node.min_start, child.min_start);
+            node.max_start = std::max(node.max_start, child.max_start);
+            node.min_end = std::min(node.min_end, child.min_end);
+            node.max_end = std::max(node.max_end, child.max_end);
+        }
+    }
+
+    bool lessKey(size_t left, size_t right,
+                 const std::vector<HighlightSpan>& spans) const noexcept {
+        const auto& a = spans[nodes_[left].span_index];
+        const auto& b = spans[nodes_[right].span_index];
+        return a.start_byte < b.start_byte ||
+            (a.start_byte == b.start_byte &&
+             nodes_[left].span_index < nodes_[right].span_index);
+    }
+
+    size_t rotateRight(size_t root, const std::vector<HighlightSpan>& spans) noexcept {
+        const size_t pivot = nodes_[root].left;
+        nodes_[root].left = nodes_[pivot].right;
+        nodes_[pivot].right = root;
+        update(root, spans);
+        update(pivot, spans);
+        return pivot;
+    }
+
+    size_t rotateLeft(size_t root, const std::vector<HighlightSpan>& spans) noexcept {
+        const size_t pivot = nodes_[root].right;
+        nodes_[root].right = nodes_[pivot].left;
+        nodes_[pivot].left = root;
+        update(root, spans);
+        update(pivot, spans);
+        return pivot;
+    }
+
+    size_t insert(size_t root, size_t inserted,
+                  const std::vector<HighlightSpan>& spans) {
+        if (root == kNone) return inserted;
+        if (lessKey(inserted, root, spans)) {
+            nodes_[root].left = insert(nodes_[root].left, inserted, spans);
+            if (nodes_[nodes_[root].left].heap_priority >
+                nodes_[root].heap_priority) {
+                root = rotateRight(root, spans);
+            }
+        } else {
+            nodes_[root].right = insert(nodes_[root].right, inserted, spans);
+            if (nodes_[nodes_[root].right].heap_priority >
+                nodes_[root].heap_priority) {
+                root = rotateLeft(root, spans);
+            }
+        }
+        update(root, spans);
+        return root;
+    }
+
+    void collect(size_t index, uint32_t start, uint32_t end,
+                 const std::vector<HighlightSpan>& spans,
+                 std::vector<size_t>& output) const {
+        if (index == kNone) return;
+        const Node& node = nodes_[index];
+        // Only strict interval crossings and exact duplicates can conflict.
+        // Subtree bounds prune fully nested intervals, which are common in AST
+        // captures and must remain layered rather than being flattened.
+        const bool mayContainLeftCrossing =
+            node.min_start < start && node.max_end > start && node.min_end < end;
+        const bool mayContainRightCrossing =
+            node.max_start > start && node.min_start < end && node.max_end > end;
+        if (!mayContainLeftCrossing && !mayContainRightCrossing) return;
+
+        const HighlightSpan& accepted = spans[node.span_index];
+        const bool leftCrossing = accepted.start_byte < start &&
+            accepted.end_byte > start && accepted.end_byte < end;
+        const bool rightCrossing = accepted.start_byte > start &&
+            accepted.start_byte < end && accepted.end_byte > end;
+        if (leftCrossing || rightCrossing) output.push_back(node.span_index);
+
+        collect(node.left, start, end, spans, output);
+        collect(node.right, start, end, spans, output);
+    }
+
+    std::vector<Node> nodes_;
+    std::unordered_map<uint64_t, size_t> exact_ranges_;
+    size_t root_ = kNone;
+};
+
 static const UChar* advanceOneUtf16CodePoint(const UChar* current, const UChar* end) {
     const auto* bytes = reinterpret_cast<const uint8_t*>(current);
     const auto* end_bytes = reinterpret_cast<const uint8_t*>(end);
@@ -1799,71 +1950,84 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                    a.flags == b.flags;
         }), final_spans.end());
 
-    // Resolve strict partial intersections by subtracting only the conflicting
-    // interval. This preserves the non-conflicting portions of lower-priority
-    // candidates instead of dropping their entire highlighting range.
+    // Resolve only strict interval crossings. The previous implementation
+    // compared every candidate against every accepted span (O(n^2)); dense AST
+    // queries with hundreds of thousands of captures became unusable. This
+    // augmented interval treap indexes accepted non-overlap spans and prunes
+    // nested intervals, which are deliberately preserved as layered captures.
     std::vector<HighlightSpan> resolved_spans;
     resolved_spans.reserve(final_spans.size());
-
-    // Reuse two scratch vectors across every candidate/accepted pair. The old
-    // inner-loop vectors repeatedly allocated and freed storage proportional
-    // to overlap count, creating avoidable allocator churn on dense grammars.
+    HighlightSpanConflictIndex conflict_index;
     std::vector<HighlightSpan> fragments;
     std::vector<HighlightSpan> remaining;
-    fragments.reserve(2);
-    remaining.reserve(2);
+    std::vector<size_t> conflicts;
+    std::vector<std::pair<uint32_t, uint32_t>> cuts;
+    fragments.reserve(4);
+    remaining.reserve(4);
+    conflicts.reserve(8);
+    cuts.reserve(8);
+
     for (const auto& candidate : final_spans) {
         fragments.clear();
         fragments.push_back(candidate);
-        for (const auto& accepted : resolved_spans) {
-            if (fragments.empty()) break;
+        bool removedAny = true;
+        while (removedAny && !fragments.empty()) {
+            removedAny = false;
             remaining.clear();
-            if (remaining.capacity() < fragments.size() + 1)
-                remaining.reserve(fragments.size() + 1);
             for (const auto& fragment : fragments) {
-                if (fragment.end_byte <= accepted.start_byte ||
-                    fragment.start_byte >= accepted.end_byte) {
+                if (fragment.allow_overlap) {
+                    remaining.push_back(fragment);
+                    continue;
+                }
+                conflict_index.findCrossings(
+                    fragment.start_byte, fragment.end_byte, resolved_spans, conflicts);
+                if (conflicts.empty()) {
                     remaining.push_back(fragment);
                     continue;
                 }
 
-                const bool same_range = fragment.start_byte == accepted.start_byte &&
-                                        fragment.end_byte == accepted.end_byte;
-                const bool fragment_contains =
-                    fragment.start_byte <= accepted.start_byte &&
-                    fragment.end_byte >= accepted.end_byte;
-                const bool accepted_contains =
-                    accepted.start_byte <= fragment.start_byte &&
-                    accepted.end_byte >= fragment.end_byte;
-                const bool nested = !same_range &&
-                    (fragment_contains || accepted_contains);
-
-                // Preserve explicit overlap and proper nesting. Only crossing
-                // intervals are exclusive; the already accepted candidate wins.
-                if (nested || fragment.allow_overlap || accepted.allow_overlap) {
+                cuts.clear();
+                for (size_t acceptedIndex : conflicts) {
+                    if (acceptedIndex >= resolved_spans.size()) continue;
+                    const auto& accepted = resolved_spans[acceptedIndex];
+                    const uint32_t cutStart = std::max(
+                        fragment.start_byte, accepted.start_byte);
+                    const uint32_t cutEnd = std::min(
+                        fragment.end_byte, accepted.end_byte);
+                    if (cutStart < cutEnd) cuts.emplace_back(cutStart, cutEnd);
+                }
+                if (cuts.empty()) {
                     remaining.push_back(fragment);
                     continue;
                 }
-
-                const uint32_t overlap_start =
-                    std::max(fragment.start_byte, accepted.start_byte);
-                const uint32_t overlap_end =
-                    std::min(fragment.end_byte, accepted.end_byte);
-                if (fragment.start_byte < overlap_start) {
-                    HighlightSpan left = fragment;
-                    left.end_byte = overlap_start;
-                    remaining.push_back(left);
+                std::sort(cuts.begin(), cuts.end());
+                uint32_t cursor = fragment.start_byte;
+                for (const auto& cut : cuts) {
+                    if (cut.second <= cursor) continue;
+                    if (cut.first > cursor) {
+                        HighlightSpan left = fragment;
+                        left.start_byte = cursor;
+                        left.end_byte = cut.first;
+                        remaining.push_back(left);
+                    }
+                    cursor = std::max(cursor, cut.second);
+                    if (cursor >= fragment.end_byte) break;
                 }
-                if (overlap_end < fragment.end_byte) {
+                if (cursor < fragment.end_byte) {
                     HighlightSpan right = fragment;
-                    right.start_byte = overlap_end;
+                    right.start_byte = cursor;
                     remaining.push_back(right);
                 }
+                removedAny = true;
             }
             fragments.swap(remaining);
         }
-        resolved_spans.insert(
-            resolved_spans.end(), fragments.begin(), fragments.end());
+
+        for (const auto& fragment : fragments) {
+            const size_t acceptedIndex = resolved_spans.size();
+            resolved_spans.push_back(fragment);
+            conflict_index.add(fragment, acceptedIndex, resolved_spans);
+        }
     }
 
     // Rejoin adjacent fragments when every semantic attribute is identical.
