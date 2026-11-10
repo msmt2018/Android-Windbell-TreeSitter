@@ -59,13 +59,15 @@ public:
         uint64_t version = 0;
         uint64_t source_version = 0;
         uint64_t partition_version = 0;
+        uint64_t grammar_revision = 0;
         uint32_t start_byte = 0;
         uint32_t end_byte = 0;
         bool diagnostics = false;
 
         bool operator==(const Key &other) const noexcept {
             return version == other.version && source_version == other.source_version &&
-                partition_version == other.partition_version && start_byte == other.start_byte &&
+                partition_version == other.partition_version && grammar_revision == other.grammar_revision &&
+                start_byte == other.start_byte &&
                 end_byte == other.end_byte && diagnostics == other.diagnostics;
         }
     };
@@ -179,6 +181,7 @@ private:
         size_t operator()(const Key &key) const noexcept {
             uint64_t value = key.version ^ (key.source_version * 0x9E3779B97F4A7C15ULL) ^
                 (key.partition_version * 0xBF58476D1CE4E5B9ULL);
+            value ^= key.grammar_revision * 0xD6E8FEB86659FD93ULL;
             value ^= static_cast<uint64_t>(key.start_byte) << 17u;
             value ^= static_cast<uint64_t>(key.end_byte) << 1u;
             value ^= key.diagnostics ? 0x9E3779B97F4A7C15ULL : 0ULL;
