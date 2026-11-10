@@ -259,4 +259,24 @@ class TshTreeSitterEditCompilerTest {
         assertEquals(4, edit.oldEndPoint.column)
     }
 
+    @Test
+    fun refusesUnindexedLargeSnapshotInsteadOfScanningTheWholeDocument() {
+        val largeSnapshot = object : TshTextSnapshot {
+            override val documentId = "doc"
+            override val version = 4L
+            override val lengthUtf16 = 2_000_000L
+            override fun readUtf16(start: Long, end: Long): CharSequence =
+                error("Large fallback scan must be rejected before reading")
+        }
+        val result = TshTreeSitterEditCompiler.compile(
+            largeSnapshot,
+            TshTextChange("doc", 4L, 5L, listOf(TshTextEdit(1_900_000L, 1_900_001L, "x")))
+        )
+        assertTrue(result is TshResult.Failure)
+        assertEquals(
+            "TSH-EDIT-COMPILE-009",
+            (result as TshResult.Failure).diagnostics.single().code
+        )
+    }
+
 }
