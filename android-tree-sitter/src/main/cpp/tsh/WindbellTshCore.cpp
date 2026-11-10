@@ -881,9 +881,13 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                             }
                         }
                     }
+                    // Oniguruma offsets are UTF-16LE byte offsets here.
+                    // A zero-width match must advance by one complete code unit;
+                    // advancing one byte would restart inside a UTF-16 code unit.
                     const int64_t next = local_end > local_start
-                        ? local_end : local_start + 1;
-                    if (next <= 0 || static_cast<uint64_t>(next) >= window.size()) break;
+                        ? local_end : local_start + 2;
+                    if (next <= 0 || (next & 1LL) != 0 ||
+                        static_cast<uint64_t>(next) >= window.size()) break;
                     current = window_start + next;
                 }
                 onig_region_free(region, 1);
