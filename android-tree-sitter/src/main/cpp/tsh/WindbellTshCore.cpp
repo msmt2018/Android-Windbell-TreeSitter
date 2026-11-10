@@ -453,6 +453,44 @@ static int tshPredicateCaptureEquals(const TSNode& node,
     return 1;
 }
 
+static int tshPredicateNodesEqual(const TSNode& left, const TSNode& right,
+    const UChar* utf16_source,
+    const windbell::largefile::TextSource* text_source,
+    uint32_t source_bytes) {
+    const uint32_t left_start = ts_node_start_byte(left);
+    const uint32_t left_end = ts_node_end_byte(left);
+    const uint32_t right_start = ts_node_start_byte(right);
+    const uint32_t right_end = ts_node_end_byte(right);
+    if (left_start > left_end || right_start > right_end ||
+        left_end > source_bytes || right_end > source_bytes ||
+        (left_start & 1u) || (left_end & 1u) ||
+        (right_start & 1u) || (right_end & 1u)) return -1;
+    const uint64_t length = static_cast<uint64_t>(left_end) - left_start;
+    if (length != static_cast<uint64_t>(right_end) - right_start) return 0;
+    if (length == 0) return 1;
+    if (utf16_source) {
+        return std::memcmp(utf16_source + left_start, utf16_source + right_start,
+            static_cast<size_t>(length)) == 0 ? 1 : 0;
+    }
+    if (!text_source) return -1;
+    constexpr uint32_t kCompareChunkBytes = 16u * 1024u;
+    std::array<UChar, kCompareChunkBytes> left_buffer{};
+    std::array<UChar, kCompareChunkBytes> right_buffer{};
+    uint64_t compared = 0;
+    while (compared < length) {
+        const uint32_t amount = static_cast<uint32_t>(
+            std::min<uint64_t>(kCompareChunkBytes, length - compared));
+        if (!windbell::largefile::copyTextRange(*text_source,
+                static_cast<uint64_t>(left_start) + compared, amount, left_buffer.data()) ||
+            !windbell::largefile::copyTextRange(*text_source,
+                static_cast<uint64_t>(right_start) + compared, amount, right_buffer.data()))
+            return -1;
+        if (std::memcmp(left_buffer.data(), right_buffer.data(), amount) != 0) return 0;
+        compared += amount;
+    }
+    return 1;
+}
+
 static int tshPredicateRegexMatchesContiguous(
     regex_t* regex, const UChar* begin, const UChar* end
 ) {
