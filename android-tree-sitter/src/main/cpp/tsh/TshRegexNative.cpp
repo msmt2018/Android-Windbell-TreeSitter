@@ -32,6 +32,10 @@ uint64_t TshRegexNativeRegistry::compile(
         ONIG_ENCODING_UTF16_LE, ONIG_SYNTAX_DEFAULT, &info
     );
     if (status != ONIG_NORMAL || !compiled) {
+        if (compiled) {
+            onig_free(compiled);
+            compiled = nullptr;
+        }
         UChar message[ONIG_MAX_ERROR_MESSAGE_LEN]{};
         onig_error_code_to_str(message, status, &info);
         error.assign(reinterpret_cast<const char*>(message));
