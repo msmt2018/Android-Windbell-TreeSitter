@@ -71,6 +71,44 @@ class PieceTreeSnapshot internal constructor(
 
     override val length: Int = pieceStarts[pieceStarts.size - 1]
 
+    /**
+     * Returns Tree-sitter's zero-based (row, UTF-16 column) for a document offset.
+     *
+     * The lookup is O(log(piece count) + log(lines in the source buffer)); it reuses the
+     * immutable line-start arrays belonging to the backing buffers and does not build a
+     * document-wide line-start table. Returns null when this snapshot cannot guarantee LF-only
+     * row semantics or when the offset splits a surrogate pair.
+     */
+    fun getTreeSitterPositionAt(offset: Int): Pair<Int, Int>? {
+        if (!supportsTreeSitterLineCoordinates || offset !in 0..length) return null
+        if (offset == 0 || length == 0) return 0 to 0
+        if (offset < length && Character.isHighSurrogate(get(offset - 1)) &&
+            Character.isLowSurrogate(get(offset))) return null
+        if (sources.isEmpty()) return 0 to 0
+
+        val piece = if (offset == length) sources.lastIndex else pieceAt(offset)
+        if (piece !in sources.indices) return null
+        val sourceOffset = sourceStarts[piece] + offset - pieceStarts[piece]
+        val starts = pieceLineStarts[piece]
+        var low = 0
+        var high = starts.lastIndex
+        while (low < high) {
+            val mid = (low + high + 1) ushr 1
+            if (starts[mid] <= sourceOffset) low = mid else high = mid - 1
+        }
+
+        val localLine = low
+        val lineDelta = localLine - pieceStartLineIndices[piece]
+        if (lineDelta < 0) return null
+        val row = Math.addExact(pieceLineFeedPrefixes[piece], lineDelta)
+        val column = if (localLine == pieceStartLineIndices[piece]) {
+            Math.addExact(pieceStartColumns[piece], sourceOffset - sourceStarts[piece])
+        } else {
+            sourceOffset - starts[localLine]
+        }
+        return row to column
+    }
+
     // the piece holding [offset], 0 <= offset < length
     private fun pieceAt(offset: Int): Int {
         val index = java.util.Arrays.binarySearch(pieceStarts, 0, sources.size, offset)
