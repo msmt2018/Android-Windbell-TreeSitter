@@ -3168,8 +3168,12 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
         }
         // A graph containing only include/transition directives has no
         // executable finite-width matcher and must not enter the window path.
+        // Keep each TextSource tokenizer window within a predictable memory
+        // budget. The core window adds 256 KiB to this proven lookahead width.
+        constexpr uint64_t kMaxRegexStateLookaheadBytes = 8u * 1024u * 1024u;
         if (!grammar->regex_state_graph_bounded ||
-            grammar->regex_state_graph_maximum_match_bytes == 0) {
+            grammar->regex_state_graph_maximum_match_bytes == 0 ||
+            grammar->regex_state_graph_maximum_match_bytes > kMaxRegexStateLookaheadBytes) {
             grammar->regex_state_graph_bounded = false;
             grammar->regex_state_graph_maximum_match_bytes = 0;
         }
