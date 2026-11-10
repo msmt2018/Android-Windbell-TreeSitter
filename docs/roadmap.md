@@ -267,3 +267,9 @@
 - [x] 清理 TSInput 接口 Class local reference，并在 Native parse 前明确拒绝未设置 Language 的 Parser。
 - [x] 增加 ParserTest：小块多次读取、UTF-16LE 内容完整性及 Tree-sitter progress callback 实际回调。
 - [ ] 最新 JNI / JUnit 改动等待 CI 验证；Native allocator 内部的 Tree/Parser 实际分配仍不由此输入缓冲区预算覆盖。
+
+
+### Memory Budget Ledger Self-Protection
+
+- [x] Reservation ledger 增加独立 count cap：默认最多 65,536 个活动 reservation，绝对配置上限 262,144；防止大量极小 reservation 使账本元数据本身耗尽内存。
+- [x] 达到数量上限返回 `TSH-MEMORY-010`，释放任一 reservation 后可继续申请。
