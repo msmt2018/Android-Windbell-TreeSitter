@@ -106,6 +106,12 @@ Port the reference Lua 5.1/LuaJIT matcher with strict input validation and impro
 - Cache by source version, grammar/query revision and partition version.
 - On cancellation, stale source, budget exhaustion, match-limit overflow or failed batch, expose explicit FAILED/PARTIAL state and retry/backoff; never report successful complete highlighting.
 
+## Current implementation progress
+
+- Added this integration plan and reviewed the reference filter against the current TSH execution path.
+- Cached each compiled TSH query pattern's predicate-step vectors in `NativeQueryProgram`. The compiler now records them once, and the per-match evaluator reuses immutable steps instead of rebuilding a temporary vector for every match. This is a hot-loop allocation reduction only; predicate coverage and capture-text materialization are not yet expanded.
+- GitHub Actions run `42761510543` was started for the current head and was still running at the time of this update. No build or test success is claimed until its jobs complete.
+
 ## Delivery sequence and acceptance gates
 
 1. **Contract and tests**: document operator semantics; add predicate truth-table tests (including absent and repeated captures), malformed UTF-8, Unicode supplementary characters, and unsupported-predicate fallback.
