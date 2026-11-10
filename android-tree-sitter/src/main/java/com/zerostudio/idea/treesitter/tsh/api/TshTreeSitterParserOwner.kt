@@ -318,9 +318,20 @@ class TshTreeSitterParserOwner private constructor(
             val parsedTree = parseLock.withLock {
                 parseStartedAtNanos = System.nanoTime()
                 parse(parserLease.resource)
-            } ?: return nullTreeFailure(parserLease.resource, parseStartedAtNanos, "String parse")
-            tree = parsedTree
-            if (!parsedTree.canAccess()) {
+            }
+            if (parserLease.resource.isCancellationRequested) {
+                parsedTree?.let { runCatching { it.close() } }
+                return failure(
+                    "TSH-PARSER-OWNER-030",
+                    "String parse result was discarded because Native cancellation had been accepted",
+                    TshDiagnosticStage.PARSE,
+                    parser.descriptor.id
+                )
+            }
+            val completedTree = parsedTree
+                ?: return nullTreeFailure(parserLease.resource, parseStartedAtNanos, "String parse")
+            tree = completedTree
+            if (!completedTree.canAccess()) {
                 return failure(
                     "TSH-PARSER-OWNER-005",
                     "Tree-sitter returned an inaccessible syntax tree",
@@ -329,7 +340,7 @@ class TshTreeSitterParserOwner private constructor(
                 )
             }
 
-            val root = parsedTree.rootNode
+            val root = completedTree.rootNode
             if (!root.canAccess()) {
                 return failure(
                     "TSH-PARSER-OWNER-006",
@@ -340,7 +351,7 @@ class TshTreeSitterParserOwner private constructor(
             }
             val rootRange = TshByteRange(root.startByte, root.endByte)
             val registration = resources.register(
-                resource = parsedTree,
+                resource = completedTree,
                 type = "syntax-tree",
                 metadata = mapOf(
                     "documentId" to documentId,
@@ -778,9 +789,20 @@ class TshTreeSitterParserOwner private constructor(
             val parsedTree = parseLock.withLock {
                 parseStartedAtNanos = System.nanoTime()
                 parserLease.resource.parseInput(oldTreeLease?.resource, input, chunkSizeBytes)
-            } ?: return nullTreeFailure(parserLease.resource, parseStartedAtNanos, "Snapshot parse")
-            tree = parsedTree
-            if (!parsedTree.canAccess()) {
+            }
+            if (parserLease.resource.isCancellationRequested) {
+                parsedTree?.let { runCatching { it.close() } }
+                return failure(
+                    "TSH-PARSER-OWNER-030",
+                    "Snapshot parse result was discarded because Native cancellation had been accepted",
+                    TshDiagnosticStage.PARSE,
+                    parser.descriptor.id
+                )
+            }
+            val completedTree = parsedTree
+                ?: return nullTreeFailure(parserLease.resource, parseStartedAtNanos, "Snapshot parse")
+            tree = completedTree
+            if (!completedTree.canAccess()) {
                 return failure(
                     "TSH-PARSER-OWNER-005",
                     "Tree-sitter returned an inaccessible syntax tree",
@@ -788,7 +810,7 @@ class TshTreeSitterParserOwner private constructor(
                     parser.descriptor.id
                 )
             }
-            val root = parsedTree.rootNode
+            val root = completedTree.rootNode
             if (!root.canAccess()) {
                 return failure(
                     "TSH-PARSER-OWNER-006",
@@ -798,7 +820,7 @@ class TshTreeSitterParserOwner private constructor(
                 )
             }
             val registration = resources.register(
-                resource = parsedTree,
+                resource = completedTree,
                 type = "syntax-tree",
                 metadata = mapOf(
                     "documentId" to snapshot.documentId,
