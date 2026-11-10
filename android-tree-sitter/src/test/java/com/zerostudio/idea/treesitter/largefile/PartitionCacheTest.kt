@@ -19,11 +19,38 @@ class PartitionCacheTest {
         val lease = cache.acquire(key())!!
         cache.invalidate { true }
         assertEquals(0, cache.size)
+        // A retired tree is still physically alive and must remain charged.
+        assertEquals(100L, cache.bytesUsed)
         // The lease remains valid through invalidation; releasing it owns final close.
         assertNotNull(lease.tree.rootNode)
         lease.close()
         lease.close()
+        assertEquals(0L, cache.bytesUsed)
         cache.close()
+        parser.close()
+    }
+
+
+    @Test fun leasedTreesRemainInsideBudgetDuringPressureAndClose() {
+        val parser = TSParser.create().apply { setLanguage(TSLanguageJava.getInstance()) }
+        val cache = PartitionAstCache(150, { 100L })
+        val first = parser.parseString("class First {}")!!
+        assertTrue(cache.put(key(), first, 10))
+        val lease = cache.acquire(key())!!
+
+        // Eviction removes the key, but cannot reclaim the native tree while leased.
+        val second = parser.parseString("class Second {}")!!
+        assertFalse(cache.put(key(version = 2), second, 10))
+        assertEquals(100L, cache.bytesUsed)
+        assertEquals(0, cache.size)
+        assertNotNull(lease.tree.rootNode)
+
+        // Closing the cache also defers native destruction and budget release.
+        cache.close()
+        assertEquals(100L, cache.bytesUsed)
+        assertNotNull(lease.tree.rootNode)
+        lease.close()
+        assertEquals(0L, cache.bytesUsed)
         parser.close()
     }
 
