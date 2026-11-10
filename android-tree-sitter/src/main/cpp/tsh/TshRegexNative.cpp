@@ -1,6 +1,7 @@
 #include "TshRegexNative.h"
 
 #include <algorithm>
+#include <cstddef>
 #include <limits>
 #include <new>
 
