@@ -267,7 +267,7 @@ class TreeSitterPartitionScheduler(
             if (newline >= 0) lastNewline = cursor + newline
             cursor += chunk.length
         }
-        return lastNewline?.plus(1L) ?: offset
+        return lastNewline?.plus(1L) ?: windowStart
     }
 
     private fun alignContextEndToLine(source: Utf16DocumentSource, offset: Long): Long {
@@ -284,7 +284,10 @@ class TreeSitterPartitionScheduler(
             if (newline >= 0) return cursor + newline + 1L
             cursor += chunk.length
         }
-        return offset
+        // A single line may be much longer than the alignment window. In that
+        // case retain the bounded extra context instead of returning the original
+        // partition boundary and parsing with zero surrounding text.
+        return limit
     }
 
     private fun distanceToRange(position: Long, start: Long, end: Long): Long = when {
