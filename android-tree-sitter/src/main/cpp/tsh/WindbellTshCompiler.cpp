@@ -2834,6 +2834,9 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                                     return nullptr;
                                 }
                             }
+                            // Keep ownership inside the guarded region until the
+                            // compiled query is transferred to the grammar.
+                            grammar->native_queries.push_back(std::move(program));
                             } catch (const std::bad_alloc&) {
                                 // A partially compiled query owns both its Tree-sitter
                                 // query and any regex predicates compiled before the
@@ -2853,7 +2856,6 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                                 return nullptr;
                             }
                         }
-                        grammar->native_queries.push_back(std::move(program));
                     }
                 }
             }
