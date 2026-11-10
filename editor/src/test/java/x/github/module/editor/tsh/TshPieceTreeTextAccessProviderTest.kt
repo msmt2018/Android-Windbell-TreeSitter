@@ -53,7 +53,7 @@ class TshPieceTreeTextAccessProviderTest {
 
     @Test
     fun snapshotExposesPieceTreeIndexedCoordinatesWithoutReadingText() {
-        val (buffer, document) = document("first\\n😀tail\\nend")
+        val (buffer, document) = document("first\n😀tail\nend")
         val endPosition = buffer.getPositionAt(buffer.length)
         buffer.applyEdits(
             listOf(com.zerostudio.idea.piecetable.common.SingleEditOperation(
@@ -61,7 +61,7 @@ class TshPieceTreeTextAccessProviderTest {
                     endPosition.lineNumber, endPosition.column,
                     endPosition.lineNumber, endPosition.column
                 ),
-                "typed\\n"
+                "typed\n"
             )),
             false,
             false
