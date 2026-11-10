@@ -248,21 +248,25 @@ bool TshRegexNativeRegistry::execute(
             if (capture_count > retained_count) output.truncated = true;
             match.capture_ranges_utf16.reserve(static_cast<size_t>(retained_count));
             for (int group = 0; group < retained_count; ++group) {
-                const int beg = region.value->beg[group];
-                const int group_end = region.value->end[group];
-                if (beg < 0 || group_end < 0) {
+                const OnigPosition beg_position = region.value->beg[group];
+                const OnigPosition group_end_position = region.value->end[group];
+                if (beg_position < 0 || group_end_position < 0) {
                     match.capture_ranges_utf16.emplace_back(-1, -1);
                 } else {
-                    if ((beg & 1) != 0 || (group_end & 1) != 0 ||
-                        beg < static_cast<int32_t>(prefix_bytes) ||
-                        group_end < beg ||
-                        group_end > static_cast<int32_t>(actual_end_byte)) {
+                    if ((beg_position & 1) != 0 || (group_end_position & 1) != 0 ||
+                        beg_position < static_cast<OnigPosition>(prefix_bytes) ||
+                        group_end_position < beg_position ||
+                        group_end_position > static_cast<OnigPosition>(actual_end_byte)) {
                         error = "Oniguruma returned a malformed UTF-16 capture range";
                         return false;
                     }
                     match.capture_ranges_utf16.emplace_back(
-                        (beg - static_cast<int32_t>(prefix_bytes)) / 2,
-                        (group_end - static_cast<int32_t>(prefix_bytes)) / 2
+                        static_cast<int32_t>(
+                            (beg_position - static_cast<OnigPosition>(prefix_bytes)) / 2
+                        ),
+                        static_cast<int32_t>(
+                            (group_end_position - static_cast<OnigPosition>(prefix_bytes)) / 2
+                        )
                     );
                 }
             }
