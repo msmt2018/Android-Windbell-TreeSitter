@@ -273,3 +273,7 @@
 
 - [x] Reservation ledger 增加独立 count cap：默认最多 65,536 个活动 reservation，绝对配置上限 262,144；防止大量极小 reservation 使账本元数据本身耗尽内存。
 - [x] 达到数量上限返回 `TSH-MEMORY-010`，释放任一 reservation 后可继续申请。
+
+### Native allocator 约束审查
+
+- [ ] Tree-sitter `ts_set_allocator()` 是进程级全局 hook，且默认 allocator OOM 会 abort；禁止按 parse 临时切换 allocator 或把返回 null 当成安全 OOM。真实 Native 遥测需先设计常驻进程级逐块追踪及可恢复分配失败协议，暂不宣称 TSH reservation 能硬限制 Native heap。
