@@ -5,6 +5,7 @@
 
 #include "WindbellTshCore.h"
 #include <algorithm>
+#include <atomic>
 #include <cstring>
 #include <limits>
 #include <functional>
@@ -433,6 +434,11 @@ WindbellEngine::~WindbellEngine() {
 }
 
 bool WindbellEngine::registerGrammar(const std::string& extension, std::shared_ptr<TshGrammar> grammar) {
+    if (!grammar) return false;
+    static std::atomic<uint64_t> next_revision{1};
+    uint64_t revision = next_revision.fetch_add(1, std::memory_order_relaxed);
+    if (revision == 0) revision = next_revision.fetch_add(1, std::memory_order_relaxed);
+    grammar->revision = revision;
     std::lock_guard<std::mutex> lock(registry_lock_);
     grammar_registry_[extension] = grammar;
     return true;
