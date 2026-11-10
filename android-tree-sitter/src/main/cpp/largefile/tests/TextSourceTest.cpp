@@ -41,6 +41,14 @@ static void testSegmentedTextSource() {
     SegmentedTextSource invalid({{first, 3}}, 3);
     assert(!invalid.isValid());
     assert(!invalid.read(0, 64, &view));
+
+    const char contiguous_bytes[] = {'e', 0, 'f', 0};
+    ContiguousTextSource contiguous(contiguous_bytes, sizeof(contiguous_bytes));
+    const char *contiguous_data = nullptr;
+    uint64_t contiguous_size = 0;
+    assert(contiguous.contiguousData(&contiguous_data, &contiguous_size));
+    assert(contiguous_data == contiguous_bytes);
+    assert(contiguous_size == sizeof(contiguous_bytes));
 }
 
 static void testChunkedStoreReadsAcrossBoundaries() {
