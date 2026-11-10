@@ -109,6 +109,32 @@ internal object TshParserInputMemoryReservations {
         }
     }
 
+    /** Reserves the reusable Java byte[] allocated by TSParser's streaming JNI entry point. */
+    fun reserveChunkBuffer(
+        budget: TshMemoryBudget?,
+        documentId: String,
+        documentVersion: Long,
+        chunkSizeBytes: Int
+    ): TshResult<TshMemoryReservation?> {
+        if (budget == null) return TshResult.Success(null)
+        if (documentId.isBlank() || documentVersion < 0L ||
+            chunkSizeBytes !in 4..(1024 * 1024) || (chunkSizeBytes and 1) != 0) {
+            return failure(
+                "TSH-MEMORY-009",
+                "Streaming parser input buffer size or document identity is invalid"
+            )
+        }
+        val estimate = chunkSizeBytes.toLong() + ESTIMATED_FIXED_OVERHEAD_BYTES
+        return when (val result = budget.reserve(
+            TshMemoryCategory.PARSER_INPUT,
+            estimate,
+            "tree-sitter-input-buffer:${documentId}:${documentVersion}"
+        )) {
+            is TshResult.Success -> TshResult.Success(result.value)
+            is TshResult.Failure -> TshResult.Failure(result.diagnostics)
+        }
+    }
+
     private fun failure(code: String, message: String) = TshResult.Failure(listOf(TshDiagnostic(
         code = code,
         severity = TshDiagnosticSeverity.ERROR,
