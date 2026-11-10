@@ -120,6 +120,9 @@ struct NativeQueryProgram {
     std::unordered_map<uint32_t, uint16_t> capture_style_ids;
     struct PredicateRegex { uint32_t pattern_index = 0; uint32_t predicate_index = 0; uint32_t capture_id = 0; regex_t* regex = nullptr; bool negate = false; };
     std::vector<PredicateRegex> predicate_regexes;
+    // Immutable Tree-sitter predicate steps are cached per pattern so each
+    // match does not allocate and reconstruct the same predicate vectors.
+    std::vector<std::vector<std::vector<TSQueryPredicateStep>>> predicates_by_pattern;
 };
 
 struct AstSelectorRule {

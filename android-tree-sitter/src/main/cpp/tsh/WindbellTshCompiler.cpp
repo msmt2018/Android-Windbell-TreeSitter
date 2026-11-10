@@ -2411,10 +2411,13 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                                     std::to_string(static_cast<int>(error_type)) + ")";
                                 return nullptr;
                             }
-                            // Predicate steps are evaluated by TSH at complete-match
-                            // granularity. Reject unsupported or malformed forms at compile time.
+                            // Predicate steps are validated and cached once at compile
+                            // time. The Native match hot path reuses these immutable steps.
+                            const uint32_t compiled_pattern_count =
+                                ts_query_pattern_count(program.query);
+                            program.predicates_by_pattern.resize(compiled_pattern_count);
                             for (uint32_t pattern = 0;
-                                 pattern < ts_query_pattern_count(program.query); ++pattern) {
+                                 pattern < compiled_pattern_count; ++pattern) {
                                 uint32_t step_count = 0;
                                 const TSQueryPredicateStep* steps =
                                     ts_query_predicates_for_pattern(program.query, pattern, &step_count);
@@ -2440,15 +2443,32 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                                         program.query, predicate.front().value_id, &op_length);
                                     const std::string op = op_text
                                         ? std::string(op_text, op_length) : std::string();
-                                    const bool equality = op == "eq?" || op == "not-eq?";
+                                    const bool equality = op == "eq?" || op == "not-eq?" ||
+                                        op == "any-eq?" || op == "any-not-eq?";
                                     const bool membership = op == "any-of?" || op == "not-any-of?";
                                     const bool regex_match = op == "match?" || op == "not-match?";
-                                    const bool supported = equality || membership || regex_match;
+                                    const bool contains = op == "contains?" || op == "not-contains?" ||
+                                        op == "any-contains?" || op == "any-not-contains?";
+                                    const bool has_ancestor = op == "has-ancestor?" ||
+                                        op == "not-has-ancestor?" || op == "any-has-ancestor?" ||
+                                        op == "any-not-has-ancestor?";
+                                    const bool has_parent = op == "has-parent?" ||
+                                        op == "not-has-parent?" || op == "any-has-parent?" ||
+                                        op == "any-not-has-parent?";
+                                    const bool kind_eq = op == "kind-eq?" || op == "not-kind-eq?" ||
+                                        op == "any-kind-eq?" || op == "any-not-kind-eq?";
+                                    const bool structural = has_ancestor || has_parent || kind_eq;
+                                    const bool supported = equality || membership || regex_match ||
+                                        contains || structural;
+                                    const bool fixed_arity = equality || regex_match;
                                     bool valid = predicate.size() >= 3 &&
                                         predicate[1].type == TSQueryPredicateStepTypeCapture &&
-                                        ((equality || regex_match) ? predicate.size() == 3 : true);
-                                    for (size_t arg = 2; arg < predicate.size(); ++arg) {
-                                        valid = valid &&
+                                        (!fixed_arity || predicate.size() == 3);
+                                    for (size_t arg = 2; valid && arg < predicate.size(); ++arg) {
+                                        const bool capture_comparison =
+                                            equality && predicate.size() == 3 &&
+                                            predicate[arg].type == TSQueryPredicateStepTypeCapture;
+                                        valid = capture_comparison ||
                                             predicate[arg].type == TSQueryPredicateStepTypeString;
                                     }
                                     if (!supported || !valid) {
@@ -2486,8 +2506,15 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                                         entry.capture_id = predicate[1].value_id;
                                         entry.regex = compiled;
                                         entry.negate = op == "not-match?";
-                                        program.predicate_regexes.push_back(entry);
+                                        try {
+                                            program.predicate_regexes.push_back(entry);
+                                        } catch (...) {
+                                            onig_free(compiled);
+                                            throw;
+                                        }
                                     }
+                                    program.predicates_by_pattern[pattern].push_back(
+                                        std::move(predicate));
                                     ++predicate_index;
                                 }
                             }

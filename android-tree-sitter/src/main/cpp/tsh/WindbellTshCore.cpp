@@ -113,42 +113,6 @@ static bool tshUtf8ToUtf16(const std::string& input, std::vector<UChar>& output)
 
 enum class TshPredicateResult : uint8_t { ACCEPT, REJECT, ERROR };
 
-static bool tshPredicateCaptureTexts(
-    const TSQueryMatch& match,
-    uint32_t capture_id,
-    const UChar* utf16_source,
-    uint32_t source_bytes,
-    std::vector<std::vector<UChar>>& texts) {
-    texts.clear();
-    if (!utf16_source && source_bytes != 0) return false;
-    constexpr uint64_t kMaxMaterializedCaptureBytes = 8u * 1024u * 1024u;
-    uint64_t materialized_bytes = 0;
-    try {
-        for (uint32_t i = 0; i < match.capture_count; ++i) {
-            if (match.captures[i].index != capture_id) continue;
-            const uint32_t start = ts_node_start_byte(match.captures[i].node);
-            const uint32_t end = ts_node_end_byte(match.captures[i].node);
-            if (start > end || end > source_bytes || (start & 1u) || (end & 1u))
-                return false;
-            const uint64_t capture_bytes = static_cast<uint64_t>(end) - start;
-            if (capture_bytes > kMaxMaterializedCaptureBytes - materialized_bytes)
-                return false;
-            materialized_bytes += capture_bytes;
-            std::vector<UChar> value;
-            if (capture_bytes != 0) {
-                value.resize(static_cast<size_t>(capture_bytes));
-                std::memcpy(value.data(), utf16_source + start,
-                            static_cast<size_t>(capture_bytes));
-            }
-            texts.push_back(std::move(value));
-        }
-    } catch (const std::bad_alloc&) {
-        texts.clear();
-        return false;
-    }
-    return true;
-}
-
 static int tshPredicateCaptureEquals(
     const TSNode& node,
     const std::vector<UChar>& expected,
@@ -264,21 +228,14 @@ static TshPredicateResult tshEvaluateNativePredicates(
     const UChar* utf16_source,
     uint32_t source_bytes) {
     const TSQuery* query = program.query;
-    uint32_t step_count = 0;
-    const TSQueryPredicateStep* steps =
-        ts_query_predicates_for_pattern(query, match.pattern_index, &step_count);
-    if (!steps || step_count == 0) return TshPredicateResult::ACCEPT;
+    if (match.pattern_index >= program.predicates_by_pattern.size())
+        return TshPredicateResult::ERROR;
+    const auto& predicates = program.predicates_by_pattern[match.pattern_index];
+    if (predicates.empty()) return TshPredicateResult::ACCEPT;
 
-    uint32_t cursor = 0;
     uint32_t predicate_index = 0;
     try {
-        while (cursor < step_count) {
-            std::vector<TSQueryPredicateStep> predicate;
-            while (cursor < step_count &&
-                   steps[cursor].type != TSQueryPredicateStepTypeDone) {
-                predicate.push_back(steps[cursor++]);
-            }
-            if (cursor < step_count) ++cursor;
+        for (const auto& predicate : predicates) {
             if (predicate.empty() ||
                 predicate[0].type != TSQueryPredicateStepTypeString) {
                 return TshPredicateResult::REJECT;
