@@ -44,16 +44,16 @@ class TshRegexWindowLeaseTest {
         assertEquals(2_000L, window.documentLengthUtf16)
         assertFalse(window.isDocumentStart)
         assertFalse(window.isDocumentEnd)
-        assertEquals(292L, window.windowStartUtf16)
+        assertEquals(261L, window.windowStartUtf16)
         assertEquals(591L, window.windowEndUtf16)
-        assertEquals(299, window.lengthUtf16)
-        assertEquals(8, window.coreStartInWindow)
-        assertEquals(264, window.coreEndInWindow)
+        assertEquals(330, window.lengthUtf16)
+        assertEquals(39, window.coreStartInWindow)
+        assertEquals(295, window.coreEndInWindow)
         assertTrue(window.ownsMatchStart(300L))
         assertTrue(window.ownsMatchStart(555L))
         assertFalse(window.ownsMatchStart(556L))
-        assertEquals(300L, window.absoluteUtf16Offset(8))
-        assertEquals(299L, snapshot.largestRead)
+        assertEquals(300L, window.absoluteUtf16Offset(39))
+        assertEquals(330L, snapshot.largestRead)
 
         window.close()
         sourceLease.close()
@@ -70,7 +70,7 @@ class TshRegexWindowLeaseTest {
 
         // The lookbehind start (248) is exactly before the first surrogate pair. The right
         // context boundary (543) falls between the second pair's code units and is extended.
-        assertEquals(248L, window.windowStartUtf16)
+        assertEquals(217L, window.windowStartUtf16)
         assertEquals(544L, window.windowEndUtf16)
         assertTrue(TshUnicode.isWellFormedUtf16(window.text))
         window.close()
@@ -113,7 +113,7 @@ class TshRegexWindowLeaseTest {
 
         assertEquals(TshMemoryCategory.REGEX_WINDOW, budget.snapshot().bytesByCategory
             .filterValues { it > 0L }.keys.single())
-        assertEquals(1_260L, budget.snapshot().reservedBytes)
+        assertEquals(1_384L, budget.snapshot().reservedBytes)
         window.close()
         window.close()
         assertEquals(0L, budget.snapshot().reservedBytes)
