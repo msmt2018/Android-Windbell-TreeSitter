@@ -115,54 +115,6 @@ private class CompactPointCheckpointIndex(initialCapacity: Int = 256) {
     fun columnAt(index: Int): Long = if (columns64 != null) columns64!![index] else columns32[index].toLong()
 }
 
-/** Growable primitive buffer; avoids boxed Longs during sparse-index construction. */
-private class LongArrayBuilder(initialCapacity: Int = 256) {
-    private var values = LongArray(initialCapacity.coerceAtLeast(1))
-    var size: Int = 0
-        private set
-    fun add(value: Long) {
-        if (size == values.size) {
-            val next = if (size < 1024) size * 2 else size + (size ushr 1)
-            values = values.copyOf(next.coerceAtLeast(size + 1))
-        }
-        values[size++] = value
-    }
-    fun toArray(): LongArray = values.copyOf(size)
-}
-
-
-/** Compact monotonic offset table: 32-bit until a value requires widening. */
-private class CompactOffsetIndex(initialCapacity: Int = 256) {
-    private var values32 = IntArray(initialCapacity.coerceAtLeast(1))
-    private var values64: LongArray? = null
-    var size: Int = 0
-        private set
-
-    fun add(value: Long) {
-        require(value >= 0L)
-        if (values64 == null && value > Int.MAX_VALUE) {
-            values64 = LongArray(values32.size) { values32[it].toLong() }
-            values32 = IntArray(0)
-        }
-        val wide = values64
-        if (wide != null) {
-            if (size == wide.size) {
-                val next = (size + (size ushr 1)).coerceAtLeast(size + 1)
-                values64 = wide.copyOf(next)
-            }
-            values64!![size++] = value
-        } else {
-            if (size == values32.size) {
-                val next = (size + (size ushr 1)).coerceAtLeast(size + 1)
-                values32 = values32.copyOf(next)
-            }
-            values32[size++] = value.toInt()
-        }
-    }
-
-    operator fun get(index: Int): Long =
-        if (values64 != null) values64!![index] else values32[index].toLong()
-}
 
 data class ViewportPlan(
     val requestedStart: Long,
