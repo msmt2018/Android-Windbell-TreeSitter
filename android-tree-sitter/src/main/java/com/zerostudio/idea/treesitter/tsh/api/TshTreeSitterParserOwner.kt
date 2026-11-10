@@ -317,10 +317,24 @@ class TshTreeSitterParserOwner private constructor(
             var parseStartedAtNanos = 0L
             val parsedTree = parseLock.withLock {
                 parseStartedAtNanos = System.nanoTime()
-                parse(parserLease.resource)
+                try {
+                    val result = parse(parserLease.resource)
+                    if (result == null || parserLease.resource.isCancellationRequested) {
+                        result?.let { runCatching { it.close() } }
+                        // Tree-sitter keeps an interrupted parse state for possible resumption.
+                        // This owner serves versioned documents, so discard that state before the
+                        // parser lease can be used for another document/revision.
+                        parserLease.resource.reset()
+                        null
+                    } else {
+                        result
+                    }
+                } catch (error: Throwable) {
+                    runCatching { parserLease.resource.reset() }
+                    throw error
+                }
             }
             if (parserLease.resource.isCancellationRequested) {
-                parsedTree?.let { runCatching { it.close() } }
                 return failure(
                     "TSH-PARSER-OWNER-030",
                     "String parse result was discarded because Native cancellation had been accepted",
@@ -788,10 +802,26 @@ class TshTreeSitterParserOwner private constructor(
             var parseStartedAtNanos = 0L
             val parsedTree = parseLock.withLock {
                 parseStartedAtNanos = System.nanoTime()
-                parserLease.resource.parseInput(oldTreeLease?.resource, input, chunkSizeBytes)
+                try {
+                    val result = parserLease.resource.parseInput(
+                        oldTreeLease?.resource, input, chunkSizeBytes
+                    )
+                    if (result == null || parserLease.resource.isCancellationRequested) {
+                        result?.let { runCatching { it.close() } }
+                        // A cancelled/timed-out Tree-sitter parse may be resumable by default.
+                        // TSH binds this parser to explicit document versions, not an implicit
+                        // continuation, so clear the interrupted Native state before unlocking.
+                        parserLease.resource.reset()
+                        null
+                    } else {
+                        result
+                    }
+                } catch (error: Throwable) {
+                    runCatching { parserLease.resource.reset() }
+                    throw error
+                }
             }
             if (parserLease.resource.isCancellationRequested) {
-                parsedTree?.let { runCatching { it.close() } }
                 return failure(
                     "TSH-PARSER-OWNER-030",
                     "Snapshot parse result was discarded because Native cancellation had been accepted",
