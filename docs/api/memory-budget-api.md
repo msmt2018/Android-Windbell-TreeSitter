@@ -43,12 +43,20 @@ The capture estimate accounts for UTF-16 string payload lengths and a fixed per-
 
 These limits account for the merger's additional working set only. The input `Collection` already exists and is not included; upstream Tree-sitter/Regex execution must enforce its own result limits. The estimate is not a JVM heap measurement.
 
+## Regex window leases
+
+`TshRegexWindowLease.acquire()` copies one contiguous UTF-16 slice from a retained immutable snapshot. A caller must declare a finite maximum match length, maximum lookbehind, and maximum lookahead. The planner derives the window around a core interval; only matches whose absolute start is inside that core interval belong to the window. This prevents adjacent windows from emitting the same match twice.
+
+Unbounded patterns are rejected. Core boundaries that split surrogate pairs are rejected, while context edges are expanded to keep complete code points. The lease exposes whether the window touches the actual document start/end so the Regex executor can preserve anchor semantics; the executor must not treat an interior window edge as a document boundary. The optional `REGEX_WINDOW` reservation covers a conservative estimate for both the provider-returned temporary sequence and the retained String copy, and is released by `close()`.
+
+This is an input-window resource contract only. It does not compile or execute Regex, preserve Oniguruma engine state across windows, or prove correctness for patterns whose finite maximum match/lookaround cannot be established.
+
 ## Current limitations
 
 - Query result limits do not yet retain a `TshMemoryReservation` for the full lifetime of `TshQueryResult`.
 - Sparse coordinate-index checkpoints can optionally reserve an estimated budget before allocation; the reservation is held until the index closes.
 - RenderCoordinator can optionally reserve an estimated immutable RenderPlan footprint while a plan is pending. The reservation is released on terminal receipt, successful cancellation, submission failure, invalid/stale receipt, or coordinator close.
 - Snapshot-backed Tree-sitter parser input can optionally reserve the maximum temporary UTF-16 chunk estimate for each callback; the reservation is released in `finally` after copying or failure. The Native destination buffer and Tree-sitter internal allocations are not counted.
-- Native syntax-tree internals and Regex windows are not yet comprehensively wired to this ledger.
+- Native syntax-tree internals are not yet wired to this ledger. Regex windows can optionally reserve a bounded temporary-plus-retained UTF-16 payload estimate under `REGEX_WINDOW`; the reservation is held until the window lease closes.
 - Tree-sitter Native allocation size is not precisely observable through the current public binding; the ledger must not be presented as a guarantee over those opaque allocations.
 - The API does not itself implement eviction, task scheduling, cancellation, or process-wide memory-pressure callbacks. Callers must react to reservation failures by reducing work, deferring, cancelling safely, or using bounded windows.
