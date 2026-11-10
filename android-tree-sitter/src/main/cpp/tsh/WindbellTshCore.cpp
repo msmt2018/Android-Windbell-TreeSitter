@@ -1768,9 +1768,13 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
             ts_query_cursor_set_match_limit(cursor, UINT32_MAX);
             ts_query_cursor_exec(cursor, native_query.query, ts_tree_root_node(tree));
 
-            // Keep each query block transactional: publish its captures only after
-            // the cursor completes without exceeding Tree-sitter's match limit.
-            std::vector<HighlightSpan> query_spans;
+            // Keep each query block transactional without staging a second
+            // full-sized capture vector. Record a checkpoint in the shared macro
+            // output, append captures directly, and roll back this block if the
+            // cursor reports an incomplete traversal. This halves the transient
+            // storage attributable to the per-block capture staging vector while
+            // preserving all-or-nothing publication semantics.
+            const size_t query_span_checkpoint = macro_spans.size();
             TSQueryMatch match;
             uint64_t match_order = 0;
             uint64_t accepted_match_count = 0;
@@ -1809,7 +1813,7 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                         pattern_order + current_order + capture_index;
                     span.declaration_order = static_cast<uint32_t>(
                         std::min<uint64_t>(order, UINT32_MAX));
-                    query_spans.push_back(span);
+                    macro_spans.push_back(span);
                 }
             }
             const bool query_incomplete = ts_query_cursor_did_exceed_match_limit(cursor);
@@ -1817,12 +1821,10 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                 if (diagnostic_match_counts) {
                     tshIncrementDiagnostic(&diagnostic_match_counts[3], accepted_match_count);
                 }
-                macro_spans.reserve(macro_spans.size() + query_spans.size());
-                macro_spans.insert(
-                    macro_spans.end(),
-                    std::make_move_iterator(query_spans.begin()),
-                    std::make_move_iterator(query_spans.end()));
             } else {
+                // Do not expose a partial query block. Earlier AST selector
+                // results and completed query blocks remain intact.
+                macro_spans.resize(query_span_checkpoint);
                 LOGE("WindbellTSH", "Native query '%s' exceeded the maximum pending-match capacity; its captures were withheld",
                      native_query.id.c_str());
             }
