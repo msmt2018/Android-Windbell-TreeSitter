@@ -84,11 +84,13 @@ bool TshRegexNativeRegistry::execute(
     std::string& error
 ) {
     output = {};
-    if (!text || (text_bytes & 1u) != 0 ||
+    if ((!text && text_bytes != 0) || (text_bytes & 1u) != 0 ||
         text_bytes / 2u > static_cast<size_t>(std::numeric_limits<int32_t>::max())) {
         error = "Regex window is not a valid bounded UTF-16LE buffer";
         return false;
     }
+    static const UChar empty_text[] = {0, 0};
+    if (!text) text = empty_text;
     const int32_t length = static_cast<int32_t>(text_bytes / 2u);
     if (core_start_utf16 < 0 || core_end_utf16 < core_start_utf16 ||
         core_end_utf16 > length || max_matches == 0 || max_capture_groups == 0) {
