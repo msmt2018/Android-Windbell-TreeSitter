@@ -42,7 +42,49 @@ data class DocumentPartition(
     }
 }
 
-private data class PointCheckpoint(val offset: Long, val row: Long, val column: Long)
+/** Primitive parallel-array index: no per-checkpoint heap objects or references. */
+private class CompactPointCheckpointIndex(initialCapacity: Int = 256) {
+    private var offsets = LongArray(initialCapacity.coerceAtLeast(1))
+    private var rows = LongArray(initialCapacity.coerceAtLeast(1))
+    private var columns = LongArray(initialCapacity.coerceAtLeast(1))
+    var size: Int = 0
+        private set
+    fun add(offset: Long, row: Long, column: Long) {
+        if (size == offsets.size) {
+            val next = if (size < 1024) size * 2 else size + (size ushr 1)
+            val capacity = next.coerceAtLeast(size + 1)
+            offsets = offsets.copyOf(capacity); rows = rows.copyOf(capacity); columns = columns.copyOf(capacity)
+        }
+        offsets[size] = offset; rows[size] = row; columns[size] = column; size++
+    }
+    fun floorIndex(offset: Long): Int {
+        var low = 0; var high = size - 1; var best = 0
+        while (low <= high) {
+            val middle = (low + high) ushr 1
+            if (offsets[middle] <= offset) { best = middle; low = middle + 1 }
+            else high = middle - 1
+        }
+        return best
+    }
+    fun offsetAt(index: Int): Long = offsets[index]
+    fun rowAt(index: Int): Long = rows[index]
+    fun columnAt(index: Int): Long = columns[index]
+}
+
+/** Growable primitive buffer; avoids boxed Longs during sparse-index construction. */
+private class LongArrayBuilder(initialCapacity: Int = 256) {
+    private var values = LongArray(initialCapacity.coerceAtLeast(1))
+    var size: Int = 0
+        private set
+    fun add(value: Long) {
+        if (size == values.size) {
+            val next = if (size < 1024) size * 2 else size + (size ushr 1)
+            values = values.copyOf(next.coerceAtLeast(size + 1))
+        }
+        values[size++] = value
+    }
+    fun toArray(): LongArray = values.copyOf(size)
+}
 
 data class ViewportPlan(
     val requestedStart: Long,
@@ -69,7 +111,7 @@ class DocumentPartitionManager(
     private var indexedLength = 0L
     private var partitions = emptyList<DocumentPartition>()
     private var lineCheckpoints = LongArray(0)
-    private var pointCheckpoints = emptyList<PointCheckpoint>()
+    private var pointCheckpoints = CompactPointCheckpointIndex(0)
     val pointCheckpointCount: Int get() = lock.read { pointCheckpoints.size }
 
     init {
@@ -79,15 +121,15 @@ class DocumentPartitionManager(
     }
 
     fun rebuild(source: Utf16DocumentSource) = lock.write {
-        val starts = ArrayList<Long>()
+        val starts = LongArrayBuilder()
         starts.add(0L)
         var line = 0L
         var column = 0L
         var nextLineCheckpoint = lineCheckpointStride
         var nextPointCheckpoint = POINT_CHECKPOINT_STRIDE
         var offset = 0L
-        val pointIndex = ArrayList<PointCheckpoint>()
-        pointIndex.add(PointCheckpoint(0L, 0L, 0L))
+        val pointIndex = CompactPointCheckpointIndex()
+        pointIndex.add(0L, 0L, 0L)
         while (offset < source.length) {
             val chunk = source.readChunk(
                 offset,
@@ -110,13 +152,13 @@ class DocumentPartitionManager(
                 }
                 val absolute = offset + local + 1L
                 if (absolute >= nextPointCheckpoint) {
-                    pointIndex.add(PointCheckpoint(absolute, line, column))
+                    pointIndex.add(absolute, line, column)
                     nextPointCheckpoint = absolute + POINT_CHECKPOINT_STRIDE
                 }
             }
             offset += chunk.length
         }
-        val checkpoints = starts.toLongArray()
+        val checkpoints = starts.toArray()
 
         val built = ArrayList<DocumentPartition>()
         var start = 0L
@@ -225,23 +267,12 @@ class DocumentPartitionManager(
 
     private fun pointAt(source: Utf16DocumentSource, offset: Long): TSPoint {
         val checkpoint = lock.read {
-            var low = 0
-            var high = pointCheckpoints.lastIndex
-            var best = 0
-            while (low <= high) {
-                val middle = (low + high) ushr 1
-                if (pointCheckpoints[middle].offset <= offset) {
-                    best = middle
-                    low = middle + 1
-                } else {
-                    high = middle - 1
-                }
-            }
-            pointCheckpoints[best]
+            val best = pointCheckpoints.floorIndex(offset)
+            longArrayOf(pointCheckpoints.offsetAt(best), pointCheckpoints.rowAt(best), pointCheckpoints.columnAt(best))
         }
-        var row = checkpoint.row
-        var column = checkpoint.column
-        var index = checkpoint.offset
+        var index = checkpoint[0]
+        var row = checkpoint[1]
+        var column = checkpoint[2]
         while (index < offset) {
             val chunk = source.readChunk(
                 index,
@@ -441,9 +472,15 @@ class TokenizerCheckpointStore(private val maxEntries: Int = 4096) {
         while (entries.size > maxEntries) entries.remove(entries.entries.iterator().next().key)
     }
 
-    @Synchronized fun nearest(line: Long, documentVersion: Long): TokenizerCheckpoint? =
-        entries.values.filter { it.line <= line && it.documentVersion == documentVersion }
-            .maxByOrNull { it.line }
+    @Synchronized fun nearest(line: Long, documentVersion: Long): TokenizerCheckpoint? {
+        // Avoid allocating a filtered intermediate list on every checkpoint lookup.
+        var best: TokenizerCheckpoint? = null
+        for (checkpoint in entries.values) {
+            if (checkpoint.line <= line && checkpoint.documentVersion == documentVersion &&
+                (best == null || checkpoint.line > best.line)) best = checkpoint
+        }
+        return best
+    }
 
     @Synchronized fun invalidateFrom(line: Long) {
         val iterator = entries.entries.iterator()
