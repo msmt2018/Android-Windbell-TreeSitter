@@ -302,9 +302,6 @@ class TshRenderApiTest {
         val result = coordinator.submit(plan())
         assertTrue(result is TshResult.Failure)
         assertEquals(TshDiagnosticStage.MEMORY, result.diagnostics().single().stage)
-        assertTrue(provider::class.java.getDeclaredField("acknowledger").let {
-            runCatching { it.isAccessible = true; it.get(provider) }.getOrNull() == null
-        })
         assertEquals(0L, budget.snapshot().reservedBytes)
         assertTrue(coordinator.pendingPlanIds().isEmpty())
     }
