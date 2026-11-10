@@ -326,7 +326,12 @@ public class TSQueryCursor extends TSNativeObject implements Iterable<TSQueryMat
         return false;
       }
     }
-    return false;
+    // UNHANDLED is not a predicate mismatch. Returning false here would silently
+    // discard a valid native match and make unsupported query semantics look successful.
+    throw new IllegalStateException(
+      "No TSPredicateHandler handled predicate '" +
+      (steps.isEmpty() ? "<empty>" : steps.get(0).value) + "'"
+    );
   }
 
   public void removeMatch(int id) {
