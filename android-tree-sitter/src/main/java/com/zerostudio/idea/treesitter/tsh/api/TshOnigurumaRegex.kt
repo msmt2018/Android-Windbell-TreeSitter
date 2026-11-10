@@ -162,6 +162,7 @@ class TshOnigurumaRegex private constructor(
         )
 
         val records = ArrayList<TshRegexMatchRecord>(minOf(maxMatches, 4096))
+        var estimatedBytes = 0L
         var truncated = false
         while (true) {
             val acquired = when (val next = sequence.nextWindow()) {
@@ -191,8 +192,17 @@ class TshOnigurumaRegex private constructor(
             } finally {
                 acquired.close()
             }
-            records.addAll(windowResult.matches)
-            if (windowResult.truncated) {
+            for (record in windowResult.matches) {
+                val recordBytes = estimateRecordBytes(record)
+                if (records.size >= maxMatches ||
+                    recordBytes > budget.maxEstimatedBytes - estimatedBytes) {
+                    truncated = true
+                    break
+                }
+                records += record
+                estimatedBytes = saturatedAdd(estimatedBytes, recordBytes)
+            }
+            if (truncated || windowResult.truncated) {
                 truncated = true
                 break
             }
@@ -223,6 +233,18 @@ class TshOnigurumaRegex private constructor(
         val handle = nativeHandle.getAndSet(0L)
         if (handle != 0L) native.nativeRelease(handle)
     }
+
+    private fun estimateRecordBytes(record: TshRegexMatchRecord): Long {
+        var total = 192L + record.captureGroups.size.toLong() * 96L
+        for (group in record.captureGroups) {
+            val nameBytes = group.name.length.toLong() * 2L + 16L
+            total = saturatedAdd(total, nameBytes)
+        }
+        return total
+    }
+
+    private fun saturatedAdd(left: Long, right: Long): Long =
+        if (Long.MAX_VALUE - left < right) Long.MAX_VALUE else left + right
 
     private fun sourceRange(start: Long, end: Long, version: Long) = TshSourceRange(
         TshSourcePosition(start, coordinateSystem = TshCoordinateSystem.UTF16_CODE_UNIT),
