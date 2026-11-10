@@ -748,7 +748,10 @@ static TshPredicateResult tshEvaluateNativePredicates(const NativeQueryProgram& 
                 all_satisfied = all_satisfied && satisfied;
                 any_satisfied = any_satisfied || satisfied;
             }
-            accepted = any ? (has_capture && any_satisfied) : (!has_capture ? !positive : all_satisfied);
+            // EqString's missing-capture result is determined by polarity,
+            // even for any-* forms: eq? / any-eq? reject, while
+            // not-eq? / any-not-eq? accept.
+            accepted = !has_capture ? !positive : (any ? any_satisfied : all_satisfied);
         } else if (op == "any-of?" || op == "not-any-of?") {
             if (expected.empty()) return TshPredicateResult::REJECT;
             bool all_in_set = true;
