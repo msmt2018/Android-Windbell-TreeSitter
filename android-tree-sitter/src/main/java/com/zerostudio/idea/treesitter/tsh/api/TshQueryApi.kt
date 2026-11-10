@@ -98,11 +98,16 @@ data class TshSyntaxTreeSnapshot(
 
 data class TshQueryExecutionBudget(
     val maxSteps: Long? = null,
-    val maxMatches: Int = 100_000
+    val maxMatches: Int = 100_000,
+    val maxCaptures: Int = 1_000_000,
+    /** Estimated retained result bytes; this is not a measurement of Native cursor/tree memory. */
+    val maxResultBytes: Long = 32L * 1024L * 1024L
 ) {
     init {
         require(maxSteps == null || maxSteps > 0)
         require(maxMatches > 0)
+        require(maxCaptures > 0)
+        require(maxResultBytes > 0L)
     }
 }
 
