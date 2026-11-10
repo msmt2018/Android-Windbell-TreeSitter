@@ -77,8 +77,9 @@ class TshSyntaxHighlighter(
 
     private enum class PartitionWorkState { QUEUED, RUNNING, SUCCEEDED, FAILED, CANCELLED }
 
-    private class PartitionWork {
+    private class PartitionWork(val attempt: Int = 0) {
         @Volatile var state: PartitionWorkState = PartitionWorkState.QUEUED
+        @Volatile var retryAfterNanos: Long = 0L
     }
 
     private data class NativeEdit(
@@ -518,8 +519,21 @@ class TshSyntaxHighlighter(
     private fun requestLargePartition(active: LargeSession, partitionIndex: Int) {
         if (generation.get() != active.ticket || largeSession !== active) return
         if (captureCache.get(CaptureCacheKey(active.cacheSessionId, partitionIndex)) != null) return
-        val work = PartitionWork()
-        if (active.partitionWork.putIfAbsent(partitionIndex, work) != null) return
+        // Keep failed work briefly to suppress draw-triggered retry storms, but
+        // never poison a partition for the lifetime of the document. Retry with
+        // bounded exponential backoff so transient I/O/OOM/native failures recover.
+        val existing = active.partitionWork[partitionIndex]
+        val work = if (existing == null) {
+            val initial = PartitionWork()
+            if (active.partitionWork.putIfAbsent(partitionIndex, initial) != null) return
+            initial
+        } else {
+            if (existing.state != PartitionWorkState.FAILED ||
+                System.nanoTime() < existing.retryAfterNanos) return
+            val retry = PartitionWork(existing.attempt + 1)
+            if (!active.partitionWork.replace(partitionIndex, existing, retry)) return
+            retry
+        }
         val requestedRevision = active.documentRevision.get()
 
         // One native document handle has one serialized operation stream. Viewport
@@ -559,9 +573,12 @@ class TshSyntaxHighlighter(
             } catch (_: CancellationException) {
                 work.state = PartitionWorkState.CANCELLED
             } catch (error: Throwable) {
-                // Retain FAILED until an edit/session replacement invalidates it.
-                // Draw callbacks therefore cannot cause an immediate retry/log storm.
+                // Retain FAILED only until its retry deadline. Backoff is capped
+                // at 32 seconds and retries reset naturally on a new session/edit.
                 work.state = PartitionWorkState.FAILED
+                val backoffShift = (work.attempt - 1).coerceIn(0, 5)
+                val backoffNanos = (1L shl backoffShift) * 1_000_000_000L
+                work.retryAfterNanos = System.nanoTime() + backoffNanos
                 if (generation.get() == active.ticket && largeSession === active) {
                     Log.e(TAG, "Native viewport TSH failed: extension=.$extension partition=$partitionIndex", error)
                 }
