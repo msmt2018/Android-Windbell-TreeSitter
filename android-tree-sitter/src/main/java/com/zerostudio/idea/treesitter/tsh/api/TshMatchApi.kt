@@ -234,7 +234,7 @@ object TshMatchMerger {
         // Keep only bounded diagnostics from caller and stale-input filtering. Reserve one slot
         // for the diagnostic that reports diagnostic truncation itself.
         val outputDiagnostics = ArrayList<TshDiagnostic>(minOf(diagnostics.size, MAX_DIAGNOSTICS))
-        diagnostics.take(MAX_DIAGNOSTICS - 1).forEach(outputDiagnostics::add)
+        diagnostics.take(MAX_DIAGNOSTICS - 1).forEach { outputDiagnostics.add(it) }
         var diagnosticsTruncated = diagnostics.size > MAX_DIAGNOSTICS - 1
         var staleMatches = 0
         var truncated = false
