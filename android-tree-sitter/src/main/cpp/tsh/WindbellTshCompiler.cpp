@@ -3105,9 +3105,14 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
         std::vector<std::string> pending_states{grammar->regex_start_state};
         const auto enqueue_state = [&](const std::string& target) {
             if (target.empty()) return;
-            // @pop/@popall/@push are stack operations, not named states.
-            if (target.front() == '@') return;
-            pending_states.push_back(target);
+            std::string state_target = target;
+            if (state_target.front() == '@') {
+                state_target.erase(state_target.begin());
+                // These @-prefixed values are stack operations, not named states.
+                if (state_target == "pop" || state_target == "popall" ||
+                    state_target == "push") return;
+            }
+            pending_states.push_back(std::move(state_target));
         };
         while (!pending_states.empty()) {
             std::string state_name = std::move(pending_states.back());
