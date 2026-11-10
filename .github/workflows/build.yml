@@ -2,7 +2,7 @@ name: Build and test
 
 on:
   push:
-    branches: [ "dev", "main" ]
+    branches: [ "dev", "main", "migration/tsh-0.28-from-backup-no-largefile" ]
     paths-ignore:
       - '**.md'
   pull_request:
