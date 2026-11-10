@@ -60,10 +60,12 @@ class PieceTreeSnapshot internal constructor(
     // per piece, in document order: the text it lies in and where it starts in that text
     private val sources: Array<CharSequence>,
     private val sourceStarts: IntArray,
+    // Original backing-buffer offsets used only by the coordinate index (typed text is compacted).
+    private val pieceCoordinateStarts: IntArray,
     // document offset where each piece starts, plus the document length as the last element
     private val pieceStarts: IntArray,
-    /** Immutable line-start indexes from each backing buffer; shared across pieces using it. */
-    private val pieceLineStarts: Array<IntList>,
+    /** Immutable line-start snapshots from each backing buffer; shared across pieces using it. */
+    private val pieceLineStarts: Array<IntListSnapshot>,
     /** Source line and column at each piece start. */
     private val pieceStartLineIndices: IntArray,
     private val pieceStartColumns: IntArray,
@@ -100,7 +102,7 @@ class PieceTreeSnapshot internal constructor(
 
         val piece = if (offset == length) sources.lastIndex else pieceAt(offset)
         if (piece !in sources.indices) return null
-        val sourceOffset = sourceStarts[piece] + offset - pieceStarts[piece]
+        val sourceOffset = pieceCoordinateStarts[piece] + offset - pieceStarts[piece]
         val starts = pieceLineStarts[piece]
         var low = 0
         var high = starts.lastIndex
@@ -114,7 +116,7 @@ class PieceTreeSnapshot internal constructor(
         if (lineDelta < 0) return null
         val row = Math.addExact(pieceLineFeedPrefixes[piece], lineDelta)
         val column = if (localLine == pieceStartLineIndices[piece]) {
-            Math.addExact(pieceStartColumns[piece], sourceOffset - sourceStarts[piece])
+            Math.addExact(pieceStartColumns[piece], offset - pieceStarts[piece])
         } else {
             sourceOffset - starts[localLine]
         }
