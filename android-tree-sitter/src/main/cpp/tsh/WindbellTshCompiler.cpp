@@ -3166,7 +3166,11 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
             }
             if (!grammar->regex_state_graph_bounded) break;
         }
-        if (!grammar->regex_state_graph_bounded) {
+        // A graph containing only include/transition directives has no
+        // executable finite-width matcher and must not enter the window path.
+        if (!grammar->regex_state_graph_bounded ||
+            grammar->regex_state_graph_maximum_match_bytes == 0) {
+            grammar->regex_state_graph_bounded = false;
             grammar->regex_state_graph_maximum_match_bytes = 0;
         }
     }
