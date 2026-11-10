@@ -11,8 +11,8 @@ import com.zerostudio.idea.treesitter.TSPoint
  * before-version snapshot.
  *
  * Position lookup prefers coordinates supplied with each edit, then a host-native snapshot
- * coordinate index (Piece Tree/Rope), and only falls back to one bounded streaming pass when
- * neither is available. The compiler never flattens the document.
+ * coordinate index (Piece Tree/Rope), and only falls back to a bounded streaming pass for snapshots up to 1 Mi UTF-16 when
+ * neither is available; larger snapshots require a host-native coordinate index. The compiler never flattens the document.
  */
 object TshTreeSitterEditCompiler {
     private const val INDEX_CHUNK_UTF16 = 32 * 1024
