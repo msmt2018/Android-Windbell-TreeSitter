@@ -201,6 +201,60 @@ static bool tshUtf8ToUtf16(const std::string& input, std::vector<UChar>& output)
     return true;
 }
 
+static bool tshSourceRegexMatchesBounded(
+    const windbell::largefile::TextSource& source,
+    uint64_t start_byte,
+    uint64_t end_byte,
+    regex_t* regex,
+    uint64_t maximum_match_bytes
+) {
+    if (!regex || start_byte > end_byte || (start_byte & 1u) ||
+        (end_byte & 1u) || maximum_match_bytes == 0) return false;
+    constexpr uint64_t kCoreWindowBytes = 256u * 1024u;
+    const uint64_t overlap = maximum_match_bytes >= 2u
+        ? maximum_match_bytes - 2u : 0u;
+    uint64_t core_start = start_byte;
+    while (core_start < end_byte) {
+        const uint64_t remaining = end_byte - core_start;
+        const uint64_t core_end = remaining <= kCoreWindowBytes
+            ? end_byte : core_start + kCoreWindowBytes;
+        const uint64_t after_core = end_byte - core_end;
+        const uint64_t window_end = overlap >= after_core
+            ? end_byte : core_end + overlap;
+        const uint64_t window_bytes = window_end - core_start;
+        if (window_bytes == 0 || (window_bytes & 1u) != 0 ||
+            window_bytes > static_cast<uint64_t>(std::numeric_limits<size_t>::max()))
+            return false;
+        std::vector<UChar> window;
+        try { window.resize(static_cast<size_t>(window_bytes)); }
+        catch (...) { return false; }
+        if (!windbell::largefile::copyTextRange(
+                source, core_start, window_bytes, window.data())) return false;
+        OnigRegion* region = onig_region_new();
+        if (!region) return false;
+        const UChar* begin = window.data();
+        const UChar* end = begin + window.size();
+        const UChar* current = begin;
+        bool matched = false;
+        while (current < end) {
+            const int hit = onig_search(
+                regex, begin, end, current, end, region, ONIG_OPTION_NONE);
+            if (hit < 0) break;
+            if (region->beg[0] < 0 || region->end[0] < region->beg[0]) break;
+            const uint64_t local_start = static_cast<uint64_t>(region->beg[0]);
+            if (local_start < core_end - core_start) {
+                matched = true;
+                break;
+            }
+            break;
+        }
+        onig_region_free(region, 1);
+        if (matched) return true;
+        core_start = core_end;
+    }
+    return false;
+}
+
 static bool tshPredicateCaptureTexts(const TSQueryMatch& match, uint32_t capture_id,
     const UChar* utf16_source,
     const windbell::largefile::TextSource* text_source,
@@ -1294,6 +1348,22 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                             !tshSourceMatchesUtf8Literal(*text_source, text_start, text_end,
                                 ast_rule.text_suffix, 2)) continue;
                     } else {
+                    // A bounded AST text-regex is searched directly against the
+                    // TextSource in fixed windows. Never materialize a potentially
+                    // enormous syntax node just to evaluate a selector predicate.
+                    if (text_source && ast_rule.text_regex &&
+                        ast_rule.text_regex_bounded) {
+                        if (!tshSourceRegexMatchesBounded(
+                                *text_source, text_start, text_end,
+                                ast_rule.text_regex,
+                                ast_rule.text_regex_maximum_bytes)) continue;
+                    } else {
+                    // Context-dependent AST regexes retain the contiguous adapter,
+                    // but cap the temporary node to prevent a single giant string or
+                    // comment node from allocating a document-sized second copy.
+                    constexpr uint64_t kMaxContiguousAstRegexBytes = 4ULL * 1024ULL * 1024ULL;
+                    if (text_source && ast_rule.text_regex &&
+                        text_end - text_start > kMaxContiguousAstRegexBytes) continue;
                     std::string node_text_storage;
                     std::vector<UChar> node_text_window((text_end - text_start) / sizeof(UChar));
                     const UChar* node_source = nullptr;
@@ -1332,6 +1402,7 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                             regex_begin, regex_end, regex_region, ONIG_OPTION_NONE);
                         onig_region_free(regex_region, 1);
                         if (regex_result < 0) continue;
+                    }
                     }
                     }
                 }
