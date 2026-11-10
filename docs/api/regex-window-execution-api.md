@@ -52,3 +52,16 @@ Adapter 负责将窗口转成稳定连续编码 buffer，创建 region/match dat
 ## 7. 验收
 
 Piece Tree 跨 chunk、emoji/组合字符、超长行、窗口边缘匹配、lookbehind、lookahead、^/$、多行、零宽匹配、灾难性回溯、取消和增量 dirty range 均需与整段连续基准结果比对。无法证明等价的模式必须明确回退或拒绝。
+
+
+## 当前源码落地状态（2026-11-10）
+
+已实现的资源层基础：
+- `TshRegexWindowConstraints`、`TshRegexWindowLease`：有限 max match/lookaround、连续 UTF-16 窗口、Unicode 边界、core start 唯一归属、EOF 零宽匹配、可选 REGEX_WINDOW reservation。
+- `TshRegexWindowSequence`：独立 Snapshot Lease、自动连续分区、surrogate-safe core boundary、失败不推进、空文档单窗口。
+
+尚未完成的执行层接线：
+- 现有 `WindbellTshEngine.computeHighlights(tree, text, extension)` 仍将完整 String 传入 JNI `nativeHighlight`；C++ `WindbellEngine::highlightHybrid` 仍接收整份连续 UTF-16 文本。
+- 现有 DSL Regex MATCH 规则尚未声明可证明的最大匹配/上下文跨度；BLOCK 规则需要跨窗口状态机。
+- WindowLease/Sequence 尚未驱动 Oniguruma，也未把窗口命中统一映射为 `TshMatch`。
+- 因此大文本 Regex/Oniguruma 尚未完成窗口化迁移；不得将资源层 API 的完成等同于 Regex 大文本执行完成。
