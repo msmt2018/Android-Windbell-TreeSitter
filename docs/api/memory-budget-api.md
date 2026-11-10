@@ -42,6 +42,7 @@ The capture estimate accounts for UTF-16 string payload lengths and a fixed per-
 - Query result limits do not yet retain a `TshMemoryReservation` for the full lifetime of `TshQueryResult`.
 - Sparse coordinate-index checkpoints can optionally reserve an estimated budget before allocation; the reservation is held until the index closes.
 - RenderCoordinator can optionally reserve an estimated immutable RenderPlan footprint while a plan is pending. The reservation is released on terminal receipt, successful cancellation, submission failure, invalid/stale receipt, or coordinator close.
-- Parser input, Native syntax-tree internals, and Regex windows are not yet comprehensively wired to this ledger.
+- Snapshot-backed Tree-sitter parser input can optionally reserve the maximum temporary UTF-16 chunk estimate for each callback; the reservation is released in `finally` after copying or failure. The Native destination buffer and Tree-sitter internal allocations are not counted.
+- Native syntax-tree internals and Regex windows are not yet comprehensively wired to this ledger.
 - Tree-sitter Native allocation size is not precisely observable through the current public binding; the ledger must not be presented as a guarantee over those opaque allocations.
 - The API does not itself implement eviction, task scheduling, cancellation, or process-wide memory-pressure callbacks. Callers must react to reservation failures by reducing work, deferring, cancelling safely, or using bounded windows.
