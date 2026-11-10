@@ -175,8 +175,11 @@ class TshRegexWindowLease private constructor(
             } catch (error: Exception) {
                 return failure("TSH-REGEX-WINDOW-011", "Cannot acquire Regex window: ${error.message}", error)
             } finally {
-                retained.close()
-                if (!transferred) reservation?.close()
+                try {
+                    retained.close()
+                } finally {
+                    if (!transferred) reservation?.close()
+                }
             }
         }
 
