@@ -116,6 +116,7 @@
 - [x] Android Spannable Renderer Provider + OwnerScope-scoped host binding，Provider Registry 可按宿主对象身份发现；Render generation 事务回滚保留旧 TSH/宿主 Span；强制 host 提供有界 viewport 后才分配 Span，缺失 viewport 直接拒绝；离屏指令记为 deferred；Receipt 对 applied/deferred/dropped 完整计数；Binding cleanup failure 可通过 closeDiagnostics 查询；Robolectric test 源码覆盖 rollback、decoration、binding、viewport。 [ ] Canvas/Compose/custom View Renderer Provider 尚未实现。
 - [ ] Robolectric test 运行、真实 Draw 回执、像素/颜色可见性、字体/Decoration/主题切换设备验证尚未完成。
 - [x] editor 模块新增 `TshRenderPlanSyntaxHighlighter`：将 UTF-16 RenderPlan 指令映射为 EditorView `LineStyler` 可识别的 Foreground/Background/Style/Underline Span；按行区间索引查询，避免每帧扫描整份 RenderPlan；版本不匹配时拒绝旧样式；当前 StyledTextPainter 不支持的字体族/字号/删除线产生 warning（SOURCE_PARTIAL，待 CI 与设备验证）。
+- [x] RenderPlan highlighter 的 plan publication 与编辑回调通过同一锁线性化；编辑事务期间拒绝新计划，提交前再次读取 PieceTree 版本，避免异步 Query/Style 结果覆盖正在进行的编辑（测试源码待 CI）。
 - [ ] RenderPlan/Receipt 源码与 LineStyler 桥接均不代表所有 `.tsh` 属性都已绘制，也不代表设备像素已验证；仍需完整应用层配置加载、Theme/Scope/Attribute 映射及真实控件端到端验证。
 
 ### JNI / 大文本 / Native 生命周期
