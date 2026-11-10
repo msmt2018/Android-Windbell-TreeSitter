@@ -115,7 +115,8 @@ class TshOnigurumaRegex private constructor(
                 val absoluteGroupEnd = window.windowStartUtf16 + groupEnd
                 if (!window.isCodePointBoundary(groupStart.toInt()) ||
                     !window.isCodePointBoundary(groupEnd.toInt()) ||
-                    absoluteGroupStart < absoluteStart || absoluteGroupEnd > absoluteEnd) {
+                    absoluteGroupStart > window.documentLengthUtf16 ||
+                    absoluteGroupEnd > window.documentLengthUtf16) {
                     return failure(
                         "TSH-REGEX-NATIVE-012",
                         "Oniguruma capture group $groupIndex is outside the match or splits a Unicode code point"
@@ -180,16 +181,15 @@ class TshOnigurumaRegex private constructor(
                 break
             }
 
-            val execution = try {
-                executeWindow(acquired, minOf(remaining, MAX_MATCHES_PER_WINDOW), maxCaptureGroups)
+            val windowResult = try {
+                when (val execution = executeWindow(
+                    acquired, minOf(remaining, MAX_MATCHES_PER_WINDOW), maxCaptureGroups
+                )) {
+                    is TshResult.Failure -> return execution
+                    is TshResult.Success -> execution.value
+                }
             } finally {
-                // The window content and its memory reservation are released even on JNI failure.
-            }
-            acquired.close()
-
-            val windowResult = when (execution) {
-                is TshResult.Failure -> return execution
-                is TshResult.Success -> execution.value
+                acquired.close()
             }
             records.addAll(windowResult.matches)
             if (windowResult.truncated) {
