@@ -107,6 +107,11 @@ static void testMappedFileSource() {
     assert(source.open(path));
     assert(source.isOpen());
     assert(source.sizeBytes() == expected.size());
+    const char *mapped_data = nullptr;
+    uint64_t mapped_size = 0;
+    assert(source.contiguousData(&mapped_data, &mapped_size));
+    assert(mapped_data != nullptr && mapped_size == expected.size());
+    assert(std::memcmp(mapped_data, expected.data(), expected.size()) == 0);
 
     TextChunkView view{};
     assert(source.read(64u * 1024u + 4u, 1024, &view));
@@ -241,10 +246,15 @@ static void testPieceTreeEditsDoNotCopyUnchangedText() {
     PieceTreeSource source(mapped, 2u * 1024u * 1024u);
     assert(source.isValid());
     assert(source.sizeBytes() == utf16.size());
+    const char *tree_data = nullptr;
+    uint64_t tree_size = 0;
+    assert(source.contiguousData(&tree_data, &tree_size));
+    assert(tree_data != nullptr && tree_size == utf16.size());
     const uint64_t beforePieces = source.pieceCount();
     const char insert[] = {'X', 0, 'Y', 0};
     assert(source.replace(0, 0, insert, sizeof(insert)));
     assert(source.version() == 1);
+    assert(!source.contiguousData(&tree_data, &tree_size));
     assert(source.sizeBytes() == utf16.size() + sizeof(insert));
     assert(source.pieceCount() <= beforePieces + 2);
     assert(source.allocatedBytes() < 256u * 1024u);
