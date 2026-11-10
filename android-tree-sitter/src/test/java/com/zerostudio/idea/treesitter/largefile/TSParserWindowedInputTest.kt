@@ -85,6 +85,46 @@ class TSParserWindowedInputTest {
         }
     }
 
+
+    @Test fun largeStringAndByteArrayEntryPointsKeepOneCompleteAstAcrossReparse() {
+        val declarationCount = 30_000
+        val source = buildString(declarationCount * 24) {
+            repeat(declarationCount) { index ->
+                append("class DenseType")
+                append(index)
+                append(" {}\n")
+            }
+        }
+        assertTrue(source.length.toLong() * 2L >= 1024L * 1024L)
+
+        val parser = TSParser.create().apply { setLanguage(TSLanguageJava.getInstance()) }
+        var first: com.zerostudio.idea.treesitter.TSTree? = null
+        var reparsed: com.zerostudio.idea.treesitter.TSTree? = null
+        var fromBytes: com.zerostudio.idea.treesitter.TSTree? = null
+        try {
+            first = parser.parseString(source)
+            assertNotNull(first)
+            assertFalse(first!!.rootNode.hasErrors(),
+                "Large String parse must retain a valid complete ATS tree")
+
+            reparsed = parser.parseString(first, source)
+            assertNotNull(reparsed)
+            assertFalse(reparsed!!.rootNode.hasErrors(),
+                "Incremental String reparse must not damage the existing ATS tree")
+
+            val wrapped = ("x" + source + "y").toByteArray(Charsets.UTF_16LE)
+            fromBytes = parser.parseBytes(wrapped, 2, source.length * 2)
+            assertNotNull(fromBytes)
+            assertFalse(fromBytes!!.rootNode.hasErrors(),
+                "Large UTF-16LE byte-slice parse must preserve all syntax")
+        } finally {
+            fromBytes?.close()
+            reparsed?.close()
+            first?.close()
+            parser.close()
+        }
+    }
+
     @Test fun windowedCallbackJoinsSurrogatePairSplitAcrossPieceTreePieces() {
         val source = "😀x"
         val callback = CharSequenceParseWindowCallback(source) { start, _ ->
