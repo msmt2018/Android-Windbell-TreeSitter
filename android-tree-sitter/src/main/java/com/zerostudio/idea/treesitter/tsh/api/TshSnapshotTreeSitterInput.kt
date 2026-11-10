@@ -45,8 +45,9 @@ class TshSnapshotTreeSitterInput(
 
         val maxUtf16Length = destination.size / 2
         val reservation = memoryBudget?.let { budget ->
-            // The provider's temporary UTF-16 payload is bounded by the requested chunk. The
-            // destination array belongs to the Native caller and is intentionally not counted.
+            // This callback-local reservation covers the provider's temporary UTF-16 payload.
+            // ParserOwner separately reserves the reusable JNI destination array and possible
+            // GetByteArrayElements copy for the complete parse lifetime.
             when (val reserved = budget.reserve(
                 TshMemoryCategory.PARSER_INPUT,
                 maxUtf16Length.toLong() * 2L + 64L,
