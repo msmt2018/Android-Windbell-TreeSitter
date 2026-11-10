@@ -1671,8 +1671,8 @@ class WindbellTshLinkageTest {
                 tree!!.rootNode.hasErrors(),
                 "Large full-document ATS tree must not contain ERROR or MISSING descendants"
             )
-            val diagnostics = engine.computePipelineDiagnostics(tree, source, extension)
-            val queryCaptures = diagnostics.captures.count { it.source == 3 }
+            val spans = engine.computeHighlights(tree, source, extension)
+            val queryCaptures = spans.count { it.source == 3 }
             assertEquals(
                 declarationCount * 3,
                 queryCaptures,
