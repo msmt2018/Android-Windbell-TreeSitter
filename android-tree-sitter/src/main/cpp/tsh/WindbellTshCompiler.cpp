@@ -2963,6 +2963,15 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                             ast_rule.text_regex = compileOnigurumaUtf16(
                                 ast_rule.text_regex_pattern, ONIG_OPTION_DEFAULT);
                             if (!ast_rule.text_regex) return nullptr;
+                            uint64_t maximum_width = 0;
+                            if (analyzeBoundedRegexWidth(
+                                    ast_rule.text_regex_pattern, &maximum_width) &&
+                                maximum_width <= std::numeric_limits<uint64_t>::max() /
+                                    sizeof(uint16_t)) {
+                                ast_rule.text_regex_bounded = true;
+                                ast_rule.text_regex_maximum_bytes =
+                                    maximum_width * sizeof(uint16_t);
+                            }
                         }
                         grammar->ast_selector_rules.push_back(std::move(ast_rule));
                     }
