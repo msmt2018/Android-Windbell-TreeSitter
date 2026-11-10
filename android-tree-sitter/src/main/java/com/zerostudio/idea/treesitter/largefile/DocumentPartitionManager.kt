@@ -43,7 +43,7 @@ data class DocumentPartition(
 }
 
 /** Primitive parallel-array index: no per-checkpoint heap objects or references. */
-private class CompactPointCheckpointIndex(initialCapacity: Int = 256) {
+internal class CompactPointCheckpointIndex(initialCapacity: Int = 256) {
     private var offsets32 = IntArray(initialCapacity.coerceAtLeast(1))
     private var rows32 = IntArray(initialCapacity.coerceAtLeast(1))
     private var columns32 = IntArray(initialCapacity.coerceAtLeast(1))
@@ -78,15 +78,20 @@ private class CompactPointCheckpointIndex(initialCapacity: Int = 256) {
     }
 
     private fun ensureCapacity() {
-        if (size < offsets32.size) return
+        val wide = offsets64
+        val currentCapacity = wide?.size ?: offsets32.size
+        if (size < currentCapacity) return
         val next = if (size < 1024) size * 2 else size + (size ushr 1)
         val capacity = next.coerceAtLeast(size + 1)
-        offsets32 = offsets32.copyOf(capacity)
-        rows32 = rows32.copyOf(capacity)
-        columns32 = columns32.copyOf(capacity)
-        offsets64 = offsets64?.copyOf(capacity)
-        rows64 = rows64?.copyOf(capacity)
-        columns64 = columns64?.copyOf(capacity)
+        if (wide != null) {
+            offsets64 = wide.copyOf(capacity)
+            rows64 = rows64!!.copyOf(capacity)
+            columns64 = columns64!!.copyOf(capacity)
+        } else {
+            offsets32 = offsets32.copyOf(capacity)
+            rows32 = rows32.copyOf(capacity)
+            columns32 = columns32.copyOf(capacity)
+        }
     }
 
     private fun promoteTo64Bit() {
