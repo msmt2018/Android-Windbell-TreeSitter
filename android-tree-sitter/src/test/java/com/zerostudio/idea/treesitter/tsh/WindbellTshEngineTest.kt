@@ -78,6 +78,7 @@ class WindbellTshLinkageTest {
                     charIndex == 1L -> '*'
                     charIndex in targetChar until targetChar + token.length ->
                         token[(charIndex - targetChar).toInt()]
+                    charIndex == totalBytes / 2L - 3L -> 'z'
                     charIndex == totalBytes / 2L - 2L -> '*'
                     charIndex == totalBytes / 2L - 1L -> '/'
                     else -> 'a'
@@ -123,6 +124,11 @@ class WindbellTshLinkageTest {
                             id: "large-comment-not-equal"
                             priority: 25
                             source: `(block_comment) @comment (#not-eq? @comment "x")`
+                        },
+                        {
+                            id: "large-comment-bounded-regex"
+                            priority: 26
+                            source: `(block_comment) @comment (#match? @comment "z")`
                         }
                     ]
                 }
@@ -169,7 +175,7 @@ class WindbellTshLinkageTest {
                         values[base + 1] >= start.toInt() &&
                         values[base + 2] == commentStyle.toInt()
                 },
-                "The large block-comment capture must survive #not-eq? and produce a clipped style span"
+                "The large block-comment capture must survive both #not-eq? and bounded #match? and produce a clipped style span"
             )
         } finally {
             engine.closeNativeDocument(handle)
