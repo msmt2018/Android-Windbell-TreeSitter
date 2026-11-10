@@ -28,6 +28,16 @@ public:
     virtual ~TextSource() = default;
     virtual uint64_t sizeBytes() const noexcept = 0;
     virtual bool read(uint64_t offset, uint32_t maxBytes, TextChunkView *out) const noexcept = 0;
+
+    // Expose an immutable whole-source contiguous view when the backing store
+    // already provides one (for example mmap). This is optional: callers must
+    // retain the TextSource lifetime and fall back to read() when unavailable.
+    virtual bool contiguousData(const char **data, uint64_t *sizeBytes) const noexcept {
+        if (!data || !sizeBytes) return false;
+        *data = nullptr;
+        *sizeBytes = 0;
+        return false;
+    }
 };
 
 // Copy a bounded UTF-16LE range from any source implementation. This is the
