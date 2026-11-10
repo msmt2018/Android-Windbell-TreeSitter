@@ -279,7 +279,7 @@ class TshTreeSitterQueryExecutor(
         val effectivePredicateHandlers = buildList {
             addAll(predicateHandlers)
             if (none { handler ->
-                    handler.supportedPredicates.any { it.removePrefix("#") == SetDirectiveHandler.DIRECTIVE }
+                    handler.getSupportedPredicates().any { it.removePrefix("#") == SetDirectiveHandler.DIRECTIVE }
                 }) {
                 add(SetDirectiveHandler())
             }
@@ -296,7 +296,7 @@ class TshTreeSitterQueryExecutor(
             val declared = LinkedHashSet<String>()
             for (handler in effectivePredicateHandlers) {
                 try {
-                    handler.supportedPredicates.forEach { declared += it.removePrefix("#") }
+                    handler.getSupportedPredicates().forEach { declared += it.removePrefix("#") }
                 } catch (error: Exception) {
                     return failure(
                         "TSH-QUERY-EXEC-029",
