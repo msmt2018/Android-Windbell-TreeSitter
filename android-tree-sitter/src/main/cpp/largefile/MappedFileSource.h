@@ -11,6 +11,7 @@
 #include "TextSource.h"
 
 #include <cstdint>
+#include <memory>
 #include <string>
 
 namespace windbell::largefile {
@@ -28,6 +29,13 @@ public:
 
     bool open(const std::string &path) noexcept;
     void close() noexcept;
+
+    // Materialize any TextSource into an immutable temporary file using
+    // bounded reads, then mmap it. The returned mapping owns the mapping;
+    // the temporary pathname is unlinked before this function returns.
+    // The caller must serialize access to a mutable source during snapshotting.
+    static std::unique_ptr<MappedFileSource> createSnapshot(
+        const TextSource &source, const std::string &directory) noexcept;
     bool isOpen() const noexcept;
 
     uint64_t sizeBytes() const noexcept override;
