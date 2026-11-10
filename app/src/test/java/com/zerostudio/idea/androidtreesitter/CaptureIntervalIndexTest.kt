@@ -34,4 +34,20 @@ class CaptureIntervalIndexTest {
         assertEquals(listOf(1, 5), index.query(20, 21).map { it.styleId })
         assertEquals(5, index.size)
     }
+
+    @Test fun appendQueryMatchesQueryWithoutAllocatingIntermediateResults() {
+        val index = CaptureIntervalIndex(listOf(
+            span(0, 20, 1),
+            span(8, 12, 2),
+            span(30, 40, 3)
+        ))
+        val destination = arrayListOf(span(100, 110, 99))
+        index.appendQuery(4, 6, destination)
+        assertEquals(listOf(99, 1, 2), destination.map { it.styleId })
+        assertEquals(
+            index.query(4, 6).map { it.styleId },
+            destination.drop(1).map { it.styleId }
+        )
+    }
+
 }
