@@ -1,13 +1,13 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="x.github.module.piecetable.PieceTreeMaintenanceTest" tests="7" skipped="0" failures="0" errors="0" timestamp="2026-10-28T06:46:02.537Z" hostname="localhost" time="0.133">
+<testsuite name="com.zerostudio.idea.piecetable.PieceTreeMaintenanceTest" tests="7" skipped="0" failures="0" errors="0" timestamp="2026-11-07T08:09:19" hostname="localhost" time="0.074">
   <properties/>
-  <testcase name="undoDataStaysValidAcrossCompact()" classname="x.github.module.piecetable.PieceTreeMaintenanceTest" time="0.022"/>
-  <testcase name="compactNeverSplitsCrlfOrSurrogatePairsBetweenChunks()" classname="x.github.module.piecetable.PieceTreeMaintenanceTest" time="0.039"/>
-  <testcase name="aBrokenTreeDoesNotAffectAnotherOne()" classname="x.github.module.piecetable.PieceTreeMaintenanceTest" time="0.01"/>
-  <testcase name="compactOnAnEmptyDocument()" classname="x.github.module.piecetable.PieceTreeMaintenanceTest" time="0.004"/>
-  <testcase name="compactKeepsTextLinesAndEolAndReleasesStorage()" classname="x.github.module.piecetable.PieceTreeMaintenanceTest" time="0.02"/>
-  <testcase name="compactKeepsMixedLineBreaksOfANonNormalizedTree()" classname="x.github.module.piecetable.PieceTreeMaintenanceTest" time="0.025"/>
-  <testcase name="storageStatsFollowEdits()" classname="x.github.module.piecetable.PieceTreeMaintenanceTest" time="0.004"/>
+  <testcase name="undoDataStaysValidAcrossCompact()" classname="com.zerostudio.idea.piecetable.PieceTreeMaintenanceTest" time="0.019"/>
+  <testcase name="compactNeverSplitsCrlfOrSurrogatePairsBetweenChunks()" classname="com.zerostudio.idea.piecetable.PieceTreeMaintenanceTest" time="0.006"/>
+  <testcase name="aBrokenTreeDoesNotAffectAnotherOne()" classname="com.zerostudio.idea.piecetable.PieceTreeMaintenanceTest" time="0.003"/>
+  <testcase name="compactOnAnEmptyDocument()" classname="com.zerostudio.idea.piecetable.PieceTreeMaintenanceTest" time="0.009"/>
+  <testcase name="compactKeepsTextLinesAndEolAndReleasesStorage()" classname="com.zerostudio.idea.piecetable.PieceTreeMaintenanceTest" time="0.022"/>
+  <testcase name="compactKeepsMixedLineBreaksOfANonNormalizedTree()" classname="com.zerostudio.idea.piecetable.PieceTreeMaintenanceTest" time="0.01"/>
+  <testcase name="storageStatsFollowEdits()" classname="com.zerostudio.idea.piecetable.PieceTreeMaintenanceTest" time="0.001"/>
   <system-out><![CDATA[]]></system-out>
   <system-err><![CDATA[]]></system-err>
 </testsuite>

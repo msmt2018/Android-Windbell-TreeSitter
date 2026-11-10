@@ -1,8 +1,12 @@
 name: Build and test
 
+concurrency:
+  group: build-and-test-${{ github.ref }}-v2
+  cancel-in-progress: true
+
 on:
   push:
-    branches: [ "dev", "main" ]
+    branches: [ "dev", "main", "fix/tsh-core-architecture", "integrate/tsh-unified-api-large-text" ]
     paths-ignore:
       - '**.md'
   pull_request:
@@ -21,8 +25,7 @@ env:
   # APT
   ATS_SUDO: sudo
   ATS_APT_UPDATE: apt-get update
-  ATS_APT_UPGRADE: apt-get upgrade -y
-  ATS_APT_INSTALL: apt-get install
+  ATS_APT_INSTALL: apt-get install -y --no-install-recommends
   ATS_APT_DEPS: build-essential cargo nodejs cmake ninja-build
 
 jobs:
@@ -30,14 +33,10 @@ jobs:
     name: Build Release APK
     runs-on: ubuntu-latest
     steps:
-      - name: Cancel previous runs
-        uses: styfle/cancel-workflow-action@0.12.1
-        with:
-          access_token: ${{ github.token }}
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 1
           submodules: true
           
       # - name: Sync and Update Submodules
@@ -62,24 +61,89 @@ jobs:
         with:
           ndk-version: r25
       - name: Install dependencies
-        run: $ATS_SUDO $ATS_APT_UPDATE && $ATS_SUDO $ATS_APT_UPGRADE && $ATS_SUDO $ATS_APT_INSTALL $ATS_APT_DEPS
-      - name: Install Node packages
+        run: $ATS_SUDO $ATS_APT_UPDATE && $ATS_SUDO $ATS_APT_INSTALL $ATS_APT_DEPS
+      - name: Set up Python for native grammar builds
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Set up Node.js for native grammar bindings
+        uses: actions/setup-node@v4
+        with:
+          # tree-sitter@0.25 pulls node-gyp@13 / undici@8, which require Node >=22.19.
+          node-version: '22.22.2'
+      - name: Set up Bun for grammar packages
+        uses: oven-sh/setup-bun@v2
+      - name: Install Node packages for all grammar submodules
+        shell: bash
         run: |
-          # 1. 寻找 grammars 目录下所有包含 package.json 的子目录
-          # 2. 自动进入每个目录执行 npm install
-          find grammars -maxdepth 2 -name "package.json" | while read -r config_path; do
-              dir_path=$(dirname "$config_path")
-              echo "📦 正在为子模块安装依赖: $dir_path"
-              # 使用 () 子 Shell 隔离环境，无需担心 cd 路径错乱，且能支持路径带空格
-              (
-              cd "$dir_path" || exit 1
-             # 优先使用正常安装，如果报错 (&& 后续失败)，则自动执行 || 后面的容错安装
-              npm install || {
-                   echo "⚠️ 正常安装失败，正在尝试使用 --legacy-peer-deps..."
-                   npm install --legacy-peer-deps
-                 }
-              )
-          done
+          set -Eeuo pipefail
+
+          echo "Node: $(node --version)"
+          echo "npm:  $(npm --version)"
+          echo "Python: $(python --version)"
+
+          failed=()
+          # Install each npm workspace root exactly once. A workspace root installs
+          # its child grammar packages and creates local symlinks; installing those
+          # children independently races with npm and fails with EEXIST/MODULE_NOT_FOUND.
+          mapfile -d '' manifests < <(
+            while IFS= read -r -d '' manifest; do
+              dir_path="$(dirname "$manifest")"
+              ancestor="$(dirname "$dir_path")"
+              workspace_managed=false
+              while [[ "$ancestor" == grammars/* ]]; do
+                parent_manifest="$GITHUB_WORKSPACE/$ancestor/package.json"
+                if [[ -f "$parent_manifest" ]] && node -e 'const p=require(process.argv[1]); process.exit(p.workspaces ? 0 : 1)' "$parent_manifest"; then
+                  workspace_managed=true
+                  break
+                fi
+                next_ancestor="$(dirname "$ancestor")"
+                [[ "$next_ancestor" == "$ancestor" ]] && break
+                ancestor="$next_ancestor"
+              done
+              if [[ "$workspace_managed" == false ]]; then
+                printf '%s\0' "$manifest"
+              else
+                echo "::notice::Skipping workspace child package $dir_path; installed by $ancestor" >&2
+              fi
+            done < <(find grammars -mindepth 2 -maxdepth 3 -type f -name package.json ! -path 'grammars/asm/*' ! -path 'grammars/*/test-npm-package/*' -print0 | sort -z)
+          )
+
+          if (( ${#manifests[@]} == 0 )); then
+            echo "::error::No grammar package.json files were found under grammars/"
+            exit 1
+          fi
+
+          # Grammar packages are independent; bound parallel installs to
+          # reduce serial network latency without overloading the hosted runner.
+          failed_file="$(mktemp)"
+          export failed_file
+          install_grammar() {
+            local config_path="$1"
+            local dir_path
+            dir_path="$(dirname "$config_path")"
+            echo "::group::📦 Installing grammar dependencies: $dir_path"
+            if (cd "$dir_path" && npm install --legacy-peer-deps --no-audit --no-fund); then
+              echo "::endgroup::"
+              return 0
+            fi
+            echo "::endgroup::"
+            printf '%s\n' "$dir_path" >> "$failed_file"
+            return 1
+          }
+          export -f install_grammar
+          if ! printf '%s\0' "${manifests[@]}" | xargs -0 -r -n 1 -P 4 bash -c 'install_grammar "$1"' _; then
+            echo "One or more grammar dependency installations failed."
+          fi
+          if [[ -s "$failed_file" ]]; then
+            mapfile -t failed < "$failed_file"
+            printf '\n::error::Dependency installation failed for %d grammar(s):\n' "${#failed[@]}"
+            printf ' - %s\n' "${failed[@]}"
+            rm -f "$failed_file"
+            exit 1
+          fi
+          rm -f "$failed_file"
+          echo "✅ Installed dependencies for all ${#manifests[@]} grammar packages."
           
       - name: Restore cache
         uses: actions/cache@v4
@@ -127,7 +191,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 1
           submodules: true
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -140,10 +204,80 @@ jobs:
         with:
           ndk-version: r25
       - name: Install dependencies
-        run: $ATS_SUDO $ATS_APT_UPDATE && $ATS_SUDO $ATS_APT_UPGRADE && $ATS_SUDO $ATS_APT_INSTALL $ATS_APT_DEPS
-      - name: Install Node packages
+        run: $ATS_SUDO $ATS_APT_UPDATE && $ATS_SUDO $ATS_APT_INSTALL $ATS_APT_DEPS
+      - name: Set up Python for native grammar builds
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Set up Node.js for native grammar bindings
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22.22.2'
+      - name: Set up Bun for grammar packages
+        uses: oven-sh/setup-bun@v2
+      - name: Install Node packages for all grammar submodules
+        shell: bash
         run: |
-          cd grammars/cpp && npm install && cd -
+          set -Eeuo pipefail
+          failed=()
+          # Install each npm workspace root exactly once. A workspace root installs
+          # its child grammar packages and creates local symlinks; installing those
+          # children independently races with npm and fails with EEXIST/MODULE_NOT_FOUND.
+          mapfile -d '' manifests < <(
+            while IFS= read -r -d '' manifest; do
+              dir_path="$(dirname "$manifest")"
+              ancestor="$(dirname "$dir_path")"
+              workspace_managed=false
+              while [[ "$ancestor" == grammars/* ]]; do
+                parent_manifest="$GITHUB_WORKSPACE/$ancestor/package.json"
+                if [[ -f "$parent_manifest" ]] && node -e 'const p=require(process.argv[1]); process.exit(p.workspaces ? 0 : 1)' "$parent_manifest"; then
+                  workspace_managed=true
+                  break
+                fi
+                next_ancestor="$(dirname "$ancestor")"
+                [[ "$next_ancestor" == "$ancestor" ]] && break
+                ancestor="$next_ancestor"
+              done
+              if [[ "$workspace_managed" == false ]]; then
+                printf '%s\0' "$manifest"
+              else
+                echo "::notice::Skipping workspace child package $dir_path; installed by $ancestor" >&2
+              fi
+            done < <(find grammars -mindepth 2 -maxdepth 3 -type f -name package.json ! -path 'grammars/asm/*' ! -path 'grammars/*/test-npm-package/*' -print0 | sort -z)
+          )
+          if (( ${#manifests[@]} == 0 )); then
+            echo "::error::No grammar package.json files were found under grammars/"
+            exit 1
+          fi
+          # Run independent grammar npm installs with bounded concurrency.
+          failed_file="$(mktemp)"
+          export failed_file
+          install_grammar() {
+            local config_path="$1"
+            local dir_path
+            dir_path="$(dirname "$config_path")"
+            echo "::group::📦 Installing grammar dependencies: $dir_path"
+            if (cd "$dir_path" && npm install --legacy-peer-deps --no-audit --no-fund); then
+              echo "::endgroup::"
+              return 0
+            fi
+            echo "::endgroup::"
+            printf '%s\n' "$dir_path" >> "$failed_file"
+            return 1
+          }
+          export -f install_grammar
+          if ! printf '%s\0' "${manifests[@]}" | xargs -0 -r -n 1 -P 4 bash -c 'install_grammar "$1"' _; then
+            echo "One or more grammar dependency installations failed."
+          fi
+          if [[ -s "$failed_file" ]]; then
+            mapfile -t failed < "$failed_file"
+            printf '\n::error::Dependency installation failed for %d grammar(s):\n' "${#failed[@]}"
+            printf ' - %s\n' "${failed[@]}"
+            rm -f "$failed_file"
+            exit 1
+          fi
+          rm -f "$failed_file"
+          echo "✅ Installed dependencies for all ${#manifests[@]} grammar packages."
       - name: Restore cache
         uses: actions/cache@v4
         with:
@@ -155,10 +289,56 @@ jobs:
             ${{ runner.os }}-gradle-
       - name: Change Gradle wrapper permissions
         run: chmod +x ./gradlew
+      - name: Run native large-file storage tests (ASan/UBSan)
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cmake -S android-tree-sitter/src/main/cpp/largefile/tests \
+            -B /tmp/windbell-largefile-tests \
+            -DCMAKE_BUILD_TYPE=Debug
+          cmake --build /tmp/windbell-largefile-tests --parallel 2
+          ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 \
+          UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+            ctest --test-dir /tmp/windbell-largefile-tests --output-on-failure
+
       - name: Run debug tests
-        run: ./gradlew testDebug --continue --parallel --stacktrace
+        run: ./gradlew testDebug :editor:compileDebugAndroidTestKotlin :app:compileDebugAndroidTestKotlin --continue --parallel --stacktrace
         env:
           ANDROIDIDE_TEST: true
+      - name: Run Android rendering instrumentation tests
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 30
+          target: google_apis
+          arch: x86_64
+          disable-animations: true
+          script: |
+            set -Eeuo pipefail
+
+            # The emulator action normally waits for boot. Keep an explicit ADB
+            # readiness check here so Gradle never starts instrumentation with an
+            # empty device list (which otherwise reports "No connected devices").
+            adb start-server
+            device_serial=""
+            for attempt in $(seq 1 60); do
+              adb devices -l
+              device_serial="$(adb devices | awk 'NR > 1 && $2 == "device" { print $1; exit }')"
+              if [[ -n "$device_serial" ]]; then
+                break
+              fi
+              echo "Waiting for Android emulator to appear in ADB ($attempt/60)..."
+              sleep 2
+            done
+
+            if [[ -z "$device_serial" ]]; then
+              echo "::error::Android emulator did not register as an ADB device."
+              adb devices -l
+              exit 1
+            fi
+
+            adb -s "$device_serial" shell 'while [ "$(getprop sys.boot_completed)" != "1" ]; do sleep 1; done'
+            adb -s "$device_serial" shell getprop sys.boot_completed
+            ./gradlew :app:connectedDebugAndroidTest --stacktrace
       - name: Upload Test Reports
         if: ${{ always() }}
         uses: actions/upload-artifact@v4

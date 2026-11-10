@@ -25,6 +25,7 @@ import android.text.style.BackgroundColorSpan
 import android.text.style.CharacterStyle
 import android.text.style.ForegroundColorSpan
 import android.text.style.StyleSpan
+import android.text.style.StrikethroughSpan
 import android.text.style.UnderlineSpan
 
 /**
@@ -88,6 +89,11 @@ class StyledTextPainter {
         var runStart = start
         var runX = x
         while (runStart < end) {
+            // CharacterStyle.updateDrawState() is allowed to mutate any TextPaint
+            // property, including alpha. Restore the complete base paint for every
+            // run so a dim/opacity span cannot leak into adjacent unstyled text.
+            paint.set(basePaint)
+
             // a run ends where any style begins or ends (or at the end of the piece)
             val runEnd = spans.nextSpanTransition(runStart, end, CharacterStyle::class.java)
                 .coerceIn(runStart + 1, end)
@@ -98,20 +104,41 @@ class StyledTextPainter {
             }
 
             // background color
-            spans.getSpans(runStart, runEnd, BackgroundColorSpan::class.java).firstOrNull()?.let {
+            spans.getSpans(runStart, runEnd, BackgroundColorSpan::class.java)
+                .maxByOrNull { span -> spans.getSpanFlags(span) and Spanned.SPAN_PRIORITY }?.let {
                 paint.color = it.backgroundColor
                 canvas.drawRect(runX, rowTop, runX + runWidth, rowBottom, paint)
             }
 
             // foreground color
-            paint.color = spans.getSpans(runStart, runEnd, ForegroundColorSpan::class.java)
-                .firstOrNull()?.foregroundColor ?: plainColor
+            val foreground = spans.getSpans(runStart, runEnd, ForegroundColorSpan::class.java)
+                .maxByOrNull { span -> spans.getSpanFlags(span) and Spanned.SPAN_PRIORITY }
+            paint.color = foreground?.foregroundColor ?: plainColor
 
-            // bold, italic
-            val style = spans.getSpans(runStart, runEnd, StyleSpan::class.java).firstOrNull()?.style
-                ?: Typeface.NORMAL
-            paint.isFakeBoldText = forceBold || style == Typeface.BOLD || style == Typeface.BOLD_ITALIC
-            paint.textSkewX = if (style == Typeface.ITALIC || style == Typeface.BOLD_ITALIC) -0.2f else 0f
+            // TSH can declare bold and italic independently. Combine every
+            // StyleSpan instead of taking only the first one, otherwise a token
+            // configured as bold+italic loses whichever flag was added second.
+            val style = spans.getSpans(runStart, runEnd, StyleSpan::class.java)
+                .fold(Typeface.NORMAL) { combined, span -> combined or span.style }
+            paint.isFakeBoldText = forceBold || (style and Typeface.BOLD) != 0
+            paint.textSkewX = if ((style and Typeface.ITALIC) != 0) -0.2f else 0f
+
+            // This renderer is a Canvas painter, so Android does not automatically
+            // run CharacterStyle.updateDrawState() as TextView would. TSH currently
+            // emits a private CharacterStyle for the DSL opacity flag (0x10).
+            // Apply non-built-in styles explicitly after choosing the foreground;
+            // this preserves the selected color while honoring alpha and future
+            // paint-state-only CharacterStyles.
+            for (characterStyle in spans.getSpans(runStart, runEnd, CharacterStyle::class.java)) {
+                if (characterStyle !is ForegroundColorSpan &&
+                    characterStyle !is BackgroundColorSpan &&
+                    characterStyle !is StyleSpan &&
+                    characterStyle !is UnderlineSpan &&
+                    characterStyle !is StrikethroughSpan
+                ) {
+                    characterStyle.updateDrawState(paint)
+                }
+            }
 
             // the text; a tab is only room, up to its stop
             if (hasTabs && TabStops.hasTab(text, runStart, runEnd)) {
@@ -123,6 +150,16 @@ class StyledTextPainter {
             // underline: a little below the baseline, in the color of the text
             if (spans.getSpans(runStart, runEnd, UnderlineSpan::class.java).isNotEmpty()) {
                 val top = baseline + underlineOffset
+                canvas.drawRect(runX, top, runX + runWidth, top + underlineThickness, paint)
+            }
+            // StrikethroughSpan is emitted by the TSH style adapter for DSL flag
+            // 0x08. Draw it explicitly: this painter does not delegate to TextView's
+            // Layout, so merely attaching the Android span is not sufficient.
+            if (spans.getSpans(runStart, runEnd, StrikethroughSpan::class.java).isNotEmpty()) {
+                // Use the active run's font metrics rather than a hard-coded
+                // fraction of ascent; this remains stable across font families.
+                val metrics = paint.fontMetrics
+                val top = baseline + (metrics.ascent + metrics.descent) * 0.5f
                 canvas.drawRect(runX, top, runX + runWidth, top + underlineThickness, paint)
             }
 

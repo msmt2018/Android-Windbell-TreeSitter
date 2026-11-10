@@ -31,13 +31,88 @@ include(${CMAKE_CURRENT_SOURCE_DIR}/../../../../cmake/common-config.cmake)
 include_directories("${TS_DIR}/lib/src")
 include_directories("${TS_DIR}/lib/include")
 
+# Detect the Tree-sitter 0.28 Query Cursor controls without forcing a
+# submodule update on consumers that still build the previous API. Once the
+# vendored tree-sitter-lib is upgraded, the same TSH source automatically
+# enables bounded query execution and cancellation.
+include(CheckCXXSourceCompiles)
+# Re-evaluate the complete ABI probe after its source changes; otherwise a
+# stale cached success from an earlier, weaker probe could enable the code.
+unset(TSH_TREE_SITTER_HAS_QUERY_CURSOR_OPTIONS CACHE)
+set(CMAKE_REQUIRED_INCLUDES "${TS_DIR}/lib/include")
+check_cxx_source_compiles("
+    #include <tree_sitter/api.h>
+    #include <type_traits>
+    using ProgressCallback = decltype(TSQueryCursorOptions::progress_callback);
+    using ExpectedProgressCallback = bool (*)(TSQueryCursorState *);
+    using ExecWithOptions = decltype(&ts_query_cursor_exec_with_options);
+    using ExpectedExecWithOptions = void (*)(
+        TSQueryCursor *, const TSQuery *, TSNode, const TSQueryCursorOptions *);
+    using SetMatchLimit = decltype(&ts_query_cursor_set_match_limit);
+    using DidExceedMatchLimit = decltype(&ts_query_cursor_did_exceed_match_limit);
+    static_assert(std::is_same<ProgressCallback, ExpectedProgressCallback>::value,
+        \"Tree-sitter progress callback signature is incompatible\");
+    static_assert(std::is_same<ExecWithOptions, ExpectedExecWithOptions>::value,
+        \"Tree-sitter exec-with-options signature is incompatible\");
+    static_assert(sizeof(TSQueryCursorOptions) > 0, \"Query cursor options are available\");
+    int main() { return 0; }
+" TSH_TREE_SITTER_HAS_QUERY_CURSOR_OPTIONS)
+unset(CMAKE_REQUIRED_INCLUDES)
+if(TSH_TREE_SITTER_HAS_QUERY_CURSOR_OPTIONS)
+    add_compile_definitions(TSH_TREE_SITTER_HAS_QUERY_CURSOR_OPTIONS=1)
+endif()
+
 # ==============================================================================
 # Oniguruma (鬼车) 路径配置：位于当前 cpp/oniguruma 目录
 # ==============================================================================
 set(ONIG_DIR "${CMAKE_CURRENT_SOURCE_DIR}/oniguruma")
 set(ONIG_SRC_DIR "${ONIG_DIR}/src")
 
-# 引入 Oniguruma 源码及配置头文件路径
+# project-sora/oniguruma's regenc.h includes config.h directly. The upstream
+# CMake project generates it from config.h.cmake.in; this project compiles the
+# Oniguruma sources in its own target, so reproduce the required feature checks
+# and generate the same header into our binary directory.
+include(CheckIncludeFiles)
+include(CheckSymbolExists)
+include(CheckTypeSize)
+
+set(PACKAGE onig)
+set(PACKAGE_VERSION 6.9.10)
+set(VERSION ${PACKAGE_VERSION})
+set(USE_CRNL_AS_LINE_TERMINATOR 0)
+
+check_include_files(alloca.h HAVE_ALLOCA_H)
+check_include_files(stdint.h HAVE_STDINT_H)
+check_include_files(sys/times.h HAVE_SYS_TIMES_H)
+check_include_files(sys/time.h HAVE_SYS_TIME_H)
+check_include_files(time.h HAVE_TIME_H)
+check_include_files(sys/types.h HAVE_SYS_TYPES_H)
+check_include_files(unistd.h HAVE_UNISTD_H)
+check_include_files(inttypes.h HAVE_INTTYPES_H)
+check_type_size(int SIZEOF_INT)
+check_type_size(intptr_t SIZEOF_INTPTR_T)
+check_type_size(long SIZEOF_LONG)
+check_type_size("long long" SIZEOF_LONG_LONG)
+check_type_size("void*" SIZEOF_VOIDP)
+if(HAVE_TIME_H)
+    check_type_size(time_t SIZEOF_TIME_T)
+    check_symbol_exists(clock_gettime time.h HAVE_CLOCK_GETTIME)
+endif()
+if(HAVE_ALLOCA_H)
+    check_symbol_exists(alloca "alloca.h" HAVE_ALLOCA)
+else()
+    check_symbol_exists(alloca "stdlib.h;malloc.h" HAVE_ALLOCA)
+endif()
+
+set(ONIG_CONFIG_DIR "${CMAKE_CURRENT_BINARY_DIR}/oniguruma_config")
+file(MAKE_DIRECTORY "${ONIG_CONFIG_DIR}")
+configure_file(
+    "${ONIG_SRC_DIR}/config.h.cmake.in"
+    "${ONIG_CONFIG_DIR}/config.h"
+)
+
+# Search generated configuration before the vendored Oniguruma source tree.
+include_directories(BEFORE "${ONIG_CONFIG_DIR}")
 include_directories("${ONIG_SRC_DIR}")
 
 # 引入 Windbell-TSH 自身头文件
@@ -88,6 +163,13 @@ add_library(android-tree-sitter SHARED
     "${ONIG_SRC_DIR}/unicode_fold2_key.c"
     "${ONIG_SRC_DIR}/unicode_fold3_key.c"
 
+    # Native large-text source adapters and bounded storage
+    largefile/TextSource.cpp
+    largefile/FileWindowSource.cpp
+    largefile/MappedFileSource.cpp
+    largefile/PieceTreeSource.cpp
+    largefile/TextPartitionIndex.cpp
+
     # 原生 JNI 适配层
     main.cc
     ts.cc
@@ -98,6 +180,7 @@ add_library(android-tree-sitter SHARED
     ts_parser.cc
     ts_query.cc
     ts_query_cursor.cc
+    ts_tags.cc
     ts_tree.cc
     utf16str/JavaUTF16String.cpp
     utf16str/JavaUTF16StringFactory.cpp
@@ -113,7 +196,42 @@ add_library(android-tree-sitter SHARED
     ts_windbell_jni.cpp
 )
 
+# Drop unreferenced code/data from the monolithic JNI library.
+#
+# Oniguruma is built from its upstream source files, but Windbell-TSH currently
+# initializes only UTF-16 LE. Section-level garbage collection allows the linker
+# to discard unused encoding implementations and other unreachable routines
+# without maintaining a fragile hand-picked list of Oniguruma translation units.
+if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU" AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(android-tree-sitter PRIVATE
+        -ffunction-sections
+        -fdata-sections
+    )
+    target_link_options(android-tree-sitter PRIVATE
+        -Wl,--gc-sections
+    )
+endif()
+
 if (${CMAKE_SYSTEM_NAME} STREQUAL Android)
     find_library(log log)
     target_link_libraries(android-tree-sitter PRIVATE ${log})
+endif()
+# Host-side tests for storage and source adapters. Android builds only compile
+# the production library; these tests run in a normal desktop CMake build.
+include(CTest)
+if(BUILD_TESTING AND NOT ANDROID)
+    add_executable(windbell_largefile_tests
+        largefile/tests/TextSourceTest.cpp
+        largefile/TextSource.cpp
+        largefile/ChunkedTextStore.cpp
+        largefile/MappedFileSource.cpp
+        largefile/FileWindowSource.cpp
+        largefile/PieceTreeSource.cpp
+        largefile/TextPartitionIndex.cpp
+    )
+    target_include_directories(windbell_largefile_tests PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/largefile"
+    )
+    target_compile_features(windbell_largefile_tests PRIVATE cxx_std_20)
+    add_test(NAME windbell_largefile_tests COMMAND windbell_largefile_tests)
 endif()

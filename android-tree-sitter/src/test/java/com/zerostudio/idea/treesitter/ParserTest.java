@@ -29,6 +29,8 @@ import com.zerostudio.idea.treesitter.log.TSLanguageLog;
 import com.zerostudio.idea.treesitter.python.TSLanguagePython;
 import com.zerostudio.idea.treesitter.string.UTF16StringFactory;
 import java.io.UnsupportedEncodingException;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -78,6 +80,70 @@ public class ParserTest extends TreeSitterTest {
       try (TSTree tree = parser.parseString("print(\"hi\")")) {
         assertThat(tree.getRootNode().getNodeString()).isEqualTo(
           "(module (expression_statement (call function: (identifier) arguments: (argument_list (string (string_start) (string_content) (string_end))))))");
+      }
+    }
+  }
+
+  @Test
+  public void testParseSegmentedDirectBuffers() {
+    try (TSParser parser = TSParser.create()) {
+      parser.setLanguage(TSLanguageJava.getInstance());
+
+      final ByteBuffer first = ByteBuffer.allocateDirect(40).order(ByteOrder.LITTLE_ENDIAN);
+      first.putChar('x').putChar('x').putChar('x').putChar('x');
+      for (char ch : "class Segmented ".toCharArray()) {
+        first.putChar(ch);
+      }
+      first.flip();
+      first.position(8);
+
+      final ByteBuffer second = ByteBuffer.allocateDirect(64).order(ByteOrder.LITTLE_ENDIAN);
+      for (char ch : "{ int value = 42; }".toCharArray()) {
+        second.putChar(ch);
+      }
+      second.flip();
+
+      try (TSTree tree = parser.parseBuffers(new ByteBuffer[]{first, second})) {
+        assertThat(tree).isNotNull();
+        assertThat(tree.getRootNode().getNodeString()).contains("class_declaration");
+        assertThat(tree.getRootNode().hasErrors()).isFalse();
+      }
+    }
+  }
+
+  @Test
+  public void testSegmentedParseWithIncludedRangeKeepsAbsoluteDocumentOffsets() {
+    try (TSParser parser = TSParser.create()) {
+      parser.setLanguage(TSLanguageJava.getInstance());
+      final String source = "class Before {}\nclass Visible { int value; }\nclass After {}";
+      final ByteBuffer bytes = ByteBuffer.allocateDirect(source.length() * 2)
+        .order(ByteOrder.LITTLE_ENDIAN);
+      for (char ch : source.toCharArray()) bytes.putChar(ch);
+      bytes.flip();
+
+      final int startChar = source.indexOf("class Visible");
+      final int endChar = source.indexOf("class After");
+      final int start = startChar * 2;
+      final int end = endChar * 2;
+      final int startRow = (int) source.substring(0, startChar).chars().filter(c -> c == '\n').count();
+      final int endRow = (int) source.substring(0, endChar).chars().filter(c -> c == '\n').count();
+      final int startColumn = startChar - source.lastIndexOf('\n', startChar - 1) - 1;
+      final int endColumn = endChar - source.lastIndexOf('\n', endChar - 1) - 1;
+      final TSRange range = TSRange.create(start, end,
+        TSPoint.create(startRow, startColumn * 2),
+        TSPoint.create(endRow, endColumn * 2));
+
+      try (TSTree tree = parser.parseBuffers(null, new ByteBuffer[]{bytes}, new TSRange[]{range})) {
+        assertThat(tree).isNotNull();
+        assertThat(tree.getIncludedRanges()).asList().containsExactly(range);
+        assertThat(tree.getRootNode().getStartByte()).isAtLeast(start);
+        assertThat(tree.getRootNode().getEndByte()).isAtMost(end);
+      }
+
+      bytes.position(0);
+      try (TSTree fullTree = parser.parseBuffers(new ByteBuffer[]{bytes})) {
+        assertThat(fullTree).isNotNull();
+        assertThat(fullTree.getRootNode().getStartByte()).isEqualTo(0);
       }
     }
   }

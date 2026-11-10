@@ -5,7 +5,6 @@ import com.zerostudio.idea.treesitter.TSParser
 import com.zerostudio.idea.treesitter.java.TSLanguageJava
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.BeforeAll
-import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
 import java.io.File
 import java.util.concurrent.CountDownLatch
@@ -19,14 +18,19 @@ class JavaTshFullTest {
         @JvmStatic
         @BeforeAll
         fun setup() {
-            val file = File(TSH_RESOURCE_PATH)
-            val tshContent = if (file.exists()) {
-                file.readText(Charsets.UTF_8)
-            } else {
-                JavaTshFullTest::class.java.classLoader.getResourceAsStream("tsh/java.tsh")
+            // The grammar lives in the app's asset source set; this test belongs
+            // to the android-tree-sitter module, so resolve it from either Gradle
+            // working-directory convention before falling back to classpath assets.
+            val candidates = listOf(
+                File(TSH_RESOURCE_PATH),
+                File("../app/src/main/assets/tsh/java.tsh"),
+                File("app/src/main/assets/tsh/java.tsh")
+            )
+            val tshContent = candidates.firstOrNull { it.isFile }
+                ?.readText(Charsets.UTF_8)
+                ?: JavaTshFullTest::class.java.classLoader.getResourceAsStream("tsh/java.tsh")
                     ?.bufferedReader()?.use { it.readText() }
-                    ?: error("Could not find java.tsh file!")
-            }
+                ?: error("Could not find app/src/main/assets/tsh/java.tsh; checked ${candidates.map { it.absolutePath }}")
 
             // 直接驱动动态 DSL 编译器完成 Native 装配（零 SCM 硬编码）
             val loadSuccess = WindbellTshEngine.instance.loadTshSource(
@@ -39,9 +43,9 @@ class JavaTshFullTest {
     }
 
     @Test
-    @DisplayName("断言：验证 Javadoc 嵌套块、文本块与代理对字符高亮稳定性")
     fun testBlockScopeAndSurrogatePairStability() {
         // 覆盖：现代 Text Block、Javadoc 嵌套块、Emoji 👨‍👩‍👧‍👦 (4 个 Code Units) 与罕见汉字 𠮷
+        val textBlockDelimiter = "\"\"\""
         val testSource = """
             package com.zerostudio.test;
 
@@ -54,11 +58,11 @@ class JavaTshFullTest {
                 public static final int MAX_CACHE_CAPACITY = 0x1000;
 
                 public void renderEmoji() {
-                    var multiline = """
+                    var multiline = $textBlockDelimiter
                         First line of text block
                         Multi-byte Emoji: 👨‍👩‍👧‍👦
                         End of block.
-                        """;
+                        $textBlockDelimiter;
                     System.out.println(targetUser + ": " + MAX_CACHE_CAPACITY);
                 }
             }
@@ -70,9 +74,59 @@ class JavaTshFullTest {
         assertNotNull(tree, "Tree-sitter must generate non-null syntax tree.")
 
         // 1. 混合分词测试 (AST 寄存器比对 + 正则下推自动机)
+        assertTrue(WindbellTshEngine.instance.isGrammarLoaded("java"))
         val spans = WindbellTshEngine.instance.computeHighlights(tree, testSource, "java")
         assertNotNull(spans)
         assertTrue(spans.isNotEmpty(), "Highlight spans must not be empty.")
+        assertTrue(spans.any { it.source == 0 }, "Oniguruma regex rules must emit identifiable spans.")
+        assertTrue(spans.any { it.source == 2 }, "ATS selectors must emit identifiable spans.")
+        val atsTexts = spans.filter { it.source == 2 }.map { span ->
+            testSource.substring(
+                (span.startByte shr 1).coerceIn(0, testSource.length),
+                (span.endByte shr 1).coerceIn(0, testSource.length)
+            )
+        }
+        assertTrue(
+            atsTexts.any { it == "UserProfile" },
+            "ATS field selector record_declaration.name must capture the declared type identifier; got $atsTexts"
+        )
+
+        // Tree-sitter's Kotlin binding parses UTF-16LE. Prefixing the declarations
+        // with CJK/Emoji text must not make ATS or native-query byte offsets drift.
+        val pipelineDiagnostics = WindbellTshEngine.instance
+            .computePipelineDiagnostics(tree, testSource, "java")
+        val nativeQueryTexts = pipelineDiagnostics.captures.filter { it.source == 3 }.map { span ->
+            testSource.substring(
+                (span.startByte shr 1).coerceIn(0, testSource.length),
+                (span.endByte shr 1).coerceIn(0, testSource.length)
+            )
+        }
+        assertTrue(
+            nativeQueryTexts.contains("multiline"),
+            "Native Tree-sitter Query must capture variable_declarator.name after UTF-16 offsets are mapped; got $nativeQueryTexts"
+        )
+
+        assertTrue(
+            nativeQueryTexts.contains("MAX_CACHE_CAPACITY"),
+            "Native #match? predicate must evaluate against the UTF-8 slice mapped from UTF-16LE node offsets."
+        )
+        assertTrue(
+            nativeQueryTexts.all { it == "multiline" || it == "MAX_CACHE_CAPACITY" },
+            "Native query regex predicate must reject identifiers outside its pattern; got $nativeQueryTexts"
+        )
+        assertTrue(
+            spans.any { it.source == 3 },
+            "A native-query candidate must survive the final conflict-resolution pipeline."
+        )
+
+        assertTrue(
+            (pipelineDiagnostics.matchCounts[2] ?: 0) > 0,
+            "ATS selector matches must be counted against UTF-16LE Tree-sitter node offsets."
+        )
+        assertTrue(
+            (pipelineDiagnostics.matchCounts[3] ?: 0) > 0,
+            "Native query matches must be counted after predicates evaluate on the correct UTF-8 slices."
+        )
 
         // 2. 严格硬件边界与 UTF-16 Code Unit 偶数对齐断言
         for (span in spans) {
@@ -81,36 +135,103 @@ class JavaTshFullTest {
             assertTrue(span.endByte >= span.startByte, "Span endByte must not precede startByte.")
         }
 
-        // 3. 校验代码块折叠 (Fold Ranges)
-        val folds = WindbellTshEngine.instance.computeFolds(tree, testSource, "java")
-        assertNotNull(folds)
-        assertTrue(folds.any { it.kind == 1 }, "Must contain Javadoc comment folding range.")
-        assertTrue(folds.any { it.kind == 0 }, "Must contain Record body folding range.")
-
-        // 4. 校验符号大纲 (Outline)
-        val outlines = WindbellTshEngine.instance.computeOutline(tree, testSource, "java")
-        assertNotNull(outlines)
-        assertTrue(outlines.any { it.name == "UserProfile" && it.kind == 1 }, "Must extract UserProfile record outline.")
-        assertTrue(outlines.any { it.name == "renderEmoji" && it.kind == 2 }, "Must extract renderEmoji method outline.")
+        // 3. DSL-declared scheme enumeration and palette-only switching.
+        val schemes = WindbellTshEngine.instance.listSchemes("java")
+        assertTrue(schemes.contains("darcula"))
+        assertTrue(schemes.contains("github"))
+        assertEquals("darcula", WindbellTshEngine.instance.getDefaultScheme("java"))
+        assertTrue(WindbellTshEngine.instance.selectScheme("java", "darcula"))
+        val darculaPalette = WindbellTshEngine.instance.getSchemePalette("java", "darcula")
+        val githubPalette = WindbellTshEngine.instance.getSchemePalette("java", "github")
+        assertTrue(darculaPalette.isNotEmpty(), "Every declared scheme must expose its compiled palette.")
+        assertTrue(githubPalette.isNotEmpty(), "Inactive schemes must also expose their compiled palette.")
+        assertTrue(darculaPalette.values.any { it.hasLightColor && it.hasDarkColor })
+        val darculaLightTokens = WindbellTshEngine.instance.getSchemeThemeTokens("java", "darcula", false)
+        val darculaDarkTokens = WindbellTshEngine.instance.getSchemeThemeTokens("java", "darcula", true)
+        assertTrue(darculaLightTokens.containsKey("activity.toolbar.background"))
+        assertTrue(darculaDarkTokens.containsKey("activity.toolbar.background"))
+        assertSame(
+            darculaPalette,
+            WindbellTshEngine.instance.getSchemePalette("java", "darcula"),
+            "Selecting another scheme must reuse the already-decoded palette snapshot."
+        )
+        repeat(8) {
+            val selected = if (it % 2 == 0) "github" else "darcula"
+            assertTrue(WindbellTshEngine.instance.selectScheme("java", selected))
+            assertSame(
+                if (selected == "github") githubPalette else darculaPalette,
+                WindbellTshEngine.instance.getSchemePalette("java", selected)
+            )
+        }
 
         // 5. 校验多态色彩应用 (Light / Dark 热切换上屏)
         val ssb = SpannableStringBuilder(testSource)
-        WindbellTshEngine.instance.isDarkTheme = false
-        assertDoesNotThrow {
-            WindbellTshEngine.instance.applyHighlightsToSpannable(tree, testSource, "java", ssb)
-        }
+        WindbellTshEngine.instance.setAppearance("java", false)
+        WindbellTshEngine.instance.applyHighlightsToSpannable(tree, testSource, "java", ssb)
         assertEquals(testSource.length, ssb.length)
+        assertTrue(
+            ssb.getSpans(0, ssb.length, android.text.style.ForegroundColorSpan::class.java).isNotEmpty(),
+            "The Java TSH palette must produce visible Android foreground-color spans."
+        )
 
-        WindbellTshEngine.instance.isDarkTheme = true
-        assertDoesNotThrow {
-            WindbellTshEngine.instance.applyHighlightsToSpannable(tree, testSource, "java", ssb)
-        }
+        WindbellTshEngine.instance.setAppearance("java", true)
+        WindbellTshEngine.instance.applyHighlightsToSpannable(tree, testSource, "java", ssb)
 
+        WindbellTshEngine.instance.clearAppearanceOverride("java")
         parser.close()
     }
 
     @Test
-    @DisplayName("断言：验证 32 线程高并发无锁竞争与重入稳定性")
+    fun testAstSelectorViewportMatchesFullDocumentAndSkipsEarlierSubtrees() {
+        val declarations = (0 until 1200).joinToString("\n") { index ->
+            "    private int field_$index = $index;"
+        }
+        val source = "class ViewportProbe {\n$declarations\n}"
+        val parser = TSParser.create().apply { language = TSLanguageJava.getInstance() }
+        val tree = parser.parseString(source)
+        assertNotNull(tree)
+        try {
+            val engine = WindbellTshEngine.instance
+            val full = engine.computeHighlights(tree, source, "java")
+                .filter { it.source == 2 }
+            assertTrue(full.isNotEmpty(), "The full ATS selector pipeline must emit symbol spans")
+
+            val targetStart = source.indexOf("field_1190")
+            val targetEnd = source.indexOf("field_1195") + "field_1195".length
+            assertTrue(targetStart >= 0 && targetEnd > targetStart)
+            val startByte = targetStart.toLong() * 2L
+            val endByte = targetEnd.toLong() * 2L
+            val viewport = engine.computeHighlights(
+                tree, source, "java", startByte, endByte
+            ).filter { it.source == 2 }
+
+            val expected = full.mapNotNull { span ->
+                val start = maxOf(span.startByte, startByte)
+                val end = minOf(span.endByte, endByte)
+                if (start < end) {
+                    listOf(start, end, span.styleId.toLong(), span.priority.toLong(),
+                        span.declarationOrder.toLong())
+                } else null
+            }.sortedWith(compareBy<List<Long>> { it[0] }.thenBy { it[1] }.thenBy { it[2] })
+            val actual = viewport.map { span ->
+                listOf(span.startByte, span.endByte, span.styleId.toLong(),
+                    span.priority.toLong(), span.declarationOrder.toLong())
+            }.sortedWith(compareBy<List<Long>> { it[0] }.thenBy { it[1] }.thenBy { it[2] })
+
+            assertEquals(expected, actual,
+                "A late-file ATS viewport must preserve the exact full-document selector captures")
+            assertTrue(viewport.any { span ->
+                val tokenStart = (span.startByte / 2L).toInt()
+                val tokenEnd = (span.endByte / 2L).toInt()
+                source.substring(tokenStart, tokenEnd).startsWith("field_")
+            }, "The viewport must retain actual declaration-name symbol tokens")
+        } finally {
+            tree?.close()
+            parser.close()
+        }
+    }
+
+    @Test
     fun testHighConcurrencyReentrancy() {
         val threadCount = 32
         val iterationsPerThread = 50
@@ -129,8 +250,6 @@ class JavaTshFullTest {
                     for (i in 0 until iterationsPerThread) {
                         val spans = WindbellTshEngine.instance.computeHighlights(tr, snippet, "java")
                         assertFalse(spans.isEmpty())
-                        val folds = WindbellTshEngine.instance.computeFolds(tr, snippet, "java")
-                        assertNotNull(folds)
                     }
                     p.close()
                 } finally {

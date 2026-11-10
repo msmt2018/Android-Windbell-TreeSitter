@@ -90,6 +90,8 @@ tasks.withType<Test>().configureEach {
 }
 
 dependencies {
+    // TSH render-plan adapter consumes the unified Tree-sitter/TSH API.
+    implementation(project(":android-tree-sitter"))
     implementation(project(":piecetable"))
     implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.jar"))))
     

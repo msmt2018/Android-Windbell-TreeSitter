@@ -21,6 +21,8 @@ import com.zerostudio.idea.treesitter.annotations.GenerateNativeHeaders;
 import com.zerostudio.idea.treesitter.string.UTF16String;
 import com.zerostudio.idea.treesitter.string.UTF16StringFactory;
 import com.zerostudio.idea.treesitter.util.TSObjectFactoryProvider;
+import java.nio.ByteBuffer;
+import java.util.Arrays;
 import dalvik.annotation.optimization.CriticalNative;
 import dalvik.annotation.optimization.FastNative;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -28,15 +30,124 @@ import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.ReentrantLock;
 
 /**
- * Implementation of tree sitter's <code>TSParser</code> APIs. This implementation always converts
- * the input source code to {@link UTF16String UTF-16 string}.
+ * Tree-sitter JNI parser binding. Small String/byte inputs use the contiguous UTF16String path;
+ * larger inputs use bounded 64 KiB UTF-16LE windows while Tree-sitter still constructs one
+ * complete document AST. Windowing limits transient input copies, not the AST itself. The
+ * upstream Tree-sitter byte-offset ABI remains uint32, so the absolute input ceiling is
+ * {@link #MAX_SEGMENTED_INPUT_BYTES}; device memory and AST size impose lower practical limits.
  */
 public class TSParser extends TSNativeObject {
+
+  /**
+   * Maximum even UTF-16LE byte length representable by this binding's current
+   * signed-int UTF16String storage and Tree-sitter's 32-bit byte offsets.
+   * This is an ABI ceiling, not a promise that a device has enough memory to
+   * parse a document of this size.
+   */
+  public static final int MAX_SUPPORTED_INPUT_BYTES = Integer.MAX_VALUE - 1;
+
+  /**
+   * Maximum even byte length accepted by Tree-sitter's uint32 byte-offset API.
+   * This is an address-space limit, not a device-memory recommendation.
+   */
+  public static final long MAX_SEGMENTED_INPUT_BYTES = 0xFFFF_FFFEL;
+
+  /** Avoid a second native UTF16String copy for ordinary large String/byte inputs. */
+  private static final int WINDOWED_PARSE_THRESHOLD_BYTES = 1024 * 1024;
 
   protected final ReentrantLock parseLock = new ReentrantLock();
   protected final Condition parseCondition = parseLock.newCondition();
   protected final AtomicBoolean isParsing = new AtomicBoolean(false);
   protected final AtomicBoolean isCancellationRequested = new AtomicBoolean(false);
+
+  /**
+   * Supplies bounded UTF-16LE windows for a document without flattening or
+   * allocating a direct buffer for the entire file. Returned bytes must be
+   * even-length and remain valid only for the duration of the callback.
+   */
+  public interface ParseWindowCallback {
+    byte[] read(long byteOffset, int maxBytes);
+  }
+
+  private static final class StringParseWindowCallback implements ParseWindowCallback {
+    private final String source;
+
+    StringParseWindowCallback(String source) {
+      this.source = source;
+    }
+
+    @Override
+    public byte[] read(long byteOffset, int maxBytes) {
+      final long byteLength = (long) source.length() * 2L;
+      if (byteOffset < 0L || (byteOffset & 1L) != 0L ||
+          byteOffset > byteLength || maxBytes < 2) {
+        throw new IllegalArgumentException("Invalid UTF-16LE String window");
+      }
+      if (byteOffset == byteLength) return new byte[0];
+
+      final int start = (int) (byteOffset / 2L);
+      final int maxChars = maxBytes / 2;
+      int end = start + Math.min(maxChars, source.length() - start);
+      if (end < source.length() && end > start &&
+          Character.isHighSurrogate(source.charAt(end - 1)) &&
+          Character.isLowSurrogate(source.charAt(end))) {
+        end--;
+      }
+      if (end == start) {
+        throw new IllegalStateException(
+            "Tree-sitter input window is too small to keep a surrogate pair together");
+      }
+
+      final byte[] result = new byte[(end - start) * 2];
+      int output = 0;
+      for (int index = start; index < end; index++) {
+        final char value = source.charAt(index);
+        result[output++] = (byte) value;
+        result[output++] = (byte) (value >>> 8);
+      }
+      return result;
+    }
+  }
+
+  private static final class ByteArrayParseWindowCallback implements ParseWindowCallback {
+    private final byte[] source;
+    private final int offset;
+    private final int length;
+
+    ByteArrayParseWindowCallback(byte[] source, int offset, int length) {
+      this.source = source;
+      this.offset = offset;
+      this.length = length;
+    }
+
+    @Override
+    public byte[] read(long byteOffset, int maxBytes) {
+      if (byteOffset < 0L || (byteOffset & 1L) != 0L ||
+          byteOffset > length || maxBytes < 2) {
+        throw new IllegalArgumentException("Invalid UTF-16LE byte-array window");
+      }
+      if (byteOffset == length) return new byte[0];
+
+      final int start = (int) byteOffset;
+      int count = Math.min(length - start, maxBytes) & ~1;
+      if (count >= 2 && start + count < length) {
+        final int last = offset + start + count - 2;
+        final int next = offset + start + count;
+        final char lastUnit = (char) ((source[last] & 0xFF) |
+            ((source[last + 1] & 0xFF) << 8));
+        final char nextUnit = (char) ((source[next] & 0xFF) |
+            ((source[next + 1] & 0xFF) << 8));
+        if (Character.isHighSurrogate(lastUnit) && Character.isLowSurrogate(nextUnit)) {
+          count -= 2;
+        }
+      }
+      if (count <= 0) {
+        throw new IllegalStateException(
+            "Tree-sitter input window is too small to keep a surrogate pair together");
+      }
+      return Arrays.copyOfRange(source, offset + start, offset + start + count);
+    }
+  }
 
   protected TSParser(long pointer) {
     super(pointer);
@@ -95,10 +206,7 @@ public class TSParser extends TSNativeObject {
    * @return The parsed tree, or <code>null</code> if the parse failed or was cancelled.
    */
   public TSTree parseString(String source) {
-    throwIfParseNotCancelled();
-    try (final var str = UTF16StringFactory.newString(source)) {
-      return parseString(str);
-    }
+    return parseString(null, source);
   }
 
   /**
@@ -134,7 +242,16 @@ public class TSParser extends TSNativeObject {
    * @return The parsed tree, or <code>null</code> if the parse failed or was cancelled.
    */
   public TSTree parseBytes(byte[] bytes, int offset, int len) {
+    if (bytes == null) throw new NullPointerException("bytes");
+    if (offset < 0 || len < 0 || (offset & 1) != 0 || (len & 1) != 0 ||
+        offset > bytes.length || len > bytes.length - offset) {
+      throw new IllegalArgumentException("UTF-16LE byte range must be even and within the source array");
+    }
     throwIfParseNotCancelled();
+    if (len >= WINDOWED_PARSE_THRESHOLD_BYTES) {
+      return parseWindowed(null, len, new TSRange[0],
+          new ByteArrayParseWindowCallback(bytes, offset, len));
+    }
     try (final var source = UTF16StringFactory.newString(bytes, offset, len)) {
       return parseString(source);
     }
@@ -150,7 +267,13 @@ public class TSParser extends TSNativeObject {
    * @return The parsed tree, or <code>null</code> if the parse failed or was cancelled.
    */
   public TSTree parseString(TSTree oldTree, String source) {
+    if (source == null) throw new NullPointerException("source");
     throwIfParseNotCancelled();
+    final long byteLength = (long) source.length() * 2L;
+    if (byteLength >= WINDOWED_PARSE_THRESHOLD_BYTES) {
+      return parseWindowed(oldTree, byteLength, new TSRange[0],
+          new StringParseWindowCallback(source));
+    }
     try (final var str = UTF16StringFactory.newString(source)) {
       return parseString(oldTree, str);
     }
@@ -175,6 +298,14 @@ public class TSParser extends TSNativeObject {
    */
   public TSTree parseString(TSTree oldTree, UTF16String source) {
     checkAccess();
+    final int sourceByteLength = source.byteLength();
+    if (sourceByteLength < 0 || sourceByteLength > MAX_SUPPORTED_INPUT_BYTES) {
+      throw new IllegalArgumentException(
+          "UTF-16 source exceeds this Tree-sitter binding's supported byte length");
+    }
+    if ((sourceByteLength & 1) != 0) {
+      throw new IllegalArgumentException("UTF-16LE source byte length must be even");
+    }
 
     // Check for reentrancy (same thread calling this method again, before the previous call returned)
     if (parseLock.isHeldByCurrentThread()) {
@@ -199,6 +330,186 @@ public class TSParser extends TSNativeObject {
       unsetParsingFlag();
       parseCondition.signalAll();
       parseLock.unlock();
+    }
+  }
+
+  /**
+   * Parses UTF-16LE text supplied as direct ByteBuffer segments without joining
+   * the segments into a single Java String or native contiguous byte array.
+   *
+   * <p>Each buffer's remaining range is parsed. Buffers must be direct, have an
+   * even remaining byte count, and remain unmodified for the duration of this
+   * synchronous call. The parser retains no references after it returns.
+   *
+   * <p>This avoids an additional full-document input copy, but Tree-sitter still
+   * constructs a syntax tree for the supplied input. For the editor's complete ATS
+   * symbol tree, parse the full source and bound query/render work separately.
+   *
+   * @param buffers UTF-16LE direct buffers in document order.
+   * @return parsed tree, or null if parsing failed or was cancelled.
+   */
+  public TSTree parseBuffers(ByteBuffer[] buffers) {
+    return parseBuffers(null, buffers);
+  }
+
+  /**
+   * Incrementally parses segmented UTF-16LE input using a previously edited tree.
+   *
+   * @param oldTree previously parsed and edited tree, or null.
+   * @param buffers UTF-16LE direct buffers in document order.
+   * @return parsed tree, or null if parsing failed or was cancelled.
+   */
+  public TSTree parseBuffers(TSTree oldTree, ByteBuffer[] buffers) {
+    return parseBuffers(oldTree, buffers, null);
+  }
+
+  /**
+   * Parses segmented UTF-16LE input while retaining only the supplied Tree-sitter
+   * included ranges in the resulting syntax tree. Ranges use absolute document
+   * byte offsets and UTF-16LE TSPoint coordinates. A non-empty included-range set
+   * creates a partial syntax tree, not a complete document AST. Never publish that
+   * tree as the editor's ATS symbol tree or pass it to the TSH full-document path.
+   *
+   * <p>The included ranges are reset to the full-document default after parsing,
+   * including when parsing fails, so a later ordinary parse is not accidentally
+   * restricted to a stale viewport.
+   */
+  public TSTree parseBuffers(
+      TSTree oldTree, ByteBuffer[] buffers, TSRange[] includedRanges) {
+    checkAccess();
+    if (buffers == null) {
+      throw new NullPointerException("buffers");
+    }
+
+    final ByteBuffer[] slices = new ByteBuffer[buffers.length];
+    long totalBytes = 0;
+    for (int i = 0; i < buffers.length; i++) {
+      final ByteBuffer buffer = buffers[i];
+      if (buffer == null) {
+        throw new IllegalArgumentException("buffers[" + i + "] must not be null");
+      }
+      if (!buffer.isDirect()) {
+        throw new IllegalArgumentException("buffers[" + i + "] must be a direct ByteBuffer");
+      }
+      final ByteBuffer slice = buffer.slice();
+      final int remaining = slice.remaining();
+      if ((remaining & 1) != 0) {
+        throw new IllegalArgumentException("buffers[" + i + "] splits a UTF-16 code unit");
+      }
+      totalBytes += remaining;
+      if (totalBytes > MAX_SEGMENTED_INPUT_BYTES) {
+        throw new IllegalArgumentException("Segmented input exceeds Tree-sitter's 32-bit byte-offset limit");
+      }
+      slices[i] = slice;
+    }
+
+    if (includedRanges != null) {
+      long previousEnd = 0L;
+      for (int i = 0; i < includedRanges.length; i++) {
+        final TSRange range = includedRanges[i];
+        if (range == null) {
+          throw new IllegalArgumentException("includedRanges[" + i + "] must not be null");
+        }
+        final long start = Integer.toUnsignedLong(range.getStartByte());
+        final long end = Integer.toUnsignedLong(range.getEndByte());
+        if ((start & 1L) != 0L || (end & 1L) != 0L ||
+            start > end || end > totalBytes || (i > 0 && start < previousEnd)) {
+          throw new IllegalArgumentException("includedRanges must be ordered, non-overlapping UTF-16LE ranges within the input");
+        }
+        previousEnd = end;
+      }
+    }
+
+    if (parseLock.isHeldByCurrentThread()) {
+      throw new IllegalStateException("Reentrancy detected");
+    }
+    throwIfParseNotCancelled();
+    parseLock.lock();
+    setCancellationRequested(false);
+    setParsingFlag();
+    boolean rangesInstalled = false;
+    try {
+      if (includedRanges != null) {
+        if (!setIncludedRanges(includedRanges)) {
+          throw new IllegalArgumentException("Tree-sitter rejected the included ranges");
+        }
+        rangesInstalled = true;
+      }
+      final long oldTreePointer = oldTree != null ? oldTree.getNativeObject() : 0;
+      return createTree(Native.parseBuffers(
+          getNativeObject(), oldTreePointer, slices, totalBytes));
+    } finally {
+      try {
+        if (rangesInstalled && !setIncludedRanges(new TSRange[0])) {
+          throw new IllegalStateException("Failed to reset Tree-sitter included ranges");
+        }
+      } finally {
+        unsetParsingFlag();
+        parseCondition.signalAll();
+        parseLock.unlock();
+      }
+    }
+  }
+
+  /**
+   * Parses a versioned/random-access UTF-16 document through bounded windows.
+   * Only bytes requested by Tree-sitter are materialized. Pass an empty included
+   * range set for a complete document AST; non-empty ranges intentionally produce
+   * a partial tree and must not replace the complete ATS symbol tree.
+   */
+  public TSTree parseWindowed(
+      TSTree oldTree,
+      long byteLength,
+      TSRange[] includedRanges,
+      ParseWindowCallback callback) {
+    checkAccess();
+    if (callback == null) throw new NullPointerException("callback");
+    if (byteLength < 0 || byteLength > MAX_SEGMENTED_INPUT_BYTES || (byteLength & 1L) != 0) {
+      throw new IllegalArgumentException(
+          "Windowed UTF-16LE input length must be even and fit Tree-sitter's 32-bit byte offsets");
+    }
+
+    final TSRange[] ranges = includedRanges == null ? new TSRange[0] : includedRanges;
+    long previousEnd = 0L;
+    for (int i = 0; i < ranges.length; i++) {
+      final TSRange range = ranges[i];
+      if (range == null) throw new IllegalArgumentException("includedRanges[" + i + "] must not be null");
+      final long start = Integer.toUnsignedLong(range.getStartByte());
+      final long end = Integer.toUnsignedLong(range.getEndByte());
+      if ((start & 1L) != 0L || (end & 1L) != 0L ||
+          start > end || end > byteLength || (i > 0 && start < previousEnd)) {
+        throw new IllegalArgumentException(
+            "includedRanges must be ordered, non-overlapping UTF-16LE ranges within the input");
+      }
+      previousEnd = end;
+    }
+
+    if (parseLock.isHeldByCurrentThread()) {
+      throw new IllegalStateException("Reentrancy detected");
+    }
+    throwIfParseNotCancelled();
+    parseLock.lock();
+    setCancellationRequested(false);
+    setParsingFlag();
+    boolean rangesInstalled = false;
+    try {
+      if (!setIncludedRanges(ranges)) {
+        throw new IllegalArgumentException("Tree-sitter rejected the included ranges");
+      }
+      rangesInstalled = true;
+      final long oldTreePointer = oldTree != null ? oldTree.getNativeObject() : 0;
+      return createTree(Native.parseWindowed(
+          getNativeObject(), oldTreePointer, callback, byteLength));
+    } finally {
+      try {
+        if (rangesInstalled && !setIncludedRanges(new TSRange[0])) {
+          throw new IllegalStateException("Failed to reset Tree-sitter included ranges");
+        }
+      } finally {
+        unsetParsingFlag();
+        parseCondition.signalAll();
+        parseLock.unlock();
+      }
     }
   }
 
@@ -404,6 +715,14 @@ public class TSParser extends TSNativeObject {
 
     @FastNative
     static native long parse(long parser, long treePointer, long strPointer);
+
+    @FastNative
+    static native long parseBuffers(
+        long parser, long treePointer, ByteBuffer[] buffers, long byteLength);
+
+    @FastNative
+    static native long parseWindowed(
+        long parser, long treePointer, ParseWindowCallback callback, long byteLength);
 
     @FastNative
     static native boolean requestCancellation(long parser);

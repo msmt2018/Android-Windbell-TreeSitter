@@ -66,7 +66,7 @@ class TshNativeResourceRegistry(
     }
 
     /** Acquires an exclusive mutation lease; it fails while any read/query lease is active. */
-    internal fun <T : TSNativeObject> acquireExclusive(
+    fun <T : TSNativeObject> acquireExclusive(
         handle: TshNativeResourceLeaseStore.Handle<T>
     ): TshNativeResourceLeaseStore.ExclusiveLease<T>? = synchronized(lock) {
         if (closed || handle.objectId !in ownedIds) return@synchronized null

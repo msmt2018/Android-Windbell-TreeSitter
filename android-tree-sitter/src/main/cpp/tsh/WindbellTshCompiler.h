@@ -11,8 +11,31 @@
 #include <string>
 #include <memory>
 #include <unordered_map>
+#include <mutex>
+#include <cstdint>
 
 namespace windbell::tsh {
+
+struct TshCompileDiagnostic {
+    std::string code;
+    std::string message;
+    uint32_t offset = 0;
+    uint32_t line = 1;
+    uint32_t column = 1;
+};
+
+/**
+ * Per-invocation compilation output.
+ *
+ * Unlike getLastDiagnostics(), this value belongs to one compile call and is
+ * therefore deterministic when several editor documents compile concurrently.
+ */
+struct TshCompileResult {
+    std::shared_ptr<TshGrammar> grammar;
+    std::vector<TshCompileDiagnostic> diagnostics;
+
+    explicit operator bool() const noexcept { return static_cast<bool>(grammar); }
+};
 
 class TshCompiler {
 public:
@@ -24,11 +47,22 @@ public:
     // 从 .tsh 文件源码直接编译出可执行的高可用语法对象 (若传入 ts_lang 则同时完成符号对齐)
     std::shared_ptr<TshGrammar> compile(const std::string& source, const TSLanguage* ts_lang = nullptr);
 
+    // Preferred API: diagnostics are returned with this invocation, not through
+    // process-wide "last result" state. Safe for concurrent document compilation.
+    TshCompileResult compileDetailed(const std::string& source, const TSLanguage* ts_lang = nullptr);
+
+    // Compatibility API. Under concurrency this is only the most recently
+    // completed compile on this compiler instance; use compileDetailed instead.
+    std::vector<TshCompileDiagnostic> getLastDiagnostics() const;
+
 private:
     TshCompiler() = default;
 
+    std::shared_ptr<TshGrammar> compileInternal(const std::string& source, const TSLanguage* ts_lang);
+    mutable std::mutex diagnostic_mutex_;
+    std::vector<TshCompileDiagnostic> last_diagnostics_;
+
     std::string expandKeywordsToRegex(const std::string& word_list);
-    std::string expandBuiltin(const std::string& builtin_name);
     uint32_t parseColorHex(const std::string& hex_str);
 };
 

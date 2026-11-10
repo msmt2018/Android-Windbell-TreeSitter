@@ -15,16 +15,20 @@
  *  along with android-tree-sitter.  If not, see <https://www.gnu.org/licenses/>.
  */
 
+#include <algorithm>
 #include <string>
 #include <sstream>
 #include <cstring>
 #include <utility>
 #include <iostream>
+#include <limits>
+#include <new>
 
 #include "UTF16String.h"
 #include "../utils/jni_string.h"
 #include "../utils/ts_obj_utils.h"
 #include "../utils/ts_preconditions.h"
+#include "../utils/ts_exceptions.h"
 
 #define HI_BYTE_SHIFT 0
 #define LO_BYTE_SHIFT 8
@@ -71,21 +75,64 @@ UTF16String *UTF16String::set_char_at(jint index, jchar c) {
 }
 
 UTF16String *UTF16String::append(JNIEnv *env, jstring src) {
-    jint len;
+    if (src == nullptr) {
+        throw_npe(env, "source string");
+        return this;
+    }
+    jint len = 0;
     const jchar *chars = FNI_GetStringChars(env, src, &len);
-    _string.reserve(vsize(_string) + len);
-    for (jint i = 0; i < len; ++i) {
-        auto c = *(chars + i);
-        append(c);
+    if (chars == nullptr) return this;
+
+    const size_t append_bytes = static_cast<size_t>(len) * 2u;
+    if (append_bytes > static_cast<size_t>(std::numeric_limits<jint>::max()) -
+            std::min(_string.size(), static_cast<size_t>(std::numeric_limits<jint>::max()))) {
+        FNI_ReleaseStringChars(chars);
+        throw_illegal_args(env, "UTF16String exceeds the signed JNI byte-length limit");
+        return this;
+    }
+    try {
+        // Reserve the exact UTF-16LE byte count once. The previous code reserved
+        // only one byte per Java char and caused repeated vector growth/copies.
+        _string.reserve(_string.size() + append_bytes);
+        for (jint i = 0; i < len; ++i) append(chars[i]);
+    } catch (const std::bad_alloc&) {
+        FNI_ReleaseStringChars(chars);
+        throw_exception(env, "java/lang/OutOfMemoryError",
+                        "Unable to grow native UTF16String");
+        return this;
     }
     FNI_ReleaseStringChars(chars);
     return this;
 }
 
 UTF16String *UTF16String::append(JNIEnv *env, jstring src, jint from, jint len) {
+    if (src == nullptr) {
+        throw_npe(env, "source string");
+        return this;
+    }
+    const jsize source_length = env->GetStringLength(src);
+    if (env->ExceptionCheck()) return this;
+    if (from < 0 || len < 0 || from > source_length || len > source_length - from) {
+        throw_illegal_args(env, "UTF16String append range is outside the source string");
+        return this;
+    }
     const jchar *chars = FNI_GetStringChars(env, src, nullptr);
-    for (jint i = from; i < from + len; ++i) {
-        append(*(chars + i));
+    if (chars == nullptr) return this;
+    const size_t append_bytes = static_cast<size_t>(len) * 2u;
+    if (append_bytes > static_cast<size_t>(std::numeric_limits<jint>::max()) -
+            std::min(_string.size(), static_cast<size_t>(std::numeric_limits<jint>::max()))) {
+        FNI_ReleaseStringChars(chars);
+        throw_illegal_args(env, "UTF16String exceeds the signed JNI byte-length limit");
+        return this;
+    }
+    try {
+        _string.reserve(_string.size() + append_bytes);
+        for (jint i = 0; i < len; ++i) append(chars[from + i]);
+    } catch (const std::bad_alloc&) {
+        FNI_ReleaseStringChars(chars);
+        throw_exception(env, "java/lang/OutOfMemoryError",
+                        "Unable to append native UTF16String range");
+        return this;
     }
     FNI_ReleaseStringChars(chars);
     return this;
@@ -201,6 +248,10 @@ jint UTF16String::byte_length() {
 
 jint UTF16String::length() {
     return byte_length() >> CODER;
+}
+
+const jbyte *UTF16String::data() const {
+    return _string.data();
 }
 
 jstring UTF16String::to_jstring(JNIEnv *env) {

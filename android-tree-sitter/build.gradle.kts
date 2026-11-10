@@ -16,6 +16,7 @@
  */
 import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import org.gradle.api.tasks.testing.Test
 
 plugins {
   id("com.android.library")
@@ -52,6 +53,13 @@ dependencies {
   testImplementation(projects.treeSitterPython)
   testImplementation(libs.tests.google.truth)
   testImplementation(libs.tests.junit)
+  testImplementation("org.junit.jupiter:junit-jupiter-api:5.10.2")
+  testRuntimeOnly("org.junit.jupiter:junit-jupiter-engine:5.10.2")
   testImplementation(libs.tests.robolectric)
   testImplementation(libs.tests.mockito)
+}
+
+// The TSH engine tests use JUnit Jupiter annotations and assertions.
+tasks.withType<Test>().configureEach {
+  useJUnitPlatform()
 }

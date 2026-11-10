@@ -48,11 +48,54 @@ abstract class GenerateTreeSitterGrammarTask : DefaultTask() {
       project.logger.log(LIFECYCLE, "Using '$tsCmd' to generate composite grammars for '${project.name}'")
       
       val grammarRootDir = project.rootProject.file("grammars/$langName")
+      if (langName == "markdwon") {
+        applyMarkdownInlineConflictCompatibility(grammarRootDir)
+      }
       for (subPath in grammar.subPaths) {
         val subDir = File(grammarRootDir, subPath).absolutePath
         project.logger.log(LIFECYCLE, "Generating sub-parser grammar at: $subDir")
         project.executeCommand(subDir, tsCmd, "generate")
       }
     }
+  }
+
+  /**
+   * Tree-sitter CLI 0.28 requires the image-description ambiguity to be
+   * declared explicitly. Keep the upstream grammar submodule untouched:
+   * patch only its checked-out build workspace, before parser generation.
+   *
+   * The three-way conflict is the exact ambiguity reported by CLI 0.28:
+   * _inline_element vs. the two non-blank image-description alternatives.
+   */
+  private fun applyMarkdownInlineConflictCompatibility(grammarRootDir: File) {
+    val grammarFile = File(grammarRootDir, "tree-sitter-markdown-inline/grammar.js")
+    if (!grammarFile.isFile) {
+      throw IllegalStateException(
+        "Markdown inline grammar is missing: ${grammarFile.absolutePath}"
+      )
+    }
+
+    val source = grammarFile.readText(Charsets.UTF_8)
+    val conflict = "['_inline_element', '_image_description_non_blank_no_label', '_image_description_non_blank_with_label']"
+    if (source.contains(conflict)) return
+
+    val anchor = """    conflicts.push(
+        ['_text_base_no_emphasis', ...heads('image_description')],"""
+    if (!source.contains(anchor)) {
+      throw IllegalStateException(
+        "Markdown grammar layout changed; cannot safely apply the Tree-sitter 0.28 conflict patch"
+      )
+    }
+
+    val patched = source.replace(
+      anchor,
+      """    conflicts.push(
+        $conflict,
+        ['_text_base_no_emphasis', ...heads('image_description')],"""
+    )
+    grammarFile.writeText(patched, Charsets.UTF_8)
+    logger.lifecycle(
+      "Applied local Tree-sitter 0.28 Markdown image-description conflict compatibility patch"
+    )
   }
 }

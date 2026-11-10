@@ -136,7 +136,9 @@ class PieceTreeSnapshot internal constructor(
         // only what is asked for is copied
         val start = this.sourceStarts[piece] + offset - this.pieceStarts[piece]
         val end = this.sourceStarts[piece] + this.pieceStarts[piece + 1] - this.pieceStarts[piece]
-        return this.sources[piece].substring(start, Math.min(end, start + Math.max(1, maxLength)))
+        val requestedLength = Math.max(1, maxLength)
+        val safeEnd = start + Math.min(end - start, requestedLength)
+        return this.sources[piece].substring(start, safeEnd)
     }
 
     /** Hands the whole content to [callback], one piece at a time, in order, without the BOM. */
