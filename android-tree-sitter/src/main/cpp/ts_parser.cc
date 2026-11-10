@@ -124,6 +124,8 @@ static bool TSParser_progressCallback(TSParseState *state) {
   if (context == nullptr || context->parser == nullptr || context->parser->shouldStop()) {
     return true;
   }
+  // Never make another JNI callback while an earlier TSInput/read callback exception is pending.
+  if (context->env->ExceptionCheck()) return true;
   if (context->callback == nullptr || context->callbackMethod == nullptr) {
     return false;
   }
@@ -169,6 +171,10 @@ static const char *TSParser_readJavaInput(
   if (input->currentBytes != nullptr) {
     input->env->ReleaseByteArrayElements(input->buffer, input->currentBytes, JNI_ABORT);
     input->currentBytes = nullptr;
+  }
+  if (input->env->ExceptionCheck()) {
+    *bytes_read = 0;
+    return nullptr;
   }
 
   if ((byte_index & 1u) != 0) {
