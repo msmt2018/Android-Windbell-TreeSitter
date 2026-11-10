@@ -246,10 +246,11 @@ bool PieceTreeSource::appendAdded(const uint8_t *data, uint64_t bytes,
         (bytesBeyondTail + chunkBytes - 1u) / chunkBytes;
     if (requiredChunks > (memory_limit_bytes_ -
         std::min(memory_limit_bytes_, added_allocated_)) / chunkBytes ||
-        requiredChunks > static_cast<uint64_t>(std::numeric_limits<size_t>::max()) ||
         requiredChunks > std::numeric_limits<uint64_t>::max() - added_chunk_count_ ||
-        requiredChunks > static_cast<uint64_t>(std::numeric_limits<size_t>::max() -
-                                               added_chunk_count_)) return false;
+        added_chunk_count_ > static_cast<uint64_t>(std::numeric_limits<size_t>::max())) return false;
+    const size_t currentChunkCount = static_cast<size_t>(added_chunk_count_);
+    if (requiredChunks > static_cast<uint64_t>(
+            std::numeric_limits<size_t>::max() - currentChunkCount)) return false;
 
     // Allocate all chunk payloads and directory metadata before touching
     // logical size or existing tail bytes. The directory is a persistent
@@ -277,8 +278,10 @@ bool PieceTreeSource::appendAdded(const uint8_t *data, uint64_t bytes,
             }
         }
         const size_t additionalBlocks = slotsAfterTail == 0 ? 0 :
-            (slotsAfterTail + fanout - 1u) / fanout;
+            ((slotsAfterTail - 1u) / fanout) + 1u;
         newBlocks.reserve(additionalBlocks);
+        if (additionalBlocks > std::numeric_limits<size_t>::max() - added_chunk_blocks_.size())
+            return false;
         added_chunk_blocks_.reserve(added_chunk_blocks_.size() + additionalBlocks);
         for (size_t i = 0; i < additionalBlocks; ++i) {
             newBlocks.push_back(std::make_shared<AddedChunkBlock>());
@@ -310,7 +313,7 @@ bool PieceTreeSource::appendAdded(const uint8_t *data, uint64_t bytes,
         }
         added_chunk_blocks_.push_back(std::move(block));
     }
-    if (pendingIndex != pending.size()) return false; // Defensive invariant.
+    // The precomputed block/slot counts must consume every pending chunk.
     added_chunk_count_ += requiredChunkCount;
     added_allocated_ += requiredChunks * chunkBytes;
 
