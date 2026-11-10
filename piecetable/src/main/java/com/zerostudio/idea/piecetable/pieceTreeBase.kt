@@ -548,11 +548,11 @@ internal class PieceTreeBase {
         val coordinateStarts = pieceCoordinateStarts.toIntArray()
         val buffers = pieceBufferIndices.toIntArray()
         val lineStartsCache = arrayOfNulls<IntListSnapshot>(this._buffers.size)
-        for (bufferIndex in this._buffers.indices) {
-            lineStartsCache[bufferIndex] = this._buffers[bufferIndex].lineStarts.snapshotView()
-        }
         val pieceLineStarts = Array(sources.size) { index ->
-            lineStartsCache[buffers[index]]!!
+            val bufferIndex = buffers[index]
+            lineStartsCache[bufferIndex] ?: this._buffers[bufferIndex].lineStarts
+                .snapshotView()
+                .also { lineStartsCache[bufferIndex] = it }
         }
         return PieceTreeSnapshot(
             Array(sources.size) { sources[it] ?: typedText },
