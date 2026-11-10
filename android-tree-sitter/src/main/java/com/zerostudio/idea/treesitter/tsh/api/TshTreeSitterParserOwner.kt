@@ -880,7 +880,7 @@ class TshTreeSitterParserOwner private constructor(
         var treeMemoryReservation: TshMemoryReservation? = null
         var dependenciesTransferred = false
         try {
-            when (val reserved = TshParserInputMemoryReservations.reserveChunkBuffer(
+            when (val reserved = TshParserInputMemoryReservations.reserveStreamingBridge(
                 memoryBudget, snapshot.documentId, snapshot.version, chunkSizeBytes
             )) {
                 is TshResult.Success -> parserInputBufferReservation = reserved.value
