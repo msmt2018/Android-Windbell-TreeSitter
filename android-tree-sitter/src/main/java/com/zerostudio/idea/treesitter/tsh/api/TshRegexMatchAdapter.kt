@@ -97,12 +97,10 @@ object TshRegexMatchAdapter {
                     )
                 }
                 val range = group.range ?: continue
-                if (!isValidDocumentRange(range, result) ||
-                    range.start.offset < record.range.start.offset ||
-                    range.end.offset > record.range.end.offset) {
+                if (!isValidDocumentRange(range, result)) {
                     return failure(
                         "TSH-REGEX-MATCH-004",
-                        "Regex capture group ${group.groupIndex} of match $matchIndex is outside its full match"
+                        "Regex capture group ${group.groupIndex} of match $matchIndex is outside the document or uses a stale version"
                     )
                 }
                 captures += TshCaptureValue(group.name, normalizeVersion(range, result.documentVersion))
