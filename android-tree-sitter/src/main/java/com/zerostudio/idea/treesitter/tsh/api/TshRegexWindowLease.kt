@@ -58,18 +58,34 @@ class TshRegexWindowLease private constructor(
     val coreStartInWindow: Int get() = (coreStartUtf16 - windowStartUtf16).toInt()
     val coreEndInWindow: Int get() = (coreEndUtf16 - windowStartUtf16).toInt()
 
+    /** Whether a local UTF-16 offset is a Unicode code-point boundary. */
+    fun isCodePointBoundary(windowOffsetUtf16: Int): Boolean {
+        if (closed.get() || windowOffsetUtf16 < 0) return false
+        val value = text
+        if (windowOffsetUtf16 > value.length) return false
+        if (windowOffsetUtf16 == 0 || windowOffsetUtf16 == value.length) return true
+        return !(Character.isHighSurrogate(value[windowOffsetUtf16 - 1]) &&
+            Character.isLowSurrogate(value[windowOffsetUtf16]))
+    }
+
     /**
-     * Emit a match only when its absolute start belongs to this core interval. The final document
-     * boundary is included by the last window so zero-width EOF matches are not lost.
+     * Emit a match only when its absolute start belongs to this core interval and is a valid
+     * Unicode code-point boundary. The final document boundary is included for zero-width EOF matches.
      */
-    fun ownsMatchStart(absoluteStartUtf16: Long): Boolean =
-        !closed.get() && absoluteStartUtf16 >= coreStartUtf16 &&
+    fun ownsMatchStart(absoluteStartUtf16: Long): Boolean {
+        if (closed.get()) return false
+        val inCore = absoluteStartUtf16 >= coreStartUtf16 &&
             (absoluteStartUtf16 < coreEndUtf16 ||
                 (isDocumentEnd && coreEndUtf16 == documentLengthUtf16 &&
                     absoluteStartUtf16 == documentLengthUtf16))
+        if (!inCore) return false
+        val local = absoluteStartUtf16 - windowStartUtf16
+        return local in 0L..Int.MAX_VALUE.toLong() && isCodePointBoundary(local.toInt())
+    }
 
+    /** Maps a local code-point boundary to the source snapshot's absolute UTF-16 offset. */
     fun absoluteUtf16Offset(windowOffsetUtf16: Int): Long? {
-        if (closed.get() || windowOffsetUtf16 < 0 || windowOffsetUtf16 > lengthUtf16) return null
+        if (!isCodePointBoundary(windowOffsetUtf16)) return null
         return windowStartUtf16 + windowOffsetUtf16.toLong()
     }
 
