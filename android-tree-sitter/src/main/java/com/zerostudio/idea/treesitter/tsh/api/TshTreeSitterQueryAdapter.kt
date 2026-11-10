@@ -279,7 +279,7 @@ class TshTreeSitterQueryExecutor(
         val effectivePredicateHandlers = buildList {
             addAll(predicateHandlers)
             if (none { handler ->
-                    handler.getSupportedPredicates().any { it.removePrefix("#") == SetDirectiveHandler.DIRECTIVE }
+                    TSPredicateHandlerCompat.supportedPredicates(handler).any { it.removePrefix("#") == SetDirectiveHandler.DIRECTIVE }
                 }) {
                 add(SetDirectiveHandler())
             }
