@@ -89,7 +89,7 @@ public class ParserTest extends TreeSitterTest {
     final StringBuilder sourceBuilder = new StringBuilder();
     for (int i = 0; i < 256; i++) {
       sourceBuilder.append("class StreamingInput").append(i)
-          .append(" { int value = ").append(i).append("; }\\n");
+          .append(" { int value = ").append(i).append("; }\n");
     }
     final String source = sourceBuilder.toString();
     final AtomicInteger readCalls = new AtomicInteger();
