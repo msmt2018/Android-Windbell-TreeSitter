@@ -96,7 +96,7 @@ data class TshSyntaxTreeSnapshot(
     }
 }
 
-data class TshQueryExecutionBudget(
+data class TshQueryExecutionBudget @JvmOverloads constructor(
     val maxSteps: Long? = null,
     val maxMatches: Int = 100_000,
     val maxCaptures: Int = 1_000_000,
