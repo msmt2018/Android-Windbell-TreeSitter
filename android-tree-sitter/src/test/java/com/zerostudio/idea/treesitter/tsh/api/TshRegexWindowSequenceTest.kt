@@ -23,12 +23,12 @@ class TshRegexWindowSequenceTest {
     fun partitionsSourceIntoContiguousNonOverlappingCodePointSafeCores() {
         val source = Snapshot("a".repeat(255) + "😀" + "b".repeat(500))
         val callerLease = TshSharedTextSnapshotLease.acquire(source)
-        val sequence = (TshRegexWindowSequence.open(callerLease, constraints()) as TshResult.Success).value
+        val sequence = (TshRegexWindowSequence.open(callerLease, constraints()) as TshResult.Success<TshRegexWindowSequence>).value
         val starts = mutableListOf<Long>()
         val ends = mutableListOf<Long>()
 
         while (true) {
-            val result = sequence.nextWindow() as TshResult.Success
+            val result = sequence.nextWindow() as TshResult.Success<TshRegexWindowLease?>
             val window = result.value ?: break
             starts += window.coreStartUtf16
             ends += window.coreEndUtf16
@@ -39,7 +39,7 @@ class TshRegexWindowSequenceTest {
         assertEquals(listOf(0L, 255L, 511L), starts)
         assertEquals(listOf(255L, 511L, source.lengthUtf16), ends)
         assertEquals(source.lengthUtf16, sequence.nextCoreOffsetUtf16)
-        assertTrue((sequence.nextWindow() as TshResult.Success).value == null)
+        assertTrue((sequence.nextWindow() as TshResult.Success<TshRegexWindowLease?>).value == null)
         sequence.close()
         callerLease.close()
     }
@@ -53,7 +53,7 @@ class TshRegexWindowSequenceTest {
 
         callerLease.close()
         assertEquals(0, released.get())
-        val first = (sequence.nextWindow() as TshResult.Success).value!!
+        val first = (sequence.nextWindow() as TshResult.Success<TshRegexWindowLease?>).value!!
         assertTrue(first.text.isNotEmpty())
         first.close()
         sequence.close()
@@ -77,7 +77,7 @@ class TshRegexWindowSequenceTest {
         unboundedLease.close()
 
         val emptyLease = TshSharedTextSnapshotLease.acquire(Snapshot(""))
-        val emptySequence = (TshRegexWindowSequence.open(emptyLease, constraints()) as TshResult.Success).value
+        val emptySequence = (TshRegexWindowSequence.open(emptyLease, constraints()) as TshResult.Success<TshRegexWindowSequence>).value
         assertEquals(null, (emptySequence.nextWindow() as TshResult.Success).value)
         emptySequence.close()
         emptyLease.close()
@@ -89,14 +89,14 @@ class TshRegexWindowSequenceTest {
         val callerLease = TshSharedTextSnapshotLease.acquire(source)
         val budget = TshMemoryBudget(TshMemoryBudgetOptions(2_048, 4_096))
         val blocker = (budget.reserve(TshMemoryCategory.OTHER, 1_000) as TshResult.Success).value
-        val sequence = (TshRegexWindowSequence.open(callerLease, constraints(), budget) as TshResult.Success).value
+        val sequence = (TshRegexWindowSequence.open(callerLease, constraints(), budget) as TshResult.Success<TshRegexWindowSequence>).value
 
         val rejected = sequence.nextWindow()
         assertTrue(rejected is TshResult.Failure)
         assertEquals(0L, sequence.nextCoreOffsetUtf16)
         blocker.close()
 
-        val retried = (sequence.nextWindow() as TshResult.Success).value
+        val retried = (sequence.nextWindow() as TshResult.Success<TshRegexWindowLease?>).value
         assertNotNull(retried)
         assertEquals(256L, sequence.nextCoreOffsetUtf16)
         retried!!.close()
