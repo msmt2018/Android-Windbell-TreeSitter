@@ -634,9 +634,17 @@ static TshPredicateResult tshEvaluateNativePredicates(const NativeQueryProgram& 
                 if (!compared_any) all_left_satisfied = false;
                 else all_left_satisfied = all_left_satisfied && left_satisfied;
             }
-            if (!has_left) accepted = !positive;
-            else if (!has_right) accepted = !positive;
-            else accepted = any ? any_pair_satisfied : all_left_satisfied;
+            // Match Tree-sitter's EqCapture contract:
+            // - non-any predicates quantify over every left capture (vacuously true
+            //   when the left capture is absent);
+            // - any-* predicates require at least one left capture and one
+            //   satisfying pair;
+            // - a missing right capture cannot satisfy either equality polarity.
+            if (any) {
+                accepted = has_left && has_right && any_pair_satisfied;
+            } else {
+                accepted = !has_left || (has_right && all_left_satisfied);
+            }
         } else if (equality_predicate) {
             if (expected.size() != 1) return TshPredicateResult::REJECT;
             const bool any = op == "any-eq?" || op == "any-not-eq?";
