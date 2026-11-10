@@ -606,6 +606,17 @@ class TshTreeSitterParserOwner private constructor(
                 inputEncoding = TshTreeSitterInputEncoding.UTF16_LE
             )
             return TshResult.Success(TshOwnedSyntaxTree(syntaxSnapshot, registration))
+        } catch (error: TshTextInputException) {
+            if (error.diagnostics.isNotEmpty()) {
+                return TshResult.Failure(error.diagnostics)
+            }
+            return failure(
+                "TSH-PARSER-OWNER-017",
+                "Tree-sitter snapshot input failed: ${error.message}",
+                TshDiagnosticStage.PARSE,
+                parser.descriptor.id,
+                error
+            )
         } catch (error: LinkageError) {
             return failure(
                 "TSH-PARSER-OWNER-024",
