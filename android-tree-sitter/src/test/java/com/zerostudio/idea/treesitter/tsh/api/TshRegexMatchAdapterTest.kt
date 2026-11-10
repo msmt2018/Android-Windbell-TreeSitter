@@ -119,4 +119,29 @@ class TshRegexMatchAdapterTest {
             result(listOf(TshRegexMatchRecord(range(0, 1, version = 6L))))
         ) is TshResult.Failure)
     }
+    @Test
+    fun enforcesAdapterBudgetAndMarksOutputTruncated() {
+        val source = result(listOf(
+            TshRegexMatchRecord(range(0, 1)),
+            TshRegexMatchRecord(range(1, 2)),
+            TshRegexMatchRecord(range(2, 3))
+        ))
+        val adapted = TshRegexMatchAdapter.adapt(
+            source,
+            budget = TshMatchMergeBudget(maxMatches = 1, maxEstimatedBytes = 4096)
+        ) as TshResult.Success
+
+        assertEquals(1, adapted.value.matches.size)
+        assertEquals(TshMatchCompleteness.TRUNCATED, adapted.value.completeness)
+        assertTrue(adapted.value.diagnostics.any { it.code == "TSH-REGEX-MATCH-005" })
+    }
+
+    @Test
+    fun acceptsZeroWidthMatchAtDocumentEof() {
+        val source = result(listOf(TshRegexMatchRecord(range(4, 4))))
+        val adapted = TshRegexMatchAdapter.adapt(source) as TshResult.Success
+        assertEquals(4L, adapted.value.matches.single().range.start.offset)
+        assertEquals(4L, adapted.value.matches.single().range.end.offset)
+    }
+
 }
