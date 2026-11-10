@@ -17,7 +17,7 @@ uint64_t TshRegexNativeRegistry::compile(
     std::string& error
 ) {
     if ((!pattern && pattern_bytes != 0) || (pattern_bytes & 1u) != 0 ||
-        pattern_bytes > static_cast<size_t>(std::numeric_limits<OnigLength>::max())) {
+        pattern_bytes > static_cast<size_t>(std::numeric_limits<OnigLen>::max())) {
         error = "Regex pattern has an invalid UTF-16LE buffer";
         return 0;
     }
@@ -189,7 +189,14 @@ bool TshRegexNativeRegistry::execute(
             current = begin + end_byte;
         } else {
             if (end_byte >= static_cast<int32_t>(text_bytes)) break;
-            current = begin + end_byte + sizeof(uint16_t);
+            const int32_t next_unit = end_byte / 2;
+            const uint16_t* units = reinterpret_cast<const uint16_t*>(text);
+            const bool starts_surrogate_pair =
+                next_unit < length &&
+                units[next_unit] >= 0xD800 && units[next_unit] <= 0xDBFF &&
+                next_unit + 1 < length &&
+                units[next_unit + 1] >= 0xDC00 && units[next_unit + 1] <= 0xDFFF;
+            current = begin + end_byte + (starts_surrogate_pair ? 2 * sizeof(uint16_t) : sizeof(uint16_t));
         }
     }
     return true;
