@@ -2728,6 +2728,18 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                                         entry.capture_id = predicate[1].value_id;
                                         entry.regex = compiled;
                                         entry.negate = op == "not-match?";
+                                        uint64_t maximum_width_units = 0;
+                                        if (analyzeBoundedRegexWidth(
+                                                std::string(pattern_text, pattern_length),
+                                                &maximum_width_units) &&
+                                            maximum_width_units > 0 &&
+                                            maximum_width_units <=
+                                                std::numeric_limits<uint64_t>::max() / sizeof(uint16_t)) {
+                                            entry.execution_capability =
+                                                RegexExecutionCapability::BOUNDED_WINDOW;
+                                            entry.maximum_match_bytes =
+                                                maximum_width_units * sizeof(uint16_t);
+                                        }
                                         program.predicate_regexes.push_back(entry);
                                     }
                                     // Keep immutable predicate steps with the query.
