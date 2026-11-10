@@ -1,5 +1,6 @@
 package com.zerostudio.idea.androidtreesitter
 
+import android.os.Looper
 import android.text.SpannableStringBuilder
 import android.text.Spanned
 import android.text.style.CharacterStyle
@@ -368,9 +369,18 @@ class TshSyntaxHighlighter(
     }
 
     private fun scheduleParse(buffer: EditorBuffer) {
+        // Snapshot creation and edit callbacks are serialized on the editor thread.
+        // This is important: queued native edits that are already represented by
+        // this snapshot must be discarded, while edits after it must remain queued
+        // for replay into the new native document.
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            scope.launch(Dispatchers.Main.immediate) { scheduleParse(buffer) }
+            return
+        }
         // PieceTreeBuffer snapshots retain their backing chunks. Large-file mode
         // never calls getText() or snapshot.toString() for the complete document.
         val snapshot = buffer.createTextSnapshot()
+        synchronized(nativeEditLock) { pendingNativeEdits.clear() }
         val ticket = generation.incrementAndGet()
         parseJob?.cancel(CancellationException("Superseded by newer document snapshot"))
         largeSession?.let(::disposeSession)
