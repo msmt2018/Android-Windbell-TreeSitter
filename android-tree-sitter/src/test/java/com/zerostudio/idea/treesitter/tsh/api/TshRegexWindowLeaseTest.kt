@@ -201,4 +201,26 @@ class TshRegexWindowLeaseTest {
         sourceLease.close()
     }
 
+
+    @Test
+    fun validatesMatchEndWithinWindowAndOnCodePointBoundary() {
+        val sourceLease = lease(Snapshot("a".repeat(300) + "😀" + "b".repeat(500)))
+        val window = (TshRegexWindowLease.acquire(
+            sourceLease, 300L, 256,
+            TshRegexWindowConstraints(
+                coreWindowUtf16 = 256,
+                maxWindowUtf16 = 512,
+                maxMatchLengthUtf16 = 32
+            )
+        ) as TshResult.Success).value
+
+        assertTrue(window.ownsMatchRange(300L, 332L))
+        assertFalse(window.ownsMatchRange(300L, window.windowEndUtf16 + 1L))
+        // The emoji begins at absolute offset 300; offset 302 is after the complete pair.
+        assertTrue(window.ownsMatchRange(300L, 302L))
+        assertFalse(window.ownsMatchRange(300L, 301L))
+        window.close()
+        sourceLease.close()
+    }
+
 }
