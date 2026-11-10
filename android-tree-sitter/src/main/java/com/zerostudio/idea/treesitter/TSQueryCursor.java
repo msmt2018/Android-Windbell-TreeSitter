@@ -24,7 +24,8 @@ import com.zerostudio.idea.treesitter.predicate.TSPredicateHandler.Result;
 import com.zerostudio.idea.treesitter.util.TSObjectFactoryProvider;
 import dalvik.annotation.optimization.FastNative;
 import java.util.ArrayList;
-import java.util.HashSet;
+import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Iterator;
 import java.util.NoSuchElementException;
 import java.util.Objects;
@@ -37,6 +38,7 @@ public class TSQueryCursor extends TSNativeObject implements Iterable<TSQueryMat
 
   protected boolean isExecuted = false;
   private boolean allowChangedNodes = false;
+  private boolean predicateEvaluationEnabled = true;
   protected TSNode targetNode = null;
   protected TSQuery execQuery = null;
   protected final Set<TSPredicateHandler> predicateHandlers = new HashSet<>();
@@ -242,23 +244,35 @@ public class TSQueryCursor extends TSNativeObject implements Iterable<TSQueryMat
     Native.setPointRange(getNativeObject(), start, end);
   }
 
+  /** Enable or disable Java-side predicate evaluation for subsequent matches. */
+  public void setPredicateEvaluationEnabled(boolean enabled) {
+    checkAccess();
+    predicateEvaluationEnabled = enabled;
+  }
+
   public TSQueryMatch nextMatch() {
     checkAccess();
     checkExecuted("nextMatch");
-    final var match = Native.nextMatch(getNativeObject());
-    if (match != null) {
-      applyPredicates(match);
+    while (true) {
+      final var match = Native.nextMatch(getNativeObject());
+      if (match == null || !predicateEvaluationEnabled || applyPredicates(match)) {
+        return match;
+      }
     }
-    return match;
   }
 
-  private void applyPredicates(TSQueryMatch match) {
+  private boolean applyPredicates(TSQueryMatch match) {
     if (match == null || execQuery == null) {
-      return;
+      return true;
     }
 
     final var predicates = execQuery.getPredicatesForPattern(match.getPatternIndex());
-    final var steps = new ArrayList<PredicateStep>(predicates.length);
+    if (predicates == null || predicates.length == 0) {
+      return true;
+    }
+
+    final var group = new ArrayList<PredicateStep>();
+    boolean foundExpression = false;
 
     for (final var predicate : predicates) {
       final PredicateStep step;
@@ -271,19 +285,48 @@ public class TSQueryCursor extends TSNativeObject implements Iterable<TSQueryMat
           step = new PredicateStep(predicate.getType(),
             execQuery.getStringValueForId(predicate.getValueId()));
           break;
+        case Done:
         default:
           step = new PredicateStep(predicate.getType(), "");
           break;
       }
 
-      steps.add(step);
+      if (predicate.getType() != TSQueryPredicateStep.Type.Done) {
+        foundExpression = true;
+        group.add(step);
+        continue;
+      }
+
+      // A Done step closes exactly one predicate/directive expression.
+      group.add(step);
+      if (foundExpression && !dispatchPredicateGroup(match, group)) {
+        return false;
+      }
+      group.clear();
+      foundExpression = false;
     }
 
+    // Be defensive if a malformed/native implementation omits the trailing Done step.
+    return !foundExpression || dispatchPredicateGroup(match, group);
+  }
+
+  /**
+   * Dispatch one complete predicate/directive expression in registration order.
+   */
+  private boolean dispatchPredicateGroup(
+    TSQueryMatch match,
+    List<PredicateStep> steps
+  ) {
     for (final var handler : predicateHandlers) {
-      if (handler.handle(execQuery, match, steps) == Result.OK) {
-        break;
+      final Result result = handler.handle(execQuery, match, steps);
+      if (result == Result.OK) {
+        return true;
+      }
+      if (result == Result.ERR) {
+        return false;
       }
     }
+    return false;
   }
 
   public void removeMatch(int id) {
