@@ -111,9 +111,30 @@ class TSParserInternal {
   }
 };
 
+struct TSParserProgressContext {
+  TSParserInternal *parser;
+  JNIEnv *env;
+  jobject callback;
+  jmethodID callbackMethod;
+};
+
 static bool TSParser_progressCallback(TSParseState *state) {
-  auto *parser = static_cast<TSParserInternal *>(state->payload);
-  return parser == nullptr || parser->shouldStop();
+  auto *context = static_cast<TSParserProgressContext *>(state->payload);
+  if (context == nullptr || context->parser == nullptr || context->parser->shouldStop()) {
+    return true;
+  }
+  if (context->callback == nullptr || context->callbackMethod == nullptr) {
+    return false;
+  }
+  const jboolean shouldStop = context->env->CallBooleanMethod(
+      context->callback,
+      context->callbackMethod,
+      static_cast<jlong>(state->current_byte_offset),
+      static_cast<jboolean>(state->has_error)
+  );
+  // A pending Java exception must stop Tree-sitter immediately. The JNI entry point will
+  // delete any partial tree and let the original exception propagate to the caller.
+  return context->env->ExceptionCheck() || shouldStop == JNI_TRUE;
 }
 
 struct TSParserInput {
@@ -347,8 +368,11 @@ static jlong TSParser_parse(JNIEnv *env,
       TSInputEncodingUTF16LE,
       nullptr,
   };
+  TSParserProgressContext progressContext{
+      ts_parser_internal, env, nullptr, nullptr
+  };
   TSParseOptions options{
-      ts_parser_internal,
+      &progressContext,
       TSParser_progressCallback,
   };
 
@@ -369,7 +393,8 @@ static jlong TSParser_parseInput(
     jlong parser,
     jlong tree_pointer,
     jobject input_object,
-    jint chunk_size_bytes) {
+    jint chunk_size_bytes,
+    jobject progress_callback) {
   req_nnp(env, parser, "parser");
   req_nnp(env, input_object, "input");
   if (chunk_size_bytes < 2 || chunk_size_bytes > 1024 * 1024 ||
@@ -382,6 +407,16 @@ static jlong TSParser_parseInput(
   if (input_class == nullptr) return 0;
   jmethodID read_method = env->GetMethodID(input_class, "read", "(JII[B)I");
   if (read_method == nullptr) return 0;
+
+  jmethodID progress_method = nullptr;
+  if (progress_callback != nullptr) {
+    jclass callback_class = env->GetObjectClass(progress_callback);
+    if (callback_class == nullptr) return 0;
+    progress_method = env->GetMethodID(callback_class, "onProgress", "(JZ)Z");
+    env->DeleteLocalRef(callback_class);
+    if (progress_method == nullptr) return 0;
+  }
+
   jbyteArray buffer = env->NewByteArray(chunk_size_bytes);
   if (buffer == nullptr) return 0;
 
@@ -399,8 +434,11 @@ static jlong TSParser_parseInput(
       TSInputEncodingUTF16LE,
       nullptr,
   };
+  TSParserProgressContext progressContext{
+      ts_parser_internal, env, progress_callback, progress_method
+  };
   TSParseOptions options{
-      ts_parser_internal,
+      &progressContext,
       TSParser_progressCallback,
   };
 
