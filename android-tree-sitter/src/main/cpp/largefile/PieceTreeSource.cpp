@@ -68,6 +68,29 @@ std::unique_ptr<PieceTreeSource> PieceTreeSource::clone() const noexcept {
 bool PieceTreeSource::isValid() const noexcept { return valid_; }
 uint64_t PieceTreeSource::sizeBytes() const noexcept { return subtreeBytes(root_); }
 
+bool PieceTreeSource::contiguousData(
+    const char **data, uint64_t *sizeBytes
+) const noexcept {
+    if (!data || !sizeBytes || !valid_) return false;
+    *data = nullptr;
+    *sizeBytes = sizeBytes();
+    if (*sizeBytes == 0) return true;
+
+    // A single untouched original piece is already contiguous in its backing
+    // source. Edited/multi-piece trees deliberately do not flatten here.
+    if (!root_ || root_->left || root_->right ||
+        root_->buffer != Buffer::Original ||
+        root_->length != *sizeBytes) return false;
+
+    const char *original_data = nullptr;
+    uint64_t original_size = 0;
+    if (!original_->contiguousData(&original_data, &original_size) ||
+        !original_data || root_->source_offset > original_size ||
+        root_->length > original_size - root_->source_offset) return false;
+    *data = original_data + static_cast<size_t>(root_->source_offset);
+    return true;
+}
+
 uint64_t PieceTreeSource::allocatedBytes() const noexcept {
     const uint64_t nodes = countNodes(root_.get());
     if (nodes > (std::numeric_limits<uint64_t>::max() - added_allocated_) / sizeof(Node))
