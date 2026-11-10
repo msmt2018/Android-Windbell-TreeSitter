@@ -1024,10 +1024,19 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
     // Avoid pointer arithmetic on a null input pointer for an empty document.
     // Empty buffers are valid inputs (for example, immediately after clearing an editor).
     static const UChar kEmptyInput = 0;
+    const char *contiguous_source_data = nullptr;
+    uint64_t contiguous_source_size = 0;
+    const bool source_is_contiguous = text_source &&
+        text_source->contiguousData(&contiguous_source_data, &contiguous_source_size) &&
+        contiguous_source_size == total_bytes &&
+        (total_bytes == 0 || contiguous_source_data != nullptr);
+    const bool has_contiguous_text = input_chars != nullptr || source_is_contiguous;
     const UChar* text_start = input_chars
         ? reinterpret_cast<const UChar*>(input_chars)
-        : &kEmptyInput;
-    const UChar* text_end = input_chars ? text_start + total_bytes : text_start;
+        : (source_is_contiguous && contiguous_source_data
+            ? reinterpret_cast<const UChar*>(contiguous_source_data)
+            : &kEmptyInput);
+    const UChar* text_end = has_contiguous_text ? text_start + total_bytes : text_start;
 
     // Keep intermediate capture memory proportional to the requested viewport.
     // Regex rules scan from document start to preserve anchors and state transitions,
@@ -1065,7 +1074,7 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
     // for large files without rebuilding a 32 MiB+ compatibility buffer.
     // Anchors, block rules, and stateful tokenizers remain on their dedicated
     // context-aware paths; they are never silently reinterpreted as window-local.
-    if (text_source) {
+    if (text_source && !has_contiguous_text) {
         constexpr uint64_t kRegexCoreWindowBytes = 256u * 1024u;
         for (const auto& rule : grammar->regex_rules) {
             if (!rule.enabled || rule.type != RegexRuleType::MATCH ||
@@ -1177,13 +1186,13 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
         }
     }
 
-    if (input_chars) for (const auto& rule : grammar->regex_rules) {
+    if (has_contiguous_text) for (const auto& rule : grammar->regex_rules) {
         if (!rule.enabled) continue;
         // Compiler-proven finite-width MATCH rules have already run against
         // bounded TextSource windows above. Do not rescan the entire mapped
         // document for every viewport request merely because a contiguous
         // mmap view is available for context-dependent rules.
-        if (text_source && rule.type == RegexRuleType::MATCH &&
+        if (text_source && !has_contiguous_text && rule.type == RegexRuleType::MATCH &&
             rule.execution_capability == RegexExecutionCapability::BOUNDED_WINDOW) {
             continue;
         }
@@ -1414,7 +1423,7 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
         // smaller documents consume only their own source size. This is a hard
         // ceiling, not a claim that arbitrary context-sensitive patterns can
         // be evaluated correctly in independent windows.
-        if (!input_chars && text_source && !grammar->regex_state_graph_bounded &&
+        if (!has_contiguous_text && text_source && !grammar->regex_state_graph_bounded &&
             static_cast<uint64_t>(total_bytes) <= kMaxRegexStateContextFallbackBytes) {
             const uint64_t required_units = static_cast<uint64_t>(total_bytes) / sizeof(UChar);
             if (required_units <= static_cast<uint64_t>(state_window.max_size())) {
@@ -1429,7 +1438,7 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
             }
         }
         auto ensure_state_window = [&]() -> bool {
-            if (input_chars || state_full_source_fallback) {
+            if (has_contiguous_text || state_full_source_fallback) {
                 state_window_start = 0;
                 state_window_end = total_bytes;
                 return true;
@@ -1471,8 +1480,8 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                     "TSH Regex State execution requires whole-document context, "
                     "but a complete compatible input buffer could not be provided");
             }
-            const UChar* state_text_start = input_chars ? text_start : state_window.data();
-            const UChar* state_text_end = input_chars ? text_end : state_window.data() + state_window.size();
+            const UChar* state_text_start = has_contiguous_text ? text_start : state_window.data();
+            const UChar* state_text_end = has_contiguous_text ? text_end : state_window.data() + state_window.size();
             const uint32_t local_position = position - state_window_start;
             const UChar* state_position_ptr = state_text_start + local_position;
             const RegexStateRule* matched_rule = nullptr;
@@ -1779,7 +1788,7 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                         if (text_source) {
                             if (!windbell::largefile::copyTextRange(*text_source, text_start, text_end - text_start, node_text_window.data())) continue;
                             node_source = node_text_window.data();
-                        } else if (input_chars) node_source = reinterpret_cast<const UChar*>(input_chars) + text_start;
+                        } else if (has_contiguous_text) node_source = text_start + text_start;
                         else continue;
                     } else node_source = &kEmptyInput;
                     if (!tshUtf16SliceToUtf8(node_source, text_end - text_start, node_text_storage)) continue;
@@ -1959,7 +1968,8 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                     continue;
                 }
                 const TshPredicateResult predicate_result = tshEvaluateNativePredicates(
-                    native_query, match, text_start, text_source, total_bytes);
+                    native_query, match, text_start,
+                    has_contiguous_text ? nullptr : text_source, total_bytes);
                 if (predicate_result == TshPredicateResult::ERROR) {
                     throw std::runtime_error(
                         "TSH native query predicate evaluation failed while reading capture text");
