@@ -11,6 +11,7 @@ import com.zerostudio.idea.treesitter.tsh.api.TshResult
 import com.zerostudio.idea.treesitter.tsh.api.TshTextAccessProvider
 import com.zerostudio.idea.treesitter.tsh.api.TshTextAccessThreading
 import com.zerostudio.idea.treesitter.tsh.api.TshTextSnapshot
+import com.zerostudio.idea.treesitter.tsh.api.TshTextPosition
 import com.zerostudio.idea.treesitter.tsh.api.TshTextChange
 import com.zerostudio.idea.treesitter.tsh.api.TshTextChangeListener
 import com.zerostudio.idea.treesitter.tsh.api.TshTextDocumentDisposedListener
@@ -202,6 +203,12 @@ class TshPieceTreeTextAccessProvider(
                 "PieceTreeSnapshot currently exposes Int offsets"
             }
             return source.substring(start.toInt(), end.toInt())
+        }
+
+        override fun lineColumnAtUtf16(offset: Long): TshTextPosition? {
+            if (offset < 0L || offset > Int.MAX_VALUE.toLong()) return null
+            val position = source.getTreeSitterPositionAt(offset.toInt()) ?: return null
+            return TshTextPosition(position.first, position.second.toLong())
         }
     }
 
