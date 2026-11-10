@@ -91,6 +91,15 @@ uint64_t MappedFileSource::sizeBytes() const noexcept {
     return size_bytes_;
 }
 
+bool MappedFileSource::contiguousData(
+    const char **data, uint64_t *sizeBytes
+) const noexcept {
+    if (!data || !sizeBytes || !open_) return false;
+    *data = static_cast<const char *>(mapping_);
+    *sizeBytes = size_bytes_;
+    return size_bytes_ == 0 || mapping_ != nullptr;
+}
+
 bool MappedFileSource::read(
     uint64_t offset,
     uint32_t maxBytes,
