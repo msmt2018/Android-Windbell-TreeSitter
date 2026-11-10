@@ -20,7 +20,7 @@ uint64_t TshRegexNativeRegistry::compile(
     size_t pattern_bytes,
     std::string& error
 ) {
-    constexpr size_t kMaxPatternUtf16 = 1024u * 1024u;
+    constexpr size_t kMaxPatternUtf16 = 64u * 1024u;
     if ((!pattern && pattern_bytes != 0) || (pattern_bytes & 1u) != 0 ||
         pattern_bytes / 2u > kMaxPatternUtf16 ||
         pattern_bytes > static_cast<size_t>(std::numeric_limits<std::ptrdiff_t>::max())) {
@@ -74,9 +74,9 @@ uint64_t TshRegexNativeRegistry::compile(
     }
 
     std::lock_guard<std::mutex> lock(mutex_);
-    constexpr size_t kMaxActiveRegexHandles = 4096;
+    constexpr size_t kMaxActiveRegexHandles = 512;
     if (entries_.size() >= kMaxActiveRegexHandles) {
-        error = "Active Regex handle limit (4096) has been reached";
+        error = "Active Regex handle limit (512) has been reached";
         return 0;
     }
     if (next_handle_ == 0 || next_handle_ > static_cast<uint64_t>(std::numeric_limits<int64_t>::max())) {
