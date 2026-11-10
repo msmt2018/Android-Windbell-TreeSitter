@@ -1819,12 +1819,22 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
     // candidates instead of dropping their entire highlighting range.
     std::vector<HighlightSpan> resolved_spans;
     resolved_spans.reserve(final_spans.size());
+
+    // Reuse two scratch vectors across every candidate/accepted pair. The old
+    // inner-loop vectors repeatedly allocated and freed storage proportional
+    // to overlap count, creating avoidable allocator churn on dense grammars.
+    std::vector<HighlightSpan> fragments;
+    std::vector<HighlightSpan> remaining;
+    fragments.reserve(2);
+    remaining.reserve(2);
     for (const auto& candidate : final_spans) {
-        std::vector<HighlightSpan> fragments{candidate};
+        fragments.clear();
+        fragments.push_back(candidate);
         for (const auto& accepted : resolved_spans) {
             if (fragments.empty()) break;
-            std::vector<HighlightSpan> remaining;
-            remaining.reserve(fragments.size() + 1);
+            remaining.clear();
+            if (remaining.capacity() < fragments.size() + 1)
+                remaining.reserve(fragments.size() + 1);
             for (const auto& fragment : fragments) {
                 if (fragment.end_byte <= accepted.start_byte ||
                     fragment.start_byte >= accepted.end_byte) {
@@ -1865,7 +1875,7 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                     remaining.push_back(right);
                 }
             }
-            fragments = std::move(remaining);
+            fragments.swap(remaining);
         }
         resolved_spans.insert(
             resolved_spans.end(), fragments.begin(), fragments.end());
@@ -1885,11 +1895,13 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                 return a.allow_overlap < b.allow_overlap;
             return a.flags < b.flags;
         });
-    std::vector<HighlightSpan> merged_spans;
-    merged_spans.reserve(resolved_spans.size());
-    for (const auto& span : resolved_spans) {
-        if (!merged_spans.empty()) {
-            auto& previous = merged_spans.back();
+    // Merge in place after sorting. A second full-sized vector is unnecessary:
+    // write_index never advances beyond read_index, so unread entries stay intact.
+    size_t write_index = 0;
+    for (size_t read_index = 0; read_index < resolved_spans.size(); ++read_index) {
+        const HighlightSpan span = resolved_spans[read_index];
+        if (write_index != 0) {
+            auto& previous = resolved_spans[write_index - 1];
             const bool same_semantics =
                 previous.end_byte == span.start_byte &&
                 previous.style_id == span.style_id &&
@@ -1903,9 +1915,11 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                 continue;
             }
         }
-        merged_spans.push_back(span);
+        if (write_index != read_index) resolved_spans[write_index] = span;
+        ++write_index;
     }
-    final_spans = std::move(merged_spans);
+    resolved_spans.resize(write_index);
+    final_spans = std::move(resolved_spans);
 
     std::stable_sort(final_spans.begin(), final_spans.end(), [](const HighlightSpan& a, const HighlightSpan& b) {
         if (a.start_byte != b.start_byte) return a.start_byte < b.start_byte;
