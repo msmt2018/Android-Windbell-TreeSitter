@@ -192,14 +192,14 @@ class TshRegexWindowLease private constructor(
                     )
                 }
                 if (actualLength > Int.MAX_VALUE.toLong() ||
-                    actualLength > (Long.MAX_VALUE - FIXED_ESTIMATE_BYTES) / 4L) {
+                    actualLength > (Long.MAX_VALUE - FIXED_ESTIMATE_BYTES) / 6L) {
                     return failure("TSH-REGEX-WINDOW-009", "Regex window size exceeds supported capacity")
                 }
 
                 if (memoryBudget != null) {
                     when (val reserved = memoryBudget.reserve(
                         TshMemoryCategory.REGEX_WINDOW,
-                        actualLength * 4L + FIXED_ESTIMATE_BYTES,
+                        actualLength * 6L + FIXED_ESTIMATE_BYTES,
                         "regex-window:" + snapshot.documentId + ":" + snapshot.version + ":" + coreStartUtf16
                     )) {
                         is TshResult.Success -> reservation = reserved.value
