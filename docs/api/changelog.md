@@ -7,6 +7,7 @@
 
 
 ### Added
+- editor 模块新增 `TshRenderPlanSyntaxHighlighter`，实现 TSH UTF-16 RenderPlan → EditorView `SyntaxHighlighter`/`LineStyler` → `StyledTextPainter` 的实际 Span 数据桥接；使用有界行区间查询索引、零文本复制的只读 `Spanned` 视图和文档版本门禁；将当前绘制器尚不支持的 font family/size/strike-through 明确报告为 warning。源码已提交，仍待 CI 与真实设备绘制验证。
 - editor 模块新增 TshPieceTreeDocument/TshPieceTreeTextAccessProvider，直接适配仓库现有 PieceTreeTextBuffer/PieceTreeSnapshot；按 UTF-16 范围读取，不调用全文 toString；使用不可变快照持有原始 chunk 引用并保留旧版本读取能力；新增 PieceTree 适配测试源码，editor 模块接入 android-tree-sitter API 依赖。
 - TextAccessProvider 默认 Snapshot acquisition 增加 documentId/version/length 校验；Provider snapshot 获取异常与 LinkageError 转为结构化诊断，避免异常穿透绑定层；新增非法 Snapshot 与 final release failure 测试源码。
 - 新增可独立关闭的 TshTextSnapshotLease.retain() 与 TshSharedTextSnapshotLease 引用计数实现；默认不可变 Snapshot Lease 可续租，旧自定义 Lease 未实现续租时返回明确诊断；最后一个 Lease 释放时只执行一次 host snapshot release callback，并保留释放诊断。
