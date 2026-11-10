@@ -148,7 +148,7 @@ struct NativeQueryProgram {
     // independent style IDs during compilation.
     std::unordered_map<std::string, std::string> capture_bindings;
     std::unordered_map<uint32_t, uint16_t> capture_style_ids;
-    struct PredicateRegex { uint32_t pattern_index = 0; uint32_t predicate_index = 0; uint32_t capture_id = 0; regex_t* regex = nullptr; bool negate = false; };
+    struct PredicateRegex { uint32_t pattern_index = 0; uint32_t predicate_index = 0; uint32_t capture_id = 0; regex_t* regex = nullptr; bool negate = false; RegexExecutionCapability execution_capability = RegexExecutionCapability::DOCUMENT_CONTEXT_REQUIRED; uint64_t maximum_match_bytes = 0; };
     std::vector<PredicateRegex> predicate_regexes;
     // Parsed once at grammar compilation; the hot match loop must not rebuild
     // predicate-step vectors for every match in large documents.
