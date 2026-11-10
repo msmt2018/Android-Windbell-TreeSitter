@@ -40,6 +40,18 @@ Handle table 保存 kind、generation、owner runtime、refcount/lease 和 close
 - 大结果采用可分块读取或直接 buffer 协议，必须带 schema version、element width、count 和 offset unit。
 - JNI local/global reference 生命周期明确；禁止无界 global ref 泄漏。
 
+## 4.1 当前 bounded TSInput JNI bridge
+
+当前生效的 Android binding 位于 `android-tree-sitter/src/main/cpp/ts_parser.cc`，不是仓库中未纳入根 Gradle settings 的旧 `treesitter/` 目录。
+
+- `TSParser.parseInput()` 使用 Java `TSInput.read(byteOffset, row, column, destination)`，编码固定为 UTF-16LE；不创建全文 String 或全文 byte array。
+- 每次 parse 只创建一个可复用的 Java `byte[]`。JNI 在一次 read 回调返回后保留当前 `GetByteArrayElements` 指针，直到下一次 read 回调或 parse 结束，再以 `JNI_ABORT` 释放。
+- 回调必须返回 0..destination.length 内的偶数 byte count；奇数 byte offset、超出 Java signed point 范围、负数/超容量/奇数长度均拒绝。
+- Parser Owner 在 Native parse 前对可复用 Java byte[] 和可能的 JNI copy 预留整次 parse 的输入预算；每次 provider 返回的 UTF-16 临时 chunk 另行按回调生命周期预留。
+- Java read/progress callback 异常必须让 parse 停止；若 Native 已产生部分 Tree，JNI 在异常返回 Java 前删除该 Tree，避免把半成品发布给调用方。
+- `GetByteArrayElements` 失败且 JNI 没有 pending exception 时显式抛出 `OutOfMemoryError`，不得把内存分配失败误判为 EOF。
+- Tree-sitter parser/tree 内部 allocator 的实际占用仍不由这组输入缓冲区 reservation 覆盖；Native Tree 只能使用宿主估算器进行 admission accounting。
+
 ## 5. 注解与生成同步
 
 公开 JNI API、native method declaration、JNI registration table、C header、Kotlin external declaration 必须来自同一 manifest 或可校验生成流程。CI 检查：
