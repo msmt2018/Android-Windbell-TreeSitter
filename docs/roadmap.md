@@ -42,10 +42,12 @@
 - [x] Chunk read 不允许切开 UTF-16 surrogate pair，读取关闭的 Snapshot Lease 会失败。
 - [x] 坐标转换拒绝不成对 UTF-16 surrogate；UTF-8 byte 累积使用 Long；非 String CharSequence 明确拒绝隐式 flatten/toString 复制。
 - [x] 项目 editor 模块新增真实 PieceTreeTextBuffer → PieceTreeSnapshot → TSH Snapshot Provider；不可变 PieceTreeSnapshot 保留原始 chunk 引用并复制活动 change buffer 有效文本，Lease 可独立持有旧版本（SOURCE_PARTIAL）。
-- [ ] 真实 EditorDocument snapshotFactory 与编辑写锁/串行化机制尚未接线；其他可变 Piece Tree/Rope 仍需 pin persistent root/unpin。
+- [x] EditorView Binding 在编辑线程的 before/after transaction 边界创建 PieceTreeSnapshot，并通过 EditorDocument 替换事件在同一 documentId 下自动触发 Session.resync（SOURCE_PARTIAL；尚未完成并发/设备验证）。
+- [ ] 其他可变 Piece Tree/Rope 仍需由宿主提供读写互斥或 pin persistent root/unpin。
 - [ ] Piece Tree/Rope 索引化 UTF-8/UTF-16/Code Point/Grapheme 转换尚未实现。
 - [ ] Grapheme 目前使用运行时 BreakIterator，不宣称完整 UAX #29。
-- [ ] Text Provider 的实际线程调度、EditorDocument 变更事件与销毁事件尚未连接真实宿主。
+- [x] 项目 PieceTree Provider 的 change/disposal subscription 已由 EditorDocument edit callback、Binding.publishChange 与 Binding.close 接线；Buffer replacement 现通过独立生命周期事件通知 EditorView observers（SOURCE_PARTIAL）。
+- [ ] 文档永久关闭自动 dispose、文件身份切换自动关闭旧 Session/重新 attach，以及真实线程竞态验证尚未完成。
 
 ### DSL / Schema / Runtime Consumer
 
@@ -80,7 +82,8 @@
 - [x] 项目 PieceTreeTextBuffer 的 Snapshot/Chunk Provider 源码与测试源码（SOURCE_PARTIAL）。
 - [x] 新增 `TshPieceTreeEditorBinding`：在 EditorView 批量编辑前后固定 PieceTree Snapshot Lease，将 AppliedChange 转成不物化替换文本的元数据型 TshTextChange；EOL normalized 时复用编辑器行列坐标避免每次全文件扫描，非 normalized 时回退分块扫描；Provider 增加 Change/Disposal subscription capability 与事件；源码及转换测试已提交（SOURCE_PARTIAL）。
 - [x] 新增 `TshPieceTreeIncrementalSession`：每文档单线程串行化初始 Parse、增量 Edit/Parse、pending parse retry、full-parse fallback 与旧树回收；pending 工作 coalesce 到最多一个批次/快照，避免快照队列无界增长；Session 接管并 finally 释放快照 Lease（SOURCE_PARTIAL，未运行测试）。
-- [ ] EditorView buffer replacement/文件身份变化自动重建 Binding、宿主永久关闭自动触发 dispose，以及端到端 Native parse integration test。
+- [x] 同一 EditorView 的 backing Buffer replacement 通过 EditorDocument.onBufferReplaced → EditorView observer → TshPieceTreeEditorBinding → Session.resync 自动重新解析（SOURCE_PARTIAL）。
+- [ ] 文件身份变化自动重建 Binding、宿主永久关闭自动 dispose，以及端到端 Native parse integration test。
 - [ ] 旧宿主所有 Tree/Language/Parser owner 尚未全部迁移到统一 Resource Registry。
 
 ### 独立 Regex / Oniguruma
@@ -132,8 +135,8 @@
 
 ## 仍需完成的缺陷与绑定项
 
-1. 完成 TshPieceTreeEditorBinding 的宿主生命周期接线：自动处理 EditorView buffer replacement/文件身份变化和永久关闭；补齐 UTF-8/UTF-16/CodePoint 索引 Provider。
-2. 为 EditorView Binding/IncrementalSession 补充真实 EditorDocument 批量编辑/撤销/重做 Native parse integration test、快速连续输入、初次 parse 竞态、buffer replacement/resync 和关闭竞态验证。
+1. 完成剩余宿主生命周期接线：文件身份变化时自动关闭旧 Session 并重新 attach，文档永久关闭时自动 dispose；补齐 UTF-8/UTF-16/CodePoint 索引 Provider。
+2. 为 EditorView Binding/IncrementalSession 补充真实批量编辑/撤销/重做 Native parse integration test、快速连续输入、初次 parse 竞态、自动 buffer replacement/resync 和关闭竞态验证。
 3. 实现 Regex WindowLease 和跨窗口正确性语义；无界模式必须有明确回退/拒绝策略。
 4. 实现 ATS 前端并 Lower 到唯一 Tree-sitter Query 执行管线。
 5. 将 Tree-sitter/ATS 与 Regex 输出真正适配到统一 TshMatch。
