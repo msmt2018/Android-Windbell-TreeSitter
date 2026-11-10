@@ -61,6 +61,15 @@ class PieceTreeSnapshot internal constructor(
     private val sourceStarts: IntArray,
     // document offset where each piece starts, plus the document length as the last element
     private val pieceStarts: IntArray,
+    /** Immutable line-start indexes from each backing buffer; shared across pieces using it. */
+    private val pieceLineStarts: Array<IntList>,
+    /** Source line and column at each piece start. */
+    private val pieceStartLineIndices: IntArray,
+    private val pieceStartColumns: IntArray,
+    /** Tree-sitter row prefix before each piece. */
+    private val pieceLineFeedPrefixes: IntArray,
+    /** False when the host cannot guarantee LF-only Tree-sitter row semantics. */
+    val supportsTreeSitterLineCoordinates: Boolean,
     /** [PieceTreeTextBuffer.getVersionId] at the time the snapshot was created. */
     val versionId: Int,
     /** Number of lines of the document, at least 1. */
