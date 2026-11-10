@@ -23,7 +23,7 @@
 
 package com.zerostudio.idea.piecetable
 
-import com.zerostudio.idea.piecetable.common.IntList
+import com.zerostudio.idea.piecetable.common.IntListSnapshot
 
 /**
  * The content of a document at one version, readable from any thread while the buffer keeps
@@ -31,8 +31,9 @@ import com.zerostudio.idea.piecetable.common.IntList
  *
  * Created with [PieceTreeTextBuffer.createSnapshot]. Creating one is a read of the buffer (same
  * rules as any other read: not at the same time as an edit of that buffer) and costs
- * O(number of pieces + typed text length) plus a copy of the typed text that is still in the document
- * and its line-start index. After that
+ * O(number of pieces + typed text length) plus a copy of the typed text that is still in the document.
+ * Line-start metadata uses immutable copy-on-write views, so snapshot creation does not duplicate
+ * the line-start arrays. After that
  * the snapshot never touches the buffer again: any number of threads may read it at any time,
  * also while the buffer is being edited, compacted or switched to another EOL, without a lock.
  *
@@ -40,9 +41,10 @@ import com.zerostudio.idea.piecetable.common.IntList
  * created, to (text, start offset, length). Pieces of the original chunks (the file as loaded,
  * text inserted in 64K+ blocks, the chunks compact() / setEOL() create) point at those chunks
  * directly, because a chunk is never written once the tree holds it. Pieces of the change
- * buffer, which keeps growing while the user types, were copied. Nothing is looked up through
- * the tree, its buffer list or its line starts later on, so no later edit can change what the
- * snapshot reads.
+ * buffer, which keeps growing while the user types, are copied. Nothing is looked up through the
+ * live tree or buffer list later on. Line-start metadata is retained through immutable
+ * copy-on-write views: a later mutation detaches the live IntList and leaves this snapshot's view
+ * unchanged.
  *
  * Memory: the snapshot keeps the original chunks it points at alive, also after compact() or
  * setEOL() replaced them in the buffer. Drop snapshots once they are processed; usually one or
