@@ -18,18 +18,26 @@ struct OnigRegionDeleter {
     }
 };
 using ScopedOnigRegion = std::unique_ptr<OnigRegion, OnigRegionDeleter>;
+
+void freeRegexRule(CompiledRegexRule& rule) {
+    if (rule.onig_start) {
+        onig_free(rule.onig_start);
+        rule.onig_start = nullptr;
+    }
+    if (rule.onig_end) {
+        onig_free(rule.onig_end);
+        rule.onig_end = nullptr;
+    }
+    for (auto& nested : rule.nested_rules) {
+        freeRegexRule(nested);
+    }
+    rule.nested_rules.clear();
+}
 }
 
 TshGrammar::~TshGrammar() {
     for (auto& rule : regex_rules) {
-        if (rule.onig_start) {
-            onig_free(rule.onig_start);
-            rule.onig_start = nullptr;
-        }
-        if (rule.onig_end) {
-            onig_free(rule.onig_end);
-            rule.onig_end = nullptr;
-        }
+        freeRegexRule(rule);
     }
     if (dynamic_ts_query) {
         ts_query_delete(dynamic_ts_query);
