@@ -632,8 +632,8 @@ class TshSyntaxHighlighter(
                 val offset = index * 6
                 val packed = flat[offset + 2]
                 spans += WindbellTshEngine.HighlightSpan(
-                    startByte = Integer.toUnsignedLong(flat[offset]),
-                    endByte = Integer.toUnsignedLong(flat[offset + 1]),
+                    startByte = flat[offset],
+                    endByte = flat[offset + 1],
                     styleId = packed and 0xFFFF,
                     fontFlags = (packed ushr 16) and 0xFFFF,
                     priority = flat[offset + 3],
