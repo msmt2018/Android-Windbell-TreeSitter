@@ -36,12 +36,20 @@ class TshRegexWindowSequence private constructor(
         if (nextCoreStartUtf16 >= documentLengthUtf16) {
             return TshResult.Success(null)
         }
-        val snapshot = snapshotLease.snapshot
+        val snapshot = try {
+            snapshotLease.snapshot
+        } catch (error: Exception) {
+            return failure("TSH-REGEX-SEQUENCE-007", "Cannot access pinned Regex source snapshot: ${error.message}", error)
+        }
         var coreEnd = minOf(
             documentLengthUtf16,
             safeAdd(nextCoreStartUtf16, constraints.coreWindowUtf16.toLong())
         )
-        if (splitsSurrogate(snapshot, coreEnd)) coreEnd--
+        try {
+            if (splitsSurrogate(snapshot, coreEnd)) coreEnd--
+        } catch (error: Exception) {
+            return failure("TSH-REGEX-SEQUENCE-007", "Cannot inspect Regex core boundary: ${error.message}", error)
+        }
         if (coreEnd <= nextCoreStartUtf16) {
             return failure(
                 "TSH-REGEX-SEQUENCE-002",
@@ -91,6 +99,7 @@ class TshRegexWindowSequence private constructor(
                 is TshResult.Success -> result.value
                 is TshResult.Failure -> return TshResult.Failure(result.diagnostics)
             }
+            var transferred = false
             try {
                 if (retained.isClosed) return failure(
                     "TSH-REGEX-SEQUENCE-004", "Snapshot Lease retention returned a closed lease"
@@ -102,21 +111,24 @@ class TshRegexWindowSequence private constructor(
                         "Snapshot identity, version, or length is invalid"
                     )
                 }
-                return TshResult.Success(TshRegexWindowSequence(
+                val sequence = TshRegexWindowSequence(
                     retained,
                     constraints,
                     memoryBudget,
                     snapshot.documentId,
                     snapshot.version,
                     snapshot.lengthUtf16
-                ))
+                )
+                transferred = true
+                return TshResult.Success(sequence)
             } catch (error: Exception) {
-                retained.close()
                 return failure(
                     "TSH-REGEX-SEQUENCE-006",
                     "Cannot open Regex window sequence: ${error.message}",
                     error
                 )
+            } finally {
+                if (!transferred) retained.close()
             }
         }
 
