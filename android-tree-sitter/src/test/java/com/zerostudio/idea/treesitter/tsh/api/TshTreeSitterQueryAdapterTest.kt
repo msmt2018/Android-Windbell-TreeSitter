@@ -132,7 +132,7 @@ class TshTreeSitterQueryAdapterTest {
     }
 
     @Test fun predicateScannerHandlesEscapedQuotesAndBackslashes() {
-        val source = """(#custom? @name "escaped \\" #still-in-string") ; #ignored?"""
+        val source = """(#custom? @name "escaped \" #still-in-string") ; #ignored?"""
         assertEquals(setOf("custom?"), extractTreeSitterPredicateNames(source))
     }
 
