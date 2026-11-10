@@ -22,6 +22,7 @@
 #include <new>
 #include <limits>
 #include <memory>
+#include <stdexcept>
 
 #include "utf16str/UTF16String.h"
 #include "utils/ts_obj_utils.h"
@@ -234,6 +235,9 @@ TSParser_setIncludedRanges(
   std::vector<TSRange> native_ranges;
   try {
     native_ranges.resize(static_cast<size_t>(count));
+  } catch (const std::length_error &) {
+    throw_illegal_args(env, "Included range array exceeds native container limits");
+    return JNI_FALSE;
   } catch (const std::bad_alloc &) {
     throw_exception(env, "java/lang/OutOfMemoryError",
                     "Unable to allocate Tree-sitter included ranges");
