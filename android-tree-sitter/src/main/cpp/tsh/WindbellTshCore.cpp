@@ -1019,9 +1019,12 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                     }
                 }
             } else {
-                // A stale checkpoint set cannot be mixed with the current
-                // source version. Drop it before producing replacement entries.
-                regex_state_checkpoints->clear();
+                // Keep stale checkpoints as convergence candidates while
+                // rescanning from the document start. save_regex_state_checkpoint()
+                // will promote the unchanged suffix only after it reaches an
+                // identical byte offset with an identical state stack. Clearing
+                // this set here would make that convergence path unreachable
+                // whenever the edit precedes the first reusable checkpoint.
             }
         }
         auto save_regex_state_checkpoint = [&]() {
