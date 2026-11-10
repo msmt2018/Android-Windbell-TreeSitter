@@ -985,6 +985,53 @@ class WindbellTshLinkageTest {
     }
 
     @Test
+    fun testNativeAnyEqualityMissingCaptureUsesPredicatePolarity() {
+        val engine = WindbellTshEngine.instance
+        val language = TSLanguageJava.getInstance()
+        val source = """
+            tsh 2 {
+                language { id: "java-native-missing-eq-capture" name: "Java Missing Equality Capture" extensions: [".jmec"] }
+                styles {
+                    acceptedMissing { scope: "entity.name.function.any-not-eq-missing" }
+                    rejectedMissing { scope: "entity.name.function.any-eq-missing" }
+                }
+                treeSitter {
+                    queries: [
+                        {
+                            id: "any-not-eq-missing-capture"
+                            priority: 60
+                            source: `[(class_declaration name: (identifier) @target) (method_declaration name: (identifier) @acceptedMissing)] (#any-not-eq? @target "Demo")`
+                        },
+                        {
+                            id: "any-eq-missing-capture"
+                            priority: 61
+                            source: `[(class_declaration name: (identifier) @target) (method_declaration name: (identifier) @rejectedMissing)] (#any-eq? @target "Demo")`
+                        }
+                    ]
+                }
+            }
+        """.trimIndent()
+
+        assertTrue(engine.loadTshSource("java-native-missing-eq-capture", source, language))
+        val parser = TSParser.create().apply { setLanguage(language) }
+        val code = "class Demo { void run() {} }"
+        val tree = parser.parseString(code)
+        val spans = engine.computeHighlights(tree, code, "java-native-missing-eq-capture")
+        val catalog = engine.getStyleCatalog("java-native-missing-eq-capture")
+        val acceptedId = catalog.first { it.name == "acceptedMissing" }.styleId
+        val rejectedId = catalog.first { it.name == "rejectedMissing" }.styleId
+        val runOffset = code.indexOf("run") * 2
+
+        // The method alternative has no @target capture. The original
+        // EqString semantics accept any-not-eq? and reject any-eq? here.
+        assertTrue(spans.any { it.styleId == acceptedId && it.startByte == runOffset })
+        assertFalse(spans.any { it.styleId == rejectedId && it.startByte == runOffset })
+
+        tree?.close()
+        parser.close()
+    }
+
+    @Test
     fun testAstSelectorNodeFlagsAreExecuted() {
         val engine = WindbellTshEngine.instance
         val language = TSLanguageJava.getInstance()
