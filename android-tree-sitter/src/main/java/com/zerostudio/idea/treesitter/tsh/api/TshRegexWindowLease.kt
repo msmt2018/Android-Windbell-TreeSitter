@@ -19,8 +19,11 @@ data class TshRegexWindowConstraints(
         require(maxLookaheadUtf16 >= 0)
         val matchLength = maxMatchLengthUtf16
         if (matchLength != null) {
+            // Include a maximum-match-length left context as well as the right context.
+            // This lets each window reproduce the preceding non-overlapping search state.
+            val matchContext = matchLength.toLong() - 1L
             val required = coreWindowUtf16.toLong() +
-                maxLookbehindUtf16.toLong() + matchLength.toLong() +
+                matchContext * 2L + maxLookbehindUtf16.toLong() +
                 maxLookaheadUtf16.toLong()
             require(required <= maxWindowUtf16.toLong()) {
                 "Configured core and Regex context exceed maxWindowUtf16"
@@ -169,7 +172,9 @@ class TshRegexWindowLease private constructor(
                     )
                 }
 
-                var windowStart = maxOf(0L, coreStartUtf16 - constraints.maxLookbehindUtf16.toLong())
+                val leftContext = maxMatchLength.toLong() - 1L +
+                    constraints.maxLookbehindUtf16.toLong()
+                var windowStart = maxOf(0L, coreStartUtf16 - leftContext)
                 var windowEnd = minOf(
                     length,
                     safeAdd(coreEnd, maxMatchLength.toLong() - 1L + constraints.maxLookaheadUtf16.toLong())
