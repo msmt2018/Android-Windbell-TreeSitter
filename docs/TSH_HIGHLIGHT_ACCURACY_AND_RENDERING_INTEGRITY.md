@@ -928,3 +928,311 @@ Coverage ledger 的区间必须采用统一半开区间，并记录 document/tre
 - Regex/Oniguruma 窗口必须有稳定连续 BufferLease；
 - 真实首绘与滚动 Draw 必须通过 Renderer receipt 和设备证据确认。
 
+
+---
+
+## 22. Android Span Renderer：对象复用、范围更新与宿主污染防护
+
+本节补充 Android Spannable / Editable / TextView / 自定义 Editor 的具体约束。Span 是宿主文本模型中的区间对象，不等同于 RenderPlan，也不等同于像素；Span 的存在、范围更新、样式更新、布局失效和最终绘制必须分别计量。
+
+### 22.1 不得把 DEFERRED 等同于删除或隐藏 Span
+
+- DEFERRED 表示该区间的高亮工作因调度/预算原因尚未完成，不表示必须删除已经正确应用的 Span。
+- 已经验证仍属于当前 document/style generation 的 Span，可以在滚出 viewport 后保留为可复用结果；是否保留由有界缓存/内存策略决定。
+- 视口外尚未生成的指令不得提前创建无必要的 Span，也不得把“Span 不在视口”当作结果已完成。
+- 只有在结果过期、样式失效、文档关闭、目标范围被安全替换或资源回收策略明确要求时，才清理 TSH 自己拥有的 Span。
+- 不得通过把 Span 改成透明色、空样式或其他伪样式来冒充 DEFERRED；这会混淆语义并可能污染宿主样式。
+
+### 22.2 Span Recycler 是可选优化，不是正确性前提
+
+不能把“必须实现 Span 缓存池”作为所有 Android Renderer 的硬性要求。Span 是否适合复用取决于宿主实现、Span 类型、文本对象生命周期、样式可变性和范围更新成本。
+
+允许采用以下策略，但必须通过目标 Editor 的实际性能测试选择：
+
+1. **稳定 Span 对象复用**：在同一个 Spannable 生命周期内复用由 TSH 独占的 Span 实例；更新范围时使用宿主支持的范围更新机制，并验证 flags、优先级和重叠语义。
+2. **局部 remove/add**：仅替换目标脏区间内由 TSH 所有的 Span；不得清空整份 Editable 或第三方 Span。
+3. **按行/块批量管理**：把 Span 索引与行/块或区间索引绑定，避免每个 Capture 都触发独立的全局扫描。
+4. **Canvas/自定义绘制**：当 Spannable 更新导致的布局/失效成本不可接受时，可以使用已有 Renderer 抽象支持的自定义绘制后端；不得因此引入第三条匹配管线。
+
+特别注意：
+- 同一个 Span 对象被重新设置到新范围时，必须确认宿主 API 对旧范围的迁移行为、Span flags、重叠顺序和回调行为符合预期；不能假定所有 Span 类型都能无副作用地“改起止位置”。
+- 共享可变 Span 实例不得同时挂载到多个独立文本容器，除非宿主明确保证其语义安全。
+- 若 Span 的样式由可变字段提供，必须在 UI 线程或受控同步策略下更新，并确保后续 draw 能观察到一致快照。
+- Span 池必须有容量上限、所有权标记、generation、借出/归还状态；禁止因复用而把旧文档的样式或范围带入新文档。
+- 不得为了减少 add/remove 次数而保留无界数量的离屏 Span；对象池和结果缓存都必须纳入统一内存预算。
+
+### 22.3 Span 所有权与索引契约
+
+每个 TSH Span 至少具有可追踪的内部身份：
+- ownerId / rendererId；
+- documentId；
+- documentRevision；
+- style/themeRevision；
+- rendererGeneration；
+- semantic instruction identity；
+- 当前绝对 UTF-16 range；
+- 生命周期状态（ACTIVE、DETACHED、REUSABLE、RETIRED）。
+
+删除或更新前必须验证 ownerId 和 generation。不得仅凭 Span 的 class 类型判断其属于 TSH，因为宿主或其他插件可能创建相同类型的对象。
+
+Renderer 应维护可增量更新的区间索引，支持：
+- 按脏区间定位需要替换的 TSH Span；
+- 按 viewport 查询当前有效 Span；
+- 检测重叠、嵌套和同范围多属性；
+- 统计新增、更新、复用、移除、保留和失败数量；
+- 在失败时恢复上一代仍然有效的显示状态。
+
+### 22.4 Span 更新与布局失效必须分别观测
+
+不能笼统认为每次 add/remove Span 都必然触发完整 requestLayout，也不能反过来假定 Span 更新没有布局成本。具体行为受 Span 类型、宿主控件、TextView/Editor 实现和更新 API 影响。
+
+必须在目标宿主上实测并记录：
+- addSpan / removeSpan / range update 次数；
+- 涉及的文本长度、行数和区间数量；
+- requestLayout、invalidate、文本布局重建次数；
+- 主线程最长耗时、帧时间和掉帧；
+- Span 对象新增/复用/回收数量；
+- 滚动前后离屏 Span 保留量；
+- 第三方 Span 是否被意外删除或改变。
+
+不得仅凭 JVM 单元测试或 Span 数量下降宣称 Renderer 性能已改善。
+
+---
+
+## 23. DocumentTaskIdentity：跨 Native、Kotlin 与 Renderer 的提交事务
+
+第 8.4 和 19.4 节已经要求旧版本结果禁止回流。本节将其细化为可实现的事务身份和提交屏障。单独比较 documentRevision 不足以覆盖 Query、Grammar、Theme、Viewport、Layout 和 Renderer 变化。
+
+### 23.1 任务身份必须是不可变快照
+
+每个异步任务创建时捕获不可变的 DocumentTaskIdentity，至少包含：
+
+| 字段 | 作用 |
+|---|---|
+| documentId | 区分文档实例，防止关闭后重新打开同一路径的 ABA 问题 |
+| documentRevision | 文本内容版本 |
+| editSequence | 文本编辑序列/事务序号 |
+| textSnapshotId | TextSource/Piece Tree 快照身份 |
+| parserGeneration | Parser 生命周期/状态世代 |
+| treeRevision | 任务读取的 Tree 版本 |
+| grammarFingerprint | 语法及 ABI 身份 |
+| queryRevision | Query 编译配置版本 |
+| regexRevision | Regex 规则版本 |
+| tshConfigRevision | TSH 配置版本 |
+| themeRevision | Theme/Palette/Style 版本 |
+| viewportGeneration | 视口请求世代 |
+| layoutGeneration | 行布局/坐标映射世代 |
+| rendererGeneration | Renderer attach/detach/重建世代 |
+| taskGeneration / taskId | 调度任务身份及取消/替换世代 |
+
+字段可以由项目统一 API 的既有类型承载，但语义不得缺失。若某阶段不依赖某字段，应明确声明其依赖集合；不能用默认值或省略字段掩盖依赖关系。
+
+### 23.2 不同阶段使用不同的有效性判定
+
+- **Parse/Query 结果**：至少校验 documentId、documentRevision/textSnapshotId、parser/tree generation、grammarFingerprint、queryRevision；Regex 结果还必须校验 regexRevision 和窗口/BufferLease 身份。
+- **Style 结果**：除 Match 身份外，还要校验 tshConfigRevision、themeRevision。
+- **RenderPlan**：还要校验 viewportGeneration、layoutGeneration 和 rendererGeneration。
+- **Apply**：在真正修改宿主对象前再次校验本次提交所需的全部 generation。
+- **Draw/Receipt**：确认绘制的对象仍属于当前 renderer/layout/document generation；迟到回执只能记为 STALE，不得回写当前覆盖账本为 DRAWN。
+
+允许复用不受变化维度影响的中间结果。例如仅 Theme 变化时，可以复用仍有效的 MatchSet，但必须重新解析 Style 并生成新 RenderPlan；仅 viewport 变化时，可以复用文档语义结果，但必须重新裁剪并验证布局/Renderer 身份。
+
+### 23.3 原子提交屏障：校验与写入必须不可分割
+
+“在回调中比较 revision，之后再 apply”仍存在检查与写入之间的竞态窗口。正确契约是：
+
+1. 工作线程只生成不可变结果，不直接修改 UI/Span/Canvas 状态；
+2. 结果携带完整 DocumentTaskIdentity 和 completeness；
+3. 提交任务切换到宿主规定的 UI/render dispatcher；
+4. 在同一串行提交域内读取当前 identity；
+5. 校验结果所依赖的所有 generation；
+6. 在不允许其他提交插入的临界提交区间内执行局部 staging/commit；
+7. 提交后生成 APPLIED receipt；实际绘制确认后才生成 DRAWN；
+8. 若校验失败，拒绝提交并记录 STALE、过期维度和丢弃数量。
+
+如果 UI dispatcher 本身保证单线程串行，通常应优先使用该串行化保证，而不是再引入一把覆盖整个渲染过程的全局锁。若当前 identity 会被其他线程修改，则用原子不可变快照/原子引用发布；不能只对 revision 单字段做 Atomic 比较。
+
+### 23.4 Generation 规则与 ABA 防护
+
+- generation 必须单调递增或使用不可复用的唯一身份；文档关闭后重新打开，即使路径相同也必须是新的 documentId。
+- revision 回退、计数器重置、对象池复用不得使旧任务重新变成有效。
+- 取消任务只是节省资源，不是正确性屏障；取消可能晚于任务完成或回调入队。
+- 所有回调、分页、Receipt、缓存项都必须携带相应 identity。
+- 批次提交必须校验 page sequence 和 task identity；乱序批次不得覆盖更新批次。
+- 不得把 currentRevision > plan.revision 作为唯一判定。revision 相等时，Query/Theme/Renderer/Viewport generation 仍可能已经不同。
+
+### 23.5 可观测诊断
+
+每次拒绝提交至少记录：
+- taskId 与 planId；
+- 结果 identity 与当前 identity；
+- 不匹配字段列表；
+- 已完成阶段；
+- 已产生/已应用/已丢弃指令数量；
+- 是否允许复用其中间结果；
+- stale 原因与取消原因。
+
+验收必须模拟“旧任务最后完成”：连续编辑至少三次、快速滚动、切换主题、切换文件、Renderer detach/attach，并人为延迟第一代任务，使其最后返回。最终屏幕不得回退，旧 Receipt 不得污染新 Ledger。
+
+---
+
+## 24. Tree-sitter Query Range：输出裁剪与完整语法上下文
+
+本节澄清首屏/视口查询的关键语义，避免把 Range-limited Query 误实现成“只解析 viewport 文本”。
+
+### 24.1 必须区分三个范围
+
+1. **Parse/Input Domain**：Parser 实际解析的文档输入域及其语法状态。
+2. **Query Context Domain**：Query 为正确匹配所需的 Tree 上下文，包括祖先、后代、兄弟、前置状态及 Predicate 所需数据。
+3. **Result/Delivery Range**：本次任务希望输出、规范化或提交的文档范围。
+
+三者不是同一个概念。首屏调度通常希望缩小 Result/Delivery Range；这并不自动意味着可以缩小 Parse/Input Domain 或 Query Context Domain。
+
+### 24.2 Range 限制必须明确采用何种语义
+
+- 若在完整、版本一致的 Tree 上执行 Query，并通过 Tree-sitter cursor 的 byte range 限制结果，必须验证具体 Tree-sitter 版本对跨边界节点、包含关系、节点起止点和 captures 的实际匹配规则。
+- Query 的 range filter 不是“把 Tree 截断”，也不等同于只对 viewport 子树执行 Query。
+- 对跨越 viewport 边界的节点/Match，必须定义输出策略：是否返回完整 Capture、仅返回与目标范围相交的 Capture，还是返回完整 Capture 后由 Normalize/Compose 阶段裁剪。不得在不同后端采用不一致策略。
+- Predicate（例如 match/regex 相关 predicate）需要的 Capture 文本必须可读且属于同一 revision；不得因输出范围裁剪而把 Predicate 所需文本截断。
+- 外部 Scanner、Parser 状态、祖先/兄弟约束等依赖必须由有效 Tree/Parser 状态提供；不得用 viewport 文本片段伪造上下文。
+
+### 24.3 首屏解析可用性不得被描述成“Parser 只需解析到 viewport”
+
+Tree-sitter 的常规 Parser 产生的是与输入和语法状态相关联的 Tree；输入回调分块读取不等于 Parser 可以任意跳到文档中间并获得与完整解析等价的语法上下文。
+
+因此：
+- “按需读取”只说明输入存储/读取策略，不证明任意位置都能独立解析；
+- 如果要在完整文件解析尚未完成时交付远端 viewport 结果，必须有经验证的可恢复 Parser 状态、可证明的分区语义或其他明确机制；
+- 不允许仅因 viewport 范围可见，就从该字节偏移开始创建一个独立 Parser 并把结果当作完整文档结果；
+- 若当前实现必须先建立完整 Tree 才能保证语义，则 TTF 优化应从 Query 输出范围、缓存、调度、Style 和 Renderer 开始，不得牺牲语法正确性；
+- 分区解析/局部 Tree 只有在语言边界、状态恢复、跨分区节点、外部 Scanner 和 Query 结果等价均有测试证明后，才能作为独立优化能力启用。
+
+### 24.4 Range Query 的专项验收
+
+必须覆盖：
+- Match 完全位于 viewport 内；
+- Match 从 viewport 外开始、在 viewport 内结束；
+- Match 从 viewport 内开始、在 viewport 外结束；
+- Match 完全包围 viewport；
+- 祖先节点位于 viewport 外、Capture 位于 viewport 内；
+- 兄弟节点/前置语法状态影响 Predicate；
+- 外部 Scanner 状态跨越 viewport；
+- Unicode 多字节边界与 UTF-8 byte range；
+- 同一 Query 在全范围执行后过滤，与 Range-limited 执行的结果等价性对照。
+
+等价性比较必须比较 Pattern/Capture identity、Node 类型、文本切片、绝对 range 和 completeness，而不只是比较最终颜色数量。
+
+---
+
+## 25. Viewport Coverage Ledger：区间状态、背压与收敛
+
+第 18 节定义了覆盖状态，本节补充其数据模型和调度行为。Ledger 是可观测的覆盖事实，不是任务队列本身，也不是“当前屏幕已高亮”的布尔标志。
+
+### 25.1 区间记录模型
+
+每个区间记录至少包含：
+- documentId/documentRevision；
+- 统一坐标单位和半开区间 [start,end)；
+- tree/query/regex/style/theme/layout/renderer generation；
+- viewportGeneration / taskId；
+- coverage state；
+- completeness；
+- created/enqueued/started/ready/applied/drawn 时间；
+- deferred reason、failure reason、retry policy；
+- producer/source provenance；
+- 结果页或缓存引用（若存在）。
+
+区间拆分、合并必须保持身份语义。只有 document revision、依赖的配置 generation、坐标单位和状态兼容的区间才能合并。不同 generation 的区间不得因数值范围相邻而合并成 COMPLETE/DRAWN。
+
+### 25.2 Ledger 与任务队列分离
+
+- Ledger 记录“某个范围当前是什么状态”；
+- Scheduler 记录“哪些工作正在排队/执行、优先级和资源占用”；
+- Cache 记录“哪些语义结果可复用及其依赖身份”；
+- Renderer Receipt 记录“哪些指令实际应用/绘制”。
+
+四者不得用一个集合或一个状态字段混为一谈。一个范围可以有缓存结果但尚未 APPLIED；也可以已经 APPLIED 但尚未 DRAWN；也可以处于 DEFERRED 但缓存中存在可复用 MatchSet。
+
+### 25.3 背压与任务合并
+
+Scheduler 至少要限制：
+- 同一文档同时执行的 Parser 推进任务数量；
+- 同一 Parser/Cursor 的并发访问；
+- 每文档排队的 viewport 任务数；
+- 预取的最大距离、总字节/行数和结果页数；
+- Native/JVM 临时内存预算；
+- Span/RenderInstruction 的待提交数量；
+- 取消任务仍占用的 lease 和 buffer 数量。
+
+当预算达到上限时：
+1. 合并相交或相邻且身份兼容的请求；
+2. 优先当前 viewport，淘汰或降级远端预取；
+3. 取消无消费者且已过期的任务；
+4. 对不能取消但结果仍可复用的工作，允许转为低优先级缓存填充，但禁止提交旧 viewport RenderPlan；
+5. 记录 DEFERRED 的明确原因、重试触发条件和公平性保障。
+
+### 25.4 覆盖收敛与饥饿保护
+
+- 当前 viewport 的缺失范围必须最终进入 DRAWN、明确的 EMPTY（完整执行且确实无匹配）或可诊断的 DEFERRED/PARTIAL/FAILED/STALE；不得永久停留在 QUEUED/PARSING。
+- 连续滚动时，Scheduler 应优先最新可见范围，但必须防止持续滚动导致编辑任务永久饥饿。
+- 编辑持续发生时，应允许短暂合并高频事件，但必须有最大等待时间或公平性策略，防止 viewport 永远不更新。
+- 滚动停止后，当前 viewport 应优先收敛；相邻预取不得抢占当前范围的关键资源。
+- 每次 viewport generation 变化后，旧范围的 DRAWN 事实可以作为历史记录保留，但不能冒充新 viewport generation 的绘制完成。
+
+### 25.5 账本一致性测试
+
+- 同一区间重复请求、相邻请求和交叠请求；
+- 请求乱序完成、分页乱序、任务取消后迟到回调；
+- 文档 revision 变化后旧区间失效；
+- 仅 Theme 变化时 Match 缓存可复用、Style/Render 必须更新；
+- 仅 viewport 变化时语义缓存可复用、旧 RenderPlan 不得直接提交；
+- Renderer detach 后旧 DRAWN 回执不得更新新 Renderer generation；
+- 内存压力下预取降级，当前 viewport 仍有明确结果；
+- 持续滚动和持续编辑下的公平性、队列上限及最终收敛。
+
+---
+
+## 26. 本轮评估意见的采纳边界与实施顺序
+
+外部评估提出的方向总体成立，但落地时采用以下修订口径：
+
+| 评估建议 | 采纳结论 | 本规范中的约束 |
+|---|---|---|
+| 为 Span 实现缓存池/Recycler | 有条件采纳，不作为强制架构前提 | 先测宿主行为；池必须有界、按 owner/generation 管理；稳定 Span 复用、局部更新或 Canvas 后端均可 |
+| 滚出视口时将 Span 标记 DEFERRED 并复用 | 修正 | DEFERRED 是工作覆盖状态；已有效 Span 可保留，不能用隐藏/伪样式代替状态，也不能无界保留 |
+| 把 DocumentTaskIdentity 下沉到 Kotlin 回调层 | 完全采纳并细化 | 全链路不可变身份，Apply 前校验所有依赖 generation |
+| 用 Atomic 世代锁阻止旧结果 | 部分采纳 | 原子快照可发布当前身份；提交必须在串行提交域内完成校验与写入，不能只比较 documentRevision |
+| Query 必须在完整 Tree 上保留上下文 | 完全采纳并澄清 | Parse/Input、Query Context、Result/Delivery 三种范围必须分开 |
+| 首屏优先、后台补全 | 采纳但不得破坏 Parser 语义 | 若尚无完整 Tree 或可证明的恢复状态，不得从 viewport 任意起点独立解析并宣称等价 |
+
+### 26.1 建议落地优先级
+
+**P0：版本与生命周期正确性**
+- 定义并贯通 DocumentTaskIdentity；
+- 固定 TextSource snapshot、Parser/Tree/Query/Theme/Renderer generation；
+- 在 UI/render 提交域实现不可分割的 stale 校验与局部提交；
+- 对迟到回调、取消、close、detach 和 ABA 场景增加测试。
+
+**P1：Renderer 所有权与真实绘制**
+- 审计现有 Span 创建、更新、删除和第三方 Span 共存；
+- 建立 TSH Span owner/index/generation；
+- 量化 add/remove/update、layout、invalidate、frame time；
+- 再决定是否引入 Span Recycler；不预设对象池一定更快；
+- 让 APPLIED 与 DRAWN 的证据来源可区分。
+
+**P2：视口 Ledger 与背压**
+- 建立与 Scheduler/Cache/Receipt 分离的 Coverage Ledger；
+- 统一 UTF-16 viewport 到文档绝对坐标及 Native 坐标转换；
+- 增加任务合并、取消、预取上限、公平性和收敛测试；
+- 当前 viewport 优先，远端预取受预算约束。
+
+**P3：Range Query 与首屏优化**
+- 先建立全范围 Query 与 Range-limited Query 的语义等价测试；
+- 明确跨边界 Match 的输出/裁剪策略；
+- 保证 Query Predicate 和完整 Tree 上下文；
+- 在语义正确前提下优化结果范围、缓存和调度；
+- 以真实 Android 设备的 TTF、TTF-Complete、P95/P99 和峰值内存验收。
+
+### 26.2 实施状态不得由本规范自动推定
+
+本节新增内容仍属于规范与验收要求。除非对应源码、构建、自动化测试和设备证据均已核验，不得将 Span Recycler、事务屏障、Ledger 背压或 Range Query 等标记为已实现。状态继续遵循第 14 节的 SPEC_ONLY、SOURCE_PARTIAL、SOURCE_COMPLETE、BUILD_VERIFIED、TEST_VERIFIED、DEVICE_VERIFIED 分级。
