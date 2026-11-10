@@ -29,6 +29,7 @@ public:
     bool isValid() const noexcept;
     uint64_t sizeBytes() const noexcept override;
     bool read(uint64_t offset, uint32_t maxBytes, TextChunkView *out) const noexcept override;
+    bool contiguousData(const char **data, uint64_t *sizeBytes) const noexcept override;
 
     // Replace [startByte, oldEndByte) with UTF-16LE bytes.
     // O(log(piece-count)) tree work plus inserted bytes, excluding source reads.
