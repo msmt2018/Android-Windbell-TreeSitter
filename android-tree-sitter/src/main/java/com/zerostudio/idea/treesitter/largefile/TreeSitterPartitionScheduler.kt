@@ -142,6 +142,11 @@ class TreeSitterPartitionScheduler(
                 // Roll back staged-but-not-submitted tasks as well as the plan.
                 discardUnsubmitted(tasks)
                 return emptyList()
+            } catch (error: Throwable) {
+                // Indexing/read failures must not strand tasks staged for earlier
+                // partitions. The async entry point reports this to onPlanningFailure.
+                discardUnsubmitted(tasks)
+                throw error
             }
             if (closed.get() || source.version != plan.documentVersion) {
                 discardUnsubmitted(tasks)
