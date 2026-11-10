@@ -60,7 +60,8 @@ editorView.setSyntaxHighlighter(null)
 - foreground / background
 - bold / italic
 - underline
+- strike-through
 
-`fontFamilies`、`fontSize`、`strikeThrough` 暂未由该 Painter 实现。highlighter 会返回 warning，不会把这些属性静默伪装成已绘制。
+`fontFamilies`、`fontSize` 暂未由该 Painter 实现。highlighter 会返回 warning，不会把这些属性静默伪装成已绘制。
 
 本桥接证明的是 TSH RenderPlan 已进入 EditorView 的 Span 绘制路径，不等于真实设备像素验证。仍需在 Android 设备上验证滚动、换行、长行、主题切换、编辑/撤销重做及大文件场景。
