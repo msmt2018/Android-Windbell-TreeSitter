@@ -812,10 +812,11 @@ static TshPredicateResult tshEvaluateNativePredicates(const NativeQueryProgram& 
                 if (any && any_satisfied) break;
                 if (!any && !all_satisfied) break;
             }
-            // The standard predicates quantify over all captures; any-* requires
-            // at least one capture. Empty capture sets therefore hold only for
-            // non-any predicates, consistent with the query-filter fallback.
-            accepted = any ? (has_capture && any_satisfied) : all_satisfied;
+            // Match the original query-filter fallback: a predicate whose
+            // target capture is absent is vacuously true, including any-* forms.
+            // Once captures exist, ordinary forms require all and any-* requires
+            // at least one capture to satisfy the node-level predicate.
+            accepted = !has_capture || (any ? any_satisfied : all_satisfied);
         } else if (op == "match?" || op == "not-match?") {
             const NativeQueryProgram::PredicateRegex* compiled = nullptr;
             for (const auto& candidate : program.predicate_regexes) {
