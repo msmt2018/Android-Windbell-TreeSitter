@@ -119,7 +119,7 @@ class TshMatchApiTest {
     }
 
     @Test
-    fun mergeBoundsNestedCapturePayloadAndPreservesStalePartialSemantics() {
+    fun mergeBoundsNestedCapturePayloadAndStopsBeforeRetainingOversizedMatch() {
         val nested = treeMatch("nested", 0, 4).copy(
             captures = listOf(TshCaptureValue("body", range(0, 4), "x".repeat(4096)))
         )
@@ -143,6 +143,17 @@ class TshMatchApiTest {
         assertTrue(result.diagnostics.size <= 4096)
         assertTrue(result.diagnostics.any { it.code == "TSH-MATCH-007" })
         assertEquals(TshMatchCompleteness.PARTIAL, result.value.completeness)
+    }
+
+
+    @Test
+    fun rejectsConflictingPayloadsThatReuseOneMatchId() {
+        val result = TshMatchMerger.merge(
+            documentId, 4, "tree-r1", "regex-r1", "config-r2",
+            listOf(treeMatch("same-id", 0, 2), treeMatch("same-id", 3, 5))
+        )
+        assertTrue(result is TshResult.Failure)
+        assertTrue(result.diagnostics().any { it.code == "TSH-MATCH-005" })
     }
 
 }
