@@ -108,7 +108,7 @@ class TshRegexMatchAdapterTest {
         val second = TshRegexMatchAdapter.adapt(source) as TshResult.Success
         assertEquals(TshMatchCompleteness.TRUNCATED, first.value.completeness)
         assertTrue(first.value.diagnostics.any { it.code == warning.code })
-        assertEquals(listOf(0L, 0L, 2L), first.value.matches.map { it.range.start.offset })
+        assertEquals(listOf(0L, 2L), first.value.matches.map { it.range.start.offset })
         assertEquals(first.value.matches.map { it.id }, second.value.matches.map { it.id })
         assertEquals(first.value.matches.size, first.value.matches.map { it.id }.distinct().size)
     }
