@@ -650,7 +650,12 @@ static TshPredicateResult tshEvaluateNativePredicates(const NativeQueryProgram& 
         const char* op_text = ts_query_string_value_for_id(query, predicate[0].value_id, &op_length);
         if (!op_text || predicate.size() < 3 ||
             predicate[1].type != TSQueryPredicateStepTypeCapture) return TshPredicateResult::REJECT;
-        std::string op(op_text, op_length);
+        std::string op;
+        try {
+            op.assign(op_text, op_length);
+        } catch (const std::bad_alloc&) {
+            return TshPredicateResult::ERROR;
+        }
         if (!op.empty() && op.front() == '#') op.erase(op.begin());
 
         std::vector<std::vector<UChar>> expected;
