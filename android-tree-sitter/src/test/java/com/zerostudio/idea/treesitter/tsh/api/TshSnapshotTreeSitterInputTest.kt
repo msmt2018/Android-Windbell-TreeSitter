@@ -154,7 +154,7 @@ class TshSnapshotTreeSitterInputTest {
     @Test
     fun reservesReusableStreamingJniBufferForWholeParseLifetime() {
         val budget = TshMemoryBudget(TshMemoryBudgetOptions(4_096, 8_192))
-        val reservation = (TshParserInputMemoryReservations.reserveChunkBuffer(
+        val reservation = (TshParserInputMemoryReservations.reserveStreamingBridge(
             budget, "doc", 3L, 1_024
         ) as TshResult.Success).value!!
 
@@ -167,13 +167,13 @@ class TshSnapshotTreeSitterInputTest {
     @Test
     fun rejectsInvalidOrOverBudgetStreamingJniBufferBeforeNativeAllocation() {
         val budget = TshMemoryBudget(TshMemoryBudgetOptions(1_024, 2_048))
-        val tooLarge = TshParserInputMemoryReservations.reserveChunkBuffer(
+        val tooLarge = TshParserInputMemoryReservations.reserveStreamingBridge(
             budget, "doc", 3L, 1_024
         )
         assertTrue(tooLarge is TshResult.Failure)
         assertEquals(0L, budget.snapshot().reservedBytes)
 
-        val invalid = TshParserInputMemoryReservations.reserveChunkBuffer(
+        val invalid = TshParserInputMemoryReservations.reserveStreamingBridge(
             budget, "doc", 3L, 1_025
         )
         assertTrue(invalid is TshResult.Failure)
