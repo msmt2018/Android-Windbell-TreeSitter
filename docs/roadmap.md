@@ -187,7 +187,9 @@
 - [x] Sparse CoordinateIndex 可选接入 reservation：按 checkpoint 数量预估，在分配 checkpoint 列表前申请，随 Index.close() 释放；估算不等于 JVM heap 精确值。
 - [x] RenderCoordinator 可选接入 RENDER_PLAN reservation：pending 期间持有，终态回执、成功取消、提交失败、无效/过期回执和 coordinator close 时释放。
 - [x] Snapshot-backed Parser 输入回调可选接入 PARSER_INPUT reservation：按请求 chunk 上限预留临时 UTF-16 数据估算，回调结束在 finally 释放；Native destination 与 Tree-sitter 内部 Native 分配不计入此账本。
-- [ ] Native Tree、Regex Window 尚未接入统一 reservation；Tree-sitter 内部 Native 分配不可由此账本精确计量。
+- [ ] Native Tree 尚未接入可证明有效的统一 reservation；Tree-sitter 内部 Native 分配不可由此账本精确计量。
+- [x] 新增 `TshRegexWindowLease`：仅获取有界连续 UTF-16 窗口，要求有限最大匹配长度/lookaround，按实际窗口估算预留 REGEX_WINDOW，随 Lease.close() 释放；拒绝无界 Regex 窗口，不把全文转成 String。
+- [ ] Regex 编译器/Oniguruma 执行器、跨窗口状态/捕获、超长匹配策略与端到端边界测试尚未接入；WindowLease 只是输入资源契约，不代表 Regex 执行已完成。
 - [ ] 本轮新增 JUnit 测试源码待 CI 执行；未声称构建或设备压力测试通过。
 
 
@@ -209,3 +211,14 @@
 - [x] String parse 与 Snapshot streaming parse 的 null-tree 路径区分已接受的 Native cancellation、达到已配置 timeout 的“可能超时”以及其他无树失败。
 - [ ] Tree-sitter Native API 对 timeout/cancel 只返回 null，没有精确 stop-reason；timeout 分类使用实际 parse 耗时与配置阈值推断，诊断明确标注“likely”，不伪称 Native 精确原因。
 - [ ] TSH Owner 的真实并发 parse/cancel、timeout、close 竞态需在 CI/设备验证；当前新增底层 ParserTest 源码尚未通过最新 CI。
+
+
+### 2026-11-10：Regex 有界窗口 Lease（SOURCE_PARTIAL）
+
+- [x] 新增 `TshRegexWindowConstraints` 与 `TshRegexWindowLease`，显式约束 core window、最大连续窗口、最大匹配长度、lookbehind/lookahead。
+- [x] 窗口只读取当前 core 和必要上下文；核心区间决定 match start 的唯一归属，避免相邻窗口重复输出。
+- [x] 拒绝未声明有限最大匹配长度的模式；核心边界不能拆分 surrogate pair，读取窗口边缘自动扩展一个 UTF-16 code unit 以保持完整 code point。
+- [x] 通过 REGEX_WINDOW reservation 预留临时 CharSequence 与 retained String 的双份估算，Reservation 随 Lease.close() 释放；超预算在读取完整窗口前拒绝。
+- [x] 暴露 document length 与窗口是否触及文档首尾，供 Regex Executor 正确处理文档锚点；Executor 仍需在非文档边界禁用窗口伪造的 BOL/EOL 语义。
+- [ ] WindowLease 不执行 Regex、不实现 Oniguruma 状态跨窗延续；使用者必须按 core interval 过滤 match start，并遵守有限 match/lookaround 声明。
+- [ ] 新增测试源码待 CI 验证。
