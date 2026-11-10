@@ -87,7 +87,7 @@ public class TSParser extends TSNativeObject {
 
       final int start = (int) (byteOffset / 2L);
       final int maxChars = maxBytes / 2;
-      int end = Math.min(source.length(), start + maxChars);
+      int end = start + Math.min(maxChars, source.length() - start);
       if (end < source.length() && end > start &&
           Character.isHighSurrogate(source.charAt(end - 1)) &&
           Character.isLowSurrogate(source.charAt(end))) {
@@ -243,8 +243,8 @@ public class TSParser extends TSNativeObject {
    */
   public TSTree parseBytes(byte[] bytes, int offset, int len) {
     if (bytes == null) throw new NullPointerException("bytes");
-    if (offset < 0 || len < 0 || offset > bytes.length || len > bytes.length - offset ||
-        (len & 1) != 0) {
+    if (offset < 0 || len < 0 || (offset & 1) != 0 || (len & 1) != 0 ||
+        offset > bytes.length || len > bytes.length - offset) {
       throw new IllegalArgumentException("UTF-16LE byte range must be even and within the source array");
     }
     throwIfParseNotCancelled();
