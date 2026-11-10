@@ -155,8 +155,8 @@ static void annotateRegexRuleExecution(CompiledRegexRule& rule) {
     rule.execution_capability = bounded ?
         RegexExecutionCapability::BOUNDED_WINDOW :
         RegexExecutionCapability::DOCUMENT_CONTEXT_REQUIRED;
-    rule.maximum_match_bytes = bounded && width <= std::numeric_limits<uint64_t>::max() / sizeof(UChar) ?
-        width * sizeof(UChar) : 0;
+    rule.maximum_match_bytes = bounded && width <= std::numeric_limits<uint64_t>::max() / sizeof(uint16_t) ?
+        width * sizeof(uint16_t) : 0;
     if (bounded && rule.maximum_match_bytes == 0) {
         rule.execution_capability = RegexExecutionCapability::DOCUMENT_CONTEXT_REQUIRED;
     }
@@ -2153,7 +2153,7 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                                     if (analyzeBoundedRegexWidth(expanded_pattern, &maximum_width)) {
                                         rule.execution_capability = RegexExecutionCapability::BOUNDED_WINDOW;
                                         if (maximum_width <= std::numeric_limits<uint64_t>::max() / sizeof(UChar))
-                                            rule.maximum_match_bytes = maximum_width * sizeof(UChar);
+                                            rule.maximum_match_bytes = maximum_width * sizeof(uint16_t);
                                         else
                                             rule.execution_capability = RegexExecutionCapability::DOCUMENT_CONTEXT_REQUIRED;
                                     }
