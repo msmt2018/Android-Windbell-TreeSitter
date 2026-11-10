@@ -1,6 +1,6 @@
 # 统一 Match 与 Scope API 契约
 
-> 状态：SOURCE_PARTIAL。新增 TshMatch/TshMatchSet/TshScopePath/TshMatchMerger、TshScopeSelector AST、TshStyleResolver 首版纯 Kotlin 模型，以及 Tree-sitter QueryResult → TshMatch 适配器源码与测试源码。支持双来源 provenance、Long/UTF-16 canonical range、revision 校验、去重、稳定排序、stale Match 排除、selector suffix/exact path 匹配及 Style merge；Regex → TshMatch、Scope parser/assignment 生成、DSL selector parser 和端到端验证尚未完成。新增源码尚未构建或运行测试。
+> 状态：SOURCE_PARTIAL。新增 TshMatch/TshMatchSet/TshScopePath/TshMatchMerger、TshScopeSelector AST、TshStyleResolver 首版纯 Kotlin 模型，以及 Tree-sitter 与 Regex 两类结果适配器源码和测试源码。Regex 适配器只消费执行器输出，不等同于 Oniguruma Executor 或窗口化执行已完成。Scope parser/assignment 生成、DSL selector parser 和端到端验证尚未完成；新增源码尚未构建或运行测试。
 
 ## 1. TshMatch
 
@@ -63,3 +63,18 @@ Selector 语法必须支持精确 scope、通配、祖先/后代关系、组合�
 - Match ID 由文档版本、查询版本、管线版本、capture 身份和重复序号确定性生成；ID 仅在相同输入快照与相同 revision 内稳定。
 
 该适配器只覆盖 Tree-sitter 原生查询结果；ATS Compiler 尚未实现，未来 ATS lowering 后复用同一 Tree-sitter QueryResult 适配路径。Regex 仍保持独立执行，并需要自己的结果适配器。
+
+
+## 9. Regex Result → TshMatch 适配
+
+`TshRegexMatchAdapter` 将独立 Regex 执行结果映射为统一 MatchSet，但不负责执行正则：
+
+- 执行结果必须携带 documentId/version/length、regexId/revision、Regex pipeline revision、完整匹配范围、捕获组、completeness 与 diagnostics。
+- 每个完整匹配产生一个 REGEX Match；捕获组作为 `TshCaptureValue` 附着，未参与匹配的可选组以 null range 表示并被省略。
+- 输入范围必须已经是绝对 UTF-16 code-unit 半开区间；局部 Oniguruma byte offset → 窗口偏移 → 文档绝对 UTF-16 的换算属于 Regex Executor，不允许适配器猜测或读取全文。
+- 捕获组范围必须位于完整匹配内部；匹配/捕获不得越过文档长度或引用其他 document version。
+- Regex provenance 只写入 regexId/revision/pipelineRevision，不伪造 Grammar、Tree 或 Query 信息；rawRange 不填充 UTF-8 byte range。
+- 适配器在构造 Match 列表前应用 count 与 estimated-byte 上限，达到限制时输出 TRUNCATED 和 MEMORY warning；之后仍通过共享 MatchMerger 做统一校验、去重和排序。
+- 稳定 ID 仅保证同文档版本、Regex revision、pipeline revision 和同一有序结果集内稳定。
+
+该适配器不证明跨窗口等价，也不负责 Oniguruma timeout/cancellation、锚点或 lookaround 语义。旧 `WindbellTshEngine.nativeHighlight(String)` 路径仍需独立迁移。
