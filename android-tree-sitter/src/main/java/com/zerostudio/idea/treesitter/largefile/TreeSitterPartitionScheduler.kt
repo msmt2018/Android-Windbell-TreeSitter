@@ -127,7 +127,10 @@ class TreeSitterPartitionScheduler(
         for (partition in plan.partitions) {
             // A source may invalidate an in-progress read when a newer document
             // snapshot supersedes it. This is normal cancellation, not a parse error.
-            if (closed.get() || source.version != plan.documentVersion) return emptyList()
+            if (closed.get() || source.version != plan.documentVersion) {
+                discardUnsubmitted(tasks)
+                return emptyList()
+            }
             var contextStart = (partition.start - contextChars).coerceAtLeast(0L)
             var contextEnd = minOf(source.length, safeAdd(partition.endExclusive, contextChars))
             // Align context outside the renderer's hot path. Source reads may be
@@ -136,7 +139,8 @@ class TreeSitterPartitionScheduler(
                 contextStart = alignContextStartToLine(source, contextStart)
                 contextEnd = alignContextEndToLine(source, contextEnd)
             } catch (_: CancellationException) {
-                // No tasks have been submitted yet; abandon this plan atomically.
+                // Roll back staged-but-not-submitted tasks as well as the plan.
+                discardUnsubmitted(tasks)
                 return emptyList()
             }
             if (closed.get() || source.version != plan.documentVersion) return emptyList()
@@ -205,12 +209,28 @@ class TreeSitterPartitionScheduler(
         // All tasks have priorities computed before they enter the priority queue.
         synchronized(lock) {
             if (closed.get()) {
-                tasks.forEach { it.cancel() }
+                discardUnsubmitted(tasks)
             } else {
                 tasks.forEach(executor::execute)
             }
         }
         return keys
+    }
+
+    /** Removes staged tasks when planning aborts before they reach the executor. */
+    private fun discardUnsubmitted(tasks: List<PrioritizedTask>) {
+        if (tasks.isEmpty()) return
+        val abandoned = HashSet(tasks)
+        synchronized(lock) {
+            val iterator = pending.entries.iterator()
+            while (iterator.hasNext()) {
+                val entry = iterator.next()
+                if (abandoned.contains(entry.value)) {
+                    entry.value.cancel()
+                    iterator.remove()
+                }
+            }
+        }
     }
 
     fun cancelPending() {
