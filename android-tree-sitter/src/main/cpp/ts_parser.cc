@@ -176,6 +176,12 @@ static const char *TSParser_readJavaInput(
     *bytes_read = 0;
     return nullptr;
   }
+  if (position.row > static_cast<uint32_t>(std::numeric_limits<jint>::max()) ||
+      position.column > static_cast<uint32_t>(std::numeric_limits<jint>::max())) {
+    throw_illegal_args(input->env, "TSInput point exceeds Java signed coordinate capacity");
+    *bytes_read = 0;
+    return nullptr;
+  }
 
   const jint count = input->env->CallIntMethod(
       input->source,
@@ -202,6 +208,10 @@ static const char *TSParser_readJavaInput(
 
   input->currentBytes = input->env->GetByteArrayElements(input->buffer, nullptr);
   if (input->currentBytes == nullptr) {
+    if (!input->env->ExceptionCheck()) {
+      throw_exception(input->env, "java/lang/OutOfMemoryError",
+                      "Cannot access the reusable Tree-sitter input chunk");
+    }
     *bytes_read = 0;
     return nullptr;
   }
@@ -407,7 +417,8 @@ static jlong TSParser_parseInput(
   jclass input_class = env->GetObjectClass(input_object);
   if (input_class == nullptr) return 0;
   jmethodID read_method = env->GetMethodID(input_class, "read", "(JII[B)I");
-  if (read_method == nullptr) return 0;
+  env->DeleteLocalRef(input_class);
+  if (read_method == nullptr || env->ExceptionCheck()) return 0;
 
   jmethodID progress_method = nullptr;
   if (progress_callback != nullptr) {
@@ -423,7 +434,13 @@ static jlong TSParser_parseInput(
 
   auto *ts_parser_internal = reinterpret_cast<TSParserInternal *>(parser);
   TSParser *ts_parser = ts_parser_internal->getParser(env);
-  if (ts_parser == nullptr || !ts_parser_internal->beginRound(env)) return 0;
+  if (ts_parser == nullptr) return 0;
+  if (ts_parser_language(ts_parser) == nullptr) {
+    throw_exception(env, "java/lang/IllegalStateException",
+                    "The parser has no language assigned");
+    return 0;
+  }
+  if (!ts_parser_internal->beginRound(env)) return 0;
   TSTree *old_tree = tree_pointer == 0 ? nullptr : reinterpret_cast<TSTree *>(tree_pointer);
 
   TSParserJavaInput payload{
