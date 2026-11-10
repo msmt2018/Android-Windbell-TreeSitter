@@ -207,6 +207,29 @@ class TshTreeSitterEditCompilerTest {
     }
 
     @Test
+    fun nativeCoordinateIndexRejectsInvalidEndpointWithoutFallingBackToFullScan() {
+        val indexedSnapshot = object : TshTextSnapshot {
+            override val documentId = "doc"
+            override val version = 4L
+            override val lengthUtf16 = 4L
+            override val supportsLineColumnLookup = true
+            override fun readUtf16(start: Long, end: Long): CharSequence =
+                error("A capable host index must not fall back to scanning")
+            override fun lineColumnAtUtf16(offset: Long): TshTextPosition? =
+                if (offset == 2L) null else TshTextPosition(0, offset)
+        }
+        val result = TshTreeSitterEditCompiler.compile(
+            indexedSnapshot,
+            TshTextChange("doc", 4L, 5L, listOf(TshTextEdit(2L, 2L, "!")))
+        )
+        assertTrue(result is TshResult.Failure)
+        assertEquals(
+            "TSH-EDIT-COMPILE-005",
+            (result as TshResult.Failure).diagnostics.single().code
+        )
+    }
+
+    @Test
     fun usesHostBeforeVersionCoordinatesWithoutScanningSnapshot() {
         val change = TshTextChange(
             "doc", 4L, 5L,
