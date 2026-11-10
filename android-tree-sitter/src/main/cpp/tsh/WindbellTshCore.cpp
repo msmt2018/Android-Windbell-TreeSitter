@@ -448,21 +448,23 @@ static int tshPredicateCaptureEquals(const TSNode& node,
     return 1;
 }
 
-static bool tshEvaluateNativePredicates(const NativeQueryProgram& program,
+enum class TshPredicateResult : uint8_t { ACCEPT, REJECT, ERROR };
+
+static TshPredicateResult tshEvaluateNativePredicates(const NativeQueryProgram& program,
     const TSQueryMatch& match, const UChar* utf16_source,
     const windbell::largefile::TextSource* text_source, uint32_t source_bytes) {
     const TSQuery* query = program.query;
-    if (match.pattern_index >= program.predicates_by_pattern.size()) return false;
+    if (match.pattern_index >= program.predicates_by_pattern.size()) return TshPredicateResult::REJECT;
     const auto& predicates = program.predicates_by_pattern[match.pattern_index];
-    if (predicates.empty()) return true;
+    if (predicates.empty()) return TshPredicateResult::ACCEPT;
     uint32_t predicate_index = 0;
     for (const auto& predicate : predicates) {
-        if (predicate.empty() || predicate[0].type != TSQueryPredicateStepTypeString) return false;
+        if (predicate.empty() || predicate[0].type != TSQueryPredicateStepTypeString) return TshPredicateResult::REJECT;
 
         uint32_t op_length = 0;
         const char* op_text = ts_query_string_value_for_id(query, predicate[0].value_id, &op_length);
         if (!op_text || predicate.size() < 3 ||
-            predicate[1].type != TSQueryPredicateStepTypeCapture) return false;
+            predicate[1].type != TSQueryPredicateStepTypeCapture) return TshPredicateResult::REJECT;
         std::string op(op_text, op_length);
         if (!op.empty() && op.front() == '#') op.erase(op.begin());
 
@@ -473,20 +475,20 @@ static bool tshEvaluateNativePredicates(const NativeQueryProgram& program,
         std::vector<std::vector<UChar>> actual;
         if (needs_regex_text &&
             !tshPredicateCaptureTexts(match, predicate[1].value_id, utf16_source,
-                text_source, source_bytes, actual)) return false;
+                text_source, source_bytes, actual)) return TshPredicateResult::ERROR;
         std::vector<std::vector<UChar>> expected;
         for (size_t i = 2; i < predicate.size(); ++i) {
-            if (predicate[i].type != TSQueryPredicateStepTypeString) return false;
+            if (predicate[i].type != TSQueryPredicateStepTypeString) return TshPredicateResult::REJECT;
             uint32_t length = 0;
             const char* value = ts_query_string_value_for_id(query, predicate[i].value_id, &length);
             std::vector<UChar> converted;
-            if (!value || !tshUtf8ToUtf16(std::string(value, length), converted)) return false;
+            if (!value || !tshUtf8ToUtf16(std::string(value, length), converted)) return TshPredicateResult::REJECT;
             expected.push_back(std::move(converted));
         }
-        if (expected.empty()) return false;
+        if (expected.empty()) return TshPredicateResult::REJECT;
         bool accepted = false;
         if (op == "eq?" || op == "not-eq?") {
-            if (expected.size() != 1) return false;
+            if (expected.size() != 1) return TshPredicateResult::REJECT;
             bool has_capture = false;
             bool all_equal = true;
             bool all_not_equal = true;
@@ -495,7 +497,7 @@ static bool tshEvaluateNativePredicates(const NativeQueryProgram& program,
                 has_capture = true;
                 const int comparison = tshPredicateCaptureEquals(match.captures[i].node,
                     expected.front(), utf16_source, text_source, source_bytes);
-                if (comparison < 0) return false;
+                if (comparison < 0) return TshPredicateResult::ERROR;
                 const bool equal = comparison == 1;
                 all_equal = all_equal && equal;
                 all_not_equal = all_not_equal && !equal;
@@ -511,7 +513,7 @@ static bool tshEvaluateNativePredicates(const NativeQueryProgram& program,
                 for (const auto& candidate : expected) {
                     const int comparison = tshPredicateCaptureEquals(match.captures[i].node,
                         candidate, utf16_source, text_source, source_bytes);
-                    if (comparison < 0) return false;
+                    if (comparison < 0) return TshPredicateResult::REJECT;
                     if (comparison == 1) {
                         found = true;
                         break;
@@ -531,11 +533,11 @@ static bool tshEvaluateNativePredicates(const NativeQueryProgram& program,
                     break;
                 }
             }
-            if (!compiled || !compiled->regex) return false;
+            if (!compiled || !compiled->regex) return TshPredicateResult::REJECT;
             const auto matches_regex = [&](const std::vector<UChar>& value) {
-                if (value.empty()) return false;
+                if (value.empty()) return TshPredicateResult::REJECT;
                 OnigRegion* region = onig_region_new();
-                if (!region) return false;
+                if (!region) return TshPredicateResult::REJECT;
                 const UChar* begin = value.data();
                 const UChar* end = begin + value.size();
                 const int result = onig_search(compiled->regex, begin, end, begin, end,
@@ -547,12 +549,13 @@ static bool tshEvaluateNativePredicates(const NativeQueryProgram& program,
                 std::all_of(actual.begin(), actual.end(), matches_regex);
             const bool all_not_match = std::all_of(actual.begin(), actual.end(),
                 [&](const std::vector<UChar>& value) { return !matches_regex(value); });
+            if (regex_allocation_failed) return TshPredicateResult::ERROR;
             accepted = compiled->negate ? all_not_match : all_match;
-        } else return false;
-        if (!accepted) return false;
+        } else return TshPredicateResult::REJECT;
+        if (!accepted) return TshPredicateResult::REJECT;
         ++predicate_index;
     }
-    return true;
+    return TshPredicateResult::ACCEPT;
 }
 
 static void appendRegexCaptureSpans(
@@ -1840,8 +1843,13 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                     !pattern_metadata->second.enabled) {
                     continue;
                 }
-                if (!tshEvaluateNativePredicates(native_query, match, text_start, text_source, total_bytes))
-                    continue;
+                const TshPredicateResult predicate_result = tshEvaluateNativePredicates(
+                    native_query, match, text_start, text_source, total_bytes);
+                if (predicate_result == TshPredicateResult::ERROR) {
+                    throw std::runtime_error(
+                        "TSH native query predicate evaluation failed while reading capture text");
+                }
+                if (predicate_result == TshPredicateResult::REJECT) continue;
                 ++accepted_match_count;
                 const int32_t pattern_priority =
                     pattern_metadata != native_query.pattern_metadata.end() &&
