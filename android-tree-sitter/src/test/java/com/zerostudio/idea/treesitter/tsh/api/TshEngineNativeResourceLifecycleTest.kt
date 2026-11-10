@@ -115,6 +115,44 @@ class TshEngineNativeResourceLifecycleTest {
     }
 
     @Test
+    fun syntaxTreeReservationIsReleasedOnlyAfterLastNativeLeaseCloses() {
+        val engine = TshEngine.create()
+        val tree = FakeTree()
+        val reservation = (engine.memoryBudget.reserve(
+            TshMemoryCategory.SYNTAX_TREE, 64L, "tree-lifetime-test"
+        ) as TshResult.Success).value
+        val registration = engine.nativeResources.register(
+            tree, "syntax-tree", dependencies = listOf(reservation)
+        )
+        val activeTreeLease = engine.nativeResources.acquire(registration.handle)!!
+
+        assertTrue(engine.nativeResources.retire(registration.descriptor.id))
+        assertEquals(0, tree.closeCalls)
+        assertEquals(64L, engine.memoryBudget.snapshot().reservedBytes)
+
+        activeTreeLease.close()
+        assertEquals(1, tree.closeCalls)
+        assertEquals(0L, engine.memoryBudget.snapshot().reservedBytes)
+        engine.close()
+    }
+
+    @Test
+    fun engineOwnsAndClosesOneSharedMemoryBudget() {
+        val engine = TshEngine.create(
+            TshEngineOptions(memoryBudgetOptions = TshMemoryBudgetOptions(128L, 256L))
+        )
+        val reservation = (engine.memoryBudget.reserve(TshMemoryCategory.OTHER, 32L) as TshResult.Success).value
+
+        engine.close()
+
+        assertTrue(engine.memoryBudget.snapshot().closed)
+        assertEquals(32L, engine.memoryBudget.snapshot().reservedBytes)
+        reservation.close()
+        assertEquals(0L, engine.memoryBudget.snapshot().reservedBytes)
+        assertTrue(engine.memoryBudget.reserve(TshMemoryCategory.OTHER, 1L) is TshResult.Failure)
+    }
+
+    @Test
     fun closedEngineCannotPublishNewNativeResources() {
         val engine = TshEngine.create()
         engine.close()
