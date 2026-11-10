@@ -156,7 +156,7 @@
 - Native/JNI：未构建/运行验证。
 - Android 设备：未验证。
 - 超大文件：已减少 JNI/Span 中的若干额外内存和 O(m*n) 扫描，但未证明 200–300 MB 文件端到端稳定高亮与真实绘制。
-- Draft PR #2：保持 Draft；未合并、未改变 PR 状态。
+- PR #2：保持 Open；当前非 Draft，未合并。
 
 ### 2026-11-10 CI 回归修复记录（SOURCE_PARTIAL）
 
