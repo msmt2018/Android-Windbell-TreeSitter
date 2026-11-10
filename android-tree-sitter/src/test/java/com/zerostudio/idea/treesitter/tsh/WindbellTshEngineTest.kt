@@ -1568,7 +1568,7 @@ class WindbellTshLinkageTest {
                     charIndex == 1L -> '*'
                     charIndex == closeStart -> '*'
                     charIndex == closeStart + 1L -> '/'
-                    charIndex == closeStart + 2L -> '\\n'
+                    charIndex == closeStart + 2L -> '\n'
                     charIndex in targetChar until targetChar + classText.length ->
                         classText[(charIndex - targetChar).toInt()]
                     else -> 'a'
