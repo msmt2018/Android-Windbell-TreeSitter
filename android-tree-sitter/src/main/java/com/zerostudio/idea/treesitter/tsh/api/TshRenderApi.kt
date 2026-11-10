@@ -366,6 +366,9 @@ class TshRenderCoordinator @JvmOverloads constructor(
         addString(plan.revisions.treeSitterRevision)
         addString(plan.revisions.regexRevision)
         total = saturatedAdd(total, saturatedMultiply(plan.instructions.size.toLong(), 128L))
+        val capabilities = plan.requiredCapabilities.all()
+        total = saturatedAdd(total, saturatedMultiply(capabilities.size.toLong(), 48L))
+        capabilities.forEach { addString(it.id) }
         plan.instructions.forEach { instruction ->
             instruction.style.fontFamilies.forEach(::addString)
             instruction.style.decorations.forEach(::addString)
