@@ -113,7 +113,7 @@ bool TshRegexNativeRegistry::execute(
 ) {
     output = {};
     if ((!text && text_bytes != 0) || (text_bytes & 1u) != 0 ||
-        text_bytes / 2u > static_cast<size_t>(std::numeric_limits<int32_t>::max())) {
+        text_bytes / 2u > 1024u * 1024u) {
         error = "Regex window is not a valid bounded UTF-16LE buffer";
         return false;
     }
@@ -181,7 +181,7 @@ bool TshRegexNativeRegistry::execute(
     const OnigOptionType options = ONIG_OPTION_NONE;
 
     while (current <= search_range) {
-        const OnigPosition hit = onig_search(
+        const int hit = onig_search(
             entry->regex, begin, end, current, search_range, region.value, options
         );
         if (hit < 0) {
@@ -192,21 +192,21 @@ bool TshRegexNativeRegistry::execute(
             break;
         }
 
-        const OnigPosition start_byte_position = region.value->beg[0];
-        const OnigPosition end_byte_position = region.value->end[0];
-        if (start_byte_position < static_cast<OnigPosition>(prefix_bytes) ||
-            start_byte_position > static_cast<OnigPosition>(actual_end_byte) ||
+        const int start_byte_position = region.value->beg[0];
+        const int end_byte_position = region.value->end[0];
+        if (start_byte_position < static_cast<int>(prefix_bytes) ||
+            start_byte_position > static_cast<int>(actual_end_byte) ||
             end_byte_position < start_byte_position ||
             (start_byte_position & 1) != 0 || (end_byte_position & 1) != 0) {
             error = "Oniguruma returned a malformed UTF-16 match range";
             return false;
         }
-        if (end_byte_position > static_cast<OnigPosition>(actual_end_byte)) {
+        if (end_byte_position > static_cast<int>(actual_end_byte)) {
             // A candidate that consumes the synthetic suffix is not a document match.
             // Resume one code point after its start instead of accepting or skipping the core.
-            if (start_byte_position >= static_cast<OnigPosition>(actual_end_byte)) break;
+            if (start_byte_position >= static_cast<int>(actual_end_byte)) break;
             const int32_t local_start = static_cast<int32_t>(
-                (start_byte_position - static_cast<OnigPosition>(prefix_bytes)) / 2
+                (start_byte_position - static_cast<int>(prefix_bytes)) / 2
             );
             const uint16_t* units = reinterpret_cast<const uint16_t*>(text);
             const bool starts_surrogate_pair =
@@ -221,10 +221,10 @@ bool TshRegexNativeRegistry::execute(
         const int32_t start_byte = static_cast<int32_t>(start_byte_position);
         const int32_t end_byte = static_cast<int32_t>(end_byte_position);
         const int32_t start = static_cast<int32_t>(
-            (start_byte_position - static_cast<OnigPosition>(prefix_bytes)) / 2
+            (start_byte_position - static_cast<int>(prefix_bytes)) / 2
         );
         const int32_t finish = static_cast<int32_t>(
-            (end_byte_position - static_cast<OnigPosition>(prefix_bytes)) / 2
+            (end_byte_position - static_cast<int>(prefix_bytes)) / 2
         );
 
         // Core ownership is half-open. Only the final document EOF owns its zero-width match.
@@ -248,24 +248,24 @@ bool TshRegexNativeRegistry::execute(
             if (capture_count > retained_count) output.truncated = true;
             match.capture_ranges_utf16.reserve(static_cast<size_t>(retained_count));
             for (int group = 0; group < retained_count; ++group) {
-                const OnigPosition beg_position = region.value->beg[group];
-                const OnigPosition group_end_position = region.value->end[group];
+                const int beg_position = region.value->beg[group];
+                const int group_end_position = region.value->end[group];
                 if (beg_position < 0 || group_end_position < 0) {
                     match.capture_ranges_utf16.emplace_back(-1, -1);
                 } else {
                     if ((beg_position & 1) != 0 || (group_end_position & 1) != 0 ||
-                        beg_position < static_cast<OnigPosition>(prefix_bytes) ||
+                        beg_position < static_cast<int>(prefix_bytes) ||
                         group_end_position < beg_position ||
-                        group_end_position > static_cast<OnigPosition>(actual_end_byte)) {
+                        group_end_position > static_cast<int>(actual_end_byte)) {
                         error = "Oniguruma returned a malformed UTF-16 capture range";
                         return false;
                     }
                     match.capture_ranges_utf16.emplace_back(
                         static_cast<int32_t>(
-                            (beg_position - static_cast<OnigPosition>(prefix_bytes)) / 2
+                            (beg_position - static_cast<int>(prefix_bytes)) / 2
                         ),
                         static_cast<int32_t>(
-                            (group_end_position - static_cast<OnigPosition>(prefix_bytes)) / 2
+                            (group_end_position - static_cast<int>(prefix_bytes)) / 2
                         )
                     );
                 }
