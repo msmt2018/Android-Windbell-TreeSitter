@@ -77,7 +77,7 @@ class PartitionAstCache(
             }
             removeLocked(key)
             evictUntilFitsLocked(weight)
-            if (usedBytes + weight > maxEstimatedBytes) {
+            if (weight > maxEstimatedBytes - usedBytes.coerceAtMost(maxEstimatedBytes)) {
                 tree.close()
                 return false
             }
@@ -101,42 +101,55 @@ class PartitionAstCache(
                 val (key, entry) = iterator.next()
                 if (!predicate(key)) continue
                 iterator.remove()
-                usedBytes -= entry.weight
-                if (entry.leases == 0) entry.tree.close() else entry.evictWhenReleased = true
+                if (entry.leases == 0) {
+                    usedBytes -= entry.weight
+                    entry.tree.close()
+                } else {
+                    // The tree remains physically allocated while any lease is
+                    // alive. Keep its weight charged even though it is no longer
+                    // discoverable through the LRU map.
+                    entry.evictWhenReleased = true
+                }
             }
         }
     }
 
     private fun evictUntilFitsLocked(incoming: Long) {
         val iterator = entries.entries.iterator()
-        while (usedBytes + incoming > maxEstimatedBytes && iterator.hasNext()) {
+        while (incoming > maxEstimatedBytes - usedBytes.coerceAtMost(maxEstimatedBytes) &&
+            iterator.hasNext()) {
             val entry = iterator.next().value
             iterator.remove()
-            usedBytes -= entry.weight
-            if (entry.leases == 0) entry.tree.close() else entry.evictWhenReleased = true
+            if (entry.leases == 0) {
+                usedBytes -= entry.weight
+                entry.tree.close()
+            } else {
+                // A leased tree cannot be reclaimed yet. Its bytes remain in
+                // usedBytes until the final lease closes, preventing over-admission.
+                entry.evictWhenReleased = true
+            }
         }
     }
 
     private fun removeLocked(key: PartitionAstKey) {
         val previous = entries.remove(key) ?: return
-        usedBytes -= previous.weight
-        if (previous.leases == 0) previous.tree.close() else previous.evictWhenReleased = true
+        if (previous.leases == 0) {
+            usedBytes -= previous.weight
+            previous.tree.close()
+        } else {
+            // Replacing a leased key must not make its still-live tree disappear
+            // from the memory budget.
+            previous.evictWhenReleased = true
+        }
     }
 
     private fun releaseLocked(entry: Entry) {
         check(entry.leases > 0) { "Unbalanced AST lease release" }
         entry.leases--
         if (entry.leases == 0 && entry.evictWhenReleased) {
-            // The entry may already have been removed from the LRU map by
-            // invalidation/pressure eviction. The lease itself retains ownership.
-            val iterator = entries.entries.iterator()
-            while (iterator.hasNext()) {
-                if (iterator.next().value === entry) {
-                    iterator.remove()
-                    usedBytes -= entry.weight
-                    break
-                }
-            }
+            // Retired entries were removed from the map at invalidation/eviction.
+            // Their retained weight is charged until this exact point.
+            usedBytes -= entry.weight
             entry.tree.close()
         }
     }
@@ -145,17 +158,17 @@ class PartitionAstCache(
         synchronized(lock) {
             if (closed) return
             closed = true
-            val iterator = entries.values.iterator()
-            while (iterator.hasNext()) {
-                val entry = iterator.next()
+            entries.values.forEach { entry ->
                 if (entry.leases == 0) {
-                    entry.tree.close()
-                    iterator.remove()
                     usedBytes -= entry.weight
+                    entry.tree.close()
                 } else {
+                    // close() prevents new leases, but an outstanding lease still
+                    // owns a live native tree and therefore keeps its budget charge.
                     entry.evictWhenReleased = true
                 }
             }
+            entries.clear()
         }
     }
 }
