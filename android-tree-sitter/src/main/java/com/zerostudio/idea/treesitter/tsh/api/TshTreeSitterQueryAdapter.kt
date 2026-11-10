@@ -296,7 +296,8 @@ class TshTreeSitterQueryExecutor(
             val declared = LinkedHashSet<String>()
             for (handler in effectivePredicateHandlers) {
                 try {
-                    handler.getSupportedPredicates().forEach { declared += it.removePrefix("#") }
+                    TSPredicateHandlerCompat.supportedPredicates(handler)
+                    .forEach { declared += it.removePrefix("#") }
                 } catch (error: Exception) {
                     return failure(
                         "TSH-QUERY-EXEC-029",

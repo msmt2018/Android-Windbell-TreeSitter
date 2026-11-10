@@ -79,6 +79,7 @@ val textBuffer: PieceTreeTextBuffer = builder.build(
 textBuffer.getLineCount()      // number of lines
 textBuffer.getLineContent(1)   // first line, line numbers are 1 based
 textBuffer.getEOL()            // "\n" or "\r\n", sniffed from the content
+textBuffer.isEOLNormalized() // true only if every line ending matches getEOL()
 textBuffer.getBOM()            // UTF-8 BOM if the file had one
 ```
 
@@ -304,6 +305,7 @@ undoStack.add(redone.reverseEdits)
 | `TextSlice.of(text)` | a slice holding a String; can go into any buffer |
 | `TextSlice.length` / `eolCount` / `firstLineLength` / `lastLineLength` | size and line shape of the content, without reading it |
 | `TextSlice.toText()` | the content as a String (copies it when held as references) |
+| `TextSlice.forEachChunk { }` | visits read-only CharSequence views of each text/reference segment without flattening the slice into one String |
 
 - **Two forms.** Content shorter than `TextSlice.TEXT_THRESHOLD` (16K chars) is kept as a String,
   like `reverseEdits`. Longer content is kept as (buffer, start, length) runs; putting it back

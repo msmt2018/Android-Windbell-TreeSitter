@@ -31,6 +31,8 @@ class IntList {
 
     private var data: IntArray
     private var length: Int
+    /** True after an immutable snapshot view starts sharing [data]. */
+    private var shared = false
 
     constructor(initialCapacity: Int = 16) {
         this.data = IntArray(if (initialCapacity > 0) initialCapacity else 1)
@@ -60,7 +62,17 @@ class IntList {
         if (index < 0 || index >= this.length) {
             throw IndexOutOfBoundsException("index: $index, size: ${this.length}")
         }
+        ensureWritable()
         this.data[index] = value
+    }
+
+    /**
+     * Immutable O(1) view of the current contents. The next mutation detaches this list by
+     * copying its backing array, leaving every existing snapshot view stable.
+     */
+    fun snapshotView(): IntListSnapshot {
+        shared = true
+        return IntListSnapshot(data, length)
     }
 
     fun add(value: Int) {
@@ -91,6 +103,7 @@ class IntList {
         if (delta == 0) {
             return
         }
+        ensureWritable()
         for (i in 0 until this.length) {
             this.data[i] += delta
         }
@@ -113,7 +126,15 @@ class IntList {
 
     fun copy(): IntList = IntList(this.data.copyOf(this.length), this.length)
 
+    private fun ensureWritable() {
+        if (shared) {
+            data = data.copyOf()
+            shared = false
+        }
+    }
+
     private fun ensureCapacity(required: Int) {
+        ensureWritable()
         if (required <= this.data.size) {
             return
         }
@@ -156,5 +177,19 @@ class IntList {
         fun of(vararg values: Int): IntList = IntList(values.copyOf(), values.size)
 
         fun fromIntArray(values: IntArray): IntList = IntList(values.copyOf(), values.size)
+    }
+}
+
+
+/** Read-only snapshot of an [IntList] backing array with a fixed logical length. */
+class IntListSnapshot internal constructor(
+    private val data: IntArray,
+    val size: Int
+) {
+    operator fun get(index: Int): Int {
+        if (index < 0 || index >= size) {
+            throw IndexOutOfBoundsException("index: $index, size: $size")
+        }
+        return data[index]
     }
 }

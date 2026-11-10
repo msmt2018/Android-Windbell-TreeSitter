@@ -88,6 +88,47 @@ class TextSlice internal constructor(
         return result.toString()
     }
 
+    /**
+     * Visits the immutable text chunks represented by this slice without flattening referenced
+     * storage into one String. A chunk is a read-only CharSequence view; callers must not retain
+     * it beyond the callback when the slice refers to mutable-owner storage.
+     */
+    fun forEachChunk(callback: (CharSequence) -> Unit) {
+        this.text?.let {
+            callback(it)
+            return
+        }
+        for (segment in this.segments) {
+            callback(SliceCharSequence(
+                segment.buffer.buffer,
+                segment.start,
+                segment.length
+            ))
+        }
+    }
+
+    private class SliceCharSequence(
+        private val source: CharSequence,
+        private val start: Int,
+        override val length: Int
+    ) : CharSequence {
+        override fun get(index: Int): Char {
+            if (index < 0 || index >= length) {
+                throw IndexOutOfBoundsException("index=$index, length=$length")
+            }
+            return source[start + index]
+        }
+
+        override fun subSequence(startIndex: Int, endIndex: Int): CharSequence {
+            require(startIndex >= 0 && endIndex >= startIndex && endIndex <= length)
+            return SliceCharSequence(source, start + startIndex, endIndex - startIndex)
+        }
+
+        override fun toString(): String = buildString(length) {
+            for (index in 0 until length) append(source[start + index])
+        }
+    }
+
     /** Whether the content can be inserted into [tree] unchanged; see the class comment. */
     internal fun canInsertAsIs(tree: PieceTreeBase): Boolean {
         if (this.eol == null) {
