@@ -2,12 +2,7 @@ package com.zerostudio.idea.treesitter.tsh.api
 
 import java.security.MessageDigest
 
-/**
- * One Regex capture group, expressed in absolute document UTF-16 code-unit coordinates.
- *
- * A null range represents an unmatched optional group. The executor must convert its local
- * Oniguruma byte offsets to absolute UTF-16 offsets before publishing this record.
- */
+/** One Regex capture group in absolute document UTF-16 code-unit coordinates. */
 data class TshRegexCaptureGroup(
     val groupIndex: Int,
     val name: String,
@@ -19,15 +14,15 @@ data class TshRegexCaptureGroup(
     }
 }
 
-/** One complete Regex match and the capture groups returned by the Regex engine. */
+/** One complete Regex match; null capture ranges represent unmatched optional groups. */
 data class TshRegexMatchRecord(
     val range: TshSourceRange,
     val captureGroups: List<TshRegexCaptureGroup> = emptyList()
 )
 
 /**
- * Source-neutral Regex execution output. This is an adapter boundary, not an executor:
- * Oniguruma execution, window ownership, timeout and cancellation remain the executor's job.
+ * Regex execution output boundary. This is not an executor: Oniguruma execution, window
+ * ownership, timeout and cancellation remain the executor's responsibility.
  */
 data class TshRegexResult(
     val documentId: TshDocumentId,
@@ -52,11 +47,13 @@ data class TshRegexResult(
 /**
  * Converts independent Regex output into the canonical unified MatchSet.
  *
- * All ranges must already be absolute UTF-16 code-unit offsets. This adapter deliberately does
- * not access text, invoke Oniguruma, infer window equivalence, or manufacture a Tree-sitter
- * revision. The MatchMerger applies the shared count/memory budget and stale-input rules.
+ * Ranges must already be absolute UTF-16 offsets. The adapter does not read text, invoke
+ * Oniguruma, infer cross-window equivalence, or create a Tree-sitter revision. It bounds its
+ * own retained Match/capture working set before constructing the shared MatchMerger input.
  */
 object TshRegexMatchAdapter {
+    private const val MAX_DIAGNOSTICS = 4096
+
     @JvmStatic
     @JvmOverloads
     fun adapt(
@@ -65,11 +62,10 @@ object TshRegexMatchAdapter {
         configRevision: String? = null,
         budget: TshMatchMergeBudget = TshMatchMergeBudget()
     ): TshResult<TshMatchSet> {
-        if (result.documentLengthUtf16 < 0L) {
-            return failure("TSH-REGEX-MATCH-001", "Document length must be non-negative")
-        }
+        val matches = ArrayList<TshMatch>(minOf(result.matches.size, budget.maxMatches))
+        var estimatedBytes = 0L
+        var truncatedByAdapter = false
 
-        val matches = ArrayList<TshMatch>(result.matches.size)
         for ((matchIndex, record) in result.matches.withIndex()) {
             if (!isValidDocumentRange(record.range, result)) {
                 return failure(
@@ -96,13 +92,10 @@ object TshRegexMatchAdapter {
                         "Regex capture group ${group.groupIndex} of match $matchIndex is outside its full match"
                     )
                 }
-                captures += TshCaptureValue(group.name, range)
+                captures += TshCaptureValue(group.name, normalizeVersion(range, result.documentVersion))
             }
 
             val matchRange = normalizeVersion(record.range, result.documentVersion)
-            val normalizedCaptures = captures.map { capture ->
-                capture.copy(range = normalizeVersion(capture.range, result.documentVersion))
-            }
             val id = stableId(
                 result.documentId.value,
                 result.documentVersion.toString(),
@@ -112,17 +105,11 @@ object TshRegexMatchAdapter {
                 matchIndex.toString(),
                 matchRange.start.offset.toString(),
                 matchRange.end.offset.toString(),
-                normalizedCaptures.joinToString("|") {
+                captures.joinToString("|") {
                     "${it.name.length}:${it.name}:${it.range.start.offset}:${it.range.end.offset}"
                 }
             )
-            val provenance = TshMatchProvenance(
-                source = TshMatchSource.REGEX,
-                pipelineRevision = result.pipelineRevision,
-                regexId = result.regexId,
-                regexRevision = result.regexRevision
-            )
-            matches += TshMatch(
+            val match = TshMatch(
                 id = TshMatchId(id),
                 documentId = result.documentId,
                 documentVersion = result.documentVersion,
@@ -132,10 +119,45 @@ object TshRegexMatchAdapter {
                 captureName = "match",
                 range = matchRange,
                 priority = priority,
-                captures = normalizedCaptures,
-                provenance = provenance
+                captures = captures,
+                provenance = TshMatchProvenance(
+                    source = TshMatchSource.REGEX,
+                    pipelineRevision = result.pipelineRevision,
+                    regexId = result.regexId,
+                    regexRevision = result.regexRevision
+                )
+            )
+
+            val matchBytes = estimateMatchBytes(match)
+            if (matches.size >= budget.maxMatches ||
+                matchBytes > budget.maxEstimatedBytes - estimatedBytes) {
+                truncatedByAdapter = true
+                break
+            }
+            matches += match
+            estimatedBytes = saturatedAdd(estimatedBytes, matchBytes)
+        }
+
+        val diagnostics = ArrayList<TshDiagnostic>(minOf(result.diagnostics.size + 1, MAX_DIAGNOSTICS))
+        diagnostics.addAll(result.diagnostics.take(MAX_DIAGNOSTICS - 1))
+        if (truncatedByAdapter) {
+            diagnostics += TshDiagnostic(
+                code = "TSH-REGEX-MATCH-005",
+                severity = TshDiagnosticSeverity.WARNING,
+                stage = TshDiagnosticStage.MEMORY,
+                message = "Regex Match adaptation stopped at its configured count or estimated-memory budget"
+            )
+        } else if (result.diagnostics.size > MAX_DIAGNOSTICS - 1) {
+            diagnostics += TshDiagnostic(
+                code = "TSH-REGEX-MATCH-006",
+                severity = TshDiagnosticSeverity.WARNING,
+                stage = TshDiagnosticStage.MEMORY,
+                message = "Additional Regex diagnostics were omitted because the diagnostic budget was reached"
             )
         }
+
+        val completeness = if (truncatedByAdapter) TshMatchCompleteness.TRUNCATED
+            else result.completeness
 
         return TshMatchMerger.merge(
             documentId = result.documentId,
@@ -144,8 +166,8 @@ object TshRegexMatchAdapter {
             regexRevision = result.pipelineRevision,
             configRevision = configRevision,
             input = matches,
-            completeness = result.completeness,
-            diagnostics = result.diagnostics,
+            completeness = completeness,
+            diagnostics = diagnostics,
             budget = budget
         )
     }
@@ -160,6 +182,32 @@ object TshRegexMatchAdapter {
 
     private fun normalizeVersion(range: TshSourceRange, version: Long) =
         if (range.documentVersion == version) range else range.copy(documentVersion = version)
+
+    private fun estimateMatchBytes(match: TshMatch): Long {
+        var total = 256L
+        fun addString(value: String?) {
+            if (value != null) total = saturatedAdd(
+                total, saturatedAdd(saturatedMultiply(value.length.toLong(), 2L), 16L)
+            )
+        }
+        addString(match.id.value)
+        addString(match.documentId.value)
+        addString(match.pipelineRevision)
+        addString(match.ruleId.value)
+        addString(match.captureName)
+        addString(match.provenance.regexId)
+        addString(match.provenance.regexRevision)
+        total = saturatedAdd(total, saturatedMultiply(match.captures.size.toLong(), 96L))
+        match.captures.forEach { addString(it.name); addString(it.text) }
+        return total
+    }
+
+    private fun saturatedMultiply(left: Long, right: Long): Long =
+        if (left == 0L || right == 0L) 0L
+        else if (left > Long.MAX_VALUE / right) Long.MAX_VALUE else left * right
+
+    private fun saturatedAdd(left: Long, right: Long): Long =
+        if (Long.MAX_VALUE - left < right) Long.MAX_VALUE else left + right
 
     private fun stableId(vararg parts: String): String {
         val digest = MessageDigest.getInstance("SHA-256")
