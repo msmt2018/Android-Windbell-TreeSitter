@@ -147,9 +147,10 @@ class TshSyntaxHighlighter(
             bytes[index * 2] = (unit and 0xFF).toByte()
             bytes[index * 2 + 1] = (unit ushr 8).toByte()
         }
-        val active = largeSession
-        active?.pendingEditEpoch?.incrementAndGet()
         synchronized(nativeEditLock) {
+            // Read the active session under the same lock used when initialization
+            // publishes it and drains queued edits; this closes the null-to-active race.
+            largeSession?.pendingEditEpoch?.incrementAndGet()
             pendingNativeEdits += NativeEdit(
                 startByte = change.rangeOffset.toLong() * 2L,
                 oldEndByte = (change.rangeOffset.toLong() + change.deletedTextLength) * 2L,
