@@ -1,6 +1,6 @@
 # 统一 Match 与 Scope API 契约
 
-> 状态：SOURCE_PARTIAL。新增 TshMatch/TshMatchSet/TshScopePath/TshMatchMerger、TshScopeSelector AST 和 TshStyleResolver 首版纯 Kotlin 模型，支持双来源 provenance、Long/UTF-16 canonical range、revision 校验、去重、稳定排序、stale Match 排除、selector suffix/exact path 匹配及 Style merge；Scope parser/assignment 生成、DSL selector parser、真实执行结果适配和端到端验证尚未完成。
+> 状态：SOURCE_PARTIAL。新增 TshMatch/TshMatchSet/TshScopePath/TshMatchMerger、TshScopeSelector AST、TshStyleResolver 首版纯 Kotlin 模型，以及 Tree-sitter QueryResult → TshMatch 适配器源码与测试源码。支持双来源 provenance、Long/UTF-16 canonical range、revision 校验、去重、稳定排序、stale Match 排除、selector suffix/exact path 匹配及 Style merge；Regex → TshMatch、Scope parser/assignment 生成、DSL selector parser 和端到端验证尚未完成。新增源码尚未构建或运行测试。
 
 ## 1. TshMatch
 
@@ -48,3 +48,18 @@ Selector 语法必须支持精确 scope、通配、祖先/后代关系、组合�
 ## 7. 验收
 
 两条管线产生相同字段完整度；验证 Unicode 映射、capture scope、重叠/包含/交叉冲突、稳定排序、partial result、stale revision 和 provenance 可追溯。
+
+
+## 8. Tree-sitter QueryResult → TshMatch 适配
+
+`TshTreeSitterMatchAdapter` 将现有 `TshQueryResult.captures` 转换为统一 Match 批次，不创建新的查询管线，也不读取/展平源文档：
+
+- 输入必须是同一 queryId/queryRevision、documentId/documentVersion、treeRevision 和 grammar fingerprint 的结果；任一版本身份不一致均拒绝发布。
+- 坐标索引必须绑定同一 documentId/version。UTF-8 输入使用稀疏索引的 UTF-8 byte → UTF-16 转换；UTF-16LE/BE 输入要求 byte offset 为偶数，再以 UTF-16 code-unit offset 检查 surrogate 边界。
+- 所有 Match 的 canonical range 均为 UTF-16 code-unit 半开区间；UTF-8 输入额外保留 rawRange（UTF-8 byte），UTF-16 输入不伪造 UTF-8 rawRange。
+- 每个 Native capture 映射为一个 Match，保留 capture name、pattern index、node identity、query/grammar provenance 和 pipeline revision。scopeAssignments 暂为空，必须由后续 Scope Assignment 阶段生成。
+- Native Cursor 返回顺序不是公共契约；适配器按 start、outer-before-inner、pattern、capture name 和稳定 ID 排序。
+- Native result 不完整时输出 completeness=TRUNCATED；该状态必须继续传递到后续 MatchSet merge，不能被提升为 COMPLETE。
+- Match ID 由文档版本、查询版本、管线版本、capture 身份和重复序号确定性生成；ID 仅在相同输入快照与相同 revision 内稳定。
+
+该适配器只覆盖 Tree-sitter 原生查询结果；ATS Compiler 尚未实现，未来 ATS lowering 后复用同一 Tree-sitter QueryResult 适配路径。Regex 仍保持独立执行，并需要自己的结果适配器。
