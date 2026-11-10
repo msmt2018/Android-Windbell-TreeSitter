@@ -436,6 +436,38 @@ class EditorDocumentTest {
         assertTrue(callback.events.isEmpty())
     }
 
+    @Test
+    fun replaceBufferPublishesASeparateStorageLifecycleEvent() {
+        val original = PieceTreeBuffer(PieceTreeTextBufferBuilder().apply {
+            acceptChunk("old")
+        }.build())
+        val replacement = PieceTreeBuffer(PieceTreeTextBufferBuilder().apply {
+            acceptChunk("new")
+        }.build())
+        var observedPrevious: EditorBuffer? = null
+        var observedCurrent: EditorBuffer? = null
+        val observing = object : EditorDocument.Callback {
+            override fun beforeTextChanged(edits: List<SliceEdit>) = Unit
+            override fun onBufferReplaced(previous: EditorBuffer, current: EditorBuffer) {
+                observedPrevious = previous
+                observedCurrent = current
+            }
+            override fun onTextChanged(change: EditorDocument.AppliedChange) = Unit
+            override fun afterTextChanged(
+                changes: List<EditorDocument.AppliedChange>,
+                caretLineNumber: Int,
+                caretColumn: Int
+            ) = Unit
+        }
+        val doc = EditorDocument(EditHistory(scheduler), observing, original)
+
+        doc.replaceBuffer(replacement)
+
+        assertTrue(observedPrevious === original)
+        assertTrue(observedCurrent === replacement)
+        assertEquals("new", doc.getText())
+    }
+
     // #region AppliedChange.of: where the caret goes, without a buffer
 
     private fun change(range: Range, text: String?) = ContentChange(range, 0, 0, text, false)
