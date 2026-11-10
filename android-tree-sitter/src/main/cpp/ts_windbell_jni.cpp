@@ -424,4 +424,137 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeGetHoverInfo(
     return arr;
 }
 
+
+/**
+ * Independent bounded-window Oniguruma API.
+ * nativeFindAll result layout:
+ * [truncated, matchCount, startUtf16, endUtf16, groupCount, groupStart, groupEnd, ...]*
+ */
+JNIEXPORT jlong JNICALL
+Java_com_zerostudio_idea_treesitter_tsh_api_TshOnigurumaNative_nativeCompile(
+    JNIEnv* env, jobject /* thiz */, jstring pattern
+) {
+    if (!pattern) {
+        throw_npe(env, "Regex pattern cannot be null");
+        return 0;
+    }
+    try {
+        // Ensure Oniguruma has been initialized by the existing engine lifecycle.
+        (void)WindbellEngine::getInstance();
+        const jsize length = env->GetStringLength(pattern);
+        ScopedStringChars chars(env, pattern);
+        if (!chars) return 0;
+        std::string error;
+        const uint64_t handle = TshRegexNativeRegistry::instance().compile(
+            reinterpret_cast<const UChar*>(chars.get()),
+            static_cast<size_t>(length) * sizeof(jchar),
+            error
+        );
+        if (handle == 0) {
+            LOGE("WindbellTSH", "Regex compile failed: %s", error.c_str());
+        }
+        return static_cast<jlong>(handle);
+    } catch (const std::bad_alloc&) {
+        throw_exception(env, "java/lang/OutOfMemoryError", "Regex compilation allocation failed");
+    } catch (const std::exception& error) {
+        throw_exception(env, "java/lang/RuntimeException", error.what());
+    } catch (...) {
+        throw_exception(env, "java/lang/RuntimeException", "Unknown Regex compilation failure");
+    }
+    return 0;
+}
+
+JNIEXPORT jboolean JNICALL
+Java_com_zerostudio_idea_treesitter_tsh_api_TshOnigurumaNative_nativeRelease(
+    JNIEnv* /* env */, jobject /* thiz */, jlong handle
+) {
+    if (handle <= 0) return JNI_FALSE;
+    return TshRegexNativeRegistry::instance().release(static_cast<uint64_t>(handle))
+        ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT jlongArray JNICALL
+Java_com_zerostudio_idea_treesitter_tsh_api_TshOnigurumaNative_nativeFindAll(
+    JNIEnv* env,
+    jobject /* thiz */,
+    jlong handle,
+    jstring window_text,
+    jint core_start_utf16,
+    jint core_end_utf16,
+    jboolean document_start,
+    jboolean document_end,
+    jint max_matches,
+    jint max_capture_groups
+) {
+    if (handle <= 0 || !window_text) {
+        throw_illegal_args(env, "Regex handle and window text are required");
+        return nullptr;
+    }
+    if (max_matches <= 0 || max_matches > 8192 ||
+        max_capture_groups <= 0 || max_capture_groups > 256) {
+        throw_illegal_args(env, "Regex execution limits exceed the supported native bounds");
+        return nullptr;
+    }
+
+    try {
+        const jsize length = env->GetStringLength(window_text);
+        ScopedStringChars chars(env, window_text);
+        if (!chars) return nullptr;
+
+        TshRegexNativeBatch batch;
+        std::string error;
+        const bool ok = TshRegexNativeRegistry::instance().execute(
+            static_cast<uint64_t>(handle),
+            reinterpret_cast<const UChar*>(chars.get()),
+            static_cast<size_t>(length) * sizeof(jchar),
+            static_cast<int32_t>(core_start_utf16),
+            static_cast<int32_t>(core_end_utf16),
+            document_start == JNI_TRUE,
+            document_end == JNI_TRUE,
+            static_cast<uint32_t>(max_matches),
+            static_cast<uint32_t>(max_capture_groups),
+            batch,
+            error
+        );
+        if (!ok) {
+            LOGE("WindbellTSH", "Regex execution failed: %s", error.c_str());
+            throw_exception(env, "java/lang/IllegalStateException", error.c_str());
+            return nullptr;
+        }
+
+        std::vector<jlong> flat;
+        flat.reserve(2 + batch.matches.size() * 8);
+        flat.push_back(batch.truncated ? 1 : 0);
+        flat.push_back(static_cast<jlong>(batch.matches.size()));
+        for (const auto& match : batch.matches) {
+            flat.push_back(match.start_utf16);
+            flat.push_back(match.end_utf16);
+            flat.push_back(static_cast<jlong>(match.capture_ranges_utf16.size()));
+            for (const auto& capture : match.capture_ranges_utf16) {
+                flat.push_back(capture.first);
+                flat.push_back(capture.second);
+            }
+        }
+        if (flat.size() > static_cast<size_t>(std::numeric_limits<jsize>::max())) {
+            throw_illegal_args(env, "Regex result exceeds Java array capacity");
+            return nullptr;
+        }
+        jlongArray result = env->NewLongArray(static_cast<jsize>(flat.size()));
+        if (!result) return nullptr;
+        if (!flat.empty()) {
+            env->SetLongArrayRegion(result, 0, static_cast<jsize>(flat.size()), flat.data());
+            if (env->ExceptionCheck()) return nullptr;
+        }
+        return result;
+    } catch (const std::bad_alloc&) {
+        throw_exception(env, "java/lang/OutOfMemoryError", "Regex execution allocation failed");
+    } catch (const std::exception& error) {
+        throw_exception(env, "java/lang/RuntimeException", error.what());
+    } catch (...) {
+        throw_exception(env, "java/lang/RuntimeException", "Unknown Regex execution failure");
+    }
+    return nullptr;
+}
+
+
 } // extern "C"
