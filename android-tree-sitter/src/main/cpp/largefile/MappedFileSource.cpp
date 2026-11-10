@@ -1,5 +1,6 @@
 #include "MappedFileSource.h"
 
+#include <algorithm>
 #include <limits>
 #include <new>
 #include <cerrno>
