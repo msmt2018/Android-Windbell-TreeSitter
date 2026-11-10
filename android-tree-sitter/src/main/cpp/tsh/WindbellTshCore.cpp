@@ -328,6 +328,10 @@ static bool tshUtf8ToUtf16(const std::string& input, std::vector<UChar>& output)
     return true;
 }
 
+static int tshPredicateRegexMatchesContiguous(
+    regex_t* regex, const UChar* begin, const UChar* end
+);
+
 static bool tshSourceRegexMatchesBounded(
     const windbell::largefile::TextSource& source,
     uint64_t start_byte,
