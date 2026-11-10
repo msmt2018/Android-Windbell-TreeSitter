@@ -69,12 +69,14 @@ class TshRegexMatchAdapterTest {
     }
 
     @Test
-    fun rejectsCaptureOutsideFullMatchAndDuplicateGroupIndexes() {
-        val outside = TshRegexMatchRecord(
-            range(1, 2),
-            listOf(TshRegexCaptureGroup(1, "bad", range(0, 2)))
+    fun acceptsLookaroundCaptureOutsideFullMatchAndRejectsDuplicateGroupIndexes() {
+        // A lookbehind/lookaround capture can legitimately lie outside the full match.
+        val lookbehindCapture = TshRegexMatchRecord(
+            range(2, 3),
+            listOf(TshRegexCaptureGroup(1, "lookbehind", range(1, 2)))
         )
-        assertTrue(TshRegexMatchAdapter.adapt(result(listOf(outside))) is TshResult.Failure)
+        val adapted = TshRegexMatchAdapter.adapt(result(listOf(lookbehindCapture))) as TshResult.Success
+        assertEquals(1L, adapted.value.matches.single().captures.single().range.start.offset)
 
         val duplicate = TshRegexMatchRecord(
             range(1, 2),
