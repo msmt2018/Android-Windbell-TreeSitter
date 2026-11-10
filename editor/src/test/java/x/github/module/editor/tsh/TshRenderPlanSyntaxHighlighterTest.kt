@@ -10,6 +10,8 @@ import com.zerostudio.idea.treesitter.tsh.api.TshResolvedStyle
 import com.zerostudio.idea.treesitter.tsh.api.TshResult
 import com.zerostudio.idea.treesitter.tsh.api.TshSourcePosition
 import com.zerostudio.idea.treesitter.tsh.api.TshSourceRange
+import com.zerostudio.idea.piecetable.common.Range
+import x.github.module.editor.model.EditorDocument
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -75,6 +77,27 @@ class TshRenderPlanSyntaxHighlighterTest {
 
         version = 8L
         assertFalse(highlighter.isStyleReady(1, 0, 0, 1))
+    }
+
+    @Test
+    fun refusesPlanPublicationDuringAnEditTransaction() {
+        val highlighter = TshRenderPlanSyntaxHighlighter(documentId) { 7L }
+        highlighter.onTextChanged(
+            EditorDocument.AppliedChange(
+                range = Range(1, 1, 1, 2),
+                rangeOffset = 0,
+                insertedLinesCnt = 0,
+                insertedTextLength = 0,
+                deletedLinesCnt = 0,
+                deletedTextLength = 1,
+                finalLineNumber = 1,
+                finalColumn = 1
+            )
+        )
+
+        val result = highlighter.updateRenderPlan(plan(7L))
+        assertTrue(result is TshResult.Failure)
+        assertEquals("TSH-EDITOR-RENDER-008", (result as TshResult.Failure).diagnostics.single().code)
     }
 
 }
