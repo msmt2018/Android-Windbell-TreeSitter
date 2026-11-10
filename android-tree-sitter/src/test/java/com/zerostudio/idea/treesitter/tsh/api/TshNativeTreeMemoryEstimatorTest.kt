@@ -67,6 +67,28 @@ class TshNativeTreeMemoryEstimatorTest {
         assertEquals(0L, budget.snapshot().reservedBytes)
     }
 
+    @Test fun contiguousStringInputReservationUsesParserInputCategoryAndReleases() {
+        val budget = TshMemoryBudget(TshMemoryBudgetOptions(1024, 2048))
+        val result = TshParserInputMemoryReservations.reserveStringInput(
+            budget, "doc-string", 3L, 100L
+        )
+        assertTrue(result is TshResult.Success)
+        val reservation = (result as TshResult.Success).value!!
+        assertEquals(264L, reservation.bytes)
+        assertEquals(264L, budget.snapshot().bytesByCategory[TshMemoryCategory.PARSER_INPUT])
+        reservation.close()
+        assertEquals(0L, budget.snapshot().reservedBytes)
+    }
+
+    @Test fun rejectsContiguousStringInputBeforeNativeParseWhenBudgetIsInsufficient() {
+        val budget = TshMemoryBudget(TshMemoryBudgetOptions(128, 256))
+        val result = TshParserInputMemoryReservations.reserveStringInput(
+            budget, "large-doc", 1L, 100L
+        )
+        assertTrue(result is TshResult.Failure)
+        assertEquals(0L, budget.snapshot().reservedBytes)
+    }
+
     @Test fun rejectsSourceLengthThatWouldOverflowUtf16ByteCount() {
         assertThrows(IllegalArgumentException::class.java) {
             request(Long.MAX_VALUE)
