@@ -131,7 +131,7 @@ class WindbellTshLinkageTest {
                         {
                             id: "large-comment-bounded-regex"
                             priority: 26
-                            source: `(block_comment) @regexComment (#match? @regexComment "z")`
+                            source: `(block_comment) @regexComment (#match? @regexComment "az")`
                         }
                     ]
                 }
@@ -152,7 +152,7 @@ class WindbellTshLinkageTest {
                 val value = when {
                     charIndex == 0L -> '/'
                     charIndex == 1L -> '*'
-                    charIndex == totalBytes / 2L - 3L -> 'z'
+                    charIndex == 131072L -> 'z'
                     charIndex == totalBytes / 2L - 2L -> '*'
                     charIndex == totalBytes / 2L - 1L -> '/'
                     else -> 'a'
