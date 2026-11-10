@@ -25,6 +25,7 @@ import android.text.style.BackgroundColorSpan
 import android.text.style.CharacterStyle
 import android.text.style.ForegroundColorSpan
 import android.text.style.StyleSpan
+import android.text.style.StrikethroughSpan
 import android.text.style.UnderlineSpan
 
 /**
@@ -123,6 +124,12 @@ class StyledTextPainter {
             // underline: a little below the baseline, in the color of the text
             if (spans.getSpans(runStart, runEnd, UnderlineSpan::class.java).isNotEmpty()) {
                 val top = baseline + underlineOffset
+                canvas.drawRect(runX, top, runX + runWidth, top + underlineThickness, paint)
+            }
+            // Strike-through is drawn explicitly because this painter renders glyph runs
+            // itself rather than delegating CharacterStyle updates to TextView.
+            if (spans.getSpans(runStart, runEnd, StrikethroughSpan::class.java).isNotEmpty()) {
+                val top = baseline - Math.max(1f, paint.textSize / 3f)
                 canvas.drawRect(runX, top, runX + runWidth, top + underlineThickness, paint)
             }
 
