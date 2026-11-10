@@ -265,6 +265,48 @@ class PieceTreeSnapshotTest {
     }
 
     @Test
+    fun snapshotTreeSitterCoordinatesUsePieceAndBackingBufferLineIndexes() {
+        val builder = PieceTreeTextBufferBuilder()
+        builder.acceptChunk("alpha\\n")
+        builder.acceptChunk("beta😀\\n")
+        builder.acceptChunk("gamma")
+        val buffer = builder.build(EndOfLine.LF, normalizeEOL = true)
+        val tree = buffer.getPieceTree()
+
+        // Split original pieces and create change-buffer pieces without flattening the snapshot.
+        tree.insert(2, "X", eolNormalized = true)
+        tree.delete(7, 1)
+        tree.insert(buffer.length - 2, "\\nTAIL", eolNormalized = true)
+        val expected = buffer.toString()
+        val snapshot = buffer.createSnapshot()
+
+        assertTrue(snapshot.supportsTreeSitterLineCoordinates)
+        for (offset in 0..expected.length) {
+            val splitsPair = offset > 0 && offset < expected.length &&
+                Character.isHighSurrogate(expected[offset - 1]) &&
+                Character.isLowSurrogate(expected[offset])
+            val actual = snapshot.getTreeSitterPositionAt(offset)
+            if (splitsPair) {
+                assertNull(actual, "surrogate split at $offset")
+            } else {
+                val host = buffer.getPositionAt(offset)
+                assertEquals(host.lineNumber - 1 to host.column - 1, actual, "offset $offset")
+            }
+        }
+    }
+
+    @Test
+    fun snapshotDisablesTreeSitterCoordinatesForUnusualLineTerminators() {
+        val builder = PieceTreeTextBufferBuilder()
+        builder.acceptChunk("first\\rsecond\\nthird")
+        val buffer = builder.build(EndOfLine.LF, normalizeEOL = false)
+        val snapshot = buffer.createSnapshot()
+
+        assertFalse(snapshot.supportsTreeSitterLineCoordinates)
+        assertNull(snapshot.getTreeSitterPositionAt(8))
+    }
+
+    @Test
     fun emptyDocumentSnapshot() {
         val snapshot = RandomEditing.build("", Random(1)).createSnapshot()
         assertEquals(0, snapshot.length)
@@ -301,6 +343,20 @@ class PieceTreeSnapshotTest {
         val snapshot = buffer.createSnapshot(preserveBOM = true)
         assertEquals("abc\nd", snapshot.toString())
         assertEquals('a', snapshot[0])
+    }
+
+    @Test
+    fun nearestChunkBoundsIntMaxRequestWithoutOverflow() {
+        val buffer = RandomEditing.build("hello\nworld", Random(1))
+        val snapshot = buffer.createSnapshot()
+        assertEquals("hello\nworld", buffer.getNearestChunk(0, Int.MAX_VALUE))
+        assertEquals("lo\nworld", buffer.getNearestChunk(3, Int.MAX_VALUE))
+        assertEquals("hello\nworld", snapshot.getNearestChunk(0, Int.MAX_VALUE))
+        assertEquals("lo\nworld", snapshot.getNearestChunk(3, Int.MAX_VALUE))
+        assertEquals("llo", buffer.getNearestChunk(2, 3))
+        assertEquals("llo", snapshot.getNearestChunk(2, 3))
+        assertEquals("", buffer.getNearestChunk(buffer.length, Int.MAX_VALUE))
+        assertEquals("", snapshot.getNearestChunk(snapshot.length, Int.MAX_VALUE))
     }
 
     @Test
