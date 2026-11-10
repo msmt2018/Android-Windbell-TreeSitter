@@ -2,7 +2,11 @@ package com.zerostudio.idea.treesitter.tsh.api
 
 import java.util.concurrent.atomic.AtomicBoolean
 
-/** Finite-window contract for Regex engines that require contiguous input. */
+/**
+ * Finite-window contract for Regex engines that require contiguous input.
+ * The finite match/lookaround values are caller declarations, not compiler-proven bounds;
+ * window execution is valid only when the caller can guarantee those bounds for the pattern.
+ */
 data class TshRegexWindowConstraints(
     val coreWindowUtf16: Int = 64 * 1024,
     val maxWindowUtf16: Int = 256 * 1024,
