@@ -66,9 +66,9 @@ class TshSparseCoordinateIndexTest {
         closed.close()
         assertTrue(TshSparseCoordinateIndex.build(closed) is TshResult.Failure)
 
-        val snapshot = Snapshot("abc")
+        val snapshotValue = Snapshot("abc")
         val nonRetainable = object : TshTextSnapshotLease {
-            override val snapshot: TshTextSnapshot = snapshot
+            override val snapshot: TshTextSnapshot = snapshotValue
             override val isClosed: Boolean = false
             override fun close() = Unit
         }
