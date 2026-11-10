@@ -106,14 +106,14 @@ class TshRegexWindowLeaseTest {
     fun memoryReservationIsHeldUntilWindowCloseAndReleasedIdempotently() {
         val snapshot = Snapshot("x".repeat(2_000))
         val sourceLease = lease(snapshot)
-        val budget = TshMemoryBudget(TshMemoryBudgetOptions(2_048, 4_096))
+        val budget = TshMemoryBudget(TshMemoryBudgetOptions(4_096, 8_192))
         val window = (TshRegexWindowLease.acquire(
             sourceLease, 300L, 256, constraints(), budget
         ) as TshResult.Success).value
 
         assertEquals(TshMemoryCategory.REGEX_WINDOW, budget.snapshot().bytesByCategory
             .filterValues { it > 0L }.keys.single())
-        assertEquals(1_392L, budget.snapshot().reservedBytes)
+        assertEquals(2_056L, budget.snapshot().reservedBytes)
         window.close()
         window.close()
         assertEquals(0L, budget.snapshot().reservedBytes)
