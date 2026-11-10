@@ -70,6 +70,16 @@ class EditorDocument(
          */
         fun beforeTextChanged(edits: List<SliceEdit>)
 
+        /**
+         * The backing storage was replaced wholesale, not edited in place.
+         *
+         * This is deliberately separate from the edit pipeline: replacement invalidates
+         * offsets, snapshots and native syntax trees, and must never be represented as a
+         * synthetic text edit. The default keeps existing callback implementations source
+         * compatible.
+         */
+        fun onBufferReplaced(previous: EditorBuffer, current: EditorBuffer) {}
+
         /** One change has been applied to the buffer. Called once per change of the edit. */
         fun onTextChanged(change: AppliedChange)
 
@@ -161,7 +171,10 @@ class EditorDocument(
      * what to do with both.
      */
     fun replaceBuffer(newBuffer: EditorBuffer) {
+        val previous = buffer
+        if (previous === newBuffer) return
         buffer = newBuffer
+        callback.onBufferReplaced(previous, newBuffer)
     }
 
     // #region queries

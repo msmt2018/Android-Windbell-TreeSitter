@@ -324,6 +324,7 @@ jobject JNICALL parser_parse_function(
     return NEW_OBJECT(TSTree, reinterpret_cast<jlong>(new_tree), nullptr, language);
 }
 
+
 extern const JNINativeMethod TSParser_methods[] = {
     {"init", "()J", (void *)&parser_init},
     {"delete", "(J)V", (void *)&parser_delete},

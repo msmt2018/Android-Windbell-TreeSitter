@@ -85,6 +85,48 @@ public class QueryTest extends TreeSitterTest {
     }
   }
 
+
+  @Test
+  public void testQueryUsesStandardUtf8ForSupplementaryCharacters() {
+    final String expected = "é😀";
+    final String source = "((identifier) @name (#eq? @name \"" + expected + "\"))";
+    try (final TSQuery query = TSQuery.create(TSLanguageJava.getInstance(), source)) {
+      assertThat(query.canAccess()).isTrue();
+      boolean found = false;
+      for (int i = 0; i < query.getStringCount(); i++) {
+        if (expected.equals(query.getStringValueForId(i))) {
+          found = true;
+          break;
+        }
+      }
+      assertThat(found).isTrue();
+    }
+  }
+
+
+  @Test
+  public void testQueryStringValueSupportsEmptyAndRejectsUnpairedSurrogates() {
+    final String emptyQuery = "((identifier) @name (#eq? @name \"\"))";
+    try (final TSQuery query = TSQuery.create(TSLanguageJava.getInstance(), emptyQuery)) {
+      boolean foundEmpty = false;
+      for (int i = 0; i < query.getStringCount(); i++) {
+        if ("".equals(query.getStringValueForId(i))) {
+          foundEmpty = true;
+          break;
+        }
+      }
+      assertThat(foundEmpty).isTrue();
+    }
+
+    final String invalidQuery = "((identifier) @name (#eq? @name \"" + String.valueOf((char) 0xD800) + "\"))";
+    try {
+      TSQuery.create(TSLanguageJava.getInstance(), invalidQuery);
+      throw new AssertionError("Expected an unpaired UTF-16 surrogate to be rejected");
+    } catch (IllegalArgumentException expected) {
+      assertThat(expected).hasMessageThat().contains("unpaired UTF-16");
+    }
+  }
+
   @Test
   public void testQuerySyntaxError() throws Exception {
     try (TSQuery query = TSQuery.create(TSLanguageJava.getInstance(), "(class_declaration")) {

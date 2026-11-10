@@ -21,6 +21,9 @@
 #include "utils/ts_obj_utils.h"
 #include "ts__log.h"
 #include "utils/ts_preconditions.h"
+#include "utils/jni_string.h"
+
+#include <cstring>
 
 #include "ts_language.h"
 
@@ -57,15 +60,20 @@ static jint TSLanguage_symForName(JNIEnv *env,
 static jstring
 TSLanguage_symName(JNIEnv *env, jclass self, jlong lngPtr, jint sym) {
   req_nnp(env, lngPtr);
-  return env->NewStringUTF(ts_language_symbol_name((TSLanguage *) lngPtr, sym));
+  const char *name = ts_language_symbol_name((TSLanguage *) lngPtr, sym);
+  if (name == nullptr) return nullptr;
+  return FNI_NewStringFromStandardUtf8(
+      env, name, static_cast<uint32_t>(std::strlen(name)));
 }
 
 
 static jstring
 TSLanguage_fldNameForId(JNIEnv *env, jclass self, jlong ptr, jint id) {
   req_nnp(env, ptr);
-  return env->NewStringUTF(ts_language_field_name_for_id((TSLanguage *) ptr,
-                                                         id));
+  const char *name = ts_language_field_name_for_id((TSLanguage *) ptr, id);
+  if (name == nullptr) return nullptr;
+  return FNI_NewStringFromStandardUtf8(
+      env, name, static_cast<uint32_t>(std::strlen(name)));
 }
 
 
@@ -99,51 +107,57 @@ static jlongArray TSLanguage_loadLanguage(JNIEnv *env,
                                           jclass clazz,
                                           jstring libpath,
                                           jstring func) {
-  auto lib_path = env->GetStringUTFChars(libpath, nullptr);
-  auto func_name = env->GetStringUTFChars(func, nullptr);
-
-  auto handle = dlopen(lib_path, RTLD_LAZY);
-  if (handle == nullptr) {
-    LOGE(LOG_TAG, "Failed to dlopen library '%s': %s", lib_path, dlerror());
-    env->ReleaseStringUTFChars(libpath, lib_path);
-    env->ReleaseStringUTFChars(func, func_name);
+  std::string library_path;
+  std::string function_name;
+  if (!FNI_GetStandardUtf8(env, libpath, library_path) ||
+      !FNI_GetStandardUtf8(env, func, function_name)) {
     return nullptr;
   }
 
-  void *func_addr = dlsym(handle, func_name);
+  void *handle = dlopen(library_path.c_str(), RTLD_LAZY);
+  if (handle == nullptr) {
+    LOGE(LOG_TAG, "Failed to dlopen library '%s': %s",
+         library_path.c_str(), dlerror());
+    return nullptr;
+  }
+
+  void *func_addr = dlsym(handle, function_name.c_str());
   if (func_addr == nullptr) {
     LOGE(LOG_TAG,
          "Cannot find function '%s' to create language instance: %s",
-         func_name,
-         dlerror());
-    env->ReleaseStringUTFChars(libpath, lib_path);
-    env->ReleaseStringUTFChars(func, func_name);
+         function_name.c_str(), dlerror());
+    dlclose(handle);
     return nullptr;
   }
 
   auto lang_func = reinterpret_cast<TsLangFunc>(func_addr);
   if (lang_func == nullptr) {
-    LOGE(LOG_TAG, "Cannot reinterpreset_cast to TsLangFunc");
-    env->ReleaseStringUTFChars(libpath, lib_path);
-    env->ReleaseStringUTFChars(func, func_name);
+    LOGE(LOG_TAG, "Cannot reinterpret_cast to TsLangFunc");
+    dlclose(handle);
     return nullptr;
   }
 
-  auto language = lang_func();
+  const TSLanguage *language = lang_func();
   if (language == nullptr) {
-    LOGE(LOG_TAG, "Function '%s' returned nullptr", func_name);
+    LOGE(LOG_TAG, "Function '%s' returned nullptr", function_name.c_str());
+    dlclose(handle);
     return nullptr;
   }
 
-  LOGD(LOG_TAG, "Loaded tree sitter language with function '%s'", func_name);
-
-  env->ReleaseStringUTFChars(libpath, lib_path);
-  env->ReleaseStringUTFChars(func, func_name);
+  LOGD(LOG_TAG, "Loaded tree sitter language with function '%s'",
+       function_name.c_str());
 
   jlong ptrs[2] = {(jlong) language, (jlong) handle};
-
   auto result = env->NewLongArray(2);
+  if (result == nullptr) {
+    dlclose(handle);
+    return nullptr;
+  }
   env->SetLongArrayRegion(result, 0, 2, ptrs);
+  if (env->ExceptionCheck()) {
+    dlclose(handle);
+    return nullptr;
+  }
   return result;
 }
 

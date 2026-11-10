@@ -18,8 +18,13 @@
 #include "utils/ts_exceptions.h"
 #include "utils/ts_obj_utils.h"
 #include "utils/ts_preconditions.h"
+#include "utils/jni_string.h"
 
 #include "ts_query.h"
+
+#include <cstdint>
+#include <limits>
+#include <string>
 
 void fillQuery(JNIEnv *, jobject, uint32_t, TSQueryError);
 int query_quantifier_id(JNIEnv *env, TSQuantifier quantifier);
@@ -31,18 +36,24 @@ static jlong TSQuery_newQuery(JNIEnv *env,
                               jlong language,
                               jstring source) {
   req_nnp(env, language);
-  const char *c_source;
-  uint32_t source_length = env->GetStringLength(source);
-  c_source = env->GetStringUTFChars(source, nullptr);
-  auto error_offset = new uint32_t;
-  auto error_type = new TSQueryError;
+
+  std::string source_utf8;
+  if (!FNI_GetStandardUtf8(env, source, source_utf8)) {
+    return 0;
+  }
+  if (source_utf8.size() > std::numeric_limits<uint32_t>::max()) {
+    throw_illegal_args(env, "Query source exceeds Tree-sitter's byte length limit");
+    return 0;
+  }
+
+  uint32_t error_offset = 0;
+  TSQueryError error_type = TSQueryErrorNone;
   TSQuery *query = ts_query_new((TSLanguage *) language,
-                                c_source,
-                                source_length,
-                                error_offset,
-                                error_type);
-  fillQuery(env, queryObject, *error_offset, *error_type);
-  env->ReleaseStringUTFChars(source, c_source);
+                                source_utf8.data(),
+                                static_cast<uint32_t>(source_utf8.size()),
+                                &error_offset,
+                                &error_type);
+  fillQuery(env, queryObject, error_offset, error_type);
   return (jlong) query;
 }
 
@@ -125,7 +136,7 @@ TSQuery_captureNameForId(JNIEnv *env, jclass self, jlong query, jint id) {
   uint32_t count;
   const char
       *name = ts_query_capture_name_for_id((TSQuery *) query, id, &count);
-  return (jstring) env->NewStringUTF(name);
+  return FNI_NewStringFromStandardUtf8(env, name, count);
 }
 
 static jstring
@@ -133,7 +144,7 @@ TSQuery_stringValueForId(JNIEnv *env, jclass self, jlong query, jint id) {
   req_nnp(env, query);
   uint32_t count;
   const char *str = ts_query_string_value_for_id((TSQuery *) query, id, &count);
-  return env->NewStringUTF(str);
+  return FNI_NewStringFromStandardUtf8(env, str, count);
 }
 
 void fillQuery(JNIEnv *env,

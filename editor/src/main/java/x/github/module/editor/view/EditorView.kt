@@ -259,6 +259,16 @@ open class EditorView @JvmOverloads constructor(
             }
         }
         
+        override fun onBufferReplaced(previous: EditorBuffer, current: EditorBuffer) {
+            // A replacement may be initiated by a background load/layout task. Keep the
+            // externally registered observers on the main thread, just like edit callbacks.
+            runOnMainThread {
+                for (index in editCallbacks.indices) {
+                    editCallbacks[index].onBufferReplaced(previous, current)
+                }
+            }
+        }
+
         override fun onTextChanged(change: EditorDocument.AppliedChange) {
             // keep the matches on the text they belong to
             searchResults.onTextChanged(change.range, change.finalLineNumber, change.finalColumn)
