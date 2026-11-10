@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cstring>
+#include <array>
 #include <limits>
 #include <functional>
 #include <memory>
@@ -412,6 +413,41 @@ static bool tshPredicateCaptureTexts(const TSQueryMatch& match, uint32_t capture
     return true;
 }
 
+static bool tshPredicateCaptureEquals(const TSNode& node,
+    const std::vector<UChar>& expected,
+    const UChar* utf16_source,
+    const windbell::largefile::TextSource* text_source,
+    uint32_t source_bytes) {
+    const uint32_t start = ts_node_start_byte(node);
+    const uint32_t end = ts_node_end_byte(node);
+    if (start > end || end > source_bytes || (start & 1u) || (end & 1u)) return false;
+    const uint64_t length = static_cast<uint64_t>(end) - start;
+    if (length != expected.size()) return false;
+    if (length == 0) return true;
+    if (utf16_source) {
+        return std::memcmp(utf16_source + start, expected.data(),
+            static_cast<size_t>(length)) == 0;
+    }
+    if (!text_source) return false;
+
+    // Compare large captures incrementally. Predicate equality must not
+    // materialize a potentially document-sized capture into a temporary vector.
+    constexpr uint32_t kCompareChunkBytes = 16u * 1024u;
+    std::array<UChar, kCompareChunkBytes> scratch{};
+    uint64_t compared = 0;
+    while (compared < length) {
+        const uint32_t amount = static_cast<uint32_t>(
+            std::min<uint64_t>(kCompareChunkBytes, length - compared));
+        if (!windbell::largefile::copyTextRange(
+                *text_source, static_cast<uint64_t>(start) + compared,
+                amount, scratch.data())) return false;
+        if (std::memcmp(scratch.data(), expected.data() + compared, amount) != 0)
+            return false;
+        compared += amount;
+    }
+    return true;
+}
+
 static bool tshEvaluateNativePredicates(const NativeQueryProgram& program,
     const TSQueryMatch& match, const UChar* utf16_source,
     const windbell::largefile::TextSource* text_source, uint32_t source_bytes) {
@@ -430,9 +466,14 @@ static bool tshEvaluateNativePredicates(const NativeQueryProgram& program,
         std::string op(op_text, op_length);
         if (!op.empty() && op.front() == '#') op.erase(op.begin());
 
+        // Equality and membership predicates operate directly on capture
+        // byte ranges. Only Regex predicates need a contiguous materialized
+        // capture because Oniguruma consumes a contiguous input pointer.
+        const bool needs_regex_text = op == "match?" || op == "not-match?";
         std::vector<std::vector<UChar>> actual;
-        if (!tshPredicateCaptureTexts(match, predicate[1].value_id, utf16_source, text_source, source_bytes, actual))
-            return false;
+        if (needs_regex_text &&
+            !tshPredicateCaptureTexts(match, predicate[1].value_id, utf16_source,
+                text_source, source_bytes, actual)) return false;
         std::vector<std::vector<UChar>> expected;
         for (size_t i = 2; i < predicate.size(); ++i) {
             if (predicate[i].type != TSQueryPredicateStepTypeString) return false;
@@ -446,20 +487,36 @@ static bool tshEvaluateNativePredicates(const NativeQueryProgram& program,
         bool accepted = false;
         if (op == "eq?" || op == "not-eq?") {
             if (expected.size() != 1) return false;
-            const bool all_equal = !actual.empty() && std::all_of(actual.begin(), actual.end(),
-                [&](const std::vector<UChar>& value) { return value == expected.front(); });
-            const bool all_not_equal = std::all_of(actual.begin(), actual.end(),
-                [&](const std::vector<UChar>& value) { return value != expected.front(); });
-            accepted = op == "eq?" ? all_equal : all_not_equal;
+            bool has_capture = false;
+            bool all_equal = true;
+            bool all_not_equal = true;
+            for (uint32_t i = 0; i < match.capture_count; ++i) {
+                if (match.captures[i].index != predicate[1].value_id) continue;
+                has_capture = true;
+                const bool equal = tshPredicateCaptureEquals(match.captures[i].node,
+                    expected.front(), utf16_source, text_source, source_bytes);
+                all_equal = all_equal && equal;
+                all_not_equal = all_not_equal && !equal;
+                if (!all_equal && !all_not_equal) break;
+            }
+            accepted = op == "eq?" ? (has_capture && all_equal) : all_not_equal;
         } else if (op == "any-of?" || op == "not-any-of?") {
-            const bool all_in_set = std::all_of(actual.begin(), actual.end(),
-                [&](const std::vector<UChar>& value) {
-                    return std::find(expected.begin(), expected.end(), value) != expected.end();
-                });
-            accepted = op == "any-of?" ? all_in_set :
-                std::none_of(actual.begin(), actual.end(), [&](const std::vector<UChar>& value) {
-                    return std::find(expected.begin(), expected.end(), value) != expected.end();
-                });
+            bool all_in_set = true;
+            bool any_in_set = false;
+            for (uint32_t i = 0; i < match.capture_count; ++i) {
+                if (match.captures[i].index != predicate[1].value_id) continue;
+                bool found = false;
+                for (const auto& candidate : expected) {
+                    if (tshPredicateCaptureEquals(match.captures[i].node,
+                            candidate, utf16_source, text_source, source_bytes)) {
+                        found = true;
+                        break;
+                    }
+                }
+                all_in_set = all_in_set && found;
+                any_in_set = any_in_set || found;
+            }
+            accepted = op == "any-of?" ? all_in_set : !any_in_set;
         } else if (op == "match?" || op == "not-match?") {
             const NativeQueryProgram::PredicateRegex* compiled = nullptr;
             for (const auto& candidate : program.predicate_regexes) {
