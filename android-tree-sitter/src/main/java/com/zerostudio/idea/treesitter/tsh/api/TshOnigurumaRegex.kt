@@ -2,6 +2,26 @@ package com.zerostudio.idea.treesitter.tsh.api
 
 import java.util.concurrent.atomic.AtomicLong
 
+
+/**
+ * These escapes depend on the search cursor rather than only on the document text.
+ * The current per-window executor cannot prove their global semantics, so reject them
+ * conservatively (including inside character classes/quoted regions).
+ */
+private fun unsupportedWindowSearchEscape(pattern: String): Char? {
+    var index = 0
+    while (index + 1 < pattern.length) {
+        if (pattern[index] == '\\') {
+            val escaped = pattern[index + 1]
+            if (escaped == 'G' || escaped == 'K') return escaped
+            index += 2
+        } else {
+            index++
+        }
+    }
+    return null
+}
+
 /** One bounded Oniguruma window execution result. */
 data class TshRegexWindowExecution(
     val matches: List<TshRegexMatchRecord>,
@@ -293,6 +313,13 @@ class TshOnigurumaRegex private constructor(
                 return failure(
                     "TSH-REGEX-NATIVE-019",
                     "Oniguruma window execution requires a declared finite maximum match length"
+                )
+            }
+            val unsupportedEscape = unsupportedWindowSearchEscape(pattern)
+            if (unsupportedEscape != null) {
+                return failure(
+                    "TSH-REGEX-NATIVE-022",
+                    "Regex escape \\$unsupportedEscape depends on global search-cursor state and is not supported by the window executor"
                 )
             }
             return try {
