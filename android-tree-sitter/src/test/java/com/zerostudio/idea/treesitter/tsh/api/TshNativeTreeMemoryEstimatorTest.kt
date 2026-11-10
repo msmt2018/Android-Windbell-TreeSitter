@@ -89,6 +89,29 @@ class TshNativeTreeMemoryEstimatorTest {
         assertEquals(0L, budget.snapshot().reservedBytes)
     }
 
+    @Test fun streamingBridgeBufferReservationCoversArrayAndPossibleJniCopy() {
+        val budget = TshMemoryBudget(TshMemoryBudgetOptions(1024, 2048))
+        val result = TshParserInputMemoryReservations.reserveChunkBuffer(
+            budget, "doc-stream", 5L, 64
+        )
+        assertTrue(result is TshResult.Success)
+        val reservation = (result as TshResult.Success).value!!
+        assertEquals(192L, reservation.bytes)
+        assertEquals(192L, budget.snapshot().bytesByCategory[TshMemoryCategory.PARSER_INPUT])
+        reservation.close()
+        assertEquals(0L, budget.snapshot().reservedBytes)
+    }
+
+    @Test fun streamingBridgeRejectsInvalidChunkSizeBeforeNativeParse() {
+        val budget = TshMemoryBudget(TshMemoryBudgetOptions(1024, 2048))
+        val result = TshParserInputMemoryReservations.reserveChunkBuffer(
+            budget, "doc-stream", 5L, 63
+        )
+        assertTrue(result is TshResult.Failure)
+        assertEquals("TSH-MEMORY-009", (result as TshResult.Failure).diagnostics.single().code)
+        assertEquals(0L, budget.snapshot().reservedBytes)
+    }
+
     @Test fun rejectsSourceLengthThatWouldOverflowUtf16ByteCount() {
         assertThrows(IllegalArgumentException::class.java) {
             request(Long.MAX_VALUE)
