@@ -163,8 +163,24 @@ class TshTreeSitterParserOwner private constructor(
                 TshDiagnosticStage.LIFECYCLE,
                 parser.descriptor.id
             )
+        if (!parseLock.tryLock()) {
+            lease.close()
+            return failure(
+                "TSH-PARSER-OWNER-038",
+                "Cannot change parser timeout while a parse operation is active",
+                TshDiagnosticStage.LIFECYCLE,
+                parser.descriptor.id
+            )
+        }
         return try {
-            parseLock.withLock {
+            if (lease.resource.isParsing) {
+                failure(
+                    "TSH-PARSER-OWNER-038",
+                    "Cannot change parser timeout while a parse operation is active",
+                    TshDiagnosticStage.LIFECYCLE,
+                    parser.descriptor.id
+                )
+            } else {
                 lease.resource.setTimeout(timeoutMicros)
                 TshResult.Success(Unit)
             }
@@ -185,6 +201,7 @@ class TshTreeSitterParserOwner private constructor(
                 error
             )
         } finally {
+            parseLock.unlock()
             lease.close()
         }
     }
@@ -198,6 +215,15 @@ class TshTreeSitterParserOwner private constructor(
                 TshDiagnosticStage.LIFECYCLE,
                 parser.descriptor.id
             )
+        if (!parseLock.tryLock()) {
+            lease.close()
+            return failure(
+                "TSH-PARSER-OWNER-038",
+                "Cannot inspect parser timeout while a parse operation is active",
+                TshDiagnosticStage.LIFECYCLE,
+                parser.descriptor.id
+            )
+        }
         return try {
             TshResult.Success(lease.resource.timeout)
         } catch (error: LinkageError) {
@@ -217,6 +243,7 @@ class TshTreeSitterParserOwner private constructor(
                 error
             )
         } finally {
+            parseLock.unlock()
             lease.close()
         }
     }
