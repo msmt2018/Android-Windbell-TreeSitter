@@ -71,6 +71,10 @@ class TshRenderPlanSyntaxHighlighter(
             )
         }
 
+        if (synchronized(stateLock) { editInProgress }) {
+            return failure("TSH-EDITOR-RENDER-008", "Cannot install a RenderPlan during an EditorView edit transaction")
+        }
+
         val currentLength = try {
             host?.buffer?.length
         } catch (error: Exception) {
@@ -107,7 +111,14 @@ class TshRenderPlanSyntaxHighlighter(
         val published = synchronized(stateLock) {
             // An edit may begin while the interval index is being built on a worker. Never
             // publish a plan across that transaction, even if its version check raced the edit.
-            if (editInProgress || currentDocumentVersion() != version) {
+            val latestVersion = try {
+                currentDocumentVersion()
+            } catch (_: Exception) {
+                -1L
+            } catch (_: LinkageError) {
+                -1L
+            }
+            if (editInProgress || latestVersion != version) {
                 false
             } else {
                 diagnostics = unsupported
