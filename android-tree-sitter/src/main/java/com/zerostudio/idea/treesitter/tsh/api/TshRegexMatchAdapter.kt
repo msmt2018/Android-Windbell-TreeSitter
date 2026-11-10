@@ -62,7 +62,7 @@ object TshRegexMatchAdapter {
         configRevision: String? = null,
         budget: TshMatchMergeBudget = TshMatchMergeBudget()
     ): TshResult<TshMatchSet> {
-        val matches = ArrayList<TshMatch>(minOf(result.matches.size, budget.maxMatches))
+        val matches = ArrayList<TshMatch>(minOf(result.matches.size, budget.maxMatches, 4096))
         var estimatedBytes = 0L
         var truncatedByAdapter = false
 
