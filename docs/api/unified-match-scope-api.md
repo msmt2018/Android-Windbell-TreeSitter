@@ -72,7 +72,7 @@ Selector 语法必须支持精确 scope、通配、祖先/后代关系、组合�
 - 执行结果必须携带 documentId/version/length、regexId/revision、Regex pipeline revision、完整匹配范围、捕获组、completeness 与 diagnostics。
 - 每个完整匹配产生一个 REGEX Match；捕获组作为 `TshCaptureValue` 附着，未参与匹配的可选组以 null range 表示并被省略。
 - 输入范围必须已经是绝对 UTF-16 code-unit 半开区间；局部 Oniguruma byte offset → 窗口偏移 → 文档绝对 UTF-16 的换算属于 Regex Executor，不允许适配器猜测或读取全文。
-- 捕获组范围必须位于完整匹配内部；匹配/捕获不得越过文档长度或引用其他 document version。
+- 捕获组范围必须位于文档范围内且版本一致；lookaround 等 Regex 语义可能产生位于完整匹配范围之外的合法捕获，因此不得强制捕获组嵌套于 full-match range。
 - Regex provenance 只写入 regexId/revision/pipelineRevision，不伪造 Grammar、Tree 或 Query 信息；rawRange 不填充 UTF-8 byte range。
 - 适配器在构造 Match 列表前应用 count 与 estimated-byte 上限，达到限制时输出 TRUNCATED 和 MEMORY warning；之后仍通过共享 MatchMerger 做统一校验、去重和排序。
 - 稳定 ID 仅保证同文档版本、Regex revision、pipeline revision 和同一有序结果集内稳定。
