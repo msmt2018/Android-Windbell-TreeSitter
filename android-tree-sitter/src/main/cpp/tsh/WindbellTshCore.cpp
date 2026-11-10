@@ -1135,7 +1135,7 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                 return true;
             }
             constexpr uint64_t kStateCoreWindowBytes = 256u * 1024u;
-            const uint64_t requested = state_window_match_width > UINT64_MAX - kStateCoreWindowBytes
+            const uint64_t requested = state_window_match_width > std::numeric_limits<uint64_t>::max() - kStateCoreWindowBytes
                 ? UINT64_MAX : kStateCoreWindowBytes + state_window_match_width;
             const uint64_t bytes = std::min<uint64_t>(remaining, requested);
             if (bytes == 0 || (bytes & 1u) != 0 ||
