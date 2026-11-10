@@ -880,6 +880,78 @@ class WindbellTshLinkageTest {
     }
 
     @Test
+    fun testNativeQueryContainsAndStructuralPredicates() {
+        val engine = WindbellTshEngine.instance
+        val language = TSLanguageJava.getInstance()
+        val source = """
+            tsh 2 {
+                language { id: "java-native-structural-predicates" name: "Java Native Structural Predicates" extensions: [".jnsp"] }
+                styles {
+                    containsName { scope: "entity.name.function.contains" }
+                    directParent { scope: "entity.name.function.parent" }
+                    ancestorMethod { scope: "entity.name.function.ancestor" }
+                    identifierKind { scope: "entity.name.function.kind" }
+                    excludesText { scope: "entity.name.function.excludes" }
+                }
+                treeSitter {
+                    queries: [
+                        {
+                            id: "contains-name"
+                            priority: 50
+                            source: `(method_declaration name: (identifier) @containsName (#contains? @containsName "un"))`
+                        },
+                        {
+                            id: "direct-parent"
+                            priority: 51
+                            source: `(method_declaration name: (identifier) @directParent (#has-parent? @directParent "method_declaration"))`
+                        },
+                        {
+                            id: "ancestor-method"
+                            priority: 52
+                            source: `(method_declaration name: (identifier) @ancestorMethod (#has-ancestor? @ancestorMethod "class_declaration"))`
+                        },
+                        {
+                            id: "identifier-kind"
+                            priority: 53
+                            source: `(method_declaration name: (identifier) @identifierKind (#kind-eq? @identifierKind "identifier"))`
+                        },
+                        {
+                            id: "negative-contains"
+                            priority: 54
+                            source: `(method_declaration name: (identifier) @excludesText (#not-contains? @excludesText "skip"))`
+                        }
+                    ]
+                }
+            }
+        """.trimIndent()
+
+        assertTrue(engine.loadTshSource("java-native-structural-predicates", source, language))
+        val parser = TSParser.create().apply { setLanguage(language) }
+        val code = "class Demo { void run() {} void skip() {} void other() {} }"
+        val tree = parser.parseString(code)
+        val spans = engine.computeHighlights(tree, code, "java-native-structural-predicates")
+        val catalog = engine.getStyleCatalog("java-native-structural-predicates")
+        val containsId = catalog.first { it.name == "containsName" }.styleId
+        val parentId = catalog.first { it.name == "directParent" }.styleId
+        val ancestorId = catalog.first { it.name == "ancestorMethod" }.styleId
+        val kindId = catalog.first { it.name == "identifierKind" }.styleId
+        val excludesId = catalog.first { it.name == "excludesText" }.styleId
+        val runOffset = code.indexOf("run") * 2
+        val skipOffset = code.indexOf("skip") * 2
+        val otherOffset = code.indexOf("other") * 2
+
+        assertTrue(spans.any { it.styleId == containsId && it.startByte == runOffset })
+        assertTrue(spans.any { it.styleId == parentId && it.startByte == runOffset })
+        assertTrue(spans.any { it.styleId == ancestorId && it.startByte == runOffset })
+        assertTrue(spans.any { it.styleId == kindId && it.startByte == runOffset })
+        assertFalse(spans.any { it.styleId == excludesId && it.startByte == skipOffset })
+        assertTrue(spans.any { it.styleId == excludesId && it.startByte == otherOffset })
+
+        tree?.close()
+        parser.close()
+    }
+
+    @Test
     fun testAstSelectorNodeFlagsAreExecuted() {
         val engine = WindbellTshEngine.instance
         val language = TSLanguageJava.getInstance()
