@@ -3,10 +3,33 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <cstdint>
 #include <limits>
 #include <new>
 
 namespace windbell::tsh {
+
+namespace {
+
+// Read UTF-16LE without assuming the JNI/vector byte buffer is uint16_t-aligned
+// or that the host CPU uses little-endian byte order.
+inline uint16_t read_utf16le(const UChar* bytes, size_t unit_index) noexcept {
+    const size_t offset = unit_index * 2u;
+    return static_cast<uint16_t>(
+        static_cast<uint16_t>(bytes[offset]) |
+        (static_cast<uint16_t>(bytes[offset + 1u]) << 8u)
+    );
+}
+
+inline bool starts_surrogate_pair(const UChar* bytes, int32_t length, int32_t index) noexcept {
+    if (!bytes || index < 0 || index + 1 >= length) return false;
+    const uint16_t high = read_utf16le(bytes, static_cast<size_t>(index));
+    const uint16_t low = read_utf16le(bytes, static_cast<size_t>(index + 1));
+    return high >= 0xD800 && high <= 0xDBFF &&
+           low >= 0xDC00 && low <= 0xDFFF;
+}
+
+} // namespace
 
 TshRegexNativeRegistry& TshRegexNativeRegistry::instance() {
     // Construct the Oniguruma owner first so this registry is destroyed before onig_end().
@@ -27,13 +50,16 @@ uint64_t TshRegexNativeRegistry::compile(
         error = "Regex pattern has an invalid or oversized UTF-16LE buffer";
         return 0;
     }
-    const uint16_t* pattern_units = reinterpret_cast<const uint16_t*>(pattern);
     const size_t pattern_length = pattern_bytes / 2u;
     for (size_t i = 0; i < pattern_length; ++i) {
-        const uint16_t unit = pattern_units[i];
+        const uint16_t unit = read_utf16le(pattern, i);
         if (unit >= 0xD800 && unit <= 0xDBFF) {
-            if (i + 1 >= pattern_length ||
-                pattern_units[i + 1] < 0xDC00 || pattern_units[i + 1] > 0xDFFF) {
+            if (i + 1 >= pattern_length) {
+                error = "Regex pattern contains an unpaired UTF-16 high surrogate";
+                return 0;
+            }
+            const uint16_t low = read_utf16le(pattern, i + 1u);
+            if (low < 0xDC00 || low > 0xDFFF) {
                 error = "Regex pattern contains an unpaired UTF-16 high surrogate";
                 return 0;
             }
@@ -211,14 +237,9 @@ bool TshRegexNativeRegistry::execute(
             const int32_t local_start = static_cast<int32_t>(
                 (start_byte_position - static_cast<int>(prefix_bytes)) / 2
             );
-            const uint16_t* units = reinterpret_cast<const uint16_t*>(text);
-            const bool starts_surrogate_pair =
-                local_start < length &&
-                units[local_start] >= 0xD800 && units[local_start] <= 0xDBFF &&
-                local_start + 1 < length &&
-                units[local_start + 1] >= 0xDC00 && units[local_start + 1] <= 0xDFFF;
+            const bool pair = starts_surrogate_pair(text, length, local_start);
             current = begin + start_byte_position +
-                (starts_surrogate_pair ? 2 * sizeof(uint16_t) : sizeof(uint16_t));
+                (pair ? 2 * sizeof(uint16_t) : sizeof(uint16_t));
             continue;
         }
         const int32_t start_byte = static_cast<int32_t>(start_byte_position);
@@ -282,14 +303,9 @@ bool TshRegexNativeRegistry::execute(
             const int32_t local_end_byte = end_byte - static_cast<int32_t>(prefix_bytes);
             if (local_end_byte >= static_cast<int32_t>(text_bytes)) break;
             const int32_t next_unit = local_end_byte / 2;
-            const uint16_t* units = reinterpret_cast<const uint16_t*>(text);
-            const bool starts_surrogate_pair =
-                next_unit < length &&
-                units[next_unit] >= 0xD800 && units[next_unit] <= 0xDBFF &&
-                next_unit + 1 < length &&
-                units[next_unit + 1] >= 0xDC00 && units[next_unit + 1] <= 0xDFFF;
+            const bool pair = starts_surrogate_pair(text, length, next_unit);
             current = begin + end_byte +
-                (starts_surrogate_pair ? 2 * sizeof(uint16_t) : sizeof(uint16_t));
+                (pair ? 2 * sizeof(uint16_t) : sizeof(uint16_t));
         }
     }
     return true;
