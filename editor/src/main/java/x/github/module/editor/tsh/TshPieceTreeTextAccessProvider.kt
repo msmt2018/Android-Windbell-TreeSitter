@@ -194,6 +194,8 @@ class TshPieceTreeTextAccessProvider(
         private val source: PieceTreeSnapshot
     ) : TshTextSnapshot {
         override val lengthUtf16: Long = source.length.toLong()
+        override val supportsLineColumnLookup: Boolean =
+            source.supportsTreeSitterLineCoordinates
 
         override fun readUtf16(start: Long, end: Long): CharSequence {
             require(start >= 0L && end >= start && end <= lengthUtf16) {
