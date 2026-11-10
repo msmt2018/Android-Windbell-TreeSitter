@@ -132,9 +132,10 @@ interface TshRenderProvider : TshProvider {
 }
 
 /** Version-safe render submission coordinator. It never draws; it validates revisions and receipts. */
-class TshRenderCoordinator(
+class TshRenderCoordinator @JvmOverloads constructor(
     private val provider: TshRenderProvider,
-    private val maxPendingPlans: Int = 128
+    private val maxPendingPlans: Int = 128,
+    private val memoryBudget: TshMemoryBudget? = null
 ) : TshRenderAcknowledger {
     init {
         require(provider.id.isNotBlank())
@@ -144,6 +145,7 @@ class TshRenderCoordinator(
 
     private val lock = Any()
     private val pending = LinkedHashMap<TshRenderPlanId, TshRenderPlan>()
+    private val pendingReservations = LinkedHashMap<TshRenderPlanId, TshMemoryReservation>()
     private var currentRevisions: TshRenderRevisions? = null
     private var closed = false
 
@@ -177,27 +179,41 @@ class TshRenderCoordinator(
                 "Renderer '${provider.id}' lacks required capabilities: ${missing.joinToString { it.id }}"
             )
         }
-        synchronized(lock) {
-            if (closed) return failure("TSH-RENDER-026", "RenderCoordinator is closed")
-            if (currentRevisions != stablePlan.revisions) {
-                return failure("TSH-RENDER-002", "RenderPlan became stale before submission")
+        val reservation = memoryBudget?.let { budget ->
+            when (val reserved = budget.reserve(
+                TshMemoryCategory.RENDER_PLAN,
+                estimateRenderPlanBytes(stablePlan),
+                "render-plan:" + stablePlan.id.value
+            )) {
+                is TshResult.Success -> reserved.value
+                is TshResult.Failure -> return TshResult.Failure(reserved.diagnostics)
             }
-            if (pending.containsKey(stablePlan.id)) {
-                return failure("TSH-RENDER-004", "RenderPlan id is already pending")
+        }
+        val admissionFailure = synchronized(lock) {
+            when {
+                closed -> "TSH-RENDER-026" to "RenderCoordinator is closed"
+                currentRevisions != stablePlan.revisions ->
+                    "TSH-RENDER-002" to "RenderPlan became stale before submission"
+                pending.containsKey(stablePlan.id) ->
+                    "TSH-RENDER-004" to "RenderPlan id is already pending"
+                pending.size >= maxPendingPlans ->
+                    "TSH-RENDER-022" to "Renderer pending-plan limit ($maxPendingPlans) has been reached; apply backpressure or cancel stale plans"
+                else -> {
+                    pending[stablePlan.id] = stablePlan
+                    if (reservation != null) pendingReservations[stablePlan.id] = reservation
+                    null
+                }
             }
-            if (pending.size >= maxPendingPlans) {
-                return failure(
-                    "TSH-RENDER-022",
-                    "Renderer pending-plan limit ($maxPendingPlans) has been reached; apply backpressure or cancel stale plans"
-                )
-            }
-            pending[stablePlan.id] = stablePlan
+        }
+        if (admissionFailure != null) {
+            reservation?.close()
+            return failure(admissionFailure.first, admissionFailure.second)
         }
 
         val submitted = try {
             provider.submit(stablePlan, this)
         } catch (error: Exception) {
-            synchronized(lock) { pending.remove(stablePlan.id) }
+            synchronized(lock) { removePendingLocked(stablePlan.id) }
             return failure("TSH-RENDER-005", "Renderer provider threw during submission", error)
         } catch (error: LinkageError) {
             synchronized(lock) { pending.remove(stablePlan.id) }
@@ -237,7 +253,7 @@ class TshRenderCoordinator(
         val plan = synchronized(lock) { pending[receipt.planId] }
             ?: return failure("TSH-RENDER-006", "Receipt refers to an unknown or already completed RenderPlan")
         validateReceipt(plan, receipt)?.let { problem ->
-            synchronized(lock) { pending.remove(receipt.planId) }
+            synchronized(lock) { removePendingLocked(receipt.planId) }
             return TshResult.Failure(listOf(problem))
         }
         val current = synchronized(lock) { currentRevisions }
@@ -280,7 +296,7 @@ class TshRenderCoordinator(
             return failure("TSH-RENDER-025", "Renderer cancellation failed with a linkage error", error)
         }
         if (result is TshResult.Success) {
-            synchronized(lock) { pending.remove(planId) }
+            synchronized(lock) { removePendingLocked(planId) }
         }
         return result
     }
@@ -292,11 +308,16 @@ class TshRenderCoordinator(
      * provider work. Providers must still check isCurrent immediately before committing.
      */
     fun close(): TshResult<Unit> {
-        val ids = synchronized(lock) {
-            if (closed) return@synchronized emptyList()
+        val (ids, reservations) = synchronized(lock) {
+            if (closed) return@synchronized emptyList<TshRenderPlanId>() to emptyList<TshMemoryReservation>()
             closed = true
-            pending.keys.toList().also { pending.clear() }
+            val pendingIds = pending.keys.toList()
+            val heldReservations = pendingReservations.values.toList()
+            pending.clear()
+            pendingReservations.clear()
+            pendingIds to heldReservations
         }
+        reservations.forEach(TshMemoryReservation::close)
         val diagnostics = ArrayList<TshDiagnostic>()
         ids.forEach { id ->
             try {
@@ -326,6 +347,44 @@ class TshRenderCoordinator(
             }
         }
         return TshResult.Success(Unit, diagnostics)
+    }
+
+    /** Estimates retained plan payload; this is not a JVM heap measurement. */
+    private fun estimateRenderPlanBytes(plan: TshRenderPlan): Long {
+        var total = 256L
+        fun addString(value: String?) {
+            if (value == null) return
+            val payload = saturatedMultiply(value.length.toLong(), 2L)
+            total = saturatedAdd(total, saturatedAdd(payload, 16L))
+        }
+        addString(plan.id.value)
+        addString(plan.revisions.documentId.value)
+        addString(plan.revisions.configRevision)
+        addString(plan.revisions.themeRevision)
+        addString(plan.revisions.viewportRevision)
+        addString(plan.revisions.rendererRevision)
+        addString(plan.revisions.treeSitterRevision)
+        addString(plan.revisions.regexRevision)
+        total = saturatedAdd(total, saturatedMultiply(plan.instructions.size.toLong(), 128L))
+        plan.instructions.forEach { instruction ->
+            instruction.style.fontFamilies.forEach(::addString)
+            instruction.style.decorations.forEach(::addString)
+            total = saturatedAdd(total, saturatedMultiply(instruction.sourceMatchIds.size.toLong(), 48L))
+        }
+        return total.coerceAtLeast(1L)
+    }
+
+    private fun saturatedMultiply(left: Long, right: Long): Long =
+        if (left == 0L || right == 0L) 0L
+        else if (left > Long.MAX_VALUE / right) Long.MAX_VALUE else left * right
+
+    private fun saturatedAdd(left: Long, right: Long): Long =
+        if (Long.MAX_VALUE - left < right) Long.MAX_VALUE else left + right
+
+    /** Caller must hold [lock]. */
+    private fun removePendingLocked(id: TshRenderPlanId) {
+        pending.remove(id)
+        pendingReservations.remove(id)?.close()
     }
 
     private fun snapshotPlan(plan: TshRenderPlan): TshRenderPlan = plan.copy(
