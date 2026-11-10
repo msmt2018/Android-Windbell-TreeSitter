@@ -500,17 +500,40 @@ data class TokenizerCheckpoint(
  * Per-line Monarch continuation snapshots. A checkpoint is reusable only for
  * the exact document version; edits must invalidate from the preceding checkpoint.
  */
-class TokenizerCheckpointStore(private val maxEntries: Int = 4096) {
+class TokenizerCheckpointStore(
+    private val maxEntries: Int = 4096,
+    private val maxBytes: Long = 2L * 1024L * 1024L
+) {
     private val entries = object : LinkedHashMap<Long, TokenizerCheckpoint>(16, 0.75f, true) {}
-    init { require(maxEntries > 0) }
+    private var usedBytes = 0L
+    val bytesUsed: Long @Synchronized get() = usedBytes
+
+    init {
+        require(maxEntries > 0)
+        require(maxBytes >= 0L)
+    }
 
     @Synchronized fun put(checkpoint: TokenizerCheckpoint) {
-        entries[checkpoint.line] = checkpoint
-        while (entries.size > maxEntries) entries.remove(entries.entries.iterator().next().key)
+        val weight = estimateBytes(checkpoint)
+        val previous = entries.remove(checkpoint.line)
+        if (previous != null) usedBytes = (usedBytes - estimateBytes(previous)).coerceAtLeast(0L)
+        if (weight > maxBytes || maxBytes == 0L) return
+
+        // Snapshot the stack list so external mutation cannot invalidate the
+        // accounting or change a checkpoint after it has entered the cache.
+        val stored = checkpoint.copy(stateStack = checkpoint.stateStack.toList())
+        entries[stored.line] = stored
+        usedBytes = saturatedAdd(usedBytes, weight)
+        while ((entries.size > maxEntries || usedBytes > maxBytes) && entries.isNotEmpty()) {
+            val iterator = entries.entries.iterator()
+            val eldest = iterator.next().value
+            usedBytes = (usedBytes - estimateBytes(eldest)).coerceAtLeast(0L)
+            iterator.remove()
+        }
     }
 
     @Synchronized fun nearest(line: Long, documentVersion: Long): TokenizerCheckpoint? {
-        // Avoid allocating a filtered intermediate list on every checkpoint lookup.
+        // Scan in place: no filtered intermediate list is allocated per lookup.
         var best: TokenizerCheckpoint? = null
         for (checkpoint in entries.values) {
             if (checkpoint.line <= line && checkpoint.documentVersion == documentVersion &&
@@ -521,8 +544,31 @@ class TokenizerCheckpointStore(private val maxEntries: Int = 4096) {
 
     @Synchronized fun invalidateFrom(line: Long) {
         val iterator = entries.entries.iterator()
-        while (iterator.hasNext()) if (iterator.next().key >= line) iterator.remove()
+        while (iterator.hasNext()) {
+            val entry = iterator.next()
+            if (entry.key >= line) {
+                usedBytes = (usedBytes - estimateBytes(entry.value)).coerceAtLeast(0L)
+                iterator.remove()
+            }
+        }
     }
 
-    @Synchronized fun clear() = entries.clear()
+    @Synchronized fun clear() {
+        entries.clear()
+        usedBytes = 0L
+    }
+
+    private fun estimateBytes(checkpoint: TokenizerCheckpoint): Long {
+        // Conservative retained-size estimate: checkpoint/map node, list storage,
+        // and state-name character data. Shared strings may be over-counted, never
+        // under-counted; this cache prefers early eviction to unbounded growth.
+        var bytes = 96L + checkpoint.stateStack.size.toLong() * 8L
+        for (state in checkpoint.stateStack) {
+            bytes = saturatedAdd(bytes, 24L + state.length.toLong() * 2L)
+        }
+        return bytes
+    }
+
+    private fun saturatedAdd(left: Long, right: Long): Long =
+        if (Long.MAX_VALUE - left < right) Long.MAX_VALUE else left + right
 }
