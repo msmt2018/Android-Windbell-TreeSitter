@@ -60,6 +60,7 @@ class TshRegexWindowLease private constructor(
             return checkNotNull(content) { "Regex window content has been released" }
         }
 
+    val isClosed: Boolean get() = closed.get()
     val lengthUtf16: Int get() = text.length
     val isDocumentStart: Boolean get() = windowStartUtf16 == 0L
     val isDocumentEnd: Boolean get() = windowEndUtf16 == documentLengthUtf16
