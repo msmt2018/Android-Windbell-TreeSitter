@@ -9,8 +9,10 @@ package com.zerostudio.idea.treesitter;
  * The span refers to source storage; it does not own or copy source text.
  */
 public final class TSHighlightSpan {
-  private final long startByte;
-  private final long endByte;
+  // Tree-sitter byte offsets are unsigned uint32 values. Store their bit pattern
+  // in 32 bits and widen only at the public accessor boundary.
+  private final int startByte;
+  private final int endByte;
   private final int captureId;
   private final int patternIndex;
   private final int styleId;
@@ -24,16 +26,16 @@ public final class TSHighlightSpan {
     if (captureId < 0 || patternIndex < 0 || styleId < 0) {
       throw new IllegalArgumentException("Highlight identifiers must be non-negative");
     }
-    this.startByte = startByte;
-    this.endByte = endByte;
+    this.startByte = (int) startByte;
+    this.endByte = (int) endByte;
     this.captureId = captureId;
     this.patternIndex = patternIndex;
     this.styleId = styleId;
     this.matchId = matchId;
   }
 
-  public long getStartByte() { return startByte; }
-  public long getEndByte() { return endByte; }
+  public long getStartByte() { return Integer.toUnsignedLong(startByte); }
+  public long getEndByte() { return Integer.toUnsignedLong(endByte); }
   public int getCaptureId() { return captureId; }
   public int getPatternIndex() { return patternIndex; }
   public int getStyleId() { return styleId; }
