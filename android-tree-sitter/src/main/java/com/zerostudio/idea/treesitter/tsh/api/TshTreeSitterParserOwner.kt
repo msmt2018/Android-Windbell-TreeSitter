@@ -827,6 +827,9 @@ class TshTreeSitterParserOwner private constructor(
         val nativeProgressCallback = progressCallback?.let { callback ->
             TSParser.ProgressCallback { byteOffset, hasError ->
                 try {
+                    check(byteOffset >= 0L && byteOffset % 2L == 0L) {
+                        "Tree-sitter UTF-16LE progress offset is not an even non-negative byte offset"
+                    }
                     val shouldCancel = callback.shouldCancel(byteOffset / 2L, hasError)
                     if (shouldCancel) progressCancelled.set(true)
                     shouldCancel
