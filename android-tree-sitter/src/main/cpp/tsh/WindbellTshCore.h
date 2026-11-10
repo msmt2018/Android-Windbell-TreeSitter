@@ -163,6 +163,8 @@ struct AstSelectorRule {
     regex_t* text_regex = nullptr;
     std::string text_regex_pattern;
     bool has_text_regex = false;
+    bool text_regex_bounded = false;
+    uint64_t text_regex_maximum_bytes = 0;
     uint32_t child_index = UINT32_MAX;
     uint32_t named_child_index = UINT32_MAX;
     int8_t first_child = -1;
