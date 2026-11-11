@@ -329,7 +329,7 @@
             start: {match: /\/\*/},
             end: {match: /\*\//},
             contains: [
-                {match: /\b(TODO|FIXME|XXX|BUG|NOTE)\b/, 0: "constant"}
+                {match: /\b(TODO|FIXME|XXX|BUG|NOTE)\b/, 0: "constant", priority: 135}
             ]
         },
 
