@@ -28,6 +28,8 @@ public:
     MappedFileSource &operator=(MappedFileSource &&other) noexcept;
 
     bool open(const std::string &path) noexcept;
+    // Maps an already-open immutable file descriptor without taking ownership.
+    bool openFd(int fd) noexcept;
     void close() noexcept;
 
     // Materialize any TextSource into an immutable temporary file using

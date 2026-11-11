@@ -1018,7 +1018,7 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeCreateDocument(
     }
     jclass reader_class = env->GetObjectClass(reader);
     if (!reader_class) return 0;
-    jmethodID read_method = env->GetMethodID(reader_class, "read", "(JI)[B");
+    jmethodID read_method = env->GetMethodID(reader_class, "read", "(JILjava/nio/ByteBuffer;)I");
     env->DeleteLocalRef(reader_class);
     if (!read_method || env->ExceptionCheck()) return 0;
 
@@ -1034,7 +1034,7 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeCreateDocument(
     }
     const std::string backing_path(path.data());
     bool ok = ::ftruncate(fd, static_cast<off_t>(byte_length)) == 0;
-    std::vector<jbyte> window;
+    std::vector<uint8_t> window;
     if (ok && byte_length > 0) {
         try {
             window.resize(static_cast<size_t>(std::min<uint64_t>(
@@ -1047,35 +1047,35 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeCreateDocument(
             return 0;
         }
     }
+    jobject direct_window = nullptr;
+    if (ok && byte_length > 0) {
+        direct_window = env->NewDirectByteBuffer(
+            window.data(), static_cast<jlong>(window.size()));
+        if (!direct_window) ok = false;
+    }
     uint64_t offset = 0;
     while (ok && offset < static_cast<uint64_t>(byte_length)) {
         const jint requested = static_cast<jint>(std::min<uint64_t>(
             windbell::largefile::kTreeSitterInputChunkBytes,
             static_cast<uint64_t>(byte_length) - offset));
-        auto bytes = reinterpret_cast<jbyteArray>(env->CallObjectMethod(
-            reader, read_method, static_cast<jlong>(offset), requested));
-        if (env->ExceptionCheck() || !bytes) {
-            if (bytes) env->DeleteLocalRef(bytes);
+        const jint count = env->CallIntMethod(
+            reader, read_method, static_cast<jlong>(offset), requested, direct_window);
+        if (env->ExceptionCheck()) {
             ok = false;
             break;
         }
-        const jsize count = env->GetArrayLength(bytes);
         if (count <= 0 || (count & 1) || count > requested ||
             static_cast<uint64_t>(count) > static_cast<uint64_t>(byte_length) - offset) {
-            env->DeleteLocalRef(bytes);
             ok = false;
             break;
         }
-        env->GetByteArrayRegion(bytes, 0, count, window.data());
-        env->DeleteLocalRef(bytes);
-        if (env->ExceptionCheck() ||
-            !writeAllAt(fd, reinterpret_cast<const uint8_t *>(window.data()),
-                        static_cast<size_t>(count), offset)) {
+        if (!writeAllAt(fd, window.data(), static_cast<size_t>(count), offset)) {
             ok = false;
             break;
         }
         offset += static_cast<uint64_t>(count);
     }
+    if (direct_window) env->DeleteLocalRef(direct_window);
     ::close(fd);
     if (!ok || offset != static_cast<uint64_t>(byte_length)) {
         ::unlink(backing_path.c_str());

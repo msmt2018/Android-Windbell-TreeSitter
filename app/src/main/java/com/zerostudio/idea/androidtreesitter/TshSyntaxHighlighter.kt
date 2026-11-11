@@ -27,6 +27,7 @@ import x.github.module.editor.model.EditorDocument
 import x.github.module.editor.model.EditorTextSnapshot
 import x.github.module.editor.structure.PlainBracketMatcher
 import java.io.File
+import java.nio.ByteBuffer
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
@@ -399,17 +400,18 @@ class TshSyntaxHighlighter(
                 temporaryDirectory.canWrite()) {
                 "No writable app-private cache directory for native TSH document"
             }
-            val reader = NativeTextWindowReader { byteOffset, maxBytes ->
+            val reader = NativeTextWindowReader { byteOffset, maxBytes, destination ->
                 require(byteOffset >= 0L && (byteOffset and 1L) == 0L && maxBytes >= 2)
+                destination.clear()
+                destination.limit(maxBytes)
                 val start = (byteOffset / 2L).toInt()
                 val text = snapshot.getNearestChunk(start, maxBytes / 2)
-                ByteArray(text.length * 2).also { bytes ->
-                    for (index in text.indices) {
-                        val codeUnit = text[index].code
-                        bytes[index * 2] = (codeUnit and 0xFF).toByte()
-                        bytes[index * 2 + 1] = (codeUnit ushr 8).toByte()
-                    }
+                for (character in text) {
+                    val codeUnit = character.code
+                    destination.put((codeUnit and 0xFF).toByte())
+                    destination.put((codeUnit ushr 8).toByte())
                 }
+                destination.position()
             }
             nativeHandle = engine.createNativeDocument(
                 language = language,

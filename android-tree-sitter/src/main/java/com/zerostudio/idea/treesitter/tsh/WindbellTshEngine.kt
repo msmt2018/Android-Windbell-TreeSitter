@@ -15,11 +15,13 @@ import com.zerostudio.idea.treesitter.TSTree
 import dalvik.annotation.optimization.FastNative
 import java.util.concurrent.ConcurrentHashMap
 import java.io.File
+import java.nio.ByteBuffer
 import com.zerostudio.idea.treesitter.TreeSitter
 
 /** Supplies bounded UTF-16LE windows to the native document engine. */
 fun interface NativeTextWindowReader {
-    fun read(byteOffset: Long, maxBytes: Int): ByteArray
+    /** Fill a reusable direct native window and return the number of UTF-16LE bytes written. */
+    fun read(byteOffset: Long, maxBytes: Int, destination: ByteBuffer): Int
 }
 /**
  * Windbell Treesitter Highlighting Configuration Engine (Windbell-TSH)

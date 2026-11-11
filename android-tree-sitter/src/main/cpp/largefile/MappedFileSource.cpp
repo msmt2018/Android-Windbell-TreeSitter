@@ -112,37 +112,30 @@ std::unique_ptr<MappedFileSource> MappedFileSource::createSnapshot(
 }
 
 bool MappedFileSource::open(const std::string &path) noexcept {
-    close();
     const int fd = ::open(path.c_str(), O_RDONLY | O_CLOEXEC);
-    if (fd < 0) return false;
-
-    struct stat info {};
-    const bool stat_ok = ::fstat(fd, &info) == 0 && info.st_size >= 0;
-    if (!stat_ok) {
-        ::close(fd);
+    if (fd < 0) {
+        close();
         return false;
     }
+    const bool success = openFd(fd);
+    ::close(fd);
+    return success;
+}
 
+bool MappedFileSource::openFd(int fd) noexcept {
+    close();
+    if (fd < 0) return false;
+    struct stat info {};
+    if (::fstat(fd, &info) != 0 || info.st_size < 0) return false;
     if (info.st_size == 0) {
-        ::close(fd);
         open_ = true;
         return true;
     }
-
-    const auto size = static_cast<uint64_t>(info.st_size);
-    if ((size & 1u) != 0) {
-        ::close(fd);
-        return false;
-    }
-    if (size > static_cast<uint64_t>(std::numeric_limits<size_t>::max())) {
-        ::close(fd);
-        return false;
-    }
-
+    const uint64_t size = static_cast<uint64_t>(info.st_size);
+    if ((size & 1u) != 0 ||
+        size > static_cast<uint64_t>(std::numeric_limits<size_t>::max())) return false;
     void *mapped = ::mmap(nullptr, static_cast<size_t>(size), PROT_READ, MAP_PRIVATE, fd, 0);
-    ::close(fd);
     if (mapped == MAP_FAILED) return false;
-
     mapping_ = mapped;
     size_bytes_ = size;
     open_ = true;
