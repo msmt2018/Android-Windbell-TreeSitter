@@ -152,8 +152,9 @@ class WindbellTshLinkageTest {
         // materializing that 32 MiB capture.
         val totalBytes = 32L * 1024L * 1024L + 128L * 1024L
         val directory = File(System.getProperty("java.io.tmpdir"))
-        val reader = NativeTextWindowReader { offset, requested ->
-            val bytes = ByteArray(requested)
+        val reader = NativeTextWindowReader { offset, requested, destination ->
+            destination.clear()
+            destination.limit(requested)
             for (i in 0 until requested step 2) {
                 val charIndex = (offset + i) / 2L
                 val value = when {
@@ -164,10 +165,10 @@ class WindbellTshLinkageTest {
                     charIndex == totalBytes / 2L - 1L -> '/'
                     else -> 'a'
                 }.code
-                bytes[i] = (value and 0xFF).toByte()
-                bytes[i + 1] = ((value ushr 8) and 0xFF).toByte()
+                destination.put((value and 0xFF).toByte())
+                destination.put(((value ushr 8) and 0xFF).toByte())
             }
-            bytes
+            destination.position()
         }
         val handle = engine.createNativeDocument(
             TSLanguageJava.getInstance(), extension, totalBytes, directory, reader
@@ -226,13 +227,20 @@ class WindbellTshLinkageTest {
 
         val bytes = "class Demo {}".toByteArray(Charsets.UTF_16LE)
         val readsAllowed = AtomicBoolean(true)
-        val reader = NativeTextWindowReader { offset, requested ->
+        val reader = NativeTextWindowReader { offset, requested, destination ->
             if (!readsAllowed.get()) {
-                ByteArray(0)
+                0
             } else {
                 val start = offset.toInt()
-                val end = minOf(bytes.size, start + requested)
-                if (start >= end) ByteArray(0) else bytes.copyOfRange(start, end)
+                val count = minOf(requested, bytes.size - start)
+                if (start < 0 || count <= 0) {
+                    0
+                } else {
+                    destination.clear()
+                    destination.limit(count)
+                    destination.put(bytes, start, count)
+                    destination.position()
+                }
             }
         }
         val handle = engine.createNativeDocument(
@@ -1928,8 +1936,9 @@ class WindbellTshLinkageTest {
         val classText = "class DistantTokenProbe { int value; }"
         val targetChar = totalChars - classText.length
         val closeStart = targetChar - 3L
-        val reader = NativeTextWindowReader { offset, requested ->
-            val bytes = ByteArray(requested)
+        val reader = NativeTextWindowReader { offset, requested, destination ->
+            destination.clear()
+            destination.limit(requested)
             for (i in 0 until requested step 2) {
                 val charIndex = (offset + i) / 2L
                 val ch = when {
@@ -1942,10 +1951,10 @@ class WindbellTshLinkageTest {
                         classText[(charIndex - targetChar).toInt()]
                     else -> 'a'
                 }.code
-                bytes[i] = (ch and 0xFF).toByte()
-                bytes[i + 1] = ((ch ushr 8) and 0xFF).toByte()
+                destination.put((ch and 0xFF).toByte())
+                destination.put(((ch ushr 8) and 0xFF).toByte())
             }
-            bytes
+            destination.position()
         }
         val handle = engine.createNativeDocument(
             TSLanguageJava.getInstance(), extension, totalBytes,
