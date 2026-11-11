@@ -49,7 +49,6 @@ class TshSyntaxHighlighter(
 
     companion object {
         private const val TAG = "WindbellTSH"
-        private const val LARGE_DOCUMENT_THRESHOLD_CHARS = 1 * 1024 * 1024
         private const val PARTITION_CHARS = 64L * 1024L
         private const val CAPTURE_CACHE_BYTES = 32L * 1024L * 1024L
         private val nextSessionId = AtomicLong(1L)
@@ -143,8 +142,7 @@ class TshSyntaxHighlighter(
         // Do not allocate/encode an inserted UTF-16LE copy that will be discarded.
         // Large-file initialization is the only no-session case that must queue edits.
         val needsNativeTransaction = synchronized(nativeEditLock) {
-            largeSession != null ||
-                (parsing && (host?.buffer?.length ?: 0) >= LARGE_DOCUMENT_THRESHOLD_CHARS)
+            largeSession != null || parsing
         }
         if (!needsNativeTransaction) return
 
@@ -187,7 +185,7 @@ class TshSyntaxHighlighter(
             if (active == null) {
                 // Large-document initialization may still be consuming its original
                 // immutable snapshot. Keep transactions queued for it to replay.
-                if (host?.buffer?.length?.let { it < LARGE_DOCUMENT_THRESHOLD_CHARS } == true || !parsing) {
+                if (!parsing) {
                     pendingNativeEdits.clear()
                     host?.buffer?.let(::scheduleParse)
                 }
@@ -390,11 +388,7 @@ class TshSyntaxHighlighter(
 
         parseJob = scope.launch {
             delay(45)
-            if (snapshot.length >= LARGE_DOCUMENT_THRESHOLD_CHARS) {
-                initializeLargeSession(snapshot, ticket)
-            } else {
-                parseSmallSnapshot(snapshot, ticket)
-            }
+            initializeLargeSession(snapshot, ticket)
         }
     }
 

@@ -898,6 +898,10 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlight(
 
     const jsize len = env->GetStringLength(text_jstr);
     const uint64_t sourceByteLength = static_cast<uint64_t>(len) * sizeof(jchar);
+    if (static_cast<uint64_t>(range_end_byte) > sourceByteLength) {
+        throw_illegal_args(env, "TSH byte range exceeds the UTF-16 source length");
+        return nullptr;
+    }
     if (tree && !nativeTreeCoversDocument(tree, sourceByteLength)) {
         throw_illegal_args(env,
             "TSH requires a complete full-document Tree-sitter AST; included-range fragments are not valid inputs");
@@ -912,6 +916,20 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlight(
     // this matters for multi-megabyte and very large editor buffers.
     const jchar* source_chars = env->GetStringChars(text_jstr, nullptr);
     if (!source_chars) return nullptr;
+    auto splitsSurrogatePair = [source_chars, len](jlong byteOffset) noexcept {
+        if (byteOffset <= 0 || (byteOffset & 1LL) != 0) return false;
+        const jsize unitOffset = static_cast<jsize>(byteOffset / 2LL);
+        if (unitOffset <= 0 || unitOffset >= len) return false;
+        const jchar before = source_chars[unitOffset - 1];
+        const jchar after = source_chars[unitOffset];
+        return before >= 0xD800 && before <= 0xDBFF &&
+               after >= 0xDC00 && after <= 0xDFFF;
+    };
+    if (splitsSurrogatePair(range_start_byte) || splitsSurrogatePair(range_end_byte)) {
+        env->ReleaseStringChars(text_jstr, source_chars);
+        throw_illegal_args(env, "TSH byte range must not split a UTF-16 surrogate pair");
+        return nullptr;
+    }
     struct SourceCharsGuard {
         JNIEnv* env;
         jstring source;

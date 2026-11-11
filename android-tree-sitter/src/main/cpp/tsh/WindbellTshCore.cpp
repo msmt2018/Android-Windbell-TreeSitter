@@ -2123,7 +2123,7 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                     span.end_byte = node_end;
                     span.style_id = ast_rule.style_id;
                     span.flags = 0;
-                    span.priority = ast_rule.priority;
+                    span.priority = ast_rule.priority > 0 ? ast_rule.priority : 100;
                     span.declaration_order = ast_rule.declaration_order;
                     span.allow_overlap = ast_rule.allow_overlap ? 1 : 0;
                     if (span.end_byte > range_start_byte && span.start_byte < range_end_byte) {
