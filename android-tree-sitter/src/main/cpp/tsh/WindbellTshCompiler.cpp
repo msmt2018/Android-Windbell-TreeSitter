@@ -46,6 +46,57 @@ static bool analyzeBoundedRegexWidth(
     uint64_t* maximum_utf16_units
 ) {
     if (!maximum_utf16_units || pattern.empty()) return false;
+
+    // The keyword macro and common documentation-tag rules expand to a
+    // non-capturing alternation of literal words with optional word-boundary
+    // assertions, e.g. \\b(?:class|return)\\b. These are finite-width: the
+    // boundary checks need at most one UTF-16 code unit of context on each side.
+    {
+        size_t begin = 0;
+        size_t end = pattern.size();
+        uint64_t boundary_context = 0;
+        if (pattern.compare(0, 2, "\\b") == 0) {
+            begin += 2;
+            ++boundary_context;
+        }
+        if (end >= 2 && pattern.compare(end - 2, 2, "\\b") == 0) {
+            end -= 2;
+            ++boundary_context;
+        }
+        if (end > begin + 4 && pattern.compare(begin, 3, "(?:") == 0 &&
+            pattern[end - 1] == ')') {
+            const std::string alternatives = pattern.substr(
+                begin + 3, end - begin - 4);
+            size_t position = 0;
+            uint64_t maximum_width = 0;
+            bool valid = true;
+            while (position <= alternatives.size()) {
+                const size_t separator = alternatives.find('|', position);
+                const size_t limit = separator == std::string::npos
+                    ? alternatives.size() : separator;
+                if (limit == position) { valid = false; break; }
+                for (size_t index = position; index < limit; ++index) {
+                    const unsigned char value =
+                        static_cast<unsigned char>(alternatives[index]);
+                    if (!std::isalnum(value) && value != '_' &&
+                        value != '-' && value != '@') {
+                        valid = false;
+                        break;
+                    }
+                }
+                if (!valid) break;
+                maximum_width = std::max<uint64_t>(
+                    maximum_width, static_cast<uint64_t>(limit - position));
+                if (separator == std::string::npos) break;
+                position = separator + 1;
+            }
+            if (valid && maximum_width > 0) {
+                *maximum_utf16_units = maximum_width + boundary_context;
+                return true;
+            }
+        }
+    }
+
     uint64_t total = 0;
     size_t i = 0;
     const auto add_width = [&](uint64_t width, uint64_t repeat,

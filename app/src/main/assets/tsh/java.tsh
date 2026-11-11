@@ -236,7 +236,7 @@
     // =========================================================================
     defines: [
         "identifier": /[a-zA-Z_$][a-zA-Z0-9_$]*/,
-        "docTags": /@(param|return|throws|exception|see|since|deprecated|author|version|serial)\b/,
+        "docTags": /(?:@param|@return|@throws|@exception|@see|@since|@deprecated|@author|@version|@serial)\b/,
     ],
 
     // =========================================================================
@@ -331,7 +331,7 @@
             start: {match: /\/\//},
             end: {match: /\r?\n/},
             contains: [
-                {match: /\b(TODO|FIXME|XXX|BUG|NOTE)\b/, 0: "constant", priority: 135}
+                {match: /\b(?:TODO|FIXME|XXX|BUG|NOTE)\b/, 0: "constant", priority: 135}
             ]
         },
         {
@@ -340,7 +340,7 @@
             start: {match: /\/\*/},
             end: {match: /\*\//},
             contains: [
-                {match: /\b(TODO|FIXME|XXX|BUG|NOTE)\b/, 0: "constant", priority: 135}
+                {match: /\b(?:TODO|FIXME|XXX|BUG|NOTE)\b/, 0: "constant", priority: 135}
             ]
         },
 
