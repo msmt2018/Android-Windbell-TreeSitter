@@ -69,8 +69,9 @@ class WindbellTshLinkageTest {
         val targetChar = totalBytes / 2L - 64L
         val token = "token"
         val directory = File(System.getProperty("java.io.tmpdir"))
-        val reader = NativeTextWindowReader { offset, requested ->
-            val bytes = ByteArray(requested)
+        val reader = NativeTextWindowReader { offset, requested, destination ->
+            destination.clear()
+            destination.limit(requested)
             for (i in 0 until requested step 2) {
                 val charIndex = (offset + i) / 2L
                 val value = when {
@@ -83,10 +84,10 @@ class WindbellTshLinkageTest {
                     charIndex == totalBytes / 2L - 1L -> '/'
                     else -> 'a'
                 }.code
-                bytes[i] = (value and 0xFF).toByte()
-                bytes[i + 1] = ((value ushr 8) and 0xFF).toByte()
+                destination.put((value and 0xFF).toByte())
+                destination.put(((value ushr 8) and 0xFF).toByte())
             }
-            bytes
+            destination.position()
         }
 
         val handle = engine.createNativeDocument(
