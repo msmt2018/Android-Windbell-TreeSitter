@@ -197,7 +197,7 @@ class JavaTshFullTest {
             assertTrue(full.isNotEmpty(), "The full ATS selector pipeline must emit symbol spans")
 
             val targetStart = source.indexOf("field_2990")
-            val targetEnd = source.indexOf("field_2995") + "field_1195".length
+            val targetEnd = source.indexOf("field_2995") + "field_2995".length
             assertTrue(targetStart >= 0 && targetEnd > targetStart)
             val startByte = targetStart.toLong() * 2L
             val endByte = targetEnd.toLong() * 2L
@@ -225,6 +225,58 @@ class JavaTshFullTest {
                 val tokenEnd = (span.endByte / 2L).toInt()
                 source.substring(tokenStart, tokenEnd).startsWith("field_")
             }, "The viewport must retain actual declaration-name symbol tokens")
+        } finally {
+            tree?.close()
+            parser.close()
+        }
+    }
+
+    @Test
+    fun testRegexBlockViewportMatchesFullDocumentAcrossOpenAndClosedDelimiters() {
+        val prefix = (0 until 1800).joinToString("\n") { index ->
+            "class RegexPrefix$index { int value = $index; }"
+        }
+        val blockComment = "/* " + "x".repeat(96 * 1024) +
+            " TODO_BLOCK_MARKER " + "y".repeat(96 * 1024) + " */"
+        val lineComment = "// " + "l".repeat(48 * 1024) +
+            " TODO_LINE_MARKER " + "r".repeat(48 * 1024)
+        val source = "$prefix\n$blockComment\n$lineComment\nclass RegexViewportTail {}"
+        val parser = TSParser.create().apply { language = TSLanguageJava.getInstance() }
+        val tree = parser.parseString(source)
+        assertNotNull(tree)
+        try {
+            val engine = WindbellTshEngine.instance
+            val full = engine.computeHighlights(tree, source, "java")
+                .filter { it.source == 0 }
+
+            fun assertViewportEquivalent(marker: String, label: String) {
+                val markerStart = source.indexOf(marker)
+                assertTrue(markerStart >= 0, "$label marker must exist")
+                val start = (markerStart - 24).coerceAtLeast(0)
+                val end = (markerStart + marker.length + 24).coerceAtMost(source.length)
+                val startByte = start.toLong() * 2L
+                val endByte = end.toLong() * 2L
+                val actual = engine.computeHighlights(
+                    tree, source, "java", startByte, endByte
+                ).filter { it.source == 0 }
+                val expected = full.mapNotNull { span ->
+                    val clippedStart = maxOf(span.startByte.toLong(), startByte)
+                    val clippedEnd = minOf(span.endByte.toLong(), endByte)
+                    if (clippedStart < clippedEnd) {
+                        listOf(clippedStart, clippedEnd, span.styleId.toLong(),
+                            span.priority.toLong(), span.declarationOrder.toLong())
+                    } else null
+                }.sortedWith(compareBy<List<Long>> { it[0] }.thenBy { it[1] }.thenBy { it[2] })
+                val observed = actual.map { span ->
+                    listOf(span.startByte.toLong(), span.endByte.toLong(), span.styleId.toLong(),
+                        span.priority.toLong(), span.declarationOrder.toLong())
+                }.sortedWith(compareBy<List<Long>> { it[0] }.thenBy { it[1] }.thenBy { it[2] })
+                assertEquals(expected, observed,
+                    "$label viewport must preserve block state and nested Regex captures")
+            }
+
+            assertViewportEquivalent("TODO_BLOCK_MARKER", "Multi-line block comment")
+            assertViewportEquivalent("TODO_LINE_MARKER", "Single-line comment")
         } finally {
             tree?.close()
             parser.close()
