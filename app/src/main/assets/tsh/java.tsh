@@ -246,7 +246,7 @@
         // --- 4.1 类型声明节点 ---
         { node: "class_declaration", field: "name", style: "type", priority: 110 },
         { node: "interface_declaration", field: "name", style: "type", priority: 110 },
-        { node: "record_declaration", field: "name", textRegex: /^UserProfile$/, style: "type", priority: 110 },
+        { node: "record_declaration", field: "name", style: "type", priority: 110 },
         { node: "enum_declaration", field: "name", style: "type", priority: 110 },
 
         // --- 4.2 方法与构造器声明 ---
@@ -271,7 +271,6 @@
         { node: "character_literal", style: "string", priority: 125 },
         { node: "line_comment", style: "comment", priority: 130 },
         { node: "block_comment", style: "comment", priority: 130 },
-        { node: "block_comment", textRegex: /^\/\*\*/, style: "docComment", priority: 140 },
         { node: "decimal_integer_literal", style: "number", priority: 90 },
         { node: "hex_integer_literal", style: "number", priority: 90 },
         { node: "octal_integer_literal", style: "number", priority: 90 },
@@ -280,8 +279,6 @@
         { node: "hex_floating_point_literal", style: "number", priority: 90 },
 
         // --- 4.7 常量命名约定在 AST 标识符范围内判定 ---
-        { node: "identifier", textRegex: /^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+$/, style: "constant", priority: 85 },
-        { node: "identifier", textRegex: /^(?!(?:URL|URI|XML|JSON|HTTP|UUID|ID|EOF)$)[A-Z][A-Z0-9]{2,}$/, style: "constant", priority: 80 }
     ],
 
     // =========================================================================
