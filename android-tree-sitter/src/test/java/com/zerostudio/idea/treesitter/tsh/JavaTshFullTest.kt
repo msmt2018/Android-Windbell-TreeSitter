@@ -183,7 +183,7 @@ class JavaTshFullTest {
 
     @Test
     fun testAstSelectorViewportMatchesFullDocumentAndSkipsEarlierSubtrees() {
-        val declarations = (0 until 1200).joinToString("\n") { index ->
+        val declarations = (0 until 3000).joinToString("\n") { index ->
             "    private int field_$index = $index;"
         }
         val source = "class ViewportProbe {\n$declarations\n}"
@@ -196,8 +196,8 @@ class JavaTshFullTest {
                 .filter { it.source == 2 }
             assertTrue(full.isNotEmpty(), "The full ATS selector pipeline must emit symbol spans")
 
-            val targetStart = source.indexOf("field_1190")
-            val targetEnd = source.indexOf("field_1195") + "field_1195".length
+            val targetStart = source.indexOf("field_2990")
+            val targetEnd = source.indexOf("field_2995") + "field_1195".length
             assertTrue(targetStart >= 0 && targetEnd > targetStart)
             val startByte = targetStart.toLong() * 2L
             val endByte = targetEnd.toLong() * 2L
@@ -206,15 +206,15 @@ class JavaTshFullTest {
             ).filter { it.source == 2 }
 
             val expected = full.mapNotNull { span ->
-                val start = maxOf(span.startByte, startByte)
-                val end = minOf(span.endByte, endByte)
+                val start = maxOf(span.startByte.toLong(), startByte)
+                val end = minOf(span.endByte.toLong(), endByte)
                 if (start < end) {
                     listOf(start.toLong(), end.toLong(), span.styleId.toLong(), span.priority.toLong(),
                         span.declarationOrder.toLong())
                 } else null
             }.sortedWith(compareBy<List<Long>> { it[0] }.thenBy { it[1] }.thenBy { it[2] })
             val actual = viewport.map { span ->
-                listOf(span.startByte, span.endByte, span.styleId.toLong(),
+                listOf(span.startByte.toLong(), span.endByte.toLong(), span.styleId.toLong(),
                     span.priority.toLong(), span.declarationOrder.toLong())
             }.sortedWith(compareBy<List<Long>> { it[0] }.thenBy { it[1] }.thenBy { it[2] })
 

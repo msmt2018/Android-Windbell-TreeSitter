@@ -130,7 +130,6 @@ class TshSyntaxHighlighter(
 
     override fun onTextReplaced(buffer: EditorBuffer) {
         synchronized(nativeEditLock) { pendingNativeEdits.clear() }
-        captureIndex = CaptureIntervalIndex(emptyList())
         scheduleParse(buffer)
     }
 
@@ -321,9 +320,10 @@ class TshSyntaxHighlighter(
             }
             cached.query(offset, offset + 1)
         } else {
-            if (parsing) return true
-            if (offset < 0 || offset == Int.MAX_VALUE) return false
-            captureIndex.query(offset, offset + 1)
+            // There is no Kotlin-side full-document capture index anymore.
+            // Until the native document is published, treat lexical scope as
+            // unknown and avoid inserting bracket pairs into comments/strings.
+            return true
         }
         return spans.any { span ->
             val style = stylesById[span.styleId]
@@ -376,7 +376,6 @@ class TshSyntaxHighlighter(
         parseJob?.cancel(CancellationException("Superseded by newer document snapshot"))
         largeSession?.let(::disposeSession)
         largeSession = null
-        captureIndex = CaptureIntervalIndex(emptyList())
         parsing = true
 
         parseJob = scope.launch {
