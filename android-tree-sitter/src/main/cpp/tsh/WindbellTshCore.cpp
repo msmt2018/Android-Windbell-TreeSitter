@@ -1055,6 +1055,7 @@ void WindbellEngine::matchBlockRecursive(
     const UChar* text_end,
     const UChar* range_start,
     const UChar* range_end,
+    const UChar* search_floor,
     uint32_t output_start_byte,
     uint32_t output_end_byte,
     std::vector<HighlightSpan>& out_spans,
@@ -1067,7 +1068,29 @@ void WindbellEngine::matchBlockRecursive(
         if (end_region) onig_region_free(end_region, 1);
         return;
     }
+    // Recover an active block at the viewport boundary with a reverse
+    // delimiter search. This avoids scanning the whole document prefix on each
+    // render while retaining the original block state.
     const UChar* curr = range_start;
+    if (search_floor < range_start) {
+        OnigRegion* previous_start = onig_region_new();
+        OnigRegion* previous_end = onig_region_new();
+        if (previous_start && previous_end) {
+            const int start_hit = onig_search(
+                rule.onig_start, text_start, text_end,
+                range_start, search_floor, previous_start, ONIG_OPTION_NONE);
+            const int end_hit = onig_search(
+                rule.onig_end, text_start, text_end,
+                range_start, search_floor, previous_end, ONIG_OPTION_NONE);
+            if (start_hit >= 0 && previous_start->beg[0] >= 0 &&
+                (end_hit < 0 || previous_end->beg[0] < 0 ||
+                 previous_start->beg[0] > previous_end->beg[0])) {
+                curr = text_start + previous_start->beg[0];
+            }
+        }
+        if (previous_start) onig_region_free(previous_start, 1);
+        if (previous_end) onig_region_free(previous_end, 1);
+    }
 
     while (curr < range_end) {
         int hit_start = onig_search(
@@ -1090,14 +1113,14 @@ void WindbellEngine::matchBlockRecursive(
             text_start,
             text_end,
             content_start,
-            range_end,
+            text_end,
             end_region,
             ONIG_OPTION_NONE
         );
 
         uint32_t block_end_byte = (hit_end >= 0) ?
             static_cast<uint32_t>(end_region->end[0]) :
-            static_cast<uint32_t>(range_end - text_start);
+            static_cast<uint32_t>(text_end - text_start);
 
         if ((block_start_byte & 1u) == 0 && (block_end_byte & 1u) == 0) {
             if (rule.has_style && block_start_byte < block_end_byte) {
@@ -1118,7 +1141,7 @@ void WindbellEngine::matchBlockRecursive(
                 const uint32_t content_start = static_cast<uint32_t>(start_region->end[0]);
                 const uint32_t content_end = hit_end >= 0 ?
                     static_cast<uint32_t>(end_region->beg[0]) :
-                    static_cast<uint32_t>(range_end - text_start);
+                    static_cast<uint32_t>(text_end - text_start);
                 if (content_start < content_end &&
                     (content_start & 1u) == 0 && (content_end & 1u) == 0 &&
                     content_end > output_start_byte && content_start < output_end_byte) {
@@ -1147,25 +1170,46 @@ void WindbellEngine::matchBlockRecursive(
 
             if (!rule.nested_rules.empty()) {
                 const UChar* inner_start = content_start;
-                const UChar* inner_end = hit_end >= 0 ? text_start + end_region->beg[0] : range_end;
+                const UChar* inner_end = hit_end >= 0 ? text_start + end_region->beg[0] : text_end;
 
                 for (const auto& nested : rule.nested_rules) {
                     if (!nested.enabled) continue;
                     if (nested.type == RegexRuleType::BLOCK && nested.onig_start && nested.onig_end) {
-                        matchBlockRecursive(nested, text_start, text_end, inner_start, inner_end, output_start_byte, output_end_byte, out_spans, regex_match_count);
+                        const UChar* nested_range_start = std::max(
+                            inner_start, text_start + output_start_byte);
+                        const UChar* nested_range_end = std::min(
+                            inner_end, text_start + output_end_byte);
+                        matchBlockRecursive(
+                            nested, text_start, text_end,
+                            nested_range_start, nested_range_end, inner_start,
+                            output_start_byte, output_end_byte, out_spans, regex_match_count);
                         continue;
                     }
                     if (nested.type == RegexRuleType::MATCH && nested.onig_start) {
                         OnigRegion* inner_region = onig_region_new();
                         if (!inner_region) continue;
-                        const UChar* inner_curr = inner_start;
-                        while (inner_curr < inner_end) {
+                        const UChar* nested_scan_start = inner_start;
+                        const UChar* nested_scan_end = inner_end;
+                        if (nested.execution_capability == RegexExecutionCapability::BOUNDED_WINDOW &&
+                            nested.maximum_match_bytes > 0) {
+                            const UChar* viewport_start = text_start + output_start_byte;
+                            const UChar* viewport_end = text_start + output_end_byte;
+                            const uint64_t overlap = nested.maximum_match_bytes >= 2u
+                                ? nested.maximum_match_bytes - 2u : 0u;
+                            const uint64_t available = static_cast<uint64_t>(
+                                viewport_start - inner_start);
+                            nested_scan_start = viewport_start -
+                                static_cast<ptrdiff_t>(std::min<uint64_t>(overlap, available));
+                            nested_scan_end = std::min(inner_end, viewport_end);
+                        }
+                        const UChar* inner_curr = nested_scan_start;
+                        while (inner_curr < nested_scan_end) {
                             int inner_hit = onig_search(
                                 nested.onig_start,
                                 text_start,
                                 text_end,
                                 inner_curr,
-                                inner_end,
+                                nested_scan_end,
                                 inner_region,
                                 ONIG_OPTION_NONE
                             );
@@ -1209,7 +1253,7 @@ void WindbellEngine::matchBlockRecursive(
                                 }
                             }
                             inner_curr = (inner_region->end[0] <= inner_region->beg[0]) ?
-                                advanceOneUtf16CodePoint(text_start + inner_region->beg[0], inner_end) :
+                                advanceOneUtf16CodePoint(text_start + inner_region->beg[0], nested_scan_end) :
                                 text_start + inner_region->end[0];
                         }
                         onig_region_free(inner_region, 1);
@@ -1223,7 +1267,9 @@ void WindbellEngine::matchBlockRecursive(
             if (next <= curr) next = advanceOneUtf16CodePoint(curr, range_end);
             curr = next;
         } else {
-            curr = advanceOneUtf16CodePoint(text_start + start_region->end[0], range_end);
+            // An unterminated block extends to EOF; no later top-level block can
+            // start after it, so stop after emitting the visible intersection.
+            break;
         }
     }
 
@@ -1444,7 +1490,10 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
             continue;
         }
         if (rule.type == RegexRuleType::BLOCK && rule.onig_start && rule.onig_end) {
-            matchBlockRecursive(rule, text_start, text_end, text_start, text_end, range_start_byte, range_end_byte, micro_spans,
+            matchBlockRecursive(
+                rule, text_start, text_end,
+                text_start + range_start_byte, text_start + range_end_byte, text_start,
+                range_start_byte, range_end_byte, micro_spans,
                 diagnostic_match_counts ? &diagnostic_match_counts[0] : nullptr);
             retain_requested_range(micro_spans);
             continue;

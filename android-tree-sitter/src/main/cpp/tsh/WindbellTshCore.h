@@ -429,6 +429,7 @@ private:
         const UChar* text_end,
         const UChar* range_start,
         const UChar* range_end,
+        const UChar* search_floor,
         uint32_t output_start_byte,
         uint32_t output_end_byte,
         std::vector<HighlightSpan>& out_spans,
