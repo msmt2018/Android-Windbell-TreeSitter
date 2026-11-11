@@ -6,6 +6,7 @@
 #include <cerrno>
 #include <cstdlib>
 #include <sys/mman.h>
+#include <sys/syscall.h>
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <unistd.h>
@@ -48,15 +49,24 @@ std::unique_ptr<MappedFileSource> MappedFileSource::createSnapshot(
         source_size > static_cast<uint64_t>(std::numeric_limits<off_t>::max()) ||
         directory.empty()) return nullptr;
 
-    std::string temporary_path;
     int fd = -1;
-    try {
-        temporary_path = directory;
-        if (temporary_path.back() != '/') temporary_path.push_back('/');
-        temporary_path += "windbell-text-snapshot-XXXXXX";
-        fd = ::mkstemp(temporary_path.data());
-    } catch (...) {
-        return nullptr;
+    bool anonymous = false;
+#if defined(SYS_memfd_create)
+    constexpr unsigned int kMemfdCloseOnExec = 0x0001u;
+    fd = static_cast<int>(::syscall(
+        SYS_memfd_create, "windbell-tsh-snapshot", kMemfdCloseOnExec));
+    anonymous = fd >= 0;
+#endif
+    std::string temporary_path;
+    if (fd < 0) {
+        try {
+            temporary_path = directory;
+            if (temporary_path.back() != '/') temporary_path.push_back('/');
+            temporary_path += "windbell-text-snapshot-XXXXXX";
+            fd = ::mkstemp(temporary_path.data());
+        } catch (...) {
+            return nullptr;
+        }
     }
     if (fd < 0) return nullptr;
 
@@ -89,16 +99,28 @@ std::unique_ptr<MappedFileSource> MappedFileSource::createSnapshot(
         if (success) offset += chunk.size;
     }
 
-    if (::close(fd) != 0) success = false;
-    fd = -1;
     if (!success || offset != source_size) {
-        ::unlink(temporary_path.c_str());
+        ::close(fd);
+        if (!temporary_path.empty()) ::unlink(temporary_path.c_str());
         return nullptr;
     }
 
     std::unique_ptr<MappedFileSource> snapshot(
         new (std::nothrow) MappedFileSource());
-    if (!snapshot || !snapshot->open(temporary_path)) {
+    if (!snapshot) {
+        ::close(fd);
+        if (!temporary_path.empty()) ::unlink(temporary_path.c_str());
+        return nullptr;
+    }
+    if (anonymous) {
+        const bool opened = snapshot->openFd(fd);
+        ::close(fd);
+        if (!opened) return nullptr;
+        return snapshot;
+    }
+
+    ::close(fd);
+    if (!snapshot->open(temporary_path)) {
         ::unlink(temporary_path.c_str());
         return nullptr;
     }
