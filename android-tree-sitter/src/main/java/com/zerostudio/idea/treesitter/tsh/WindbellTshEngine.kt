@@ -731,9 +731,10 @@ class WindbellTshEngine private constructor() {
 
 
     /**
-     * Creates a native-owned, file-backed UTF-16LE document and parses it in
-     * JNI. The callback only supplies bounded bytes; partitioning, storage,
-     * parsing and TSH execution remain inside the native engine.
+     * Creates a native-owned UTF-16LE document and parses it in JNI. Native prefers
+     * an anonymous memfd-backed mapping and falls back to the app-private cache
+     * directory. The callback fills a reusable direct buffer, avoiding per-window
+     * ByteArray allocation and an additional JNI array copy.
      */
     fun createNativeDocument(
         language: TSLanguage,

@@ -164,6 +164,29 @@ static void testMappedFileSource() {
     ::unlink(path);
 }
 
+static void testMappedFileSourceOpenFdSurvivesDescriptorCloseAndUnlink() {
+    char path[] = "/tmp/windbell-mmap-fd-XXXXXX";
+    const int fd = ::mkstemp(path);
+    assert(fd >= 0);
+    const char expected[] = {'F', 0, 'D', 0, 'O', 0, 'K', 0};
+    assert(::ftruncate(fd, sizeof(expected)) == 0);
+    assert(::pwrite(fd, expected, sizeof(expected), 0) ==
+           static_cast<ssize_t>(sizeof(expected)));
+
+    MappedFileSource source;
+    assert(source.openFd(fd));
+    ::close(fd);
+    ::unlink(path);
+
+    assert(source.isOpen());
+    assert(source.sizeBytes() == sizeof(expected));
+    TextChunkView view{};
+    assert(source.read(0, sizeof(expected), &view));
+    assert(view.size == sizeof(expected));
+    assert(std::memcmp(view.data, expected, sizeof(expected)) == 0);
+    source.close();
+}
+
 static void testMappedFileSourceDemandPages512MiBAndReadsTail() {
     char path[] = "/tmp/windbell-mmap-512mb-XXXXXX";
     const int fd = ::mkstemp(path);
@@ -647,6 +670,7 @@ int main() {
     testChunkedStoreReusesAllocatedTail();
     testChunkedStoreHonorsMemoryBudget();
     testMappedFileSource();
+    testMappedFileSourceOpenFdSurvivesDescriptorCloseAndUnlink();
     testMappedFileSourceDemandPages512MiBAndReadsTail();
     testPieceTreeEditsDoNotCopyUnchangedText();
     testPieceTreeRandomEditsMatchReferenceBuffer();

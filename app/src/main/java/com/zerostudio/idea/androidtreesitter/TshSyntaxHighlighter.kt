@@ -27,7 +27,6 @@ import x.github.module.editor.model.EditorDocument
 import x.github.module.editor.model.EditorTextSnapshot
 import x.github.module.editor.structure.PlainBracketMatcher
 import java.io.File
-import java.nio.ByteBuffer
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
