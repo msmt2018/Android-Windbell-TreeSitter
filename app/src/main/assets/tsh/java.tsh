@@ -196,27 +196,27 @@
     // =========================================================================
     ast: [
         // --- 4.1 类型声明节点 ---
-        { node: "class_declaration", field: "name", style: "type" },
-        { node: "interface_declaration", field: "name", style: "type" },
-        { node: "record_declaration", field: "name", style: "type" },
-        { node: "enum_declaration", field: "name", style: "type" },
+        { node: "class_declaration", field: "name", style: "type", priority: 110 },
+        { node: "interface_declaration", field: "name", style: "type", priority: 110 },
+        { node: "record_declaration", field: "name", style: "type", priority: 110 },
+        { node: "enum_declaration", field: "name", style: "type", priority: 110 },
 
         // --- 4.2 方法与构造器声明 ---
-        { node: "method_declaration", field: "name", style: "function" },
-        { node: "constructor_declaration", field: "name", style: "function" },
+        { node: "method_declaration", field: "name", style: "function", priority: 115 },
+        { node: "constructor_declaration", field: "name", style: "function", priority: 115 },
 
         // --- 4.3 枚举常量声明 ---
-        { node: "enum_constant", field: "name", style: "constant" },
+        { node: "enum_constant", field: "name", style: "constant", priority: 105 },
 
         // --- 4.4 函数调用与动态属性绑定 (消除 AST 歧义) ---
-        { node: "method_invocation", field: "name", style: "function" },
-        { node: "field_access", field: "field", style: "variable" },
+        { node: "method_invocation", field: "name", style: "function", priority: 105 },
+        { node: "field_access", field: "field", style: "variable", priority: 100 },
 
         // --- 4.5 类型标识符宏观着色 ---
-        { node: "type_identifier", style: "type" },
-        { node: "scoped_type_identifier", style: "type" },
-        { node: "annotation", field: "name", style: "annotation" },
-        { node: "marker_annotation", field: "name", style: "annotation" }
+        { node: "type_identifier", style: "type", priority: 95 },
+        { node: "scoped_type_identifier", style: "type", priority: 95 },
+        { node: "annotation", field: "name", style: "annotation", priority: 120 },
+        { node: "marker_annotation", field: "name", style: "annotation", priority: 120 }
     ],
 
     // =========================================================================
@@ -226,6 +226,7 @@
         // ---------- 5.1 文本块 Text Block (Java 15+，最高优先级) ----------
         {
             style: "stringBlock",
+            priority: 150,
             start: {match: /"""/},
             end: {match: /"""/},
             contains: [
@@ -236,6 +237,7 @@
         // ---------- 5.2 Javadoc 结构注释块 ----------
         {
             style: "docComment",
+            priority: 140,
             start: {match: /\/\*\*/},
             end: {match: /\*\//},
             contains: [
@@ -245,13 +247,14 @@
         },
 
         // ---------- 5.3 字符串与数值复合内置模式 ----------
-        {builtin: "javaQuotedString", 0: "string"},
-        {builtin: "javaNumber", 0: "number"},
+        {builtin: "javaQuotedString", 0: "string", priority: 125},
+        {builtin: "javaNumber", 0: "number", priority: 90},
 
         // ---------- 5.4 单行与普通多行注释 ----------
         {
             match: /\/\/.*/,
             0: "comment",
+            priority: 130,
             contains: [
                 {match: /\b(TODO|FIXME|XXX|BUG|NOTE)\b/, 0: "constant"}
             ]
@@ -266,7 +269,7 @@
         },
 
         // ---------- 5.5 元数据注解 (Annotations) ----------
-        {match: /@\w+(?:\.\w+)*/, 0: "annotation"},
+        {match: /@\w+(?:\.\w+)*/, 0: "annotation", priority: 110},
 
         // ---------- 5.6 静态常量规范 (SCREAMING_SNAKE_CASE) ----------
         {match: /\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+\b(?!\s*\()/, 0: "constant"},
@@ -309,10 +312,10 @@
         {match: /\b[A-Z]\w*\b/, 0: "type"},
 
         // ---------- 5.13 操作符、方法引用与标点符号 ----------
-        {match: /::/, 0: "operator"},
-        {match: /->/, 0: "operator"},
-        {match: /[?:]/, 0: "operator"},
+        {match: /::/, 0: "operator", priority: 60},
+        {match: /->/, 0: "operator", priority: 60},
+        {match: /[?:]/, 0: "operator", priority: 50},
         {match: /[=+\-*\/%&|^!~<>]/, 0: "operator"},
-        {match: /[{}()\[\],;.]/, 0: "operator"}
+        {match: /[{}()\[\],;.]/, 0: "operator", priority: 40}
     ]
 }
