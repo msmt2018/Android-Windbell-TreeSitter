@@ -6,8 +6,6 @@ import android.text.Spanned
 import android.text.style.CharacterStyle
 import android.util.Log
 import com.zerostudio.idea.treesitter.TSLanguage
-import com.zerostudio.idea.treesitter.TSParser
-import com.zerostudio.idea.treesitter.TSTree
 import com.zerostudio.idea.treesitter.largefile.ByteBudgetLruCache
 import com.zerostudio.idea.treesitter.tsh.WindbellTshEngine
 import com.zerostudio.idea.treesitter.tsh.NativeTextWindowReader
@@ -36,10 +34,10 @@ import java.util.concurrent.atomic.AtomicLong
 /**
  * TSH adapter for EditorView.
  *
- * Small documents use the original whole-document pipeline. Large documents use
- * a native-owned Piece Tree document, incremental Tree-sitter edits, viewport-range
- * TSH execution, and a byte-budgeted capture cache. The Kotlin layer transfers only
- * bounded UTF-16LE windows at document creation and the inserted slice per edit.
+ * Every document size uses one native-owned Piece Tree pipeline, incremental
+ * Tree-sitter edits, viewport-range TSH execution, and a byte-budgeted capture cache.
+ * Kotlin transfers bounded UTF-16LE windows at document creation and only inserted
+ * edit slices afterward; it never flattens the complete document into a String.
  */
 class TshSyntaxHighlighter(
     private val language: TSLanguage,
@@ -99,7 +97,6 @@ class TshSyntaxHighlighter(
     private val firstStyleCallLogged = AtomicBoolean(false)
 
     @Volatile private var host: SyntaxHighlighter.Host? = null
-    @Volatile private var captureIndex = CaptureIntervalIndex(emptyList())
     @Volatile private var largeSession: LargeSession? = null
     @Volatile private var parsing = false
 
@@ -110,7 +107,7 @@ class TshSyntaxHighlighter(
     override fun onAttached(host: SyntaxHighlighter.Host) {
         this.host = host
         // A native grammar can outlive the UI object that originally loaded it.
-        // Restore its active scheme palette before either the small- or large-file
+        // Restore its active scheme palette before the unified native-document
         // renderer starts applying capture IDs to Android spans.
         if (!engine.ensurePalette(extension)) {
             Log.w(TAG, "No active TSH color palette available for extension=.$extension")
@@ -125,7 +122,6 @@ class TshSyntaxHighlighter(
         parseJob = null
         largeSession?.let(::disposeSession)
         largeSession = null
-        captureIndex = CaptureIntervalIndex(emptyList())
         parsing = false
         synchronized(nativeEditLock) { pendingNativeEdits.clear() }
         host = null
@@ -138,9 +134,9 @@ class TshSyntaxHighlighter(
     }
 
     override fun onTextChanged(change: EditorDocument.AppliedChange) {
-        // Small documents are reparsed from the current snapshot at edit-finish.
-        // Do not allocate/encode an inserted UTF-16LE copy that will be discarded.
-        // Large-file initialization is the only no-session case that must queue edits.
+        // All document sizes share the native Piece Tree pipeline. While its
+        // initial snapshot is being transferred and parsed, retain edits for replay;
+        // after publication, apply only inserted UTF-16LE slices incrementally.
         val needsNativeTransaction = synchronized(nativeEditLock) {
             largeSession != null || parsing
         }
@@ -219,20 +215,15 @@ class TshSyntaxHighlighter(
             Log.e(TAG, "Editor offset exceeds the 32-bit capture index: start=$queryStart end=$queryEnd")
             return null
         }
-        val active = largeSession
-        if (active == null && parsing) return null
-        if (active != null && active.pendingEditEpoch.get() != active.appliedEditEpoch.get()) return null
+        val active = largeSession ?: return null
+        if (active.pendingEditEpoch.get() != active.appliedEditEpoch.get()) return null
 
-        val spans = if (active != null) {
-            val boundedStart = queryStart.coerceAtMost(active.lengthChars.get())
-            val boundedEnd = queryEnd.coerceAtMost(active.lengthChars.get())
-            if (boundedStart >= boundedEnd) emptyList()
-            else queryLargeCaptures(
-                active, boundedStart, boundedEnd, boundedStart.toInt(), boundedEnd.toInt()
-            )
-        } else {
-            captureIndex.query(queryStart.toInt(), queryEnd.toInt())
-        }
+        val boundedStart = queryStart.coerceAtMost(active.lengthChars.get())
+        val boundedEnd = queryEnd.coerceAtMost(active.lengthChars.get())
+        val spans = if (boundedStart >= boundedEnd) emptyList()
+        else queryLargeCaptures(
+            active, boundedStart, boundedEnd, boundedStart.toInt(), boundedEnd.toInt()
+        )
 
         if (firstStyleCallLogged.compareAndSet(false, true)) {
             Log.i(TAG, "Editor renderer invoked styleLine: extension=.$extension line=$bufferLine range=$start..$end captures=${spans.size}")
@@ -375,8 +366,9 @@ class TshSyntaxHighlighter(
             scope.launch(Dispatchers.Main.immediate) { scheduleParse(buffer) }
             return
         }
-        // PieceTreeBuffer snapshots retain their backing chunks. Large-file mode
-        // never calls getText() or snapshot.toString() for the complete document.
+        // PieceTreeBuffer snapshots retain their backing chunks. The unified
+        // native pipeline never calls getText() or snapshot.toString() for the
+        // complete document, regardless of its size.
         val snapshot = buffer.createTextSnapshot()
         synchronized(nativeEditLock) { pendingNativeEdits.clear() }
         val ticket = generation.incrementAndGet()
@@ -469,43 +461,6 @@ class TshSyntaxHighlighter(
             if (cacheSessionId != 0L) {
                 captureCache.invalidate { key, _ -> key.sessionId == cacheSessionId }
             }
-        }
-    }
-
-    private suspend fun parseSmallSnapshot(snapshot: EditorTextSnapshot, ticket: Long) {
-        var parser: TSParser? = null
-        var tree: TSTree? = null
-        try {
-            val createdParser = TSParser.create().also { it.setLanguage(language) }
-            parser = createdParser
-            val text = snapshot.toString()
-            val parsedTree = createdParser.parseString(text)
-            tree = parsedTree
-            val nextCaptures = if (parsedTree != null) {
-                engine.computeHighlights(parsedTree, text, extension)
-            } else {
-                emptyList()
-            }
-            if (generation.get() == ticket) {
-                captureIndex = CaptureIntervalIndex(nextCaptures)
-                parsing = false
-                logPipelineReady(snapshot.length, nextCaptures)
-                host?.invalidateStyles()
-                host?.invalidateStructure()
-            }
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (error: Throwable) {
-            if (generation.get() == ticket) {
-                Log.e(TAG, "TSH parse/highlight failed for .$extension (length=${snapshot.length})", error)
-                captureIndex = CaptureIntervalIndex(emptyList())
-                parsing = false
-                host?.invalidateStyles()
-                host?.invalidateStructure()
-            }
-        } finally {
-            tree?.close()
-            parser?.close()
         }
     }
 
@@ -712,20 +667,6 @@ class TshSyntaxHighlighter(
                 )
             }
         }
-    }
-
-    private fun logPipelineReady(length: Int, captures: List<WindbellTshEngine.HighlightSpan>) {
-        val styleIds = captures.map { it.styleId }.distinct()
-        val catalog = stylesById
-        val missingPalette = styleIds.filter { id ->
-            val style = catalog[id]
-            style == null || engine.getStylePalette(extension, style.name) == null
-        }
-        Log.i(
-            TAG,
-            "TSH pipeline ready: extension=.$extension textLength=$length spans=${captures.size} " +
-                "styles=${catalog.size} usedStyleIds=$styleIds missingPalette=$missingPalette"
-        )
     }
 
     private fun disposeSession(active: LargeSession) {
