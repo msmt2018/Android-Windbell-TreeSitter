@@ -1196,10 +1196,12 @@ void WindbellEngine::matchBlockRecursive(
                             const UChar* viewport_end = text_start + output_end_byte;
                             const uint64_t overlap = nested.maximum_match_bytes >= 2u
                                 ? nested.maximum_match_bytes - 2u : 0u;
-                            const uint64_t available = static_cast<uint64_t>(
-                                viewport_start - inner_start);
-                            nested_scan_start = viewport_start -
-                                static_cast<ptrdiff_t>(std::min<uint64_t>(overlap, available));
+                            if (viewport_start > inner_start) {
+                                const uint64_t available = static_cast<uint64_t>(
+                                    viewport_start - inner_start);
+                                nested_scan_start = viewport_start -
+                                    static_cast<ptrdiff_t>(std::min<uint64_t>(overlap, available));
+                            }
                             nested_scan_end = std::min(inner_end, viewport_end);
                         }
                         const UChar* inner_curr = nested_scan_start;
