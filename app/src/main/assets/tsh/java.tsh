@@ -264,12 +264,11 @@
         { node: "type_identifier", style: "type", priority: 95 },
         { node: "scoped_type_identifier", style: "type", priority: 95 },
         { node: "annotation", field: "name", style: "annotation", priority: 120 },
-        { node: "marker_annotation", field: "name", style: "annotation", priority: 120 }
+        { node: "marker_annotation", field: "name", style: "annotation", priority: 120 },
 
         // --- 4.6 字符串、字符、数值与注释节点：避免无界 Regex 全文扫描 ---
         { node: "string_literal", style: "string", priority: 125 },
         { node: "character_literal", style: "string", priority: 125 },
-        { node: "text_block", style: "stringBlock", priority: 150 },
         { node: "line_comment", style: "comment", priority: 130 },
         { node: "block_comment", style: "comment", priority: 130 },
         { node: "block_comment", textRegex: /^\/\*\*/, style: "docComment", priority: 140 },
