@@ -1318,7 +1318,10 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
     // for large files without rebuilding a 32 MiB+ compatibility buffer.
     // Anchors, block rules, and stateful tokenizers remain on their dedicated
     // context-aware paths; they are never silently reinterpreted as window-local.
-    if (text_source && !has_contiguous_text) {
+    if (text_source) {
+        // Finite-width regexes run only over the requested viewport plus their
+        // proven maximum-match overlap. mmap contiguity must not trigger a full
+        // document scan for every editor draw.
         constexpr uint64_t kRegexCoreWindowBytes = 256u * 1024u;
         for (const auto& rule : grammar->regex_rules) {
             if (!rule.enabled || rule.type != RegexRuleType::MATCH ||
@@ -1436,7 +1439,7 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
         // bounded TextSource windows above. Do not rescan the entire mapped
         // document for every viewport request merely because a contiguous
         // mmap view is available for context-dependent rules.
-        if (text_source && !has_contiguous_text && rule.type == RegexRuleType::MATCH &&
+        if (text_source && rule.type == RegexRuleType::MATCH &&
             rule.execution_capability == RegexExecutionCapability::BOUNDED_WINDOW) {
             continue;
         }
@@ -2149,7 +2152,7 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
             if (!subtree_before_viewport &&
                 current_start_byte < range_start_byte &&
                 current_end_byte > range_start_byte &&
-                ts_tree_cursor_goto_first_child_for_byte(&cursor, range_start_byte)) {
+                ts_tree_cursor_goto_first_child_for_byte(&cursor, range_start_byte) >= 0) {
                 continue;
             }
             if (!subtree_before_viewport && ts_tree_cursor_goto_first_child(&cursor)) continue;

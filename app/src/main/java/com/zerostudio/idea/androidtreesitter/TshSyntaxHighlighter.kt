@@ -42,7 +42,8 @@ import java.util.concurrent.atomic.AtomicLong
 class TshSyntaxHighlighter(
     private val language: TSLanguage,
     private val extension: String,
-    private val engine: WindbellTshEngine = WindbellTshEngine.instance
+    private val engine: WindbellTshEngine = WindbellTshEngine.instance,
+    private val temporaryDirectory: File
 ) : SyntaxHighlighter {
 
     companion object {
@@ -393,9 +394,11 @@ class TshSyntaxHighlighter(
             currentCoroutineContext().ensureActive()
             if (generation.get() != ticket) throw CancellationException("Stale document snapshot")
 
-            val temporaryDirectory = File(System.getProperty("java.io.tmpdir") ?: "")
-            check(temporaryDirectory.isDirectory && temporaryDirectory.canWrite()) {
-                "No writable app-private temporary directory for native TSH document"
+            // java.io.tmpdir commonly resolves to /tmp on Android and is not
+            // an app-writable storage contract. Use the owning app cache directory.
+            check((temporaryDirectory.isDirectory || temporaryDirectory.mkdirs()) &&
+                temporaryDirectory.canWrite()) {
+                "No writable app-private cache directory for native TSH document"
             }
             val reader = NativeTextWindowReader { byteOffset, maxBytes ->
                 require(byteOffset >= 0L && (byteOffset and 1L) == 0L && maxBytes >= 2)

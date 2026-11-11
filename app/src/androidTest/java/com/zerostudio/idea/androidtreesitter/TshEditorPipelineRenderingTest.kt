@@ -499,7 +499,7 @@ class TshEditorPipelineRenderingTest {
         val source = "class OtherProbe { int first; }\nclass RenderProbe { int value; }"
         val targetLineStart = source.indexOf("class RenderProbe")
         val targetLine = source.substring(targetLineStart)
-        val highlighter = TshSyntaxHighlighter(language, "java")
+        val highlighter = TshSyntaxHighlighter(language, "java", temporaryDirectory = context.cacheDir)
         val editor = EditorView(context)
         val bitmap = Bitmap.createBitmap(1200, 180, Bitmap.Config.ARGB_8888)
         try {
@@ -619,7 +619,7 @@ class TshEditorPipelineRenderingTest {
         builder.acceptChunk(targetLine)
         val targetLineNumber = chunkCount * 1024 + 1
 
-        val highlighter = TshSyntaxHighlighter(language, "java", engine)
+        val highlighter = TshSyntaxHighlighter(language, "java", engine, context.cacheDir)
         val editor = EditorView(context)
         val bitmap = Bitmap.createBitmap(1200, 180, Bitmap.Config.ARGB_8888)
         val laidOut = CountDownLatch(1)

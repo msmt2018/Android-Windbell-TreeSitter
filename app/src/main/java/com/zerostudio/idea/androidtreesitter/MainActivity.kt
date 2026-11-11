@@ -359,7 +359,8 @@ class MainActivity : AppCompatActivity() {
             if (activeTshHighlighter == null) {
                 activeTshHighlighter = TshSyntaxHighlighter(
                     language = languageMap.getValue("Java"),
-                    extension = "java"
+                    extension = "java",
+                    temporaryDirectory = cacheDir
                 )
             }
             if (view.getSyntaxHighlighter() !== activeTshHighlighter) {

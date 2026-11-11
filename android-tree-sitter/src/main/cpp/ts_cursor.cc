@@ -89,15 +89,15 @@ static jlong TreeCursor_gotoFirstChildForByte(JNIEnv *env,
 }
 
 
-static jboolean TreeCursor_gotoFirstChildForPoint(JNIEnv *env,
-                                       jclass clazz,
-                                       jlong pointer,
-                                       jobject point) {
+static jlong TreeCursor_gotoFirstChildForPoint(JNIEnv *env,
+                                    jclass clazz,
+                                    jlong pointer,
+                                    jobject point) {
   req_nnp(env, pointer);
-  return (jboolean) ts_tree_cursor_goto_first_child_for_point((TSTreeCursor *) pointer,
-                                                              _unmarshalPoint(
-                                                                  env,
-                                                                  point));
+  // Tree-sitter returns the matching child index, or -1 when no child exists.
+  // Preserve the signed index instead of truncating it to jboolean.
+  return static_cast<jlong>(ts_tree_cursor_goto_first_child_for_point(
+      (TSTreeCursor *) pointer, _unmarshalPoint(env, point)));
 }
 
 
