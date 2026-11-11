@@ -50,18 +50,18 @@ static bool analyzeBoundedRegexWidth(
     // The keyword macro and common documentation-tag rules expand to a
     // non-capturing alternation of literal words with optional word-boundary
     // assertions, e.g. \\b(?:class|return)\\b. These are finite-width: the
-    // boundary checks need at most one UTF-16 code unit of context on each side.
+    // boundary checks need up to two UTF-16 code units on each side, because an adjacent Unicode scalar may be a surrogate pair.
     {
         size_t begin = 0;
         size_t end = pattern.size();
         uint64_t boundary_context = 0;
         if (pattern.compare(0, 2, "\\b") == 0) {
             begin += 2;
-            ++boundary_context;
+            boundary_context += 2;
         }
         if (end >= 2 && pattern.compare(end - 2, 2, "\\b") == 0) {
             end -= 2;
-            ++boundary_context;
+            boundary_context += 2;
         }
         if (end > begin + 4 && pattern.compare(begin, 3, "(?:") == 0 &&
             pattern[end - 1] == ')') {
