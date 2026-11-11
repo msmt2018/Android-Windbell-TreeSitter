@@ -47,6 +47,12 @@ public:
 bool copyTextRange(const TextSource &source, uint64_t offset,
                    uint64_t length, void *destination) noexcept;
 
+// Returns false when the byte offset cannot be inspected. On success, writes
+// whether the offset splits a UTF-16 high/low surrogate pair.
+bool checkUtf16SurrogateBoundary(const TextSource &source,
+                                 uint64_t byteOffset,
+                                 bool *splitsPair) noexcept;
+
 /**
  * Zero-copy adapter for existing contiguous UTF-16LE storage.
  *

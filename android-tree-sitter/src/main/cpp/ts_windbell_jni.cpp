@@ -318,32 +318,6 @@ static void throwNativeHighlightFailure(JNIEnv *env, const char *message) noexce
     if (env && !env->ExceptionCheck()) throw_illegal_state(env, message);
 }
 
-/**
- * A viewport byte boundary must not land between a UTF-16 high/low surrogate.
- * TextSource offsets are bytes, so inspect adjacent code units through the
- * bounded source API; this works for mmap, pread windows and edited Piece Trees.
- */
-static bool splitsUtf16SurrogatePairAt(
-    const windbell::largefile::TextSource &source,
-    uint64_t byteOffset,
-    bool *splits
-) noexcept {
-    if (!splits || (byteOffset & 1u) != 0 || byteOffset > source.sizeBytes()) return false;
-    *splits = false;
-    if (byteOffset == 0 || byteOffset >= source.sizeBytes()) return true;
-
-    uint8_t adjacent[4] = {};
-    if (!windbell::largefile::copyTextRange(
-            source, byteOffset - 2u, sizeof(adjacent), adjacent)) return false;
-    const uint16_t before = static_cast<uint16_t>(adjacent[0]) |
-        (static_cast<uint16_t>(adjacent[1]) << 8u);
-    const uint16_t after = static_cast<uint16_t>(adjacent[2]) |
-        (static_cast<uint16_t>(adjacent[3]) << 8u);
-    *splits = before >= 0xD800u && before <= 0xDBFFu &&
-        after >= 0xDC00u && after <= 0xDFFFu;
-    return true;
-}
-
 static jintArray encodeNativeHighlightResult(
     JNIEnv *env,
     const std::vector<HighlightSpan> &spans,
@@ -1451,9 +1425,9 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
     uint32_t evaluation_end = requested_end;
     bool start_splits_pair = false;
     bool end_splits_pair = false;
-    if (!splitsUtf16SurrogatePairAt(
+    if (!windbell::largefile::checkUtf16SurrogateBoundary(
             *document->source, requested_start, &start_splits_pair) ||
-        !splitsUtf16SurrogatePairAt(
+        !windbell::largefile::checkUtf16SurrogateBoundary(
             *document->source, requested_end, &end_splits_pair)) {
         throw_illegal_state(env, "Unable to validate UTF-16 viewport boundaries");
         return nullptr;

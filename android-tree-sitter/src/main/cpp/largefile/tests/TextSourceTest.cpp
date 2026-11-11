@@ -17,6 +17,26 @@
 
 using namespace windbell::largefile;
 
+static void testUtf16SurrogateBoundaryAcrossSourceSegments() {
+    const char first[] = {'A', 0, static_cast<char>(0x3D), static_cast<char>(0xD8)};
+    const char second[] = {static_cast<char>(0x00), static_cast<char>(0xDE), 'B', 0};
+    SegmentedTextSource source(
+        {{first, sizeof(first)}, {second, sizeof(second)}},
+        sizeof(first) + sizeof(second));
+    assert(source.isValid());
+
+    bool splits = false;
+    assert(checkUtf16SurrogateBoundary(source, 0, &splits) && !splits);
+    assert(checkUtf16SurrogateBoundary(source, 2, &splits) && !splits);
+    // Byte offset 4 is between U+D83D and U+DE00, even though the pair is
+    // stored in two independent source segments.
+    assert(checkUtf16SurrogateBoundary(source, 4, &splits) && splits);
+    assert(checkUtf16SurrogateBoundary(source, 6, &splits) && !splits);
+    assert(checkUtf16SurrogateBoundary(source, 8, &splits) && !splits);
+    assert(!checkUtf16SurrogateBoundary(source, 3, &splits));
+    assert(!checkUtf16SurrogateBoundary(source, 10, &splits));
+}
+
 static void testSegmentedTextSource() {
     const char first[] = {'a', 0, 'b', 0};
     const char second[] = {'c', 0, 'd', 0};
@@ -176,7 +196,7 @@ static void testMappedFileSourceDemandPages512MiBAndReadsTail() {
     ::unlink(path);
 }
 
-static void testSparseFilesFromOneToThreeHundredMegabytesUseBoundedWindow() {
+static void testSparseFilesAcrossSigned32BitBoundaryUseBoundedWindow() {
     // Include an offset beyond INT32_MAX bytes to verify that TextSource
     // addressing remains 64-bit even though Tree-sitter's final byte offsets
     // are validated separately at the JNI/AST boundary.
@@ -622,6 +642,7 @@ static void testPieceTreeRejectsDocumentSizeOverflow() {
 int main() {
     testPieceTreeRejectsDocumentSizeOverflow();
     testSegmentedTextSource();
+    testUtf16SurrogateBoundaryAcrossSourceSegments();
     testChunkedStoreReadsAcrossBoundaries();
     testChunkedStoreReusesAllocatedTail();
     testChunkedStoreHonorsMemoryBudget();
@@ -635,6 +656,6 @@ int main() {
     testEditedPieceTreeCreatesImmutableMappedSnapshot();
     testCopyTextRangeAcrossPieceBoundaries();
     testSparsePartitionIndexSurvivesEdits();
-    testSparseFilesFromOneToThreeHundredMegabytesUseBoundedWindow();
+    testSparseFilesAcrossSigned32BitBoundaryUseBoundedWindow();
     return 0;
 }

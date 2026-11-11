@@ -28,6 +28,25 @@ bool copyTextRange(const TextSource &source, uint64_t offset,
     return true;
 }
 
+bool checkUtf16SurrogateBoundary(const TextSource &source,
+                                 uint64_t byteOffset,
+                                 bool *splitsPair) noexcept {
+    if (!splitsPair || (byteOffset & 1u) != 0 ||
+        byteOffset > source.sizeBytes()) return false;
+    *splitsPair = false;
+    if (byteOffset == 0 || byteOffset >= source.sizeBytes()) return true;
+
+    uint8_t adjacent[4] = {};
+    if (!copyTextRange(source, byteOffset - 2u, sizeof(adjacent), adjacent)) return false;
+    const uint16_t before = static_cast<uint16_t>(adjacent[0]) |
+        (static_cast<uint16_t>(adjacent[1]) << 8u);
+    const uint16_t after = static_cast<uint16_t>(adjacent[2]) |
+        (static_cast<uint16_t>(adjacent[3]) << 8u);
+    *splitsPair = before >= 0xD800u && before <= 0xDBFFu &&
+        after >= 0xDC00u && after <= 0xDFFFu;
+    return true;
+}
+
 SegmentedTextSource::SegmentedTextSource(
     std::vector<TextSegment> segments,
     uint64_t totalBytes
