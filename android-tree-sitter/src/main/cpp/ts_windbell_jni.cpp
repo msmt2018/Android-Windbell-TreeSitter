@@ -318,6 +318,32 @@ static void throwNativeHighlightFailure(JNIEnv *env, const char *message) noexce
     if (env && !env->ExceptionCheck()) throw_illegal_state(env, message);
 }
 
+/**
+ * A viewport byte boundary must not land between a UTF-16 high/low surrogate.
+ * TextSource offsets are bytes, so inspect adjacent code units through the
+ * bounded source API; this works for mmap, pread windows and edited Piece Trees.
+ */
+static bool splitsUtf16SurrogatePairAt(
+    const windbell::largefile::TextSource &source,
+    uint64_t byteOffset,
+    bool *splits
+) noexcept {
+    if (!splits || (byteOffset & 1u) != 0 || byteOffset > source.sizeBytes()) return false;
+    *splits = false;
+    if (byteOffset == 0 || byteOffset >= source.sizeBytes()) return true;
+
+    uint8_t adjacent[4] = {};
+    if (!windbell::largefile::copyTextRange(
+            source, byteOffset - 2u, sizeof(adjacent), adjacent)) return false;
+    const uint16_t before = static_cast<uint16_t>(adjacent[0]) |
+        (static_cast<uint16_t>(adjacent[1]) << 8u);
+    const uint16_t after = static_cast<uint16_t>(adjacent[2]) |
+        (static_cast<uint16_t>(adjacent[3]) << 8u);
+    *splits = before >= 0xD800u && before <= 0xDBFFu &&
+        after >= 0xDC00u && after <= 0xDFFFu;
+    return true;
+}
+
 static jintArray encodeNativeHighlightResult(
     JNIEnv *env,
     const std::vector<HighlightSpan> &spans,
@@ -1419,6 +1445,26 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
             "Native TSH range must be ordered UTF-16LE byte offsets within the Tree-sitter 32-bit limit");
         return nullptr;
     }
+    const uint32_t requested_start = static_cast<uint32_t>(range_start_byte);
+    const uint32_t requested_end = static_cast<uint32_t>(range_end_byte);
+    uint32_t evaluation_start = requested_start;
+    uint32_t evaluation_end = requested_end;
+    bool start_splits_pair = false;
+    bool end_splits_pair = false;
+    if (!splitsUtf16SurrogatePairAt(
+            *document->source, requested_start, &start_splits_pair) ||
+        !splitsUtf16SurrogatePairAt(
+            *document->source, requested_end, &end_splits_pair)) {
+        throw_illegal_state(env, "Unable to validate UTF-16 viewport boundaries");
+        return nullptr;
+    }
+    // Expand evaluation by at most one UTF-16 code unit on either side. The
+    // final result is clipped back to the requested half-open viewport below.
+    // This preserves surrogate pairs for Regex/Unicode consumers even when a
+    // fixed-size editor partition happens to end between the two code units.
+    if (start_splits_pair) evaluation_start -= 2u;
+    if (end_splits_pair) evaluation_end += 2u;
+
     if (!nativeTreeCoversDocument(document->tree, total_bytes)) {
         throw_illegal_state(env,
             "Native TSH document no longer owns a complete full-document Tree-sitter AST");
@@ -1530,11 +1576,20 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
             document->length_chars, document->extension,
             diagnostics == JNI_TRUE ? &candidates : nullptr,
             diagnostics == JNI_TRUE ? counts : nullptr,
-            static_cast<uint32_t>(range_start_byte),
-            static_cast<uint32_t>(range_end_byte), highlight_source,
+            evaluation_start,
+            evaluation_end, highlight_source,
             &document->regex_state_checkpoints, document->source->version(),
             document->partition_index.version());
         if (diagnostics == JNI_TRUE) spans = std::move(candidates);
+        if (requested_start == requested_end) {
+            spans.clear();
+        } else {
+            spans.erase(std::remove_if(spans.begin(), spans.end(),
+                [requested_start, requested_end](const HighlightSpan &span) {
+                    return span.end_byte <= requested_start ||
+                        span.start_byte >= requested_end;
+                }), spans.end());
+        }
     } catch (const std::bad_alloc&) {
         throwNativeAllocationFailure(env, "Native TSH capture processing exhausted memory");
         return nullptr;

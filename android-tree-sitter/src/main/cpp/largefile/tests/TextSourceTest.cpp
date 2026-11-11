@@ -144,8 +144,43 @@ static void testMappedFileSource() {
     ::unlink(path);
 }
 
+static void testMappedFileSourceDemandPages512MiBAndReadsTail() {
+    char path[] = "/tmp/windbell-mmap-512mb-XXXXXX";
+    const int fd = ::mkstemp(path);
+    assert(fd >= 0);
+    constexpr uint64_t file_size = 512ULL * 1024ULL * 1024ULL;
+    assert(::ftruncate(fd, static_cast<off_t>(file_size)) == 0);
+    const char marker[] = {'O', 0, 'K', 0};
+    const uint64_t marker_offset = file_size - sizeof(marker);
+    assert(::pwrite(fd, marker, sizeof(marker), static_cast<off_t>(marker_offset)) ==
+           static_cast<ssize_t>(sizeof(marker)));
+    ::close(fd);
+
+    MappedFileSource source(path);
+    assert(source.isOpen());
+    assert(source.sizeBytes() == file_size);
+    const char *mapped = nullptr;
+    uint64_t mapped_size = 0;
+    assert(source.contiguousData(&mapped, &mapped_size));
+    assert(mapped != nullptr && mapped_size == file_size);
+
+    TextChunkView view{};
+    assert(source.read(marker_offset, 64u * 1024u, &view));
+    assert(view.size == sizeof(marker));
+    assert(std::memcmp(view.data, marker, sizeof(marker)) == 0);
+    assert(source.read(file_size, 64u * 1024u, &view));
+    assert(view.data == nullptr && view.size == 0);
+
+    source.close();
+    assert(!source.isOpen());
+    ::unlink(path);
+}
+
 static void testSparseFilesFromOneToThreeHundredMegabytesUseBoundedWindow() {
-    constexpr int sizes_mb[] = {1, 10, 50, 100, 200, 300};
+    // Include an offset beyond INT32_MAX bytes to verify that TextSource
+    // addressing remains 64-bit even though Tree-sitter's final byte offsets
+    // are validated separately at the JNI/AST boundary.
+    constexpr int sizes_mb[] = {1, 10, 50, 100, 200, 300, 512, 2048};
     const char marker[] = {'O', 0, 'K', 0};
     for (const int size_mb : sizes_mb) {
         char path[] = "/tmp/windbell-largefile-stress-XXXXXX";
@@ -591,6 +626,7 @@ int main() {
     testChunkedStoreReusesAllocatedTail();
     testChunkedStoreHonorsMemoryBudget();
     testMappedFileSource();
+    testMappedFileSourceDemandPages512MiBAndReadsTail();
     testPieceTreeEditsDoNotCopyUnchangedText();
     testPieceTreeRandomEditsMatchReferenceBuffer();
     testPieceTreeSnapshotIsolatedAndSharesBacking();
