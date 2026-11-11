@@ -51,11 +51,16 @@ std::unique_ptr<MappedFileSource> MappedFileSource::createSnapshot(
 
     int fd = -1;
     bool anonymous = false;
+    // Large edited documents stay file-backed and demand-paged; do not turn a
+    // 100-512 MiB Piece Tree snapshot into equally large non-reclaimable tmpfs.
+    constexpr uint64_t kMaxAnonymousBytes = 64ull * 1024ull * 1024ull;
 #if defined(SYS_memfd_create)
-    constexpr unsigned int kMemfdCloseOnExec = 0x0001u;
-    fd = static_cast<int>(::syscall(
-        SYS_memfd_create, "windbell-tsh-snapshot", kMemfdCloseOnExec));
-    anonymous = fd >= 0;
+    if (source_size <= kMaxAnonymousBytes) {
+        constexpr unsigned int kMemfdCloseOnExec = 0x0001u;
+        fd = static_cast<int>(::syscall(
+            SYS_memfd_create, "windbell-tsh-snapshot", kMemfdCloseOnExec));
+        anonymous = fd >= 0;
+    }
 #endif
     std::string temporary_path;
     if (fd < 0) {

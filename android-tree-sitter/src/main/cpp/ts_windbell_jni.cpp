@@ -282,7 +282,12 @@ static bool writeAllAt(int fd, const uint8_t *data, size_t length, uint64_t offs
 // Prefer an anonymous tmpfs-backed file for the immutable initial snapshot.
 // Older Android kernels may not implement memfd_create; those devices fall
 // back to the app-private cache directory supplied by the Kotlin host.
-static int createAnonymousBackingFile() noexcept {
+static int createAnonymousBackingFile(uint64_t size_bytes) noexcept {
+    // Keep tmpfs residency below the normal editor memory budget. Larger
+    // documents use demand-paged app-private file backing instead of pinning
+    // hundreds of MiB in anonymous shmem.
+    constexpr uint64_t kMaxAnonymousBytes = 64ull * 1024ull * 1024ull;
+    if (size_bytes > kMaxAnonymousBytes) return -1;
 #if defined(SYS_memfd_create)
     constexpr unsigned int kMemfdCloseOnExec = 0x0001u;
     return static_cast<int>(::syscall(
@@ -1037,7 +1042,7 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeCreateDocument(
     if (!read_method || env->ExceptionCheck()) return 0;
 
     std::string backing_path;
-    int fd = createAnonymousBackingFile();
+    int fd = createAnonymousBackingFile(static_cast<uint64_t>(byte_length));
     const bool anonymous_backing = fd >= 0;
     if (!anonymous_backing) {
         std::string pattern = directory;
