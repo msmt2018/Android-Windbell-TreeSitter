@@ -32,6 +32,7 @@
 #include <mutex>
 #include <string>
 #include <sys/types.h>
+#include <sys/syscall.h>
 #include <unistd.h>
 #include "utils/ts_exceptions.h"
 #include "utils/ts_preconditions.h"
@@ -276,6 +277,19 @@ static bool writeAllAt(int fd, const uint8_t *data, size_t length, uint64_t offs
         written += static_cast<size_t>(count);
     }
     return true;
+}
+
+// Prefer an anonymous tmpfs-backed file for the immutable initial snapshot.
+// Older Android kernels may not implement memfd_create; those devices fall
+// back to the app-private cache directory supplied by the Kotlin host.
+static int createAnonymousBackingFile() noexcept {
+#if defined(SYS_memfd_create)
+    constexpr unsigned int kMemfdCloseOnExec = 0x0001u;
+    return static_cast<int>(::syscall(
+        SYS_memfd_create, "windbell-tsh-document", kMemfdCloseOnExec));
+#else
+    return -1;
+#endif
 }
 
 // Translate a UTF-16LE byte offset to Tree-sitter coordinates using the
@@ -1022,17 +1036,22 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeCreateDocument(
     env->DeleteLocalRef(reader_class);
     if (!read_method || env->ExceptionCheck()) return 0;
 
-    std::string pattern = directory;
-    if (pattern.back() != '/') pattern.push_back('/');
-    pattern += ".windbell-tsh-XXXXXX";
-    std::vector<char> path(pattern.begin(), pattern.end());
-    path.push_back('\0');
-    const int fd = ::mkstemp(path.data());
-    if (fd < 0) {
-        throw_illegal_state(env, "Cannot create native document backing file");
-        return 0;
+    std::string backing_path;
+    int fd = createAnonymousBackingFile();
+    const bool anonymous_backing = fd >= 0;
+    if (!anonymous_backing) {
+        std::string pattern = directory;
+        if (pattern.back() != '/') pattern.push_back('/');
+        pattern += ".windbell-tsh-XXXXXX";
+        std::vector<char> path(pattern.begin(), pattern.end());
+        path.push_back('\0');
+        fd = ::mkstemp(path.data());
+        if (fd < 0) {
+            throw_illegal_state(env, "Cannot create native document backing file");
+            return 0;
+        }
+        backing_path.assign(path.data());
     }
-    const std::string backing_path(path.data());
     bool ok = ::ftruncate(fd, static_cast<off_t>(byte_length)) == 0;
     std::vector<uint8_t> window;
     if (ok && byte_length > 0) {
@@ -1042,7 +1061,7 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeCreateDocument(
                 static_cast<uint64_t>(byte_length))));
         } catch (...) {
             ::close(fd);
-            ::unlink(backing_path.c_str());
+            if (!backing_path.empty()) ::unlink(backing_path.c_str());
             throw_illegal_state(env, "Unable to allocate bounded JNI document transfer window");
             return 0;
         }
@@ -1076,9 +1095,9 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeCreateDocument(
         offset += static_cast<uint64_t>(count);
     }
     if (direct_window) env->DeleteLocalRef(direct_window);
-    ::close(fd);
     if (!ok || offset != static_cast<uint64_t>(byte_length)) {
-        ::unlink(backing_path.c_str());
+        ::close(fd);
+        if (!backing_path.empty()) ::unlink(backing_path.c_str());
         if (!env->ExceptionCheck()) {
             throw_illegal_state(env, "Native source callback returned an invalid or incomplete UTF-16LE window");
         }
@@ -1086,27 +1105,75 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeCreateDocument(
     }
 
     auto document = std::make_shared<NativeTshDocument>();
-    // Prefer a read-only demand-paged mapping. This gives Oniguruma a
-    // contiguous address-space view without allocating a document-sized native
-    // heap buffer; pages are faulted in only as the active Regex pipeline reads
-    // them. Fall back to the fixed pread window when mmap cannot reserve a
-    // contiguous range (notably on fragmented 32-bit address spaces).
+    // mmap a memfd whenever the Android kernel supports it. This avoids
+    // writing the initial 100-512 MiB source to flash; the kernel backs the
+    // anonymous mapping with tmpfs pages. If unavailable, use app-private
+    // cache storage and retain the bounded pread fallback.
     std::shared_ptr<const windbell::largefile::TextSource> original_source;
-    auto mapped_source = std::make_shared<windbell::largefile::MappedFileSource>(backing_path);
-    if (mapped_source->isOpen()) {
+    auto mapped_source = std::make_shared<windbell::largefile::MappedFileSource>();
+    if (anonymous_backing && mapped_source->openFd(fd)) {
+        ::close(fd);
+        fd = -1;
         original_source = mapped_source;
     } else {
-        auto window_source = std::make_shared<windbell::largefile::FileWindowSource>(
-            backing_path, windbell::largefile::kTreeSitterInputChunkBytes);
-        if (!window_source->isOpen()) {
-            ::unlink(backing_path.c_str());
-            throw_illegal_state(env, "Unable to open mapped or windowed native document source");
+        if (anonymous_backing) {
+            std::string pattern = directory;
+            if (pattern.back() != '/') pattern.push_back('/');
+            pattern += ".windbell-tsh-fallback-XXXXXX";
+            std::vector<char> path(pattern.begin(), pattern.end());
+            path.push_back('\0');
+            const int fallback_fd = ::mkstemp(path.data());
+            bool copied = fallback_fd >= 0 &&
+                ::ftruncate(fallback_fd, static_cast<off_t>(byte_length)) == 0;
+            backing_path.assign(path.data());
+            uint64_t copied_bytes = 0;
+            while (copied && copied_bytes < static_cast<uint64_t>(byte_length)) {
+                const size_t request = static_cast<size_t>(std::min<uint64_t>(
+                    window.size(), static_cast<uint64_t>(byte_length) - copied_bytes));
+                ssize_t count;
+                do {
+                    count = ::pread(fd, window.data(), request,
+                        static_cast<off_t>(copied_bytes));
+                } while (count < 0 && errno == EINTR);
+                if (count <= 0 || !writeAllAt(fallback_fd, window.data(),
+                        static_cast<size_t>(count), copied_bytes)) {
+                    copied = false;
+                    break;
+                }
+                copied_bytes += static_cast<uint64_t>(count);
+            }
+            if (fallback_fd >= 0) ::close(fallback_fd);
+            ::close(fd);
+            fd = -1;
+            if (!copied || copied_bytes != static_cast<uint64_t>(byte_length)) {
+                if (!backing_path.empty()) ::unlink(backing_path.c_str());
+                throw_illegal_state(env, "Unable to materialize anonymous TSH source fallback");
+                return 0;
+            }
+        } else {
+            ::close(fd);
+            fd = -1;
+        }
+
+        if (backing_path.empty()) {
+            throw_illegal_state(env, "Native document has no usable backing source");
             return 0;
         }
-        original_source = window_source;
+        if (mapped_source->open(backing_path)) {
+            original_source = mapped_source;
+        } else {
+            auto window_source = std::make_shared<windbell::largefile::FileWindowSource>(
+                backing_path, windbell::largefile::kTreeSitterInputChunkBytes);
+            if (!window_source->isOpen()) {
+                ::unlink(backing_path.c_str());
+                throw_illegal_state(env, "Unable to open mapped or windowed native document source");
+                return 0;
+            }
+            original_source = window_source;
+        }
+        // Both mmap and the open pread descriptor remain valid after unlink.
+        ::unlink(backing_path.c_str());
     }
-    // Both mmap and the open pread descriptor remain valid after unlink.
-    ::unlink(backing_path.c_str());
     document->source = std::make_unique<windbell::largefile::PieceTreeSource>(
         std::move(original_source));
     if (!document->source->isValid()) {
