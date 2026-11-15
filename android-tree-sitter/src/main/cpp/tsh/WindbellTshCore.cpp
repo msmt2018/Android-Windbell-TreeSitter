@@ -2270,8 +2270,12 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                     !pattern_metadata->second.enabled) {
                     continue;
                 }
+                // text_start is a sentinel pointer when a PieceTree/TextSource
+                // is non-contiguous. Never pass that sentinel as readable UTF-16
+                // memory to predicate helpers; let them use the TextSource window API.
                 const TshPredicateResult predicate_result = tshEvaluateNativePredicates(
-                    native_query, match, text_start,
+                    native_query, match,
+                    has_contiguous_text ? text_start : nullptr,
                     has_contiguous_text ? nullptr : text_source, total_bytes);
                 if (predicate_result == TshPredicateResult::ERROR) {
                     throw std::runtime_error(
