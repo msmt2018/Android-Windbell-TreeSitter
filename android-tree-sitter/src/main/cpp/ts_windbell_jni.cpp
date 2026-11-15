@@ -1608,9 +1608,10 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeApplyDocumentEdi
     ++document->version;
     document->dirty_byte_intervals.swap(next_pending_dirty_bytes);
     document->dirty_line_intervals.swap(next_dirty_intervals);
-    // Until NativeHighlightCache supports interval-level eviction, clear its
-    // entries conservatively. Dirty intervals are retained for the next
-    // incremental ATS capture implementation instead of being discarded.
+    // Rebase cached highlight snapshots against the committed edit and the
+    // post-edit Tree-sitter changed ranges. Unproven/document-context
+    // dependencies are evicted; unaffected rooted-query/finite-Regex ranges
+    // retain their shifted coordinates and the new document versions.
     document->highlight_cache.rebaseAfterEdit(
         document->version, document->source->version(), document->partition_index.version(),
         static_cast<uint32_t>(start_byte), static_cast<uint32_t>(old_end_byte),
