@@ -31,6 +31,7 @@
 #include <cstdint>
 #include <new>
 #include "ts__log.h"
+#include "QueryDependencyAnalyzer.h"
 
 namespace windbell::tsh {
 
@@ -2868,6 +2869,41 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                                 } else {
                                     metadata.dependency_scope =
                                         NativeQueryProgram::QueryDependencyScope::UNROOTED;
+                                }
+
+                                const uint32_t pattern_start =
+                                    ts_query_start_byte_for_pattern(program.query, pattern);
+                                const uint32_t pattern_end =
+                                    ts_query_end_byte_for_pattern(program.query, pattern);
+                                if (metadata.is_rooted && !metadata.is_non_local &&
+                                    pattern_start < pattern_end &&
+                                    pattern_end <= query_source.size()) {
+                                    const QueryRootDescriptor root = analyzeSimpleQueryRoot(
+                                        std::string_view(query_source).substr(
+                                            pattern_start, pattern_end - pattern_start));
+                                    if (root.valid) {
+                                        metadata.root_node_type = root.node_type;
+                                        metadata.root_node_is_named = root.is_named;
+                                        metadata.root_node_symbol = ts_language_symbol_for_name(
+                                            ts_lang, root.node_type.data(),
+                                            static_cast<uint32_t>(root.node_type.size()),
+                                            root.is_named);
+                                        if (!root.direct_capture.empty()) {
+                                            for (uint32_t capture_id = 0;
+                                                 capture_id < ts_query_capture_count(program.query);
+                                                 ++capture_id) {
+                                                uint32_t name_length = 0;
+                                                const char* name = ts_query_capture_name_for_id(
+                                                    program.query, capture_id, &name_length);
+                                                if (name && root.direct_capture ==
+                                                    std::string(name, name_length)) {
+                                                    metadata.root_capture_id =
+                                                        static_cast<int32_t>(capture_id);
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                    }
                                 }
                             }
 

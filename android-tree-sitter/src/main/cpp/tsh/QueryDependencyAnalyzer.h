@@ -18,18 +18,16 @@ inline void skipQuerySpaceAndComments(std::string_view source, size_t *position)
     for (;;) {
         while (*position < source.size() &&
                (source[*position] == ' ' || source[*position] == '\t' ||
-                source[*position] == '\r' || source[*position] == '\n')) {
-            ++*position;
-        }
+                source[*position] == '\r' || source[*position] == '\n')) ++*position;
         if (*position >= source.size() || source[*position] != ';') return;
         while (*position < source.size() && source[*position] != '\n') ++*position;
     }
 }
 
 /**
- * Extracts only a simple, fixed root node type from a single S-expression
- * pattern. Wildcards, supertypes, alternatives, grouped patterns and unknown
- * syntax return valid=false so callers can conservatively use document scope.
+ * Extract a fixed root node type from a simple, single-root S-expression.
+ * Wildcards, supertypes, alternatives, grouped roots, anchors outside the
+ * root and unrecognized syntax remain UNKNOWN and must use document scope.
  */
 inline QueryRootDescriptor analyzeSimpleQueryRoot(std::string_view pattern) {
     QueryRootDescriptor result;
@@ -41,7 +39,6 @@ inline QueryRootDescriptor analyzeSimpleQueryRoot(std::string_view pattern) {
 
     if (pattern[position] == '"') {
         ++position;
-        std::string node_type;
         bool closed = false;
         while (position < pattern.size()) {
             const char ch = pattern[position++];
@@ -50,13 +47,10 @@ inline QueryRootDescriptor analyzeSimpleQueryRoot(std::string_view pattern) {
                 if (position >= pattern.size()) return result;
                 const char escaped = pattern[position++];
                 if (escaped != '"' && escaped != '\\') return result;
-                node_type.push_back(escaped);
-            } else {
-                node_type.push_back(ch);
-            }
+                result.node_type.push_back(escaped);
+            } else result.node_type.push_back(ch);
         }
-        if (!closed || node_type.empty()) return result;
-        result.node_type = std::move(node_type);
+        if (!closed || result.node_type.empty()) return result;
         result.is_named = false;
     } else {
         const size_t begin = position;
@@ -67,15 +61,15 @@ inline QueryRootDescriptor analyzeSimpleQueryRoot(std::string_view pattern) {
             ++position;
         }
         if (position == begin) return result;
-        const std::string_view node_type = pattern.substr(begin, position - begin);
-        if (node_type == "_" || node_type.find('*') != std::string_view::npos) return result;
-        result.node_type.assign(node_type);
+        const std::string_view type = pattern.substr(begin, position - begin);
+        if (type == "_" || type.find('*') != std::string_view::npos ||
+            (position < pattern.size() && pattern[position] == '/')) return result;
+        result.node_type.assign(type);
         result.is_named = true;
     }
-    result.valid = true;
 
-    // The root node's closing delimiter is the first close that returns the
-    // initial S-expression depth to zero. Ignore nested strings/comments.
+    // Find the close of the outer root expression, ignoring nested strings,
+    // comments and child-node expressions.
     size_t scan = position;
     size_t depth = 1;
     bool in_string = false;
@@ -96,11 +90,12 @@ inline QueryRootDescriptor analyzeSimpleQueryRoot(std::string_view pattern) {
         }
         if (ch == '(') ++depth;
         else if (ch == ')') {
-            if (depth == 0) return result;
+            if (depth == 0) return QueryRootDescriptor{};
             if (--depth == 0) { ++scan; closed_root = true; break; }
         }
     }
-    if (!closed_root || in_string) return result;
+    if (!closed_root || in_string) return QueryRootDescriptor{};
+
     skipQuerySpaceAndComments(pattern, &scan);
     if (scan < pattern.size() && pattern[scan] == '@') {
         ++scan;
@@ -111,8 +106,21 @@ inline QueryRootDescriptor analyzeSimpleQueryRoot(std::string_view pattern) {
                 ch == '{' || ch == '}' || ch == ';') break;
             ++scan;
         }
-        if (scan > begin) result.direct_capture.assign(pattern.substr(begin, scan - begin));
+        if (scan == begin) return QueryRootDescriptor{};
+        result.direct_capture.assign(pattern.substr(begin, scan - begin));
     }
+
+    skipQuerySpaceAndComments(pattern, &scan);
+    if (scan < pattern.size()) {
+        // Only standard predicate groups are accepted after the root. Other
+        // suffix syntax (notably sibling anchors) expands dependencies.
+        if (pattern[scan] != '(') return QueryRootDescriptor{};
+        size_t predicate = scan + 1;
+        skipQuerySpaceAndComments(pattern, &predicate);
+        if (predicate >= pattern.size() || pattern[predicate] != '#')
+            return QueryRootDescriptor{};
+    }
+    result.valid = true;
     return result;
 }
 

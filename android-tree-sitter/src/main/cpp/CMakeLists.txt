@@ -221,6 +221,20 @@ endif()
 # the production library; these tests run in a normal desktop CMake build.
 include(CTest)
 if(BUILD_TESTING AND NOT ANDROID)
+    add_executable(windbell_tsh_cache_tests
+        tsh/tests/NativeHighlightCacheTest.cpp
+    )
+    target_include_directories(windbell_tsh_cache_tests PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tsh"
+        "${CMAKE_CURRENT_SOURCE_DIR}/oniguruma/src"
+        "${TS_DIR}/lib/include"
+        "${JAVA_INCLUDE_PATH}"
+        "${JAVA_INCLUDE_PATH2}"
+    )
+    target_compile_features(windbell_tsh_cache_tests PRIVATE cxx_std_20)
+    add_test(NAME windbell_tsh_cache_tests COMMAND windbell_tsh_cache_tests)
+
     add_executable(windbell_largefile_tests
         largefile/tests/TextSourceTest.cpp
         largefile/TextSource.cpp

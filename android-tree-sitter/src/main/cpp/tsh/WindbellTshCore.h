@@ -46,6 +46,14 @@ struct HighlightSpan {
 
 static_assert(sizeof(HighlightSpan) == 24, "HighlightSpan ABI must remain 24 bytes.");
 
+struct HighlightDependencyRange {
+    uint32_t start_byte = 0;
+    uint32_t end_byte = 0;
+    uint32_t pattern_index = UINT32_MAX;
+    uint8_t source = static_cast<uint8_t>(HighlightSource::UNKNOWN);
+    uint8_t query_dependency_scope = 0xFFu;
+};
+
 enum class RegexRuleType : uint8_t {
     MATCH,
     BLOCK
@@ -149,6 +157,10 @@ struct NativeQueryProgram {
         bool enabled = true;
         bool is_rooted = false;
         bool is_non_local = false;
+        std::string root_node_type;
+        TSSymbol root_node_symbol = 0;
+        bool root_node_is_named = false;
+        int32_t root_capture_id = -1;
         QueryDependencyScope dependency_scope = QueryDependencyScope::UNKNOWN;
     };
 
@@ -433,7 +445,8 @@ public:
         const windbell::largefile::TextSource* text_source = nullptr,
         std::vector<RegexStateCheckpoint>* regex_state_checkpoints = nullptr,
         uint64_t source_version = 0,
-        uint64_t partition_version = 0
+        uint64_t partition_version = 0,
+        std::vector<HighlightDependencyRange>* dependency_ranges = nullptr
     );
 
 private:

@@ -1864,6 +1864,7 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
         // TextSource window executors; no legacy whole-document heap bridge.
     }
     std::vector<HighlightSpan> candidates;
+    std::vector<HighlightDependencyRange> query_dependencies;
     uint32_t counts[4] = {};
     std::vector<HighlightSpan> spans;
     try {
@@ -1875,7 +1876,7 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
             evaluation_start,
             evaluation_end, highlight_source,
             &document->regex_state_checkpoints, document->source->version(),
-            document->partition_index.version());
+            document->partition_index.version(), &query_dependencies);
         if (diagnostics == JNI_TRUE) spans = std::move(candidates);
         if (requested_start == requested_end) {
             spans.clear();
@@ -1915,21 +1916,9 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
     NativeHighlightCache::Value cache_value;
     cache_value.spans = std::move(spans);
 
-    // Build explicit dependency envelopes for the cached viewport. Capture
-    // spans are output locations, not proof of what the query depended on.
-    // Until a query match exposes its exact rooted syntax node, every enabled
-    // TSQuery pattern is conservatively document-dependent. This is deliberate:
-    // it prevents a sibling/ancestor/predicate change from reusing stale captures.
-    for (const auto &query : grammar->native_queries) {
-        if (!query.enabled || !query.query) continue;
-        for (const auto &pattern : query.pattern_metadata) {
-            if (!pattern.second.enabled) continue;
-            cache_value.dependencies.push_back({
-                0u, static_cast<uint32_t>(total_bytes), pattern.first,
-                static_cast<uint8_t>(HighlightSource::NATIVE_QUERY)
-            });
-        }
-    }
+    // Query dependencies were collected from every possible rooted AST
+    // candidate intersecting the evaluated viewport, not merely emitted captures.
+    cache_value.dependencies = std::move(query_dependencies);
     // AST selectors may inspect parent, ancestor, sibling, field and descendant
     // relationships. Their dependency root is not represented by emitted spans.
     if (!grammar->ast_selector_rules.empty()) {

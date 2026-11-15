@@ -70,12 +70,7 @@ public:
         }
     };
 
-    struct DependencyRange {
-        uint32_t start_byte = 0;
-        uint32_t end_byte = 0;
-        uint32_t pattern_index = UINT32_MAX;
-        uint8_t source = static_cast<uint8_t>(HighlightSource::UNKNOWN);
-    };
+    using DependencyRange = HighlightDependencyRange;
 
     struct Value {
         std::vector<HighlightSpan> spans;

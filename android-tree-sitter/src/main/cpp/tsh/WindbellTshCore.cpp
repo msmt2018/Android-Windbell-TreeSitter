@@ -1279,6 +1279,95 @@ void WindbellEngine::matchBlockRecursive(
     onig_region_free(end_region, 1);
 }
 
+static bool appendQueryRootDependencyRanges(
+    TSTree* tree,
+    TSSymbol root_symbol,
+    uint32_t range_start,
+    uint32_t range_end,
+    uint32_t total_bytes,
+    uint32_t pattern_index,
+    uint8_t dependency_scope,
+    std::vector<HighlightDependencyRange>* output
+) {
+    if (!tree || root_symbol == 0 || !output || range_start >= range_end) return false;
+    TSTreeCursor cursor = ts_tree_cursor_new(ts_tree_root_node(tree));
+    bool complete = true;
+    bool done = false;
+    size_t before = output->size();
+    while (!done) {
+        const TSNode node = ts_tree_cursor_current_node(&cursor);
+        const uint32_t start = ts_node_start_byte(node);
+        const uint32_t end = ts_node_end_byte(node);
+        const bool intersects = start == end
+            ? (start >= range_start && start <= range_end)
+            : (start < range_end && end > range_start);
+        if (intersects) {
+            if (ts_node_symbol(node) == root_symbol &&
+                start <= end && end <= total_bytes &&
+                (start & 1u) == 0 && (end & 1u) == 0) {
+                uint32_t dependency_start = start;
+                uint32_t dependency_end = end;
+                // Missing/zero-width nodes still depend on their insertion
+                // boundary. Expand by one UTF-16 code unit on each side.
+                if (dependency_start == dependency_end) {
+                    dependency_start = dependency_start >= 2u ? dependency_start - 2u : 0u;
+                    dependency_end = std::min<uint32_t>(total_bytes, dependency_end + 2u);
+                }
+                output->push_back({
+                    dependency_start, dependency_end, pattern_index,
+                    static_cast<uint8_t>(HighlightSource::NATIVE_QUERY),
+                    dependency_scope
+                });
+            }
+            if (ts_tree_cursor_goto_first_child(&cursor)) continue;
+        }
+        while (!ts_tree_cursor_goto_next_sibling(&cursor)) {
+            if (!ts_tree_cursor_goto_parent(&cursor)) {
+                done = true;
+                break;
+            }
+        }
+    }
+    ts_tree_cursor_delete(&cursor);
+    complete = output->size() > before;
+    return complete;
+}
+
+static void appendQueryPatternDependencies(
+    const TshGrammar& grammar,
+    const TSLanguage* language,
+    TSTree* tree,
+    uint32_t range_start,
+    uint32_t range_end,
+    uint32_t total_bytes,
+    std::vector<HighlightDependencyRange>* output
+) {
+    if (!output) return;
+    for (const auto& query : grammar.native_queries) {
+        if (!query.enabled || !query.query) continue;
+        for (const auto& item : query.pattern_metadata) {
+            const auto& metadata = item.second;
+            if (!metadata.enabled) continue;
+            const uint8_t scope = static_cast<uint8_t>(metadata.dependency_scope);
+            const bool local_root = metadata.dependency_scope ==
+                    NativeQueryProgram::QueryDependencyScope::ROOTED_LOCAL &&
+                metadata.root_node_symbol != 0 && language != nullptr;
+            if (local_root && appendQueryRootDependencyRanges(
+                    tree, metadata.root_node_symbol, range_start, range_end,
+                    total_bytes, item.first, scope, output)) {
+                continue;
+            }
+            // No static proof or no candidate root node in this viewport:
+            // retain a document dependency rather than assume a missing match
+            // cannot be created by an edit elsewhere in its containing syntax.
+            output->push_back({
+                0u, total_bytes, item.first,
+                static_cast<uint8_t>(HighlightSource::NATIVE_QUERY), scope
+            });
+        }
+    }
+}
+
 std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
     const TSLanguage* language,
     TSTree* tree,
@@ -1292,9 +1381,11 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
     const windbell::largefile::TextSource* text_source,
     std::vector<RegexStateCheckpoint>* regex_state_checkpoints,
     uint64_t source_version,
-    uint64_t partition_version
+    uint64_t partition_version,
+    std::vector<HighlightDependencyRange>* dependency_ranges
 ) {
     std::vector<HighlightSpan> final_spans;
+    if (dependency_ranges) dependency_ranges->clear();
     if (diagnostic_match_counts) std::fill(diagnostic_match_counts, diagnostic_match_counts + 4, 0u);
     if (length_chars != 0 && input_chars == nullptr && !text_source) return final_spans;
     if (length_chars > (std::numeric_limits<uint32_t>::max() / sizeof(uint16_t))) return final_spans;
@@ -2235,6 +2326,9 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
     }
     const size_t native_query_span_begin = macro_spans.size();
     if (tree && tree_source_valid && !grammar->native_queries.empty()) {
+        appendQueryPatternDependencies(
+            *grammar, language, tree, range_start_byte, range_end_byte,
+            total_bytes, dependency_ranges);
         // Each .tsh query block has its own native TSQuery and capture namespace.
         // This preserves per-block priority/order and avoids concatenating query
         // sources into a synthetic aggregate program.
