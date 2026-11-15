@@ -1608,9 +1608,9 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeApplyDocumentEdi
     ++document->version;
     document->dirty_byte_intervals.swap(next_pending_dirty_bytes);
     document->dirty_line_intervals.swap(next_dirty_intervals);
-    // Rebase cache entries against the post-edit Tree-sitter changed ranges
-    // and the literal edit interval. Entries without a proven dependency
-    // envelope are evicted by NativeHighlightCache rather than guessed reusable.
+    // Until NativeHighlightCache supports interval-level eviction, clear its
+    // entries conservatively. Dirty intervals are retained for the next
+    // incremental ATS capture implementation instead of being discarded.
     document->highlight_cache.rebaseAfterEdit(
         document->version, document->source->version(), document->partition_index.version(),
         static_cast<uint32_t>(start_byte), static_cast<uint32_t>(old_end_byte),
@@ -1915,7 +1915,6 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
     NativeHighlightCache::Value cache_value;
     cache_value.spans = std::move(spans);
 
-    try {
     // Build explicit dependency envelopes for the cached viewport. Capture
     // spans are output locations, not proof of what the query depended on.
     // Until a query match exposes its exact rooted syntax node, every enabled
@@ -1927,8 +1926,7 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
             if (!pattern.second.enabled) continue;
             cache_value.dependencies.push_back({
                 0u, static_cast<uint32_t>(total_bytes), pattern.first,
-                static_cast<uint8_t>(HighlightSource::NATIVE_QUERY),
-                static_cast<uint8_t>(pattern.second.dependency_scope)
+                static_cast<uint8_t>(HighlightSource::NATIVE_QUERY)
             });
         }
     }
@@ -1943,15 +1941,7 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
     // Stateful and document-context Regex have lexical dependencies extending
     // to checkpoints/EOF. They remain document-wide until their checkpoint
     // convergence result is surfaced as an explicit dependency envelope.
-    const auto has_block_rule = [](const auto &self, const CompiledRegexRule &rule) -> bool {
-        if (rule.enabled && rule.type == RegexRuleType::BLOCK) return true;
-        return std::any_of(rule.nested_rules.begin(), rule.nested_rules.end(),
-            [&](const CompiledRegexRule &nested) { return self(self, nested); });
-    };
-    const bool has_context_block = std::any_of(
-        grammar->regex_rules.begin(), grammar->regex_rules.end(),
-        [&](const CompiledRegexRule &rule) { return has_block_rule(has_block_rule, rule); });
-    if (!grammar->regex_states.empty() || source_requires_contiguous_regex || has_context_block) {
+    if (!grammar->regex_states.empty() || source_requires_contiguous_regex) {
         cache_value.dependencies.push_back({
             0u, static_cast<uint32_t>(total_bytes), UINT32_MAX,
             static_cast<uint8_t>(HighlightSource::REGEX_STATE)
@@ -1981,10 +1971,11 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
         });
     }
     std::copy(std::begin(counts), std::end(counts), std::begin(cache_value.match_counts));
+    try {
         document->highlight_cache.put(cache_key, std::move(cache_value));
     } catch (...) {
         // Cache admission is optional. Preserve the complete result even when
-        // dependency bookkeeping or cache admission cannot allocate under pressure.
+        // cache bookkeeping cannot allocate under memory pressure.
     }
     return encoded;
 }
