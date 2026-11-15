@@ -48,16 +48,16 @@ class TshSyntaxHighlighter(
 
     companion object {
         private const val TAG = "WindbellTSH"
-        private const val PARTITION_CHARS = 64L * 1024L
+        // Capture storage is byte-budgeted; execution ranges come from the live renderer.
         private const val CAPTURE_CACHE_BYTES = 32L * 1024L * 1024L
         private val nextSessionId = AtomicLong(1L)
-        private val captureCache = ByteBudgetLruCache<CaptureCacheKey, CaptureIntervalIndex>(
+        private val captureCache = ByteBudgetLruCache<CaptureRangeKey, CaptureIntervalIndex>(
             CAPTURE_CACHE_BYTES,
             { index -> 96L + index.size.toLong() * 96L }
         )
     }
 
-    private data class CaptureCacheKey(val sessionId: Long, val partitionIndex: Int)
+    private data class CaptureRangeKey(val sessionId: Long, val startUtf16: Int, val endUtf16: Int)
 
     private data class LargeSession(
         /** Native-owned PieceTreeSource + incremental Tree-sitter tree. */
@@ -71,12 +71,12 @@ class TshSyntaxHighlighter(
         val pendingEditEpoch: AtomicLong = AtomicLong(),
         val appliedEditEpoch: AtomicLong = AtomicLong(),
         val nativeMutex: Mutex = Mutex(),
-        val partitionWork: ConcurrentHashMap<Int, PartitionWork> = ConcurrentHashMap()
+        val rangeWork: ConcurrentHashMap<CaptureRangeKey, RangeWork> = ConcurrentHashMap()
     )
 
     private enum class PartitionWorkState { QUEUED, RUNNING, SUCCEEDED, FAILED, CANCELLED }
 
-    private class PartitionWork(val attempt: Int = 0) {
+    private class RangeWork(val attempt: Int = 0) {
         @Volatile var state: PartitionWorkState = PartitionWorkState.QUEUED
         @Volatile var retryAfterNanos: Long = 0L
     }
@@ -269,15 +269,10 @@ class TshSyntaxHighlighter(
         val boundedStart = queryStart.coerceAtLeast(0L)
         val boundedEnd = queryEnd.coerceAtMost(length)
         if (boundedStart >= boundedEnd) return true
-        var ready = true
-        forEachNativeViewportPartition(active, boundedStart, boundedEnd) { partitionIndex, _, _ ->
-            if (captureCache.get(CaptureCacheKey(active.cacheSessionId, partitionIndex)) == null) {
-                ready = false
-                requestLargePartition(active, partitionIndex)
-            }
-        }
-        return ready
-    }
+        val key = CaptureRangeKey(active.cacheSessionId, boundedStart.toInt(), boundedEnd.toInt())
+        if (captureCache.get(key) != null) return true
+        requestLargeRange(active, key)
+        return false    }
 
     fun createBracketMatcher(): PlainBracketMatcher? {
         val pairs = editorMetadata.brackets.joinToString("") { it.first + it.second }
@@ -309,13 +304,10 @@ class TshSyntaxHighlighter(
             if (offset < 0 || offset.toLong() >= active.lengthChars.get() || offset == Int.MAX_VALUE) {
                 return false
             }
-            val partitionIndex = (offset.toLong() / PARTITION_CHARS).toInt()
-            val cached = captureCache.get(CaptureCacheKey(active.cacheSessionId, partitionIndex))
+            val key = CaptureRangeKey(active.cacheSessionId, offset, offset + 1)
+            val cached = captureCache.get(key)
             if (cached == null) {
-                // Unknown lexical scope is handled conservatively: request the
-                // token partition and avoid inserting brackets/pairs into a
-                // comment/string until the authoritative capture data arrives.
-                requestLargePartition(active, partitionIndex)
+                requestLargeRange(active, key)
                 return true
             }
             cached.query(offset, offset + 1)
@@ -475,46 +467,32 @@ class TshSyntaxHighlighter(
         queryEndUtf16: Int
     ): List<WindbellTshEngine.HighlightSpan> {
         if (generation.get() != active.ticket || largeSession !== active) return emptyList()
-        val result = ArrayList<WindbellTshEngine.HighlightSpan>()
-        forEachNativeViewportPartition(active, start, end) { partitionIndex, _, _ ->
-            val index = captureCache.get(CaptureCacheKey(active.cacheSessionId, partitionIndex))
-            if (index == null) requestLargePartition(active, partitionIndex)
-            else index.appendQuery(queryStartUtf16, queryEndUtf16, result)
+        val key = CaptureRangeKey(active.cacheSessionId, start.toInt(), end.toInt())
+        val index = captureCache.get(key) ?: run {
+            requestLargeRange(active, key)
+            return emptyList()
         }
-        return result
-    }
-
-    private fun requestLargeViewport(active: LargeSession, start: Long, end: Long) {
-        if (generation.get() != active.ticket || largeSession !== active) return
-        forEachNativeViewportPartition(active, start, end) { partitionIndex, _, _ ->
-            if (captureCache.get(CaptureCacheKey(active.cacheSessionId, partitionIndex)) == null) {
-                requestLargePartition(active, partitionIndex)
-            }
+        return ArrayList<WindbellTshEngine.HighlightSpan>().also {
+            index.appendQuery(queryStartUtf16, queryEndUtf16, it)
         }
     }
 
-    private fun requestLargePartition(active: LargeSession, partitionIndex: Int) {
+    private fun requestLargeRange(active: LargeSession, key: CaptureRangeKey) {
         if (generation.get() != active.ticket || largeSession !== active) return
-        if (captureCache.get(CaptureCacheKey(active.cacheSessionId, partitionIndex)) != null) return
-        // Keep failed work briefly to suppress draw-triggered retry storms, but
-        // never poison a partition for the lifetime of the document. Retry with
-        // bounded exponential backoff so transient I/O/OOM/native failures recover.
-        val existing = active.partitionWork[partitionIndex]
+        if (key.startUtf16 >= key.endUtf16 || captureCache.get(key) != null) return
+        val existing = active.rangeWork[key]
         val work = if (existing == null) {
-            val initial = PartitionWork()
-            if (active.partitionWork.putIfAbsent(partitionIndex, initial) != null) return
+            val initial = RangeWork()
+            if (active.rangeWork.putIfAbsent(key, initial) != null) return
             initial
         } else {
             if (existing.state != PartitionWorkState.FAILED ||
                 System.nanoTime() < existing.retryAfterNanos) return
-            val retry = PartitionWork(existing.attempt + 1)
-            if (!active.partitionWork.replace(partitionIndex, existing, retry)) return
+            val retry = RangeWork(existing.attempt + 1)
+            if (!active.rangeWork.replace(key, existing, retry)) return
             retry
         }
         val requestedRevision = active.documentRevision.get()
-
-        // One native document handle has one serialized operation stream. Viewport
-        // highlighting, incremental edits and close must never race on its parser/tree.
         scope.launch(Dispatchers.IO) {
             try {
                 if (generation.get() != active.ticket || largeSession !== active) {
@@ -530,17 +508,14 @@ class TshSyntaxHighlighter(
                     }
                     engine.highlightNativeDocument(
                         documentHandle = active.nativeHandle,
-                        startByte = partitionIndex.toLong() * PARTITION_CHARS * 2L,
-                        endByte = minOf(active.lengthChars.get(), (partitionIndex.toLong() + 1L) * PARTITION_CHARS) * 2L
-                    ) ?: throw IllegalStateException(
-                        "Native viewport TSH returned null (partition=$partitionIndex)"
-                    )
+                        startByte = key.startUtf16.toLong() * 2L,
+                        endByte = key.endUtf16.toLong() * 2L
+                    ) ?: throw IllegalStateException("Native viewport TSH returned null for visible range")
                 }
                 val spans = decodeNativeSpans(flat)
                 if (generation.get() == active.ticket && largeSession === active &&
                     active.documentRevision.get() == requestedRevision) {
-                    // Empty IntArray is a valid completed result and is cached as such.
-                    captureCache.put(CaptureCacheKey(active.cacheSessionId, partitionIndex), CaptureIntervalIndex(spans))
+                    captureCache.put(key, CaptureIntervalIndex(spans))
                     work.state = PartitionWorkState.SUCCEEDED
                     host?.invalidateStyles()
                     host?.invalidateStructure()
@@ -550,45 +525,15 @@ class TshSyntaxHighlighter(
             } catch (_: CancellationException) {
                 work.state = PartitionWorkState.CANCELLED
             } catch (error: Throwable) {
-                // Retain FAILED only until its retry deadline. Backoff is capped
-                // at 32 seconds and retries reset naturally on a new session/edit.
                 work.state = PartitionWorkState.FAILED
                 val backoffShift = (work.attempt - 1).coerceIn(0, 5)
-                val backoffNanos = (1L shl backoffShift) * 1_000_000_000L
-                work.retryAfterNanos = System.nanoTime() + backoffNanos
+                work.retryAfterNanos = System.nanoTime() + (1L shl backoffShift) * 1_000_000_000L
                 if (generation.get() == active.ticket && largeSession === active) {
-                    Log.e(TAG, "Native viewport TSH failed: extension=.$extension partition=$partitionIndex", error)
+                    Log.e(TAG, "Native viewport TSH failed for visible range", error)
                 }
             } finally {
-                if (work.state != PartitionWorkState.FAILED) {
-                    active.partitionWork.remove(partitionIndex, work)
-                }
+                if (work.state != PartitionWorkState.FAILED) active.rangeWork.remove(key, work)
             }
-        }
-    }
-
-    /** Iterate viewport partitions without allocating a List or DocumentPartition per draw. */
-    private inline fun forEachNativeViewportPartition(
-        active: LargeSession,
-        start: Long,
-        end: Long,
-        action: (index: Int, start: Long, endExclusive: Long) -> Unit
-    ) {
-        val length = active.lengthChars.get()
-        if (length <= 0L || start >= end || start >= length) return
-        val boundedStart = start.coerceAtLeast(0L)
-        val boundedEnd = end.coerceAtMost(length)
-        if (boundedStart >= boundedEnd) return
-        var index = boundedStart / PARTITION_CHARS
-        val last = (boundedEnd - 1L) / PARTITION_CHARS
-        while (index <= last) {
-            val partStart = index * PARTITION_CHARS
-            action(
-                index.toInt(),
-                partStart,
-                minOf(length, partStart + PARTITION_CHARS)
-            )
-            index++
         }
     }
 
@@ -619,9 +564,14 @@ class TshSyntaxHighlighter(
                     // Lexical state can flow to EOF. Invalidate downstream captures
                     // and failed-work markers only after the edit transaction completes.
                     active.documentRevision.incrementAndGet()
-                    val firstInvalid = (earliestOffset / PARTITION_CHARS).toInt()
-                    captureCache.invalidate { key, _ -> key.sessionId == active.cacheSessionId && key.partitionIndex >= firstInvalid }
-                    active.partitionWork.keys.filter { it >= firstInvalid }.forEach(active.partitionWork::remove)
+                    val firstInvalid = earliestOffset.coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+                    // Captures may begin before an edit and extend through it; invalidate
+                    // every cached viewport that intersects the changed suffix.
+                    captureCache.invalidate { key, _ ->
+                        key.sessionId == active.cacheSessionId && key.endUtf16 > firstInvalid
+                    }
+                    active.rangeWork.keys.filter { it.endUtf16 > firstInvalid }
+                        .forEach(active.rangeWork::remove)
                     // Publish the new revision only after its stale cache entries are gone.
                     active.appliedEditEpoch.set(editEpoch)
                     if (generation.get() == active.ticket && largeSession === active) {
