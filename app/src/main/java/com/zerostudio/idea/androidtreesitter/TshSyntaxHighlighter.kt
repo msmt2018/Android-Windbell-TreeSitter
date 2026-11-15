@@ -74,10 +74,10 @@ class TshSyntaxHighlighter(
         val rangeWork: ConcurrentHashMap<CaptureRangeKey, RangeWork> = ConcurrentHashMap()
     )
 
-    private enum class PartitionWorkState { QUEUED, RUNNING, SUCCEEDED, FAILED, CANCELLED }
+    private enum class RangeWorkState { QUEUED, RUNNING, SUCCEEDED, FAILED, CANCELLED }
 
     private class RangeWork(val attempt: Int = 0) {
-        @Volatile var state: PartitionWorkState = PartitionWorkState.QUEUED
+        @Volatile var state: RangeWorkState = PartitionWorkState.QUEUED
         @Volatile var retryAfterNanos: Long = 0L
     }
 
@@ -272,7 +272,8 @@ class TshSyntaxHighlighter(
         val key = CaptureRangeKey(active.cacheSessionId, boundedStart.toInt(), boundedEnd.toInt())
         if (captureCache.get(key) != null) return true
         requestLargeRange(active, key)
-        return false    }
+        return false
+    }
 
     fun createBracketMatcher(): PlainBracketMatcher? {
         val pairs = editorMetadata.brackets.joinToString("") { it.first + it.second }
@@ -325,7 +326,7 @@ class TshSyntaxHighlighter(
         }
     }
 
-    /** Theme changes only invalidate drawing; partition parses and captures remain valid. */
+    /** Theme changes only invalidate drawing; range captures remain valid. */
     fun refreshTheme() {
         host?.invalidateStyles()
     }
