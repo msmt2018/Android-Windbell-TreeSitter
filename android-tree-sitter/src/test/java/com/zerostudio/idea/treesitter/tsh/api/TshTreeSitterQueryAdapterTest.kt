@@ -109,10 +109,11 @@ class TshTreeSitterQueryAdapterTest {
 
     @Test fun executorRejectsStaleQueryRevision() {
         val registry = TshCompiledQueryRegistry()
-        val active = compiledQuery().copy(revision = "r2")
+        val nativeId = TshObjectId(777)
+        val active = compiledQuery(nativeId = nativeId).copy(revision = "r2")
         assertTrue(registry.register(active) is TshResult.Success)
         val executor = TshTreeSitterQueryExecutor(TshObjectRegistry(), registry, TshNativeQueryLeaseStore())
-        val result = executor.execute(compiledQuery(), tree())
+        val result = executor.execute(compiledQuery(nativeId = nativeId), tree())
         assertTrue(result is TshResult.Failure)
         assertEquals("TSH-QUERY-EXEC-003", (result as TshResult.Failure).diagnostics.first().code)
     }

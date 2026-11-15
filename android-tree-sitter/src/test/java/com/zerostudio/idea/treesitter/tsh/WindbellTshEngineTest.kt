@@ -1741,8 +1741,8 @@ class WindbellTshLinkageTest {
         val content = spans.firstOrNull { it.styleId == contentId }
         assertNotNull(content, "The multiline block content must be captured.")
         val contentText = code.substring(content!!.startByte / 2, content.endByte / 2)
-        assertEquals("中文 👋 𠮷\n", contentText)
-        assertEquals(code.indexOf("中文") * 2, content.startByte)
+        assertEquals("\n中文 👋 𠮷\n", contentText)
+        assertEquals((code.indexOf("BEGIN") + "BEGIN".length) * 2, content.startByte)
         assertEquals((code.indexOf("END")) * 2, content.endByte)
 
         assertTrue(spans.any {

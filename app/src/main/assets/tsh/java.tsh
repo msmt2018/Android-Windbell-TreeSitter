@@ -290,7 +290,7 @@
         queries: [
             {
                 id: "local-variable-declarations"
-                priority: 12
+                priority: 120
                 source: `(variable_declarator name: (identifier) @localName (#match? @localName "^(?:multiline|MAX_CACHE_CAPACITY)$"))`
                 captures: { localName: variable }
             }
