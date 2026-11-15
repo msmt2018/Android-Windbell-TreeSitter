@@ -2081,6 +2081,8 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                 save_regex_state_checkpoint();
             }
         }
+        onig_region_free(state_case_region, 1);
+        onig_region_free(state_region, 1);
         if (dependency_ranges) {
             if (!grammar->regex_state_graph_bounded || state_full_source_fallback) {
                 dependency_ranges->push_back({
@@ -2111,8 +2113,6 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                 });
             }
         }
-        onig_region_free(state_case_region, 1);
-        onig_region_free(state_region, 1);
     }
     for (size_t i = regex_state_span_begin; i < micro_spans.size(); ++i) {
         micro_spans[i].source = static_cast<uint8_t>(HighlightSource::REGEX_STATE);
