@@ -1340,48 +1340,65 @@ static void appendQueryPatternDependencies(
     std::vector<HighlightDependencyRange>* output
 ) {
     if (!output) return;
-    // Query blocks commonly contain many patterns rooted at the same syntax
-    // type. Walk the viewport-overlapping AST once per distinct root symbol,
-    // then attach the resulting immutable envelopes to each pattern.
-    std::unordered_map<TSSymbol, std::vector<std::pair<uint32_t, uint32_t>>> roots_by_symbol;
+
+    std::unordered_set<TSSymbol> root_symbols;
+    bool has_active_pattern = false;
+    bool requires_document_scope = false;
     for (const auto& query : grammar.native_queries) {
         if (!query.enabled || !query.query) continue;
         for (const auto& item : query.pattern_metadata) {
             const auto& metadata = item.second;
             if (!metadata.enabled) continue;
-            const uint8_t scope = static_cast<uint8_t>(metadata.dependency_scope);
-            const bool local_root = metadata.dependency_scope ==
-                    NativeQueryProgram::QueryDependencyScope::ROOTED_LOCAL &&
-                metadata.root_node_symbol != 0 && language != nullptr;
-            if (local_root) {
-                auto found = roots_by_symbol.find(metadata.root_node_symbol);
-                if (found == roots_by_symbol.end()) {
-                    std::vector<std::pair<uint32_t, uint32_t>> ranges;
-                    collectQueryRootRanges(tree, metadata.root_node_symbol,
-                        range_start, range_end, total_bytes, &ranges);
-                    found = roots_by_symbol.emplace(
-                        metadata.root_node_symbol, std::move(ranges)).first;
-                }
-                if (!found->second.empty()) {
-                    for (const auto& range : found->second) {
-                        output->push_back({
-                            range.first, range.second, item.first,
-                            static_cast<uint8_t>(HighlightSource::NATIVE_QUERY), scope,
-                            static_cast<uint8_t>(
-                                range.first == 0u && range.second == total_bytes
-                                    ? HIGHLIGHT_DEPENDENCY_DOCUMENT_WIDE : 0u)
-                        });
-                    }
-                    continue;
-                }
+            has_active_pattern = true;
+            if (metadata.dependency_scope !=
+                    NativeQueryProgram::QueryDependencyScope::ROOTED_LOCAL ||
+                metadata.root_node_symbol == 0 || language == nullptr) {
+                requires_document_scope = true;
+                break;
             }
-            // No static proof or no candidate root node in this viewport:
-            // retain a document dependency rather than assume a missing match
-            // cannot be created by an edit elsewhere in its containing syntax.
+            root_symbols.insert(metadata.root_node_symbol);
+        }
+        if (requires_document_scope) break;
+    }
+    if (!has_active_pattern) return;
+    if (requires_document_scope || root_symbols.empty()) {
+        output->push_back({
+            0u, total_bytes, UINT32_MAX,
+            static_cast<uint8_t>(HighlightSource::NATIVE_QUERY), 0xFFu,
+            HIGHLIGHT_DEPENDENCY_DOCUMENT_WIDE
+        });
+        return;
+    }
+
+    // Query blocks commonly contain many patterns rooted at the same syntax
+    // type. Walk the viewport-overlapping AST once per distinct root symbol,
+    // then store the union of candidate-root envelopes instead of duplicating
+    // identical ranges for every pattern that shares that root type.
+    std::unordered_map<TSSymbol, std::vector<std::pair<uint32_t, uint32_t>>> roots_by_symbol;
+    for (const TSSymbol symbol : root_symbols) {
+        std::vector<std::pair<uint32_t, uint32_t>> ranges;
+        if (!collectQueryRootRanges(
+                tree, symbol, range_start, range_end, total_bytes, &ranges)) {
+            // A missing candidate root is not proof that an edit elsewhere
+            // cannot create a root covering this viewport.
             output->push_back({
-                0u, total_bytes, item.first,
-                static_cast<uint8_t>(HighlightSource::NATIVE_QUERY), scope,
+                0u, total_bytes, UINT32_MAX,
+                static_cast<uint8_t>(HighlightSource::NATIVE_QUERY), 0xFFu,
                 HIGHLIGHT_DEPENDENCY_DOCUMENT_WIDE
+            });
+            return;
+        }
+        roots_by_symbol.emplace(symbol, std::move(ranges));
+    }
+    for (const auto& item : roots_by_symbol) {
+        for (const auto& range : item.second) {
+            output->push_back({
+                range.first, range.second, UINT32_MAX,
+                static_cast<uint8_t>(HighlightSource::NATIVE_QUERY),
+                static_cast<uint8_t>(NativeQueryProgram::QueryDependencyScope::ROOTED_LOCAL),
+                static_cast<uint8_t>(
+                    range.first == 0u && range.second == total_bytes
+                        ? HIGHLIGHT_DEPENDENCY_DOCUMENT_WIDE : 0u)
             });
         }
     }
