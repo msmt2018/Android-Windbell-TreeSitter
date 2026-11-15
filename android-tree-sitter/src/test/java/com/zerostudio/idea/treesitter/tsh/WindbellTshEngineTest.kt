@@ -2012,10 +2012,20 @@ class WindbellTshLinkageTest {
                 "Both committed edits must be exposed as pending dirty line intervals"
             )
             assertTrue(dirtySnapshot.ranges.all { it.startLine >= 0L && it.endLineExclusive > it.startLine })
+            assertTrue(dirtySnapshot.byteRanges.isNotEmpty(), "Exact dirty byte ranges must be exposed alongside line ranges")
+            assertTrue(dirtySnapshot.byteRanges.all {
+                it.startByte >= 0L && it.endByte > it.startByte &&
+                    (it.startByte and 1L) == 0L && (it.endByte and 1L) == 0L
+            })
             assertTrue(
                 dirtySnapshot.ranges.any { it.startLine == 0L } &&
                     dirtySnapshot.ranges.any { it.endLineExclusive >= 2L },
                 "The inserted first line and shifted earlier EOF dirty range must both remain invalidated"
+            )
+            assertTrue(
+                dirtySnapshot.byteRanges.any { it.startByte == 0L } &&
+                    dirtySnapshot.byteRanges.any { it.endByte > 2L },
+                "The inserted prefix and the rebased earlier EOF edit must both remain in byte coordinates"
             )
             val consumedAgain = engine.consumeNativeDirtyLineRanges(handle)
             assertEquals(dirtySnapshot.documentVersion, consumedAgain.documentVersion)

@@ -761,31 +761,23 @@ class TshSyntaxHighlighter(
                     // Lexical state can flow to EOF. Invalidate downstream captures
                     // and failed-work markers only after the edit transaction completes.
                     active.documentRevision.incrementAndGet()
-                    // Native changed ranges are expressed in the committed document's
-                    // coordinates. The minimum dirty line can precede the textual edit
-                    // (for example, when Tree-sitter reparses an enclosing construct),
-                    // so using only the earliest UI edit offset can retain stale captures.
-                    val currentBuffer = host?.buffer
+                    // Native byte intervals are already expressed in the committed
+                    // document's UTF-16LE coordinates. Never consult EditorBuffer from
+                    // this IO worker: the editor may begin another UI edit concurrently.
+                    // The minimum dirty line can precede the textual edit when Tree-sitter
+                    // reparses an enclosing construct.
+                    val dirtyStartByte = dirtySnapshot.byteRanges.minOfOrNull { it.startByte }
                     val dirtyStartLine = dirtySnapshot.ranges.minOfOrNull { it.startLine }
-                    val dirtyStartLineNumber = if (currentBuffer != null && dirtyStartLine != null) {
-                        (dirtyStartLine + 1L)
-                            .coerceAtMost(currentBuffer.getLineCount().toLong())
-                            .coerceAtLeast(1L)
-                            .toInt()
-                    } else null
-                    val dirtyStartOffset = dirtyStartLineNumber?.let { line ->
-                        currentBuffer!!.getOffsetAt(line, currentBuffer.getLineMinColumn(line)).toLong()
-                    }
-                    // The native snapshot is authoritative only when its mapped start
-                    // is no later than the earliest pre-edit offset. If a multi-edit
-                    // coordinate sequence cannot be reconciled, invalidate from the
-                    // document start rather than risk preserving stale prefix captures.
                     val hasReliableDirtyStart =
-                        dirtyStartOffset != null && dirtyStartOffset <= earliestOffset
-                    val firstInvalidLong = if (hasReliableDirtyStart) dirtyStartOffset!! else 0L
+                        dirtyStartByte != null && dirtyStartByte / 2L <= earliestOffset
+                    // If pre-edit and committed coordinates cannot be reconciled, clear
+                    // the whole cache prefix rather than risk retaining stale captures.
+                    val firstInvalidLong = if (hasReliableDirtyStart) dirtyStartByte!! / 2L else 0L
                     val firstInvalid = firstInvalidLong
                         .coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
-                    val invalidationStartLine = if (hasReliableDirtyStart) dirtyStartLineNumber!! else 1
+                    val invalidationStartLine = if (hasReliableDirtyStart && dirtyStartLine != null) {
+                        (dirtyStartLine + 1L).coerceAtMost(Int.MAX_VALUE.toLong()).toInt().coerceAtLeast(1)
+                    } else 1
                     // Captures may begin before an edit and extend through it; invalidate
                     // every cached viewport that intersects the structurally changed suffix.
                     captureCache.invalidate { key, _ ->
@@ -796,16 +788,24 @@ class TshSyntaxHighlighter(
                     // Publish the new revision only after its stale cache entries are gone.
                     active.appliedEditEpoch.set(editEpoch)
                     if (generation.get() == active.ticket && largeSession === active) {
-                        val currentLineCount = currentBuffer?.getLineCount() ?: 0
-                        if (currentBuffer != null && invalidationStartLine <= currentLineCount) {
-                            // EditorView supports a line-scoped invalidation; the range
-                            // extends to EOF because Regex state may propagate beyond the
-                            // Tree-sitter dirty interval. It is not a fixed viewport cap.
-                            host?.invalidateStyles(invalidationStartLine, currentLineCount)
-                        } else {
-                            host?.invalidateStyles()
+                        // Resolve the current line count on the editor thread, not from
+                        // this background transaction. Regex state can propagate to EOF,
+                        // so the style invalidation remains a dynamic suffix.
+                        scope.launch(Dispatchers.Main.immediate) {
+                            if (generation.get() != active.ticket || largeSession !== active) {
+                                return@launch
+                            }
+                            val currentLineCount = host?.buffer?.getLineCount() ?: 0
+                            if (currentLineCount > 0) {
+                                host?.invalidateStyles(
+                                    invalidationStartLine.coerceIn(1, currentLineCount),
+                                    currentLineCount
+                                )
+                            } else {
+                                host?.invalidateStyles()
+                            }
+                            host?.invalidateStructure()
                         }
-                        host?.invalidateStructure()
                     }
                 }
             } catch (cancelled: CancellationException) {

@@ -18,6 +18,13 @@ import java.io.File
 import java.nio.ByteBuffer
 import com.zerostudio.idea.treesitter.TreeSitter
 
+data class NativeDirtyByteRange(val startByte: Long, val endByte: Long) {
+    init {
+        require(startByte >= 0L && endByte > startByte)
+        require((startByte and 1L) == 0L && (endByte and 1L) == 0L)
+    }
+}
+
 data class NativeDirtyLineRange(val startLine: Long, val endLineExclusive: Long) {
     init {
         require(startLine >= 0L && endLineExclusive > startLine)
@@ -26,7 +33,9 @@ data class NativeDirtyLineRange(val startLine: Long, val endLineExclusive: Long)
 
 data class NativeDirtyLineSnapshot(
     val documentVersion: Long,
-    val ranges: List<NativeDirtyLineRange>
+    val ranges: List<NativeDirtyLineRange>,
+    /** Exact UTF-16LE byte intervals in the same committed document version. */
+    val byteRanges: List<NativeDirtyByteRange> = emptyList()
 )
 
 /** Supplies bounded UTF-16LE windows to the native document engine. */
@@ -792,15 +801,29 @@ class WindbellTshEngine private constructor() {
         require(documentHandle != 0L)
         val encoded = nativeConsumeDirtyLineRanges(documentHandle)
             ?: error("Native dirty-line snapshot could not be allocated")
-        require(encoded.isNotEmpty()) { "Native dirty-line snapshot is missing its version" }
-        require((encoded.size - 1) % 2 == 0) { "Native dirty-line snapshot is malformed" }
-        val ranges = ArrayList<NativeDirtyLineRange>((encoded.size - 1) / 2)
-        var index = 1
-        while (index < encoded.size) {
+        require(encoded.size >= 3) { "Native dirty snapshot is missing its range counts" }
+        val byteCount = encoded[1]
+        require(byteCount >= 0L && byteCount <= (encoded.size - 3L) / 2L) {
+            "Native dirty byte-range count is malformed"
+        }
+        val byteRanges = ArrayList<NativeDirtyByteRange>(byteCount.toInt())
+        var index = 2
+        repeat(byteCount.toInt()) {
+            byteRanges += NativeDirtyByteRange(encoded[index], encoded[index + 1])
+            index += 2
+        }
+        require(index < encoded.size) { "Native dirty snapshot is missing its line-range count" }
+        val lineCount = encoded[index++]
+        require(lineCount >= 0L && lineCount == (encoded.size - index).toLong() / 2L &&
+            (encoded.size - index) % 2 == 0) {
+            "Native dirty line-range count is malformed"
+        }
+        val ranges = ArrayList<NativeDirtyLineRange>(lineCount.toInt())
+        repeat(lineCount.toInt()) {
             ranges += NativeDirtyLineRange(encoded[index], encoded[index + 1])
             index += 2
         }
-        return NativeDirtyLineSnapshot(encoded[0], ranges)
+        return NativeDirtyLineSnapshot(encoded[0], ranges, byteRanges)
     }
 
     fun highlightNativeDocument(

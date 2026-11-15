@@ -1598,25 +1598,38 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeConsumeDirtyLine
         return nullptr;
     }
     std::lock_guard<std::mutex> lock(document->mutex);
-    const size_t range_count = document->dirty_line_intervals.size();
-    if (range_count > (static_cast<size_t>(std::numeric_limits<jsize>::max()) - 1u) / 2u) {
-        throw_illegal_state(env, "Native dirty-line interval result exceeds JNI array capacity");
+    const size_t byte_range_count = document->dirty_byte_intervals.size();
+    const size_t line_range_count = document->dirty_line_intervals.size();
+    const size_t max_values = static_cast<size_t>(std::numeric_limits<jsize>::max());
+    if (byte_range_count > (max_values - 3u) / 2u ||
+        line_range_count > (max_values - 3u - byte_range_count * 2u) / 2u) {
+        throw_illegal_state(env, "Native dirty-range result exceeds JNI array capacity");
         return nullptr;
     }
-    const jsize value_count = static_cast<jsize>(1u + range_count * 2u);
+    // Wire layout: version, byte-range count, byte start/end pairs,
+    // line-range count, line start/end-exclusive pairs.
+    const size_t value_count_size =
+        3u + byte_range_count * 2u + line_range_count * 2u;
+    const jsize value_count = static_cast<jsize>(value_count_size);
     jlongArray result = env->NewLongArray(value_count);
     if (!result) return nullptr;
     std::vector<jlong> values;
     try {
-        values.reserve(static_cast<size_t>(value_count));
+        values.reserve(value_count_size);
         values.push_back(static_cast<jlong>(document->version));
+        values.push_back(static_cast<jlong>(byte_range_count));
+        for (const auto &range : document->dirty_byte_intervals) {
+            values.push_back(static_cast<jlong>(range.first));
+            values.push_back(static_cast<jlong>(range.second));
+        }
+        values.push_back(static_cast<jlong>(line_range_count));
         for (const auto &range : document->dirty_line_intervals) {
             values.push_back(static_cast<jlong>(range.first));
             values.push_back(static_cast<jlong>(range.second));
         }
     } catch (const std::bad_alloc &) {
         env->DeleteLocalRef(result);
-        throwNativeAllocationFailure(env, "Unable to encode native dirty-line intervals");
+        throwNativeAllocationFailure(env, "Unable to encode native dirty ranges");
         return nullptr;
     }
     env->SetLongArrayRegion(result, 0, value_count, values.data());
