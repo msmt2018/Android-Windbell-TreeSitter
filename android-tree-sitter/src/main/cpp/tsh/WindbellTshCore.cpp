@@ -1309,7 +1309,8 @@ static bool collectQueryRootRanges(
                     // boundary. Expand by one UTF-16 code unit on each side.
                     if (dependency_start == dependency_end) {
                         dependency_start = dependency_start >= 2u ? dependency_start - 2u : 0u;
-                        dependency_end = std::min<uint32_t>(total_bytes, dependency_end + 2u);
+                        dependency_end = static_cast<uint32_t>(std::min<uint64_t>(
+                            total_bytes, static_cast<uint64_t>(dependency_end) + 2u));
                     }
                     ranges->emplace_back(dependency_start, dependency_end);
                 }
@@ -1371,14 +1372,14 @@ static void appendQueryPatternDependencies(
     }
 
     // Query blocks commonly contain many patterns rooted at the same syntax
-    // type. Walk the viewport-overlapping AST once per distinct root symbol,
-    // then store the union of candidate-root envelopes instead of duplicating
-    // identical ranges for every pattern that shares that root type.
-    std::unordered_map<TSSymbol, std::vector<std::pair<uint32_t, uint32_t>>> roots_by_symbol;
+    // type. Walk the viewport-overlapping AST once per distinct root symbol.
+    // Cache invalidation only needs the union of these envelopes, not one
+    // duplicate record per Pattern or per emitted Capture.
+    std::vector<std::pair<uint32_t, uint32_t>> root_ranges;
     for (const TSSymbol symbol : root_symbols) {
-        std::vector<std::pair<uint32_t, uint32_t>> ranges;
+        std::vector<std::pair<uint32_t, uint32_t>> symbol_ranges;
         if (!collectQueryRootRanges(
-                tree, symbol, range_start, range_end, total_bytes, &ranges)) {
+                tree, symbol, range_start, range_end, total_bytes, &symbol_ranges)) {
             // A missing candidate root is not proof that an edit elsewhere
             // cannot create a root covering this viewport.
             output->push_back({
@@ -1388,19 +1389,29 @@ static void appendQueryPatternDependencies(
             });
             return;
         }
-        roots_by_symbol.emplace(symbol, std::move(ranges));
+        root_ranges.insert(root_ranges.end(), symbol_ranges.begin(), symbol_ranges.end());
     }
-    for (const auto& item : roots_by_symbol) {
-        for (const auto& range : item.second) {
-            output->push_back({
-                range.first, range.second, UINT32_MAX,
-                static_cast<uint8_t>(HighlightSource::NATIVE_QUERY),
-                static_cast<uint8_t>(NativeQueryProgram::QueryDependencyScope::ROOTED_LOCAL),
-                static_cast<uint8_t>(
-                    range.first == 0u && range.second == total_bytes
-                        ? HIGHLIGHT_DEPENDENCY_DOCUMENT_WIDE : 0u)
-            });
+
+    std::sort(root_ranges.begin(), root_ranges.end());
+    size_t merged_count = 0;
+    for (const auto& range : root_ranges) {
+        if (merged_count != 0 && range.first <= root_ranges[merged_count - 1u].second) {
+            root_ranges[merged_count - 1u].second =
+                std::max(root_ranges[merged_count - 1u].second, range.second);
+        } else {
+            root_ranges[merged_count++] = range;
         }
+    }
+    root_ranges.resize(merged_count);
+    for (const auto& range : root_ranges) {
+        output->push_back({
+            range.first, range.second, UINT32_MAX,
+            static_cast<uint8_t>(HighlightSource::NATIVE_QUERY),
+            static_cast<uint8_t>(NativeQueryProgram::QueryDependencyScope::ROOTED_LOCAL),
+            static_cast<uint8_t>(
+                range.first == 0u && range.second == total_bytes
+                    ? HIGHLIGHT_DEPENDENCY_DOCUMENT_WIDE : 0u)
+        });
     }
 }
 
