@@ -600,6 +600,13 @@ class TshSyntaxHighlighter(
                     }
                     for (key in batch) {
                         currentCoroutineContext().ensureActive()
+                        // A newer draw pass supersedes the rest of this batch. Finish
+                        // the in-flight native call, then jump directly to the newest
+                        // viewport instead of parsing rows the user has scrolled past.
+                        val superseded = synchronized(viewportRequestLock) {
+                            queuedViewportRanges.isNotEmpty()
+                        }
+                        if (superseded) break
                         executeNativeRangeNow(key)
                     }
                 }
