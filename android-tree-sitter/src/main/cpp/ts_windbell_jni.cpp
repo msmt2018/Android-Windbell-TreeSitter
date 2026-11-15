@@ -1440,14 +1440,32 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeApplyDocumentEdi
     NativeDocumentInput payload{next_source.get(), false};
     TSInput input{&payload, nativeDocumentRead, TSInputEncodingUTF16LE, nullptr};
     TSTree *next_tree = ts_parser_parse(document->parser, edited_tree, input);
-    if (!next_tree || payload.read_failed ||
-        !nativeTreeCoversDocument(next_tree, next_source->sizeBytes())) {
-        if (next_tree) ts_tree_delete(next_tree);
-        ts_tree_delete(edited_tree);
+    const bool incremental_parse_complete = next_tree && !payload.read_failed &&
+        nativeTreeCoversDocument(next_tree, next_source->sizeBytes());
+    if (!incremental_parse_complete) {
+        // Incremental reuse is an optimization, never a correctness boundary.
+        // If a reused subtree or edit-coordinate interaction yields a partial
+        // root, discard that candidate and retry against the complete candidate
+        // Piece Tree from byte zero. The published document remains untouched
+        // unless the fallback also produces a full-document AST.
+        if (next_tree) {
+            ts_tree_delete(next_tree);
+            next_tree = nullptr;
+        }
         ts_parser_reset(document->parser);
-        throw_illegal_state(env,
-            "Tree-sitter input failed or incremental parse did not cover the complete document; original document retained");
-        return JNI_FALSE;
+        NativeDocumentInput fallback_payload{next_source.get(), false};
+        TSInput fallback_input{
+            &fallback_payload, nativeDocumentRead, TSInputEncodingUTF16LE, nullptr};
+        next_tree = ts_parser_parse(document->parser, nullptr, fallback_input);
+        if (!next_tree || fallback_payload.read_failed ||
+            !nativeTreeCoversDocument(next_tree, next_source->sizeBytes())) {
+            if (next_tree) ts_tree_delete(next_tree);
+            ts_tree_delete(edited_tree);
+            ts_parser_reset(document->parser);
+            throw_illegal_state(env,
+                "Tree-sitter input failed or full fallback parse did not cover the complete document; original document retained");
+            return JNI_FALSE;
+        }
     }
 
     // Prepare syntax invalidation before committing any candidate document state.
