@@ -51,13 +51,14 @@ class TshSyntaxHighlighter(
         // Capture storage is byte-budgeted; execution ranges come from the live renderer.
         private const val CAPTURE_CACHE_BYTES = 32L * 1024L * 1024L
         private val nextSessionId = AtomicLong(1L)
+        private val captureRangeIndex = CaptureRangeLookupIndex()
         private val captureCache = ByteBudgetLruCache<CaptureRangeKey, CaptureIntervalIndex>(
             CAPTURE_CACHE_BYTES,
-            { index -> 96L + index.size.toLong() * 96L }
+            { index -> 96L + index.size.toLong() * 96L },
+            onEntryAdded = { key, _ -> captureRangeIndex.add(key) },
+            onEntryRemoved = { key, _ -> captureRangeIndex.remove(key) }
         )
     }
-
-    private data class CaptureRangeKey(val sessionId: Long, val startUtf16: Int, val endUtf16: Int)
 
     private data class LargeSession(
         /** Native-owned PieceTreeSource + incremental Tree-sitter tree. */
@@ -521,12 +522,17 @@ class TshSyntaxHighlighter(
         return buffer.getEOL().length
     }
 
-    private fun findContainingCaptureRange(key: CaptureRangeKey): CaptureIntervalIndex? =
-        captureCache.getMatching { cachedKey, _ ->
-            cachedKey.sessionId == key.sessionId &&
-                cachedKey.startUtf16 <= key.startUtf16 &&
-                cachedKey.endUtf16 >= key.endUtf16
+    private fun findContainingCaptureRange(key: CaptureRangeKey): CaptureIntervalIndex? {
+        val cachedKey = captureRangeIndex.findContaining(
+            key.sessionId, key.startUtf16, key.endUtf16
+        ) ?: return null
+        // Touch the selected LRU entry after leaving the interval-index lock. An
+        // eviction racing this lookup simply becomes a cache miss, never stale data.
+        return captureCache.get(cachedKey) ?: run {
+            captureRangeIndex.remove(cachedKey)
+            null
         }
+    }
 
     private fun enqueueViewportRange(key: CaptureRangeKey) {
         if (key.startUtf16 >= key.endUtf16) return

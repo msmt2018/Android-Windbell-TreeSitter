@@ -448,7 +448,9 @@ class DocumentPartitionManager(
 class ByteBudgetLruCache<K : Any, V : Any>(
     private val maxBytes: Long,
     private val weigh: (V) -> Long,
-    private val onEvict: (V) -> Unit = {}
+    private val onEvict: (V) -> Unit = {},
+    private val onEntryAdded: (K, V) -> Unit = { _, _ -> },
+    private val onEntryRemoved: (K, V) -> Unit = { _, _ -> }
 ) : AutoCloseable {
     private data class Entry<V>(val value: V, val weight: Long)
 
@@ -478,6 +480,7 @@ class ByteBudgetLruCache<K : Any, V : Any>(
         val previous = entries.remove(key)
         if (previous != null) {
             usedBytes -= previous.weight
+            onEntryRemoved(key, previous.value)
             if (previous.value !== value) onEvict(previous.value)
         }
         if (weight > maxBytes || maxBytes == 0L) {
@@ -488,9 +491,11 @@ class ByteBudgetLruCache<K : Any, V : Any>(
         // Evict before addition so usedBytes + weight can never overflow Long.
         val iterator = entries.entries.iterator()
         while (weight > maxBytes - usedBytes && iterator.hasNext()) {
-            val eldest = iterator.next().value
+            val eldestEntry = iterator.next()
+            val eldest = eldestEntry.value
             iterator.remove()
             usedBytes -= eldest.weight
+            onEntryRemoved(eldestEntry.key, eldest.value)
             onEvict(eldest.value)
         }
         if (weight > maxBytes - usedBytes) {
@@ -499,11 +504,13 @@ class ByteBudgetLruCache<K : Any, V : Any>(
         }
         entries[key] = Entry(value, weight)
         usedBytes += weight
+        onEntryAdded(key, value)
     }
 
     fun remove(key: K): V? = lock.write {
         val entry = entries.remove(key) ?: return@write null
         usedBytes -= entry.weight
+        onEntryRemoved(key, entry.value)
         entry.value
     }
 
@@ -514,6 +521,7 @@ class ByteBudgetLruCache<K : Any, V : Any>(
             if (predicate(entry.key, entry.value.value)) {
                 usedBytes -= entry.value.weight
                 iterator.remove()
+                onEntryRemoved(entry.key, entry.value.value)
                 onEvict(entry.value.value)
             }
         }
@@ -525,7 +533,10 @@ class ByteBudgetLruCache<K : Any, V : Any>(
     fun removeIf(predicate: (K) -> Boolean) = invalidate { key, _ -> predicate(key) }
 
     override fun close() = lock.write {
-        entries.values.forEach { onEvict(it.value) }
+        entries.forEach { (key, entry) ->
+            onEntryRemoved(key, entry.value)
+            onEvict(entry.value)
+        }
         entries.clear()
         usedBytes = 0L
     }

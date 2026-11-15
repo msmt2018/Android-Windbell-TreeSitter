@@ -33,6 +33,27 @@ class CaptureAndByteBudgetCacheTest {
         cache.close()
     }
 
+    @Test fun byteLruReportsEveryIndexAdmissionAndRemoval() {
+        val added = mutableListOf<String>()
+        val removed = mutableListOf<String>()
+        val cache = ByteBudgetLruCache<String, String>(
+            5L,
+            { it.length.toLong() },
+            onEntryAdded = { key, _ -> added += key },
+            onEntryRemoved = { key, _ -> removed += key }
+        )
+        cache.put("a", "aa")
+        cache.put("b", "bb")
+        cache.get("a") // promote a; b is now eldest
+        cache.put("c", "ccc") // evict b
+        assertEquals(listOf("a", "b", "c"), added)
+        assertEquals(listOf("b"), removed)
+        cache.invalidate { key, _ -> key == "a" }
+        assertEquals(listOf("b", "a"), removed)
+        cache.close()
+        assertEquals(listOf("b", "a", "c"), removed)
+    }
+
     @Test fun capturePagesAreVersionedAndBudgeted() {
         val cache = CapturePageCache<String>(300) { it.length.toLong() }
         val identity = CaptureCacheKey(1, 0, 0, 100, 2, 3)
