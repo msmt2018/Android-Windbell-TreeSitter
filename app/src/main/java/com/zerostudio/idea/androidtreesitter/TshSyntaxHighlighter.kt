@@ -98,11 +98,19 @@ class TshSyntaxHighlighter(
     private val firstStyleCallLogged = AtomicBoolean(false)
 
     private val viewportRequestLock = Any()
+    // Requests collected from actual renderer callbacks during the current draw.
     private val pendingViewportRanges = ArrayList<CaptureRangeKey>()
+    // At most one not-yet-running viewport batch is retained. A newer frame replaces
+    // obsolete queued scroll positions instead of building an unbounded native backlog.
+    private var queuedViewportRanges: List<CaptureRangeKey> = emptyList()
+    private var viewportWorkerActive = false
     @Volatile private var viewportFrameActive = false
 
     override fun onViewportFrameStarted() {
-        synchronized(viewportRequestLock) { viewportFrameActive = true }
+        synchronized(viewportRequestLock) {
+            viewportFrameActive = true
+            pendingViewportRanges.clear()
+        }
     }
 
     override fun onViewportFrameFinished() {
@@ -141,7 +149,11 @@ class TshSyntaxHighlighter(
         largeSession = null
         parsing = false
         synchronized(nativeEditLock) { pendingNativeEdits.clear() }
-        synchronized(viewportRequestLock) { pendingViewportRanges.clear(); viewportFrameActive = false }
+        synchronized(viewportRequestLock) {
+            pendingViewportRanges.clear()
+            queuedViewportRanges = emptyList()
+            viewportFrameActive = false
+        }
         host = null
     }
 
@@ -537,25 +549,70 @@ class TshSyntaxHighlighter(
         submitCoalescedViewportRanges(pending)
     }
 
-    /** Merge only overlapping/adjacent visible source intervals; never bridge folded text. */
+    /**
+     * Coalesce the actual source intervals collected for one draw pass. Only the newest
+     * not-yet-running viewport batch is retained while native work is busy; rapid scrolling
+     * therefore cannot queue an unbounded sequence of obsolete viewport jobs.
+     */
     private fun submitCoalescedViewportRanges(ranges: List<CaptureRangeKey>) {
         if (ranges.isEmpty()) return
         val sorted = ranges.sortedWith(compareBy<CaptureRangeKey> { it.sessionId }
             .thenBy { it.startUtf16 }.thenBy { it.endUtf16 })
-        var merged = sorted.first()
-        for (i in 1 until sorted.size) {
-            val next = sorted[i]
-            if (next.sessionId == merged.sessionId && next.startUtf16 <= merged.endUtf16) {
-                merged = merged.copy(endUtf16 = maxOf(merged.endUtf16, next.endUtf16))
+        val merged = ArrayList<CaptureRangeKey>()
+        var current = sorted.first()
+        for (index in 1 until sorted.size) {
+            val next = sorted[index]
+            if (next.sessionId == current.sessionId && next.startUtf16 <= current.endUtf16) {
+                current = current.copy(endUtf16 = maxOf(current.endUtf16, next.endUtf16))
             } else {
-                executeNativeRange(merged)
-                merged = next
+                merged += current
+                current = next
             }
         }
-        executeNativeRange(merged)
+        merged += current
+
+        val startWorker = synchronized(viewportRequestLock) {
+            // Replace, rather than append, batches that have not started. This is a
+            // freshness policy, not a row/character limit: each batch is the live viewport.
+            queuedViewportRanges = merged
+            if (viewportWorkerActive) false else {
+                viewportWorkerActive = true
+                true
+            }
+        }
+        if (startWorker) startViewportWorker()
     }
 
-    private fun executeNativeRange(key: CaptureRangeKey) {
+    private fun startViewportWorker() {
+        scope.launch(Dispatchers.IO) {
+            try {
+                while (true) {
+                    val batch = synchronized(viewportRequestLock) {
+                        if (queuedViewportRanges.isEmpty()) {
+                            viewportWorkerActive = false
+                            return@launch
+                        }
+                        queuedViewportRanges.also { queuedViewportRanges = emptyList() }
+                    }
+                    for (key in batch) {
+                        currentCoroutineContext().ensureActive()
+                        executeNativeRangeNow(key)
+                    }
+                }
+            } finally {
+                val restart = synchronized(viewportRequestLock) {
+                    viewportWorkerActive = false
+                    if (queuedViewportRanges.isNotEmpty()) {
+                        viewportWorkerActive = true
+                        true
+                    } else false
+                }
+                if (restart) startViewportWorker()
+            }
+        }
+    }
+
+    private suspend fun executeNativeRangeNow(key: CaptureRangeKey) {
         val active = largeSession ?: return
         if (generation.get() != active.ticket || active.cacheSessionId != key.sessionId ||
             findContainingCaptureRange(key) != null) return
@@ -571,45 +628,44 @@ class TshSyntaxHighlighter(
             retry
         }
         val requestedRevision = active.documentRevision.get()
-        scope.launch(Dispatchers.IO) {
-            try {
-                if (generation.get() != active.ticket || largeSession !== active) {
-                    work.state = RangeWorkState.CANCELLED
-                    return@launch
-                }
-                work.state = RangeWorkState.RUNNING
-                val flat = active.nativeMutex.withLock {
-                    currentCoroutineContext().ensureActive()
-                    if (generation.get() != active.ticket || largeSession !== active ||
-                        active.documentRevision.get() != requestedRevision) {
-                        throw CancellationException("Stale native viewport request")
-                    }
-                    engine.highlightNativeDocument(
-                        documentHandle = active.nativeHandle,
-                        startByte = key.startUtf16.toLong() * 2L,
-                        endByte = key.endUtf16.toLong() * 2L
-                    ) ?: throw IllegalStateException("Native viewport TSH returned null for visible range")
-                }
-                val spans = decodeNativeSpans(flat)
-                if (generation.get() == active.ticket && largeSession === active &&
-                    active.documentRevision.get() == requestedRevision) {
-                    captureCache.put(key, CaptureIntervalIndex(spans))
-                    work.state = RangeWorkState.SUCCEEDED
-                    host?.invalidateStyles()
-                    host?.invalidateStructure()
-                } else work.state = RangeWorkState.CANCELLED
-            } catch (_: CancellationException) {
+        try {
+            if (generation.get() != active.ticket || largeSession !== active) {
                 work.state = RangeWorkState.CANCELLED
-            } catch (error: Throwable) {
-                work.state = RangeWorkState.FAILED
-                val shift = (work.attempt - 1).coerceIn(0, 5)
-                work.retryAfterNanos = System.nanoTime() + (1L shl shift) * 1_000_000_000L
-                if (generation.get() == active.ticket && largeSession === active) {
-                    Log.e(TAG, "Native viewport TSH failed for ${key.startUtf16}..${key.endUtf16}", error)
-                }
-            } finally {
-                if (work.state != RangeWorkState.FAILED) active.rangeWork.remove(key, work)
+                return
             }
+            work.state = RangeWorkState.RUNNING
+            val flat = active.nativeMutex.withLock {
+                currentCoroutineContext().ensureActive()
+                if (generation.get() != active.ticket || largeSession !== active ||
+                    active.documentRevision.get() != requestedRevision) {
+                    throw CancellationException("Stale native viewport request")
+                }
+                engine.highlightNativeDocument(
+                    documentHandle = active.nativeHandle,
+                    startByte = key.startUtf16.toLong() * 2L,
+                    endByte = key.endUtf16.toLong() * 2L
+                ) ?: throw IllegalStateException("Native viewport TSH returned null for visible range")
+            }
+            val spans = decodeNativeSpans(flat)
+            if (generation.get() == active.ticket && largeSession === active &&
+                active.documentRevision.get() == requestedRevision) {
+                captureCache.put(key, CaptureIntervalIndex(spans))
+                work.state = RangeWorkState.SUCCEEDED
+                host?.invalidateStyles()
+                host?.invalidateStructure()
+            } else work.state = RangeWorkState.CANCELLED
+        } catch (cancelled: CancellationException) {
+            work.state = RangeWorkState.CANCELLED
+            throw cancelled
+        } catch (error: Throwable) {
+            work.state = RangeWorkState.FAILED
+            val shift = (work.attempt - 1).coerceIn(0, 5)
+            work.retryAfterNanos = System.nanoTime() + (1L shl shift) * 1_000_000_000L
+            if (generation.get() == active.ticket && largeSession === active) {
+                Log.e(TAG, "Native viewport TSH failed for ${key.startUtf16}..${key.endUtf16}", error)
+            }
+        } finally {
+            if (work.state != RangeWorkState.FAILED) active.rangeWork.remove(key, work)
         }
     }
 
