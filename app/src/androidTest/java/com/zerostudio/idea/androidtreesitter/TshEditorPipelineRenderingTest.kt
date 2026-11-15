@@ -500,10 +500,11 @@ class TshEditorPipelineRenderingTest {
         val targetLineStart = source.indexOf("class RenderProbe")
         val targetLine = source.substring(targetLineStart)
         val highlighter = TshSyntaxHighlighter(language, "java", temporaryDirectory = context.cacheDir)
-        val editor = EditorView(context)
+        lateinit var editor: EditorView
         val bitmap = Bitmap.createBitmap(1200, 180, Bitmap.Config.ARGB_8888)
         try {
             InstrumentationRegistry.getInstrumentation().runOnMainSync {
+                editor = EditorView(context)
                 editor.setBackgroundColor(Color.WHITE)
                 editor.setTextColor(Color.DKGRAY)
                 editor.setTextSize(48f)
@@ -620,11 +621,12 @@ class TshEditorPipelineRenderingTest {
         val targetLineNumber = chunkCount * 1024 + 1
 
         val highlighter = TshSyntaxHighlighter(language, "java", engine, context.cacheDir)
-        val editor = EditorView(context)
+        lateinit var editor: EditorView
         val bitmap = Bitmap.createBitmap(1200, 180, Bitmap.Config.ARGB_8888)
         val laidOut = CountDownLatch(1)
         try {
             InstrumentationRegistry.getInstrumentation().runOnMainSync {
+                editor = EditorView(context)
                 editor.setBackgroundColor(Color.WHITE)
                 editor.setTextColor(Color.DKGRAY)
                 editor.setTextSize(16f)
