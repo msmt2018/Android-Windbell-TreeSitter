@@ -1,4 +1,5 @@
 #include "NativeHighlightCache.h"
+#include "QueryDependencyAnalyzer.h"
 
 #include <cassert>
 #include <cstdint>
@@ -118,6 +119,23 @@ void testInsertionInsideDependencyEvictsSnapshot() {
     assert(cache.size() == 0);
 }
 
+void testDirectRootCaptureAnalyzerIsConservative() {
+    using windbell::tsh::findDirectRootCaptureName;
+    assert(findDirectRootCaptureName("(identifier) @name") == "name");
+    assert(findDirectRootCaptureName(
+        "(function_definition name: (identifier) @name) @function") == "function");
+    assert(findDirectRootCaptureName(
+        "(function_definition) @function (#eq? @function \"main\")") == "function");
+
+    // A descendant capture must never be mistaken for the root dependency.
+    assert(findDirectRootCaptureName(
+        "(function_definition name: (identifier) @name)") .empty());
+    assert(findDirectRootCaptureName(
+        "((identifier) @name)") .empty());
+    assert(findDirectRootCaptureName(
+        "[(identifier) (type_identifier)] @name") .empty());
+}
+
 void testSharedBudgetReleasedOnEviction() {
     auto budget = std::make_shared<SharedNativeMemoryBudget>(1024u * 1024u);
     NativeHighlightCache cache(1024u * 1024u, budget);
@@ -132,6 +150,7 @@ void testSharedBudgetReleasedOnEviction() {
 } // namespace
 
 int main() {
+    testDirectRootCaptureAnalyzerIsConservative();
     testUnrelatedEditKeepsAndRebasesEntry();
     testEditInsideDependencyEvictsEntry();
     testChangedTreeRangeEvictsDependency();

@@ -31,6 +31,7 @@
 #include <cstdint>
 #include <new>
 #include "ts__log.h"
+#include "QueryDependencyAnalyzer.h"
 
 namespace windbell::tsh {
 
@@ -2868,6 +2869,38 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                                 } else {
                                     metadata.dependency_scope =
                                         NativeQueryProgram::QueryDependencyScope::UNROOTED;
+                                }
+
+                                // Resolve a root capture only when the query
+                                // source attaches it directly to the outer root
+                                // expression. Descendant captures are not valid
+                                // substitutes for the query's dependency root.
+                                const uint32_t pattern_start =
+                                    ts_query_start_byte_for_pattern(program.query, pattern);
+                                const uint32_t pattern_end =
+                                    ts_query_end_byte_for_pattern(program.query, pattern);
+                                if (pattern_start < pattern_end &&
+                                    pattern_end <= query_source.size()) {
+                                    const std::string root_capture =
+                                        findDirectRootCaptureName(std::string_view(query_source).substr(
+                                            pattern_start, pattern_end - pattern_start));
+                                    if (!root_capture.empty()) {
+                                        for (uint32_t capture_id = 0;
+                                             capture_id < ts_query_capture_count(program.query);
+                                             ++capture_id) {
+                                            uint32_t capture_name_length = 0;
+                                            const char* capture_name =
+                                                ts_query_capture_name_for_id(
+                                                    program.query, capture_id, &capture_name_length);
+                                            if (capture_name &&
+                                                root_capture == std::string(
+                                                    capture_name, capture_name_length)) {
+                                                metadata.root_capture_id =
+                                                    static_cast<int32_t>(capture_id);
+                                                break;
+                                            }
+                                        }
+                                    }
                                 }
                             }
 
