@@ -604,16 +604,28 @@ class TshSyntaxHighlighter(
                         }
                         queuedViewportRanges.also { queuedViewportRanges = emptyList() }
                     }
-                    for (key in batch) {
-                        currentCoroutineContext().ensureActive()
-                        // A newer draw pass supersedes the rest of this batch. Finish
-                        // the in-flight native call, then jump directly to the newest
-                        // viewport instead of parsing rows the user has scrolled past.
-                        val superseded = synchronized(viewportRequestLock) {
-                            queuedViewportRanges.isNotEmpty()
+                    var batchUpdated = false
+                    try {
+                        for (key in batch) {
+                            currentCoroutineContext().ensureActive()
+                            // A newer draw pass supersedes the rest of this batch. Finish
+                            // the in-flight native call, then jump directly to the newest
+                            // viewport instead of parsing rows the user has scrolled past.
+                            val superseded = synchronized(viewportRequestLock) {
+                                queuedViewportRanges.isNotEmpty()
+                            }
+                            if (superseded) break
+                            batchUpdated = executeNativeRangeNow(key) || batchUpdated
                         }
-                        if (superseded) break
-                        executeNativeRangeNow(key)
+                    } finally {
+                        // A viewport may contain several disjoint source ranges. Publish
+                        // their captures together so a frame causes at most one style and
+                        // one structure invalidation, even if cancellation/supersession
+                        // interrupts the remainder of the batch.
+                        if (batchUpdated) {
+                            host?.invalidateStyles()
+                            host?.invalidateStructure()
+                        }
                     }
                 }
             } finally {
@@ -631,26 +643,26 @@ class TshSyntaxHighlighter(
         }
     }
 
-    private suspend fun executeNativeRangeNow(key: CaptureRangeKey) {
-        val active = largeSession ?: return
+    private suspend fun executeNativeRangeNow(key: CaptureRangeKey): Boolean {
+        val active = largeSession ?: return false
         if (generation.get() != active.ticket || active.cacheSessionId != key.sessionId ||
-            findContainingCaptureRange(key) != null) return
+            findContainingCaptureRange(key) != null) return false
         val existing = active.rangeWork[key]
         val work = if (existing == null) {
             val initial = RangeWork()
-            if (active.rangeWork.putIfAbsent(key, initial) != null) return
+            if (active.rangeWork.putIfAbsent(key, initial) != null) return false
             initial
         } else {
-            if (existing.state != RangeWorkState.FAILED || System.nanoTime() < existing.retryAfterNanos) return
+            if (existing.state != RangeWorkState.FAILED || System.nanoTime() < existing.retryAfterNanos) return false
             val retry = RangeWork(existing.attempt + 1)
-            if (!active.rangeWork.replace(key, existing, retry)) return
+            if (!active.rangeWork.replace(key, existing, retry)) return false
             retry
         }
         val requestedRevision = active.documentRevision.get()
         try {
             if (generation.get() != active.ticket || largeSession !== active) {
                 work.state = RangeWorkState.CANCELLED
-                return
+                return false
             }
             work.state = RangeWorkState.RUNNING
             val flat = active.nativeMutex.withLock {
@@ -670,8 +682,6 @@ class TshSyntaxHighlighter(
                 active.documentRevision.get() == requestedRevision) {
                 captureCache.put(key, CaptureIntervalIndex(spans))
                 work.state = RangeWorkState.SUCCEEDED
-                host?.invalidateStyles()
-                host?.invalidateStructure()
             } else work.state = RangeWorkState.CANCELLED
         } catch (cancelled: CancellationException) {
             work.state = RangeWorkState.CANCELLED
@@ -686,6 +696,7 @@ class TshSyntaxHighlighter(
         } finally {
             if (work.state != RangeWorkState.FAILED) active.rangeWork.remove(key, work)
         }
+        return work.state == RangeWorkState.SUCCEEDED
     }
 
     private fun applyNativeEdits(active: LargeSession, edits: List<NativeEdit>, editEpoch: Long) {
