@@ -1949,21 +1949,29 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
         });
     }
     // Stateful, block and document-context Regex can propagate lexical state
-    // beyond the viewport. They stay document-dependent until checkpoint
-    // convergence produces a verified post-edit dependency boundary.
-    if (source_requires_contiguous_regex || has_context_block) {
-        cache_value.dependencies.push_back({
-            0u, static_cast<uint32_t>(total_bytes), UINT32_MAX,
-            static_cast<uint8_t>(HighlightSource::REGEX_STATE), 0xFFu,
-            HIGHLIGHT_DEPENDENCY_DOCUMENT_WIDE
-        });
-    }
+    // beyond the viewport. Keep one global dependency when the core did not
+    // already publish a verified document-wide envelope.
     const bool has_regex_state_dependency = std::any_of(
         cache_value.dependencies.begin(), cache_value.dependencies.end(),
         [](const HighlightDependencyRange& dependency) {
             return dependency.source ==
                 static_cast<uint8_t>(HighlightSource::REGEX_STATE);
         });
+    const bool has_document_wide_regex_dependency = std::any_of(
+        cache_value.dependencies.begin(), cache_value.dependencies.end(),
+        [](const HighlightDependencyRange& dependency) {
+            return dependency.source ==
+                    static_cast<uint8_t>(HighlightSource::REGEX_STATE) &&
+                (dependency.flags & HIGHLIGHT_DEPENDENCY_DOCUMENT_WIDE) != 0;
+        });
+    if ((source_requires_contiguous_regex || has_context_block) &&
+        !has_document_wide_regex_dependency) {
+        cache_value.dependencies.push_back({
+            0u, static_cast<uint32_t>(total_bytes), UINT32_MAX,
+            static_cast<uint8_t>(HighlightSource::REGEX_STATE), 0xFFu,
+            HIGHLIGHT_DEPENDENCY_DOCUMENT_WIDE
+        });
+    }
     if (!grammar->regex_states.empty() && !has_regex_state_dependency) {
         // If the stateful pipeline did not publish a verified checkpoint
         // envelope, never admit its result under a guessed local dependency.

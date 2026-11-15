@@ -2089,9 +2089,13 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                     HIGHLIGHT_DEPENDENCY_DOCUMENT_WIDE
                 });
             } else {
+                const uint64_t range_lookahead =
+                    state_window_match_width >
+                        std::numeric_limits<uint64_t>::max() - range_end_byte
+                    ? UINT64_MAX
+                    : static_cast<uint64_t>(range_end_byte) + state_window_match_width;
                 const uint64_t lookahead_end = std::max<uint64_t>(
-                    position,
-                    static_cast<uint64_t>(range_end_byte) + state_window_match_width);
+                    position, range_lookahead);
                 const uint32_t dependency_end = static_cast<uint32_t>(
                     std::min<uint64_t>(total_bytes, lookahead_end));
                 uint8_t flags = static_cast<uint8_t>(
