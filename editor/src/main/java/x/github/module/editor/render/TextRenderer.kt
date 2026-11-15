@@ -115,8 +115,27 @@ class TextRenderer(
     ): Boolean {
         if (!canvasCanCache) return false
         if (wrapped) return true
-        if (TabStops.hasTab(text, start, end)) return true
-        return textPaint.measureText(text, start, end) <= host.viewWidth.toFloat()
+        val availableWidth = host.viewWidth.toFloat()
+        if (availableWidth <= 0f) return false
+        if (!TabStops.hasTab(text, start, end)) {
+            // Stop measuring as soon as the actual viewport width is filled. This
+            // avoids copying or fully measuring a multi-megabyte unwrapped line.
+            return textPaint.breakText(text, start, end, true, availableWidth, null) >= end - start
+        }
+        // Measure tab-separated runs with the editor's actual tab stops and stop as
+        // soon as the visible width is exceeded; do not allocate a whole-line width array.
+        var runStart = start
+        var x = 0f
+        for (index in start until end) {
+            if (text[index] != '\\t') continue
+            if (index > runStart) x += textPaint.measureText(text, runStart, index)
+            if (x > availableWidth) return false
+            x = TabStops.next(x, metrics.tabWidth)
+            if (x > availableWidth) return false
+            runStart = index + 1
+        }
+        if (runStart < end) x += textPaint.measureText(text, runStart, end)
+        return x <= availableWidth
     }
 
     // The recorded rows (hardware accelerated, Android 10 and later), and what each
