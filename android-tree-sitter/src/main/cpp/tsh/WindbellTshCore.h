@@ -46,12 +46,18 @@ struct HighlightSpan {
 
 static_assert(sizeof(HighlightSpan) == 24, "HighlightSpan ABI must remain 24 bytes.");
 
+enum HighlightDependencyFlags : uint8_t {
+    HIGHLIGHT_DEPENDENCY_DOCUMENT_WIDE = 1u << 0,
+    HIGHLIGHT_DEPENDENCY_BOUNDARY_SENSITIVE = 1u << 1
+};
+
 struct HighlightDependencyRange {
     uint32_t start_byte = 0;
     uint32_t end_byte = 0;
     uint32_t pattern_index = UINT32_MAX;
     uint8_t source = static_cast<uint8_t>(HighlightSource::UNKNOWN);
     uint8_t query_dependency_scope = 0xFFu;
+    uint8_t flags = 0;
 };
 
 enum class RegexRuleType : uint8_t {

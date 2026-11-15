@@ -1366,7 +1366,10 @@ static void appendQueryPatternDependencies(
                     for (const auto& range : found->second) {
                         output->push_back({
                             range.first, range.second, item.first,
-                            static_cast<uint8_t>(HighlightSource::NATIVE_QUERY), scope
+                            static_cast<uint8_t>(HighlightSource::NATIVE_QUERY), scope,
+                            static_cast<uint8_t>(
+                                range.first == 0u && range.second == total_bytes
+                                    ? HIGHLIGHT_DEPENDENCY_DOCUMENT_WIDE : 0u)
                         });
                     }
                     continue;
@@ -1377,7 +1380,8 @@ static void appendQueryPatternDependencies(
             // cannot be created by an edit elsewhere in its containing syntax.
             output->push_back({
                 0u, total_bytes, item.first,
-                static_cast<uint8_t>(HighlightSource::NATIVE_QUERY), scope
+                static_cast<uint8_t>(HighlightSource::NATIVE_QUERY), scope,
+                HIGHLIGHT_DEPENDENCY_DOCUMENT_WIDE
             });
         }
     }

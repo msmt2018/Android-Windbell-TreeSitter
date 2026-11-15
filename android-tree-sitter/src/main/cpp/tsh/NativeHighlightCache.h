@@ -209,6 +209,23 @@ public:
 
                 for (auto &dependency : entry->value.dependencies) {
                     if (!reusable) break;
+                    // Document-context dependencies cannot be rebased across
+                    // any edit, including insertion exactly at byte zero where
+                    // ordinary interval shifting would otherwise skip new text.
+                    if ((dependency.flags & HIGHLIGHT_DEPENDENCY_DOCUMENT_WIDE) != 0) {
+                        reusable = false;
+                        break;
+                    }
+                    // Bounded Regex can match across either edge of its scan
+                    // window. An insertion at the exact edge changes that
+                    // window's context even when the old interval can be shifted.
+                    if ((dependency.flags & HIGHLIGHT_DEPENDENCY_BOUNDARY_SENSITIVE) != 0 &&
+                        oldEditEnd == editStart &&
+                        dependency.start_byte <= editStart &&
+                        editStart <= dependency.end_byte) {
+                        reusable = false;
+                        break;
+                    }
                     reusable = transformRange(
                         &dependency.start_byte, &dependency.end_byte);
                     if (!reusable) break;

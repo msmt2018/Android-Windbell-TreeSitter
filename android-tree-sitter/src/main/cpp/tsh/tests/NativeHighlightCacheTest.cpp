@@ -101,6 +101,23 @@ void testInsertionInsideDependencyEvictsSnapshot() {
     cache.rebaseAfterEdit(2, 2, 2, 125, 125, 2, {{125, 127}});
     assert(cache.size() == 0);
 }
+void testDocumentWideDependencyInvalidatesBoundaryInsertion() {
+    NativeHighlightCache cache;
+    auto cached = value(20, 30, 0, 100);
+    cached.dependencies[0].flags = HIGHLIGHT_DEPENDENCY_DOCUMENT_WIDE;
+    cache.put(key(1, 10, 40), std::move(cached));
+    cache.rebaseAfterEdit(2, 2, 2, 0, 0, 2, {{0, 2}});
+    assert(cache.size() == 0);
+}
+void testRegexDependencyInvalidatesBoundaryInsertion() {
+    NativeHighlightCache cache;
+    auto cached = value(220, 230, 200, 260);
+    cached.dependencies[0].source = static_cast<uint8_t>(HighlightSource::ONIG_REGEX);
+    cached.dependencies[0].flags = HIGHLIGHT_DEPENDENCY_BOUNDARY_SENSITIVE;
+    cache.put(key(1, 210, 250), std::move(cached));
+    cache.rebaseAfterEdit(2, 2, 2, 200, 200, 2, {{200, 202}});
+    assert(cache.size() == 0);
+}
 void testSharedBudgetReleasedOnEviction() {
     auto budget = std::make_shared<SharedNativeMemoryBudget>(1024u * 1024u);
     NativeHighlightCache cache(1024u * 1024u, budget);
@@ -118,6 +135,8 @@ int main() {
     testMissingDependencyIsNeverReused();
     testInsertionAtDependencyStartShiftsSnapshot();
     testInsertionInsideDependencyEvictsSnapshot();
+    testDocumentWideDependencyInvalidatesBoundaryInsertion();
+    testRegexDependencyInvalidatesBoundaryInsertion();
     testSharedBudgetReleasedOnEviction();
     return 0;
 }

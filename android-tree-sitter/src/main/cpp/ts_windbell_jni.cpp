@@ -1933,7 +1933,8 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
     if (!grammar->native_queries.empty() && cache_value.dependencies.empty()) {
         cache_value.dependencies.push_back({
             0u, static_cast<uint32_t>(total_bytes), UINT32_MAX,
-            static_cast<uint8_t>(HighlightSource::NATIVE_QUERY)
+            static_cast<uint8_t>(HighlightSource::NATIVE_QUERY), 0xFFu,
+            HIGHLIGHT_DEPENDENCY_DOCUMENT_WIDE
         });
     }
     // AST selectors can inspect parent, ancestor, sibling, field and descendant
@@ -1942,7 +1943,8 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
     if (!grammar->ast_selector_rules.empty()) {
         cache_value.dependencies.push_back({
             0u, static_cast<uint32_t>(total_bytes), UINT32_MAX,
-            static_cast<uint8_t>(HighlightSource::AST_SELECTOR)
+            static_cast<uint8_t>(HighlightSource::AST_SELECTOR), 0xFFu,
+            HIGHLIGHT_DEPENDENCY_DOCUMENT_WIDE
         });
     }
     // Stateful, block and document-context Regex can propagate lexical state
@@ -1952,7 +1954,8 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
         has_context_block) {
         cache_value.dependencies.push_back({
             0u, static_cast<uint32_t>(total_bytes), UINT32_MAX,
-            static_cast<uint8_t>(HighlightSource::REGEX_STATE)
+            static_cast<uint8_t>(HighlightSource::REGEX_STATE), 0xFFu,
+            HIGHLIGHT_DEPENDENCY_DOCUMENT_WIDE
         });
     }
     // Finite-width MATCH Regex rules are independent dependencies even when
@@ -1978,7 +1981,8 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
                 static_cast<uint64_t>(evaluation_end) + regex_overlap));
         cache_value.dependencies.push_back({
             dependency_start, dependency_end, UINT32_MAX,
-            static_cast<uint8_t>(HighlightSource::ONIG_REGEX)
+            static_cast<uint8_t>(HighlightSource::ONIG_REGEX), 0xFFu,
+            HIGHLIGHT_DEPENDENCY_BOUNDARY_SENSITIVE
         });
     }
     std::copy(std::begin(counts), std::end(counts), std::begin(cache_value.match_counts));
