@@ -23,8 +23,8 @@ class WindbellTshLinkageTest {
         @JvmStatic
         @BeforeAll
         fun setUp() {
-            // 确保测试环境装载 Native 动态库
-            System.loadLibrary("android_tree_sitter")
+            // Use the same canonical library name as Android application code.
+            TreeSitter.loadLibrary()
         }
     }
 

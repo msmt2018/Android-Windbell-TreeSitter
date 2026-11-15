@@ -301,6 +301,15 @@ jobs:
           UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
             ctest --test-dir /tmp/windbell-largefile-tests --output-on-failure
 
+      - name: Build host JNI library for local tests
+        run: |
+          set -Eeuo pipefail
+          cmake -S android-tree-sitter/src/main/cpp -B build/host \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DBUILD_TESTING=OFF
+          cmake --build build/host --target android-tree-sitter --parallel 2
+          test -f build/host/libandroid-tree-sitter.so
+
       - name: Run debug tests
         run: ./gradlew testDebug :editor:compileDebugAndroidTestKotlin :app:compileDebugAndroidTestKotlin --continue --parallel --stacktrace
         env:

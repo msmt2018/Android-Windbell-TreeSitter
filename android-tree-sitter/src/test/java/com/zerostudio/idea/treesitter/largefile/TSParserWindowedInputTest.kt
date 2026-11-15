@@ -1,11 +1,21 @@
 package com.zerostudio.idea.treesitter.largefile
 
 import com.zerostudio.idea.treesitter.TSParser
+import com.zerostudio.idea.treesitter.TreeSitter
 import com.zerostudio.idea.treesitter.java.TSLanguageJava
 import org.junit.jupiter.api.Assertions.*
+import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.Test
 
 class TSParserWindowedInputTest {
+
+    companion object {
+        @JvmStatic
+        @BeforeAll
+        fun loadNativeLibrary() {
+            TreeSitter.loadLibrary()
+        }
+    }
 
     @Test fun windowedCallbackKeepsUtf16SurrogatePairsInsideChunkBoundaries() {
         val callback = CharSequenceParseWindowCallback("aaaaa😀b")
