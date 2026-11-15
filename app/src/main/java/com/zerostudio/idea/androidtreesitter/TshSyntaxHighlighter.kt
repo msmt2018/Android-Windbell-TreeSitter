@@ -227,7 +227,8 @@ class TshSyntaxHighlighter(
         // the painted slice: this matters for horizontally scrolled/minified lines and
         // avoids requesting every partition crossed by an off-screen part of the line.
         val queryStart = lineStartOffset.toLong() + visibleStart.toLong()
-        val queryEnd = lineStartOffset.toLong() + visibleEnd.toLong()
+        val queryEnd = lineStartOffset.toLong() + visibleEnd.toLong() +
+            visibleLineBreakLength(bufferLine, visibleEnd, text.length).toLong()
         if (queryStart > Int.MAX_VALUE || queryEnd > Int.MAX_VALUE) {
             Log.e(TAG, "Editor offset exceeds the 32-bit capture index: start=$queryStart end=$queryEnd")
             return null
@@ -279,7 +280,8 @@ class TshSyntaxHighlighter(
         // to test the first columns even when the renderer was painting a later
         // horizontal slice, allowing an uncached partition to be treated as ready.
         val queryStart = lineStartOffset.toLong() + start.toLong()
-        val queryEnd = lineStartOffset.toLong() + end.toLong()
+        val queryEnd = lineStartOffset.toLong() + end.toLong() +
+            visibleLineBreakLength(bufferLine, end, host?.buffer?.getLineLength(bufferLine) ?: end).toLong()
         val length = active.lengthChars.get()
         if (queryStart >= length) return true
         if (queryStart > Int.MAX_VALUE || queryEnd > Int.MAX_VALUE || queryEnd < queryStart) return false
@@ -493,6 +495,18 @@ class TshSyntaxHighlighter(
         return ArrayList<WindbellTshEngine.HighlightSpan>().also {
             index.appendQuery(queryStartUtf16, queryEndUtf16, it)
         }
+    }
+
+    /**
+     * Include the actual source line terminator when the painted slice reaches EOL.
+     * This lets adjacent visible lines coalesce naturally, including CRLF, while
+     * folded-away source ranges remain gaps and are never swept into the request.
+     */
+    private fun visibleLineBreakLength(bufferLine: Int, end: Int, lineLength: Int): Int {
+        if (end < lineLength) return 0
+        val buffer = host?.buffer ?: return 0
+        if (bufferLine >= buffer.getLineCount()) return 0
+        return buffer.getEOL().length
     }
 
     private fun findContainingCaptureRange(key: CaptureRangeKey): CaptureIntervalIndex? =
