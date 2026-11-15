@@ -220,9 +220,8 @@ public:
                     // window. An insertion at the exact edge changes that
                     // window's context even when the old interval can be shifted.
                     if ((dependency.flags & HIGHLIGHT_DEPENDENCY_BOUNDARY_SENSITIVE) != 0 &&
-                        oldEditEnd == editStart &&
-                        dependency.start_byte <= editStart &&
-                        editStart <= dependency.end_byte) {
+                        editStart <= dependency.end_byte &&
+                        oldEditEnd >= dependency.start_byte) {
                         reusable = false;
                         break;
                     }

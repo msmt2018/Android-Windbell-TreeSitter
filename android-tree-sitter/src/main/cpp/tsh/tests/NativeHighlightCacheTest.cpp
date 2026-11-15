@@ -10,6 +10,8 @@ using windbell::tsh::HighlightSource;
 using windbell::tsh::NativeHighlightCache;
 using windbell::tsh::SharedNativeMemoryBudget;
 using windbell::tsh::analyzeSimpleQueryRoot;
+using windbell::tsh::HIGHLIGHT_DEPENDENCY_DOCUMENT_WIDE;
+using windbell::tsh::HIGHLIGHT_DEPENDENCY_BOUNDARY_SENSITIVE;
 
 namespace {
 NativeHighlightCache::Key key(uint64_t version, uint32_t start, uint32_t end) {
@@ -117,6 +119,16 @@ void testRegexDependencyInvalidatesBoundaryInsertion() {
     cache.put(key(1, 210, 250), std::move(cached));
     cache.rebaseAfterEdit(2, 2, 2, 200, 200, 2, {{200, 202}});
     assert(cache.size() == 0);
+
+    NativeHighlightCache adjacent_cache;
+    auto adjacent = value(220, 230, 200, 260);
+    adjacent.dependencies[0].source = static_cast<uint8_t>(HighlightSource::ONIG_REGEX);
+    adjacent.dependencies[0].flags = HIGHLIGHT_DEPENDENCY_BOUNDARY_SENSITIVE;
+    adjacent_cache.put(key(1, 210, 250), std::move(adjacent));
+    // Deleting immediately after the old window changes its right-boundary
+    // context even though the half-open byte ranges do not overlap.
+    adjacent_cache.rebaseAfterEdit(2, 2, 2, 260, 262, 0, {{260, 260}});
+    assert(adjacent_cache.size() == 0);
 }
 void testSharedBudgetReleasedOnEviction() {
     auto budget = std::make_shared<SharedNativeMemoryBudget>(1024u * 1024u);
