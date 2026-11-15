@@ -206,7 +206,7 @@ class WindbellTshLinkageTest {
     }
 
     @Test
-    fun testNativeQueryPredicateSourceReadFailureIsNotSilentlyTreatedAsNoMatch() {
+    fun testNativeQueryPredicateUsesNativeSnapshotAfterReaderDetaches() {
         val engine = WindbellTshEngine.instance
         val extension = "query-predicate-read-failure"
         val dsl = """
@@ -227,7 +227,9 @@ class WindbellTshLinkageTest {
 
         val bytes = "class Demo {}".toByteArray(Charsets.UTF_16LE)
         val readsAllowed = AtomicBoolean(true)
+        var readerCalls = 0
         val reader = NativeTextWindowReader { offset, requested, destination ->
+            readerCalls++
             if (!readsAllowed.get()) {
                 0
             } else {
@@ -248,21 +250,23 @@ class WindbellTshLinkageTest {
             File(System.getProperty("java.io.tmpdir")), reader
         )
         try {
-            // Parsing has completed successfully. Fail subsequent TextSource reads
-            // so the equality predicate must report an execution error, not reject
-            // the query match and return an apparently complete empty result.
+            // Native document creation snapshots the callback's UTF-16LE windows
+            // into its owned backing store. Highlighting must keep working after
+            // the callback is detached; it must not depend on a live Kotlin reader.
+            val callsAfterSnapshot = readerCalls
+            assertTrue(callsAfterSnapshot > 0, "The reader must provide the initial native snapshot.")
             readsAllowed.set(false)
-            var failure: Throwable? = null
-            try {
-                engine.highlightNativeDocument(handle, 0L, bytes.size.toLong(), false)
-            } catch (error: Throwable) {
-                failure = error
-            }
-            assertNotNull(failure, "A failed capture read must escape as a highlight failure")
+            val encoded = engine.highlightNativeDocument(handle, 0L, bytes.size.toLong(), false)
+            assertNotNull(encoded)
+            val typeId = engine.getStyleCatalog(extension).first { it.name == "type" }.styleId
             assertTrue(
-                failure is IllegalStateException,
-                "Expected an explicit native highlight failure, got: $failure"
+                (0 until encoded!!.size / 6).any { index ->
+                    encoded[index * 6 + 2] == typeId
+                },
+                "The native snapshot must still support Tree-sitter predicate evaluation."
             )
+            assertEquals(callsAfterSnapshot, readerCalls,
+                "Highlighting must read the native snapshot, not call the detached reader again.")
         } finally {
             engine.closeNativeDocument(handle)
         }
