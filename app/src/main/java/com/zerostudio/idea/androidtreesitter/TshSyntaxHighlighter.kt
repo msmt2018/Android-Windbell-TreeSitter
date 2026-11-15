@@ -77,7 +77,7 @@ class TshSyntaxHighlighter(
     private enum class RangeWorkState { QUEUED, RUNNING, SUCCEEDED, FAILED, CANCELLED }
 
     private class RangeWork(val attempt: Int = 0) {
-        @Volatile var state: RangeWorkState = PartitionWorkState.QUEUED
+        @Volatile var state: RangeWorkState = RangeWorkState.QUEUED
         @Volatile var retryAfterNanos: Long = 0L
     }
 
@@ -96,6 +96,22 @@ class TshSyntaxHighlighter(
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val generation = AtomicLong()
     private val firstStyleCallLogged = AtomicBoolean(false)
+
+    private val viewportRequestLock = Any()
+    private val pendingViewportRanges = ArrayList<CaptureRangeKey>()
+    @Volatile private var viewportFrameActive = false
+
+    override fun onViewportFrameStarted() {
+        synchronized(viewportRequestLock) { viewportFrameActive = true }
+    }
+
+    override fun onViewportFrameFinished() {
+        val pending = synchronized(viewportRequestLock) {
+            viewportFrameActive = false
+            pendingViewportRanges.toList().also { pendingViewportRanges.clear() }
+        }
+        submitCoalescedViewportRanges(pending)
+    }
 
     @Volatile private var host: SyntaxHighlighter.Host? = null
     @Volatile private var largeSession: LargeSession? = null
@@ -125,6 +141,7 @@ class TshSyntaxHighlighter(
         largeSession = null
         parsing = false
         synchronized(nativeEditLock) { pendingNativeEdits.clear() }
+        synchronized(viewportRequestLock) { pendingViewportRanges.clear(); viewportFrameActive = false }
         host = null
     }
 
@@ -270,8 +287,8 @@ class TshSyntaxHighlighter(
         val boundedEnd = queryEnd.coerceAtMost(length)
         if (boundedStart >= boundedEnd) return true
         val key = CaptureRangeKey(active.cacheSessionId, boundedStart.toInt(), boundedEnd.toInt())
-        if (captureCache.get(key) != null) return true
-        requestLargeRange(active, key)
+        if (findContainingCaptureRange(key) != null) return true
+        enqueueViewportRange(key)
         return false
     }
 
@@ -306,9 +323,9 @@ class TshSyntaxHighlighter(
                 return false
             }
             val key = CaptureRangeKey(active.cacheSessionId, offset, offset + 1)
-            val cached = captureCache.get(key)
+            val cached = findContainingCaptureRange(key)
             if (cached == null) {
-                requestLargeRange(active, key)
+                enqueueViewportRange(key)
                 return true
             }
             cached.query(offset, offset + 1)
@@ -469,8 +486,8 @@ class TshSyntaxHighlighter(
     ): List<WindbellTshEngine.HighlightSpan> {
         if (generation.get() != active.ticket || largeSession !== active) return emptyList()
         val key = CaptureRangeKey(active.cacheSessionId, start.toInt(), end.toInt())
-        val index = captureCache.get(key) ?: run {
-            requestLargeRange(active, key)
+        val index = findContainingCaptureRange(key) ?: run {
+            enqueueViewportRange(key)
             return emptyList()
         }
         return ArrayList<WindbellTshEngine.HighlightSpan>().also {
@@ -478,17 +495,63 @@ class TshSyntaxHighlighter(
         }
     }
 
-    private fun requestLargeRange(active: LargeSession, key: CaptureRangeKey) {
-        if (generation.get() != active.ticket || largeSession !== active) return
-        if (key.startUtf16 >= key.endUtf16 || captureCache.get(key) != null) return
+    private fun findContainingCaptureRange(key: CaptureRangeKey): CaptureIntervalIndex? =
+        captureCache.getMatching { cachedKey, _ ->
+            cachedKey.sessionId == key.sessionId &&
+                cachedKey.startUtf16 <= key.startUtf16 &&
+                cachedKey.endUtf16 >= key.endUtf16
+        }
+
+    private fun enqueueViewportRange(key: CaptureRangeKey) {
+        if (key.startUtf16 >= key.endUtf16) return
+        val active = largeSession ?: return
+        if (generation.get() != active.ticket || active.cacheSessionId != key.sessionId) return
+        if (findContainingCaptureRange(key) != null) return
+        val flushNow = synchronized(viewportRequestLock) {
+            if (pendingViewportRanges.none {
+                it.sessionId == key.sessionId && it.startUtf16 <= key.startUtf16 && it.endUtf16 >= key.endUtf16
+            }) pendingViewportRanges += key
+            !viewportFrameActive
+        }
+        if (flushNow) flushPendingViewportRanges()
+    }
+
+    private fun flushPendingViewportRanges() {
+        val pending = synchronized(viewportRequestLock) {
+            pendingViewportRanges.toList().also { pendingViewportRanges.clear() }
+        }
+        submitCoalescedViewportRanges(pending)
+    }
+
+    /** Merge only overlapping/adjacent visible source intervals; never bridge folded text. */
+    private fun submitCoalescedViewportRanges(ranges: List<CaptureRangeKey>) {
+        if (ranges.isEmpty()) return
+        val sorted = ranges.sortedWith(compareBy<CaptureRangeKey> { it.sessionId }
+            .thenBy { it.startUtf16 }.thenBy { it.endUtf16 })
+        var merged = sorted.first()
+        for (i in 1 until sorted.size) {
+            val next = sorted[i]
+            if (next.sessionId == merged.sessionId && next.startUtf16 <= merged.endUtf16) {
+                merged = merged.copy(endUtf16 = maxOf(merged.endUtf16, next.endUtf16))
+            } else {
+                executeNativeRange(merged)
+                merged = next
+            }
+        }
+        executeNativeRange(merged)
+    }
+
+    private fun executeNativeRange(key: CaptureRangeKey) {
+        val active = largeSession ?: return
+        if (generation.get() != active.ticket || active.cacheSessionId != key.sessionId ||
+            findContainingCaptureRange(key) != null) return
         val existing = active.rangeWork[key]
         val work = if (existing == null) {
             val initial = RangeWork()
             if (active.rangeWork.putIfAbsent(key, initial) != null) return
             initial
         } else {
-            if (existing.state != PartitionWorkState.FAILED ||
-                System.nanoTime() < existing.retryAfterNanos) return
+            if (existing.state != RangeWorkState.FAILED || System.nanoTime() < existing.retryAfterNanos) return
             val retry = RangeWork(existing.attempt + 1)
             if (!active.rangeWork.replace(key, existing, retry)) return
             retry
@@ -497,10 +560,10 @@ class TshSyntaxHighlighter(
         scope.launch(Dispatchers.IO) {
             try {
                 if (generation.get() != active.ticket || largeSession !== active) {
-                    work.state = PartitionWorkState.CANCELLED
+                    work.state = RangeWorkState.CANCELLED
                     return@launch
                 }
-                work.state = PartitionWorkState.RUNNING
+                work.state = RangeWorkState.RUNNING
                 val flat = active.nativeMutex.withLock {
                     currentCoroutineContext().ensureActive()
                     if (generation.get() != active.ticket || largeSession !== active ||
@@ -517,23 +580,21 @@ class TshSyntaxHighlighter(
                 if (generation.get() == active.ticket && largeSession === active &&
                     active.documentRevision.get() == requestedRevision) {
                     captureCache.put(key, CaptureIntervalIndex(spans))
-                    work.state = PartitionWorkState.SUCCEEDED
+                    work.state = RangeWorkState.SUCCEEDED
                     host?.invalidateStyles()
                     host?.invalidateStructure()
-                } else {
-                    work.state = PartitionWorkState.CANCELLED
-                }
+                } else work.state = RangeWorkState.CANCELLED
             } catch (_: CancellationException) {
-                work.state = PartitionWorkState.CANCELLED
+                work.state = RangeWorkState.CANCELLED
             } catch (error: Throwable) {
-                work.state = PartitionWorkState.FAILED
-                val backoffShift = (work.attempt - 1).coerceIn(0, 5)
-                work.retryAfterNanos = System.nanoTime() + (1L shl backoffShift) * 1_000_000_000L
+                work.state = RangeWorkState.FAILED
+                val shift = (work.attempt - 1).coerceIn(0, 5)
+                work.retryAfterNanos = System.nanoTime() + (1L shl shift) * 1_000_000_000L
                 if (generation.get() == active.ticket && largeSession === active) {
-                    Log.e(TAG, "Native viewport TSH failed for visible range", error)
+                    Log.e(TAG, "Native viewport TSH failed for ${key.startUtf16}..${key.endUtf16}", error)
                 }
             } finally {
-                if (work.state != PartitionWorkState.FAILED) active.rangeWork.remove(key, work)
+                if (work.state != RangeWorkState.FAILED) active.rangeWork.remove(key, work)
             }
         }
     }

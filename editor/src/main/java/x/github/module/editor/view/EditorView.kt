@@ -3168,8 +3168,14 @@ open class EditorView @JvmOverloads constructor(
         
         // The canvas is now in content coordinates and clipped to the viewport.
         
-        // draw the text content
-        renderer.draw(canvas)
+        // Batch only the source ranges actually requested by this viewport draw.
+        val activeHighlighter = syntaxHighlighter
+        activeHighlighter?.onViewportFrameStarted()
+        try {
+            renderer.draw(canvas)
+        } finally {
+            activeHighlighter?.onViewportFrameFinished()
+        }
         // over the rows: the indent guides, the brackets at the cursor (bold,
         // underlined), the placeholders of folded lines (and the fold markers in the rows)
         structure.drawOverText(canvas)

@@ -100,4 +100,10 @@ interface SyntaxHighlighter : LineStyler {
      * The moment to bring derived data up to date (parse again).
      */
     fun onEditFinished() {}
+
+    /** Marks the start of one real renderer viewport pass. */
+    fun onViewportFrameStarted() {}
+
+    /** Flushes work collected during the renderer viewport pass. */
+    fun onViewportFrameFinished() {}
 }

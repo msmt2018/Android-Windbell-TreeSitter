@@ -463,6 +463,14 @@ class ByteBudgetLruCache<K : Any, V : Any>(
 
     fun get(key: K): V? = lock.write { entries[key]?.value }
 
+    /** Finds and promotes the most-recently-used matching entry. */
+    fun getMatching(predicate: (K, V) -> Boolean): V? = lock.write {
+        val key = entries.entries.firstOrNull { (candidate, entry) ->
+            predicate(candidate, entry.value)
+        }?.key ?: return@write null
+        entries[key]?.value
+    }
+
     fun put(key: K, value: V) = lock.write {
         // Freeze the weight at admission. Re-evaluating a mutable value during
         // eviction/removal can otherwise corrupt byte accounting.
