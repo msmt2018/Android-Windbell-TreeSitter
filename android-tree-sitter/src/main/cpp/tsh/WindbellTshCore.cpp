@@ -2243,24 +2243,11 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
             if (!q_cursor) continue;
             TSQueryCursor* cursor = q_cursor.get();
 
-            // Query cursor ranges are matched from the query root's start.
-            // A large syntax node (for example a block_comment covering tens of
-            // MiB) may begin before the viewport while its capture intersects it.
-            // Start at the top-level syntax child containing the viewport start so
-            // the complete enclosing subtree remains eligible without rescanning
-            // unrelated earlier top-level declarations.
-            uint32_t query_range_start = range_start_byte;
-            const TSNode query_root = ts_tree_root_node(tree);
-            TSTreeCursor range_cursor = ts_tree_cursor_new(query_root);
-            if (ts_tree_cursor_goto_first_child_for_byte(&range_cursor, range_start_byte) >= 0) {
-                const TSNode containing_top_level_node =
-                    ts_tree_cursor_current_node(&range_cursor);
-                query_range_start = std::min(
-                    query_range_start, ts_node_start_byte(containing_top_level_node));
-            }
-            ts_tree_cursor_delete(&range_cursor);
-            // Avoid arbitrary match/time limits: dense files must not silently lose captures.
-            if (!ts_query_cursor_set_byte_range(cursor, query_range_start, range_end_byte)) {
+            // Restrict query traversal to the requested range while retaining the
+            // complete document AST and absolute node coordinates. A fixed match
+            // limit or artificial progress timeout would remove valid captures
+            // from dense files, so use the maximum representable pending capacity.
+            if (!ts_query_cursor_set_byte_range(cursor, range_start_byte, range_end_byte)) {
                 continue;
             }
             ts_query_cursor_set_match_limit(cursor, UINT32_MAX);
