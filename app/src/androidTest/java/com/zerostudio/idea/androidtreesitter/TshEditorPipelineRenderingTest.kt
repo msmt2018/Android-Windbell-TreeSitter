@@ -674,7 +674,12 @@ class TshEditorPipelineRenderingTest {
                 // Exercise the same EditorView -> TextRenderer -> StyledTextPainter path
                 // used by the application after jumping to a distant line.
                 editor.scrollTo(0, (targetLineNumber - 1) * editor.getLineHeight())
-                editor.draw(Canvas(bitmap))
+                // ViewRootImpl normally applies the View's scroll translation
+                // before invoking draw(). This test calls draw() directly on a
+                // bitmap Canvas, so reproduce that parent transform explicitly.
+                val canvas = Canvas(bitmap)
+                canvas.translate(-editor.scrollX.toFloat(), -editor.scrollY.toFloat())
+                editor.draw(canvas)
             }
 
             val expected = engine.getStylePalette("java", "type")
@@ -732,7 +737,9 @@ class TshEditorPipelineRenderingTest {
                             styled.getSpanEnd(it) >= editedNameEnd
                     }
                     editedColor = span?.foregroundColor
-                    editor.draw(Canvas(bitmap))
+                    val canvas = Canvas(bitmap)
+                    canvas.translate(-editor.scrollX.toFloat(), -editor.scrollY.toFloat())
+                    editor.draw(canvas)
                 }
                 if (editedColor == null) SystemClock.sleep(20L)
             }
