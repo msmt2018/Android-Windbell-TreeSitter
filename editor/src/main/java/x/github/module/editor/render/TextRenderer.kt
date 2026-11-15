@@ -103,9 +103,20 @@ class TextRenderer(
         fun mayStyleNow(line: Int, startOffset: Int, endOffset: Int): Boolean
     }
 
-    companion object {
-        // rows longer than this many chars are painted directly, see draw()
-        private const val MAX_CACHED_ROW_LENGTH = 4096
+    // Whether to record the whole row or paint only its currently visible columns.
+    // This follows the live view width and measured glyph advances, not a fixed text
+    // length threshold. Wrapped rows already describe the visible visual-row slice.
+    private fun shouldCacheRow(
+        canvasCanCache: Boolean,
+        text: String,
+        start: Int,
+        end: Int,
+        wrapped: Boolean
+    ): Boolean {
+        if (!canvasCanCache) return false
+        if (wrapped) return true
+        if (TabStops.hasTab(text, start, end)) return true
+        return textPaint.measureText(text, start, end) <= host.viewWidth.toFloat()
     }
 
     // The recorded rows (hardware accelerated, Android 10 and later), and what each
@@ -175,11 +186,10 @@ class TextRenderer(
                 isFirstRowOfLine = true
             }
 
-            // A row of ordinary length is recorded whole, and scrolling sideways costs
-            // nothing. A very long one (a minified file is one line of megabytes) is
-            // not worth recording: painting just the columns on screen is far less
-            // work than recording all of it once.
-            if (cached && rowEnd - rowStart <= MAX_CACHED_ROW_LENGTH) {
+            // Cache a row only when its measured content fits the current viewport.
+            // Long unwrapped lines are painted by visible columns, regardless of their
+            // character count; wrapped rows already carry their visual slice.
+            if (shouldCacheRow(cached, text, rowStart, rowEnd, wrapped)) {
                 drawRowCached(canvas, row, visible, bufferLine, text, rowStart, rowEnd, isFirstRowOfLine, textLeft)
             } else {
                 drawRowDirect(canvas, row, bufferLine, text, rowStart, rowEnd, isFirstRowOfLine, textLeft, wrapped)
