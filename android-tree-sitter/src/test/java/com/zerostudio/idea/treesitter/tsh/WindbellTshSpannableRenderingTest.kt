@@ -5,6 +5,7 @@ import com.zerostudio.idea.treesitter.tsh.WindbellTshEngine
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import org.junit.runner.RunWith
+import org.junit.Before
 import org.junit.Test
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -17,6 +18,11 @@ import org.robolectric.RobolectricTestRunner
  */
 @RunWith(RobolectricTestRunner::class)
 class WindbellTshSpannableRenderingTest {
+    @Before
+    fun setUp() {
+        TreeSitter.loadLibrary()
+    }
+
     private fun javaTestDsl(): String {
             return """
                 name: ["Java", ".java"]
