@@ -1798,6 +1798,14 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
         return std::any_of(rule.nested_rules.begin(), rule.nested_rules.end(),
             [&](const CompiledRegexRule &nested) { return self(self, nested); });
     };
+    const auto has_block_rule = [](const auto &self, const CompiledRegexRule &rule) -> bool {
+        if (rule.enabled && rule.type == RegexRuleType::BLOCK) return true;
+        return std::any_of(rule.nested_rules.begin(), rule.nested_rules.end(),
+            [&](const CompiledRegexRule &nested) { return self(self, nested); });
+    };
+    const bool has_context_block = std::any_of(
+        grammar->regex_rules.begin(), grammar->regex_rules.end(),
+        [&](const CompiledRegexRule &rule) { return has_block_rule(has_block_rule, rule); });
     const bool has_regex_state = !grammar->regex_states.empty();
     const bool source_has_regex = grammar &&
         (!grammar->regex_rules.empty() || has_regex_state ||
@@ -1808,6 +1816,7 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
     const bool source_requires_contiguous_regex = grammar &&
         std::any_of(grammar->regex_rules.begin(), grammar->regex_rules.end(),
             [&](const CompiledRegexRule &rule) { return has_context_rule(has_context_rule, rule); }) ||
+        has_context_block ||
         (grammar && has_regex_state && !grammar->regex_state_graph_bounded) ||
         (grammar && std::any_of(grammar->native_queries.begin(), grammar->native_queries.end(),
             [](const NativeQueryProgram &query) {
@@ -1919,41 +1928,54 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
     // Query dependencies were collected from every possible rooted AST
     // candidate intersecting the evaluated viewport, not merely emitted captures.
     cache_value.dependencies = std::move(query_dependencies);
-    // AST selectors may inspect parent, ancestor, sibling, field and descendant
-    // relationships. Their dependency root is not represented by emitted spans.
+    // If Query execution was unavailable or did not produce dependency
+    // metadata, never cache a partial result under an assumed local scope.
+    if (!grammar->native_queries.empty() && cache_value.dependencies.empty()) {
+        cache_value.dependencies.push_back({
+            0u, static_cast<uint32_t>(total_bytes), UINT32_MAX,
+            static_cast<uint8_t>(HighlightSource::NATIVE_QUERY)
+        });
+    }
+    // AST selectors can inspect parent, ancestor, sibling, field and descendant
+    // relationships. Until their candidate-node envelopes are collected, keep
+    // their cache dependency document-wide.
     if (!grammar->ast_selector_rules.empty()) {
         cache_value.dependencies.push_back({
             0u, static_cast<uint32_t>(total_bytes), UINT32_MAX,
             static_cast<uint8_t>(HighlightSource::AST_SELECTOR)
         });
     }
-    // Stateful and document-context Regex have lexical dependencies extending
-    // to checkpoints/EOF. They remain document-wide until their checkpoint
-    // convergence result is surfaced as an explicit dependency envelope.
-    if (!grammar->regex_states.empty() || source_requires_contiguous_regex) {
+    // Stateful, block and document-context Regex can propagate lexical state
+    // beyond the viewport. They stay document-dependent until checkpoint
+    // convergence produces a verified post-edit dependency boundary.
+    if (!grammar->regex_states.empty() || source_requires_contiguous_regex ||
+        has_context_block) {
         cache_value.dependencies.push_back({
             0u, static_cast<uint32_t>(total_bytes), UINT32_MAX,
             static_cast<uint8_t>(HighlightSource::REGEX_STATE)
         });
     }
-    // Ordinary finite-width Regex has a compiler-proven maximum match width.
-    // Keep its dependency local to the viewport plus the maximum overlap.
-    if (cache_value.dependencies.empty()) {
-        uint64_t overlap = 0;
-        const auto include_width = [&](const auto &self, const CompiledRegexRule &rule) -> void {
-            if (rule.enabled &&
-                rule.execution_capability == RegexExecutionCapability::BOUNDED_WINDOW) {
-                overlap = std::max(overlap, rule.maximum_match_bytes >= 2u
-                    ? rule.maximum_match_bytes - 2u : 0u);
-            }
-            for (const auto &nested : rule.nested_rules) self(self, nested);
-        };
-        for (const auto &rule : grammar->regex_rules) include_width(include_width, rule);
+    // Finite-width MATCH Regex rules are independent dependencies even when
+    // the same grammar also contains Query/AST/state pipelines.
+    uint64_t regex_overlap = 0;
+    bool has_bounded_regex = false;
+    const auto include_width = [&](const auto &self, const CompiledRegexRule &rule) -> void {
+        if (rule.enabled && rule.type == RegexRuleType::MATCH && rule.onig_start &&
+            rule.execution_capability == RegexExecutionCapability::BOUNDED_WINDOW &&
+            rule.maximum_match_bytes != 0) {
+            has_bounded_regex = true;
+            regex_overlap = std::max(regex_overlap,
+                rule.maximum_match_bytes >= 2u ? rule.maximum_match_bytes - 2u : 0u);
+        }
+        for (const auto &nested : rule.nested_rules) self(self, nested);
+    };
+    for (const auto &rule : grammar->regex_rules) include_width(include_width, rule);
+    if (has_bounded_regex) {
         const uint32_t dependency_start = static_cast<uint32_t>(
-            evaluation_start > overlap ? evaluation_start - overlap : 0u);
+            evaluation_start > regex_overlap ? evaluation_start - regex_overlap : 0u);
         const uint32_t dependency_end = static_cast<uint32_t>(
             std::min<uint64_t>(total_bytes,
-                static_cast<uint64_t>(evaluation_end) + overlap));
+                static_cast<uint64_t>(evaluation_end) + regex_overlap));
         cache_value.dependencies.push_back({
             dependency_start, dependency_end, UINT32_MAX,
             static_cast<uint8_t>(HighlightSource::ONIG_REGEX)
