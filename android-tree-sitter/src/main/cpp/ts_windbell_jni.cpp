@@ -433,12 +433,20 @@ static bool nativePointAt(
 }
 
 
-static bool nativeTreeCoversDocument(TSTree *tree, uint64_t byteLength) noexcept {
+static bool nativeTreeIsValidForDocument(TSTree *tree, uint64_t byteLength) noexcept {
     if (!tree || byteLength > UINT32_MAX) return false;
     const TSNode root = ts_tree_root_node(tree);
-    return !ts_node_is_null(root) &&
-        ts_node_start_byte(root) == 0u &&
-        ts_node_end_byte(root) == static_cast<uint32_t>(byteLength);
+    if (ts_node_is_null(root)) return false;
+
+    // Tree-sitter root ranges describe parsed syntax, not necessarily every
+    // byte in the input. Leading/trailing whitespace and grammar extras may
+    // lie outside the root node range. ts_parser_parse() has already consumed
+    // the complete TSInput when it returns; the input callback separately
+    // reports source-read failures. Validate coordinate integrity here rather
+    // than incorrectly requiring root.start == 0 and root.end == document size.
+    const uint32_t start = ts_node_start_byte(root);
+    const uint32_t end = ts_node_end_byte(root);
+    return start <= end && end <= static_cast<uint32_t>(byteLength);
 }
 
 static void throwNativeAllocationFailure(JNIEnv *env, const char *message) noexcept {
@@ -1036,7 +1044,7 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlight(
         throw_illegal_args(env, "TSH byte range exceeds the UTF-16 source length");
         return nullptr;
     }
-    if (tree && !nativeTreeCoversDocument(tree, sourceByteLength)) {
+    if (tree && !nativeTreeIsValidForDocument(tree, sourceByteLength)) {
         throw_illegal_args(env,
             "TSH requires a complete full-document Tree-sitter AST; included-range fragments are not valid inputs");
         return nullptr;
@@ -1313,7 +1321,7 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeCreateDocument(
     TSInput input{&payload, nativeDocumentRead, TSInputEncodingUTF16LE, nullptr};
     document->tree = ts_parser_parse(document->parser, nullptr, input);
     if (!document->tree || payload.read_failed ||
-        !nativeTreeCoversDocument(document->tree, document->source->sizeBytes())) {
+        !nativeTreeIsValidForDocument(document->tree, document->source->sizeBytes())) {
         if (document->tree) {
             ts_tree_delete(document->tree);
             document->tree = nullptr;
@@ -1441,7 +1449,7 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeApplyDocumentEdi
     TSInput input{&payload, nativeDocumentRead, TSInputEncodingUTF16LE, nullptr};
     TSTree *next_tree = ts_parser_parse(document->parser, edited_tree, input);
     const bool incremental_parse_complete = next_tree && !payload.read_failed &&
-        nativeTreeCoversDocument(next_tree, next_source->sizeBytes());
+        nativeTreeIsValidForDocument(next_tree, next_source->sizeBytes());
     if (!incremental_parse_complete) {
         // Incremental reuse is an optimization, never a correctness boundary.
         // If a reused subtree or edit-coordinate interaction yields a partial
@@ -1472,7 +1480,7 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeApplyDocumentEdi
             &fallback_payload, nativeDocumentRead, TSInputEncodingUTF16LE, nullptr};
         TSTree *fallback_tree = ts_parser_parse(fallback_parser, nullptr, fallback_input);
         if (!fallback_tree || fallback_payload.read_failed ||
-            !nativeTreeCoversDocument(fallback_tree, next_source->sizeBytes())) {
+            !nativeTreeIsValidForDocument(fallback_tree, next_source->sizeBytes())) {
             uint32_t fallback_start = 0;
             uint32_t fallback_end = 0;
             if (fallback_tree) {
@@ -1751,7 +1759,7 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
     if (start_splits_pair) evaluation_start -= 2u;
     if (end_splits_pair) evaluation_end += 2u;
 
-    if (!nativeTreeCoversDocument(document->tree, total_bytes)) {
+    if (!nativeTreeIsValidForDocument(document->tree, total_bytes)) {
         throw_illegal_state(env,
             "Native TSH document no longer owns a complete full-document Tree-sitter AST");
         return nullptr;
