@@ -1291,46 +1291,49 @@ static bool appendQueryRootDependencyRanges(
 ) {
     if (!tree || root_symbol == 0 || !output || range_start >= range_end) return false;
     TSTreeCursor cursor = ts_tree_cursor_new(ts_tree_root_node(tree));
-    bool complete = true;
     bool done = false;
-    size_t before = output->size();
-    while (!done) {
-        const TSNode node = ts_tree_cursor_current_node(&cursor);
-        const uint32_t start = ts_node_start_byte(node);
-        const uint32_t end = ts_node_end_byte(node);
-        const bool intersects = start == end
-            ? (start >= range_start && start <= range_end)
-            : (start < range_end && end > range_start);
-        if (intersects) {
-            if (ts_node_symbol(node) == root_symbol &&
-                start <= end && end <= total_bytes &&
-                (start & 1u) == 0 && (end & 1u) == 0) {
-                uint32_t dependency_start = start;
-                uint32_t dependency_end = end;
-                // Missing/zero-width nodes still depend on their insertion
-                // boundary. Expand by one UTF-16 code unit on each side.
-                if (dependency_start == dependency_end) {
-                    dependency_start = dependency_start >= 2u ? dependency_start - 2u : 0u;
-                    dependency_end = std::min<uint32_t>(total_bytes, dependency_end + 2u);
+    const size_t before = output->size();
+    try {
+        while (!done) {
+            const TSNode node = ts_tree_cursor_current_node(&cursor);
+            const uint32_t start = ts_node_start_byte(node);
+            const uint32_t end = ts_node_end_byte(node);
+            const bool intersects = start == end
+                ? (start >= range_start && start <= range_end)
+                : (start < range_end && end > range_start);
+            if (intersects) {
+                if (ts_node_symbol(node) == root_symbol &&
+                    start <= end && end <= total_bytes &&
+                    (start & 1u) == 0 && (end & 1u) == 0) {
+                    uint32_t dependency_start = start;
+                    uint32_t dependency_end = end;
+                    // Missing/zero-width nodes still depend on their insertion
+                    // boundary. Expand by one UTF-16 code unit on each side.
+                    if (dependency_start == dependency_end) {
+                        dependency_start = dependency_start >= 2u ? dependency_start - 2u : 0u;
+                        dependency_end = std::min<uint32_t>(total_bytes, dependency_end + 2u);
+                    }
+                    output->push_back({
+                        dependency_start, dependency_end, pattern_index,
+                        static_cast<uint8_t>(HighlightSource::NATIVE_QUERY),
+                        dependency_scope
+                    });
                 }
-                output->push_back({
-                    dependency_start, dependency_end, pattern_index,
-                    static_cast<uint8_t>(HighlightSource::NATIVE_QUERY),
-                    dependency_scope
-                });
+                if (ts_tree_cursor_goto_first_child(&cursor)) continue;
             }
-            if (ts_tree_cursor_goto_first_child(&cursor)) continue;
-        }
-        while (!ts_tree_cursor_goto_next_sibling(&cursor)) {
-            if (!ts_tree_cursor_goto_parent(&cursor)) {
-                done = true;
-                break;
+            while (!ts_tree_cursor_goto_next_sibling(&cursor)) {
+                if (!ts_tree_cursor_goto_parent(&cursor)) {
+                    done = true;
+                    break;
+                }
             }
         }
+    } catch (...) {
+        ts_tree_cursor_delete(&cursor);
+        throw;
     }
     ts_tree_cursor_delete(&cursor);
-    complete = output->size() > before;
-    return complete;
+    return output->size() > before;
 }
 
 static void appendQueryPatternDependencies(
