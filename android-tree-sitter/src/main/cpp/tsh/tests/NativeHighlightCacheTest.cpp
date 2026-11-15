@@ -46,6 +46,9 @@ void testSimpleRootAnalyzer() {
     root = analyzeSimpleQueryRoot(
         "(function_definition name: (identifier) @name) @function");
     assert(root.valid && root.node_type == "function_definition");
+    root = analyzeSimpleQueryRoot(
+        "(identifier) @name (#eq? @name \"main\")");
+    assert(root.valid && root.node_type == "identifier");
     root = analyzeSimpleQueryRoot("(\",\") @comma");
     assert(root.valid && root.node_type == "," && !root.is_named);
     assert(!analyzeSimpleQueryRoot("(_) @wildcard").valid);
