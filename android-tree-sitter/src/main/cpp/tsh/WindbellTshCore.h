@@ -160,6 +160,9 @@ struct AstSelectorRule {
     TSFieldId field_id = 0;
     TSSymbol parent_symbol = 0;
     TSSymbol ancestor_symbol = 0;
+    // Preserve the grammar-facing name as well as the symbol ID so aliased
+    // Tree-sitter node types can satisfy ancestor selectors consistently.
+    std::string ancestor_type;
     TSSymbol child_symbol = 0;
     TSSymbol previous_sibling_symbol = 0;
     TSSymbol next_sibling_symbol = 0;

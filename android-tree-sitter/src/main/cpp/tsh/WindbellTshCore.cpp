@@ -2012,7 +2012,10 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                     bool ancestor_found = false;
                     TSNode ancestor = parent;
                     while (!ts_node_is_null(ancestor)) {
-                        if (ts_node_symbol(ancestor) == ast_rule.ancestor_symbol) {
+                        const char* ancestor_node_type = ts_node_type(ancestor);
+                        if (ts_node_symbol(ancestor) == ast_rule.ancestor_symbol ||
+                            (!ast_rule.ancestor_type.empty() && ancestor_node_type &&
+                             ast_rule.ancestor_type == ancestor_node_type)) {
                             ancestor_found = true;
                             break;
                         }

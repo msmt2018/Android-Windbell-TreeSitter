@@ -3108,6 +3108,7 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                                 if (ast_rule.parent_symbol == 0) return nullptr;
                             }
                             if (!ancestor_name.empty()) {
+                                ast_rule.ancestor_type = ancestor_name;
                                 ast_rule.ancestor_symbol = ts_language_symbol_for_name(
                                     ts_lang, ancestor_name.c_str(),
                                     static_cast<uint32_t>(ancestor_name.length()), true);
