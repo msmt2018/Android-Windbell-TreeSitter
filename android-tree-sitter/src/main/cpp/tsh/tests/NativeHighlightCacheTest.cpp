@@ -43,11 +43,9 @@ NativeHighlightCache::Value value(
 void testSimpleRootAnalyzer() {
     auto root = analyzeSimpleQueryRoot("(identifier) @name");
     assert(root.valid && root.node_type == "identifier" && root.is_named);
-    assert(root.direct_capture == "name");
     root = analyzeSimpleQueryRoot(
         "(function_definition name: (identifier) @name) @function");
     assert(root.valid && root.node_type == "function_definition");
-    assert(root.direct_capture == "function");
     root = analyzeSimpleQueryRoot("(\",\") @comma");
     assert(root.valid && root.node_type == "," && !root.is_named);
     assert(!analyzeSimpleQueryRoot("(_) @wildcard").valid);

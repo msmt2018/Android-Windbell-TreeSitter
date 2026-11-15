@@ -8,7 +8,6 @@ namespace windbell::tsh {
 
 struct QueryRootDescriptor {
     std::string node_type;
-    std::string direct_capture;
     bool is_named = false;
     bool valid = false;
 };
@@ -107,7 +106,8 @@ inline QueryRootDescriptor analyzeSimpleQueryRoot(std::string_view pattern) {
             ++scan;
         }
         if (scan == begin) return QueryRootDescriptor{};
-        result.direct_capture.assign(pattern.substr(begin, scan - begin));
+        // The root capture is syntactically consumed here to validate the
+        // suffix, but capture IDs are not used as dependency-range proxies.
     }
 
     skipQuerySpaceAndComments(pattern, &scan);
@@ -124,8 +124,5 @@ inline QueryRootDescriptor analyzeSimpleQueryRoot(std::string_view pattern) {
     return result;
 }
 
-inline std::string findDirectRootCaptureName(std::string_view pattern) {
-    return analyzeSimpleQueryRoot(pattern).direct_capture;
-}
 
 } // namespace windbell::tsh

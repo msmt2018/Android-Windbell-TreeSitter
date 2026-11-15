@@ -145,9 +145,8 @@ struct RegexStateRule {
 // consumed directly by ts_query_new; no generated SCM artifact exists.
 struct NativeQueryProgram {
     // This is a compile-time proof classification, not a guessed byte range.
-    // ROOTED_LOCAL is eligible for a future node-root envelope; until the
-    // matched root node is captured explicitly, cache admission still uses a
-    // document-wide dependency. NON_LOCAL and UNKNOWN are always document-wide.
+    // ROOTED_LOCAL may use AST candidate-root envelopes only when the compiler
+    // also resolves one fixed root symbol. Unknown/non-local roots stay global.
     enum class QueryDependencyScope : uint8_t {
         ROOTED_LOCAL = 0,
         NON_LOCAL = 1,
@@ -163,10 +162,7 @@ struct NativeQueryProgram {
         bool enabled = true;
         bool is_rooted = false;
         bool is_non_local = false;
-        std::string root_node_type;
         TSSymbol root_node_symbol = 0;
-        bool root_node_is_named = false;
-        int32_t root_capture_id = -1;
         QueryDependencyScope dependency_scope = QueryDependencyScope::UNKNOWN;
     };
 
