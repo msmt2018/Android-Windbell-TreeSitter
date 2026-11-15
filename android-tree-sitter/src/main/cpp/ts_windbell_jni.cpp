@@ -1625,6 +1625,7 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeConsumeDirtyLine
         return nullptr;
     }
     document->dirty_line_intervals.clear();
+    document->dirty_byte_intervals.clear();
     return result;
 }
 
