@@ -117,13 +117,14 @@ class TextRenderer(
         if (wrapped) return true
         val availableWidth = host.viewWidth.toFloat()
         if (availableWidth <= 0f) return false
-        if (!TabStops.hasTab(text, start, end)) {
-            // Stop measuring as soon as the actual viewport width is filled. This
-            // avoids copying or fully measuring a multi-megabyte unwrapped line.
-            return textPaint.breakText(text, start, end, true, availableWidth, null) >= end - start
+        // breakText stops at the live viewport boundary. A very long row is rejected
+        // before scanning it for tabs, so a minified multi-megabyte line stays O(visible).
+        if (textPaint.breakText(text, start, end, true, availableWidth, null) < end - start) {
+            return false
         }
-        // Measure tab-separated runs with the editor's actual tab stops and stop as
-        // soon as the visible width is exceeded; do not allocate a whole-line width array.
+        if (!TabStops.hasTab(text, start, end)) return true
+        // Only a row that already fits by ordinary glyph advances reaches this path.
+        // Measure tab-separated runs with actual tab stops; no whole-line width array.
         var runStart = start
         var x = 0f
         for (index in start until end) {
