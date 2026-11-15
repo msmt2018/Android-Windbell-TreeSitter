@@ -67,6 +67,9 @@ class TshSyntaxHighlighter(
         val cacheSessionId: Long,
         val ticket: Long,
         val documentRevision: AtomicLong = AtomicLong(),
+        // Mirrors the native document's committed edit version. Dirty ranges are
+        // consumed only after the matching edit transaction has fully committed.
+        val nativeDocumentVersion: AtomicLong = AtomicLong(),
         // Distinguish edits received by the UI from edits committed to the native tree.
         // While these epochs differ, cached spans belong to an older document revision.
         val pendingEditEpoch: AtomicLong = AtomicLong(),
@@ -463,6 +466,21 @@ class TshSyntaxHighlighter(
                         )) { "Unable to replay edit into newly-created native document" }
                         active.lengthChars.addAndGet(edit.insertedChars.toLong() - edit.deletedChars.toLong())
                     }
+                    // Consume the initial replay's accumulated native invalidations
+                    // before publishing the session. Subsequent UI edits can then
+                    // enforce a strict native-version progression without mixing
+                    // snapshot initialization with live edit transactions.
+                    val initialDirty = engine.consumeNativeDirtyLineRanges(nativeHandle)
+                    check(initialDirty.documentVersion == queued.size.toLong()) {
+                        "Native document version mismatch after edit replay: " +
+                            "expected=${queued.size} actual=${initialDirty.documentVersion}"
+                    }
+                    active.nativeDocumentVersion.set(initialDirty.documentVersion)
+                    Log.d(
+                        TAG,
+                        "Initial native edit replay committed: edits=${queued.size} " +
+                            "version=${initialDirty.documentVersion} dirtyLines=${initialDirty.ranges.size}"
+                    )
                     largeSession = active
                 }
                 nativeHandle = 0L
@@ -723,6 +741,23 @@ class TshSyntaxHighlighter(
                             edit.insertedChars.toLong() - edit.deletedChars.toLong()
                         )
                     }
+                    // Dirty intervals are versioned native transaction output, not
+                    // inferred from the UI edit offsets. Consume only after every edit
+                    // in this serialized batch commits, so multiple edits are observed
+                    // together in the final document coordinate space.
+                    val dirtySnapshot = engine.consumeNativeDirtyLineRanges(active.nativeHandle)
+                    val expectedNativeVersion =
+                        active.nativeDocumentVersion.get() + edits.size.toLong()
+                    check(dirtySnapshot.documentVersion == expectedNativeVersion) {
+                        "Native edit version mismatch: expected=$expectedNativeVersion " +
+                            "actual=${dirtySnapshot.documentVersion}"
+                    }
+                    active.nativeDocumentVersion.set(dirtySnapshot.documentVersion)
+                    Log.v(
+                        TAG,
+                        "Native dirty snapshot committed: version=${dirtySnapshot.documentVersion} " +
+                            "edits=${edits.size} dirtyLines=${dirtySnapshot.ranges.size}"
+                    )
                     // Lexical state can flow to EOF. Invalidate downstream captures
                     // and failed-work markers only after the edit transaction completes.
                     active.documentRevision.incrementAndGet()
