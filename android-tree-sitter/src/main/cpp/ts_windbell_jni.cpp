@@ -1915,6 +1915,7 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
     NativeHighlightCache::Value cache_value;
     cache_value.spans = std::move(spans);
 
+    try {
     // Build explicit dependency envelopes for the cached viewport. Capture
     // spans are output locations, not proof of what the query depended on.
     // Until a query match exposes its exact rooted syntax node, every enabled
@@ -1980,11 +1981,10 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
         });
     }
     std::copy(std::begin(counts), std::end(counts), std::begin(cache_value.match_counts));
-    try {
         document->highlight_cache.put(cache_key, std::move(cache_value));
     } catch (...) {
         // Cache admission is optional. Preserve the complete result even when
-        // cache bookkeeping cannot allocate under memory pressure.
+        // dependency bookkeeping or cache admission cannot allocate under pressure.
     }
     return encoded;
 }

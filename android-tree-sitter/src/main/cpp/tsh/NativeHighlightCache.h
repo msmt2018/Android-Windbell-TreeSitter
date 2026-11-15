@@ -47,9 +47,10 @@ private:
 /**
  * Per-document bounded native highlight result cache.
  *
- * Keys include the document version and the exact UTF-16LE viewport. The
- * caller serializes access with its document lock. Entries are immutable
- * snapshots; edits advance the version, so stale results can never be reused.
+ * Keys include the document/source/partition/grammar versions and exact
+ * UTF-16LE viewport. The caller serializes access with its document lock.
+ * Entries carry explicit dependency envelopes; edits rebase only snapshots
+ * whose viewport, captures and dependencies remain outside all dirty ranges.
  */
 class NativeHighlightCache final {
 public:
