@@ -1371,11 +1371,15 @@ static void appendQueryPatternDependencies(
         return;
     }
 
+    // Include the evaluated viewport itself. It catches edits that create
+    // or remove a root candidate inside the viewport even when the old tree
+    // had no node of the query's root symbol at that exact location.
     // Query blocks commonly contain many patterns rooted at the same syntax
     // type. Walk the viewport-overlapping AST once per distinct root symbol.
     // Cache invalidation only needs the union of these envelopes, not one
     // duplicate record per Pattern or per emitted Capture.
     std::vector<std::pair<uint32_t, uint32_t>> root_ranges;
+    root_ranges.emplace_back(range_start, range_end);
     for (const TSSymbol symbol : root_symbols) {
         std::vector<std::pair<uint32_t, uint32_t>> symbol_ranges;
         if (!collectQueryRootRanges(
