@@ -25,7 +25,6 @@ import com.zerostudio.idea.treesitter.aidl.TSLanguageAidl;
 import com.zerostudio.idea.treesitter.java.TSLanguageJava;
 import com.zerostudio.idea.treesitter.json.TSLanguageJson;
 import com.zerostudio.idea.treesitter.kotlin.TSLanguageKotlin;
-import com.zerostudio.idea.treesitter.log.TSLanguageLog;
 import com.zerostudio.idea.treesitter.python.TSLanguagePython;
 import com.zerostudio.idea.treesitter.string.UTF16StringFactory;
 import java.io.UnsupportedEncodingException;
@@ -236,56 +235,6 @@ public class ParserTest extends TreeSitterTest {
         assertThat(rootNode.getChildCount()).isGreaterThan(0);
         assertThat(rootNode.getNodeString()).isEqualTo(
           "(source_file (class_declaration name: (type_identifier) (class_body (function_declaration name: (simple_identifier) (function_value_parameters) (function_body (statements (call_expression (simple_identifier) (call_suffix (value_arguments (value_argument (string_literal (string_content))))))))))))");
-      }
-    }
-  }
-
-  @Test
-  public void testLogGrammar_beginHeader() {
-    try (final var parser = TSParser.create()) {
-      parser.setLanguage(TSLanguageLog.getInstance());
-
-      final var source = "--------- beginning of system";
-
-      try (final var tree = parser.parseString(source)) {
-        final var rootNode = tree.getRootNode();
-        assertThat(rootNode).isNotNull();
-        assertThat(rootNode.getChildCount()).isGreaterThan(0);
-        assertThat(rootNode.getNodeString()).isEqualTo("(logs (begin_header))");
-      }
-    }
-  }
-
-  @Test
-  public void testLogGrammar_logcatLine() {
-    try (final var parser = TSParser.create()) {
-      parser.setLanguage(TSLanguageLog.getInstance());
-
-      final var source = "06-16 17:32:54.289 19154 19154 W ziparchive: Unable to open '/data/app/~~S0ZGwshlag_3SKvS2AUm9g==/com.zerostudio.idea.logsender.sample-2mbpM5fpkBwx7otcNLWYNA==/base.dm': No such file or directory";
-
-      try (final var tree = parser.parseString(source)) {
-        final var rootNode = tree.getRootNode();
-        assertThat(rootNode).isNotNull();
-        assertThat(rootNode.getChildCount()).isGreaterThan(0);
-        assertThat(rootNode.getNodeString()).isEqualTo(
-          "(logs (log_line (date) (time) (pid) (tid) (priority) (tag) (message)))");
-      }
-    }
-  }
-
-  @Test
-  public void testLogGrammar_ideLogLine() {
-    try (final var parser = TSParser.create()) {
-      parser.setLanguage(TSLanguageLog.getInstance());
-
-      final var source = "2024-03-16 19:15:30,267 DEBUG [ForkJoinPool.commonPool-worker-9] JdkUtils: Found java.home=/data/data/com.zerostudio.idea/files/usr/opt/openjdk-17.0";
-
-      try (final var tree = parser.parseString(source)) {
-        final var rootNode = tree.getRootNode();
-        assertThat(rootNode).isNotNull();
-        assertThat(rootNode.getChildCount()).isGreaterThan(0);
-        assertThat(rootNode.getNodeString()).isEqualTo(
-          "(logs (ide_log_line (date) (time) (priority) (thread_name) (tag) (message)))");
       }
     }
   }

@@ -22,6 +22,7 @@ import static com.google.common.truth.Truth.assertThat;
 import com.zerostudio.idea.treesitter.TSParser;
 import com.zerostudio.idea.treesitter.TSQuery;
 import com.zerostudio.idea.treesitter.TSQueryCursor;
+import com.zerostudio.idea.treesitter.TSQueryMatch;
 import com.zerostudio.idea.treesitter.TSQueryError;
 import com.zerostudio.idea.treesitter.TreeSitterTest;
 import com.zerostudio.idea.treesitter.java.TSLanguageJava;
