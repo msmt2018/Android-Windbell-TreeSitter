@@ -1452,20 +1452,50 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeApplyDocumentEdi
             ts_tree_delete(next_tree);
             next_tree = nullptr;
         }
-        ts_parser_reset(document->parser);
-        NativeDocumentInput fallback_payload{next_source.get(), false};
-        TSInput fallback_input{
-            &fallback_payload, nativeDocumentRead, TSInputEncodingUTF16LE, nullptr};
-        next_tree = ts_parser_parse(document->parser, nullptr, fallback_input);
-        if (!next_tree || fallback_payload.read_failed ||
-            !nativeTreeCoversDocument(next_tree, next_source->sizeBytes())) {
-            if (next_tree) ts_tree_delete(next_tree);
+        // A failed incremental parse may leave parser-internal stack/lexer
+        // state unsuitable for recovery. Recreate the parser transactionally
+        // rather than relying on reset() to recover a potentially interrupted
+        // parse. The previous parser remains owned by the live document until
+        // the complete fallback tree has been verified.
+        TSParser *fallback_parser = ts_parser_new();
+        const TSLanguage *document_language = ts_tree_language(document->tree);
+        if (!fallback_parser || !ts_parser_set_language(fallback_parser, document_language)) {
+            if (fallback_parser) ts_parser_delete(fallback_parser);
             ts_tree_delete(edited_tree);
             ts_parser_reset(document->parser);
             throw_illegal_state(env,
-                "Tree-sitter input failed or full fallback parse did not cover the complete document; original document retained");
+                "Unable to recreate Tree-sitter parser for full-document fallback; original document retained");
             return JNI_FALSE;
         }
+        NativeDocumentInput fallback_payload{next_source.get(), false};
+        TSInput fallback_input{
+            &fallback_payload, nativeDocumentRead, TSInputEncodingUTF16LE, nullptr};
+        TSTree *fallback_tree = ts_parser_parse(fallback_parser, nullptr, fallback_input);
+        if (!fallback_tree || fallback_payload.read_failed ||
+            !nativeTreeCoversDocument(fallback_tree, next_source->sizeBytes())) {
+            uint32_t fallback_start = 0;
+            uint32_t fallback_end = 0;
+            if (fallback_tree) {
+                const TSNode fallback_root = ts_tree_root_node(fallback_tree);
+                fallback_start = ts_node_start_byte(fallback_root);
+                fallback_end = ts_node_end_byte(fallback_root);
+                ts_tree_delete(fallback_tree);
+            }
+            ts_parser_delete(fallback_parser);
+            ts_tree_delete(edited_tree);
+            ts_parser_reset(document->parser);
+            const std::string reason =
+                std::string("Tree-sitter full-document fallback failed; original document retained (read_failed=") +
+                (fallback_payload.read_failed ? "true" : "false") +
+                ", root_start=" + std::to_string(fallback_start) +
+                ", root_end=" + std::to_string(fallback_end) +
+                ", expected_end=" + std::to_string(next_source->sizeBytes()) + ")";
+            throw_illegal_state(env, reason.c_str());
+            return JNI_FALSE;
+        }
+        ts_parser_delete(document->parser);
+        document->parser = fallback_parser;
+        next_tree = fallback_tree;
     }
 
     // Prepare syntax invalidation before committing any candidate document state.
