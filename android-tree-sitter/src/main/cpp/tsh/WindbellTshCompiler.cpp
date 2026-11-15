@@ -260,11 +260,18 @@ public:
         skipIgnored();
         g_tsh_last_source_offset = static_cast<uint32_t>(cursor_);
         auto invalid = [&](const std::string& reason) {
-            g_tsh_last_error_detail = reason;
-            return Token{TokenType::TOK_INVALID, reason};
+            // Preserve the first lexical failure. Parser recovery may request
+            // another token after TOK_INVALID; a later character at the
+            // unconsumed tail must not hide the actual root cause.
+            if (g_tsh_last_error_detail.empty()) {
+                g_tsh_last_error_detail = reason;
+            }
+            return Token{TokenType::TOK_INVALID, g_tsh_last_error_detail};
         };
         if (lexical_error_) {
-            g_tsh_last_error_detail = "unterminated block comment";
+            if (g_tsh_last_error_detail.empty()) {
+                g_tsh_last_error_detail = "unterminated block comment";
+            }
             return {TokenType::TOK_INVALID, g_tsh_last_error_detail};
         }
         if (cursor_ >= src_.size()) {
@@ -438,7 +445,9 @@ public:
         }
 
         ++cursor_;
-        g_tsh_last_error_detail = std::string("unexpected character: ") + c;
+        if (g_tsh_last_error_detail.empty()) {
+            g_tsh_last_error_detail = std::string("unexpected character: ") + c;
+        }
         return {TokenType::TOK_INVALID, g_tsh_last_error_detail};
     }
 
@@ -1536,6 +1545,7 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                     if (lexer.nextToken().type != TshLexer::TokenType::TOK_COLON) return nullptr;
                     if (key.text == "id" || key.text == "name" || key.text == "firstLine") {
                         auto value = lexer.nextToken();
+                        if (value.type == TshLexer::TokenType::TOK_INVALID) return nullptr;
                         if (key.text == "id") grammar->id = value.text;
                         else if (key.text == "name") grammar->name = value.text;
                         else if (value.type != TshLexer::TokenType::TOK_REGEX) return nullptr;
