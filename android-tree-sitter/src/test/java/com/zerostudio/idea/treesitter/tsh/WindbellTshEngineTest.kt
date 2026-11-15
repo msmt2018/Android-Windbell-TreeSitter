@@ -1997,13 +1997,26 @@ class WindbellTshLinkageTest {
                 "Native Piece Tree and Tree-sitter incremental edit must commit"
             )
 
+            // Insert a newline before consuming the first edit's dirty ranges.
+            // The original EOF interval must be rebased to line 1, not replaced.
+            val newline = byteArrayOf(0x0A, 0x00)
+            assertTrue(
+                engine.applyNativeDocumentEdit(handle, 0L, 0L, newline),
+                "A second insertion before consumption must commit"
+            )
+
             val dirtySnapshot = engine.consumeNativeDirtyLineRanges(handle)
-            assertTrue(dirtySnapshot.documentVersion > 0L)
+            assertEquals(2L, dirtySnapshot.documentVersion)
             assertTrue(
                 dirtySnapshot.ranges.isNotEmpty(),
-                "Committed Tree-sitter changes and the actual text edit must be exposed as dirty line intervals"
+                "Both committed edits must be exposed as pending dirty line intervals"
             )
             assertTrue(dirtySnapshot.ranges.all { it.startLine >= 0L && it.endLineExclusive > it.startLine })
+            assertTrue(
+                dirtySnapshot.ranges.any { it.startLine == 0L } &&
+                    dirtySnapshot.ranges.any { it.endLineExclusive >= 2L },
+                "The inserted first line and shifted earlier EOF dirty range must both remain invalidated"
+            )
             val consumedAgain = engine.consumeNativeDirtyLineRanges(handle)
             assertEquals(dirtySnapshot.documentVersion, consumedAgain.documentVersion)
             assertTrue(consumedAgain.ranges.isEmpty(), "Dirty intervals must be consumed exactly once")
