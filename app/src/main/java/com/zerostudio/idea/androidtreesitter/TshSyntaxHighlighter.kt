@@ -731,12 +731,10 @@ class TshSyntaxHighlighter(
             if (generation.get() != active.ticket || largeSession !== active) return@launch
             try {
                 active.nativeMutex.withLock {
-                    var earliestOffset = Long.MAX_VALUE
                     for (edit in edits) {
                         check(engine.applyNativeDocumentEdit(
                             active.nativeHandle, edit.startByte, edit.oldEndByte, edit.insertedUtf16Le
                         )) { "Native incremental Tree-sitter edit failed" }
-                        earliestOffset = minOf(earliestOffset, edit.startByte / 2L)
                         active.lengthChars.addAndGet(
                             edit.insertedChars.toLong() - edit.deletedChars.toLong()
                         )
@@ -761,51 +759,33 @@ class TshSyntaxHighlighter(
                     // Lexical state can flow to EOF. Invalidate downstream captures
                     // and failed-work markers only after the edit transaction completes.
                     active.documentRevision.incrementAndGet()
-                    // Native byte intervals are already expressed in the committed
-                    // document's UTF-16LE coordinates. Never consult EditorBuffer from
-                    // this IO worker: the editor may begin another UI edit concurrently.
-                    // The minimum dirty line can precede the textual edit when Tree-sitter
-                    // reparses an enclosing construct.
+                    // Query matches can depend on ancestors, siblings and predicates
+                    // outside their emitted captures. Until the native result carries a
+                    // proven dependency envelope, no prefix viewport can be certified
+                    // reusable from byte/line overlap alone. Match the native cache's
+                    // conservative policy and invalidate every cached viewport for this
+                    // document revision.
                     val dirtyStartByte = dirtySnapshot.byteRanges.minOfOrNull { it.startByte }
                     val dirtyStartLine = dirtySnapshot.ranges.minOfOrNull { it.startLine }
-                    val hasReliableDirtyStart =
-                        dirtyStartByte != null && dirtyStartByte / 2L <= earliestOffset
-                    // If pre-edit and committed coordinates cannot be reconciled, clear
-                    // the whole cache prefix rather than risk retaining stale captures.
-                    val firstInvalidLong = if (hasReliableDirtyStart) dirtyStartByte!! / 2L else 0L
-                    val firstInvalid = firstInvalidLong
-                        .coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
-                    val invalidationStartLine = if (hasReliableDirtyStart && dirtyStartLine != null) {
-                        (dirtyStartLine + 1L).coerceAtMost(Int.MAX_VALUE.toLong()).toInt().coerceAtLeast(1)
-                    } else 1
-                    // Captures may begin before an edit and extend through it; invalidate
-                    // every cached viewport that intersects the structurally changed suffix.
                     captureCache.invalidate { key, _ ->
-                        key.sessionId == active.cacheSessionId && key.endUtf16 > firstInvalid
+                        key.sessionId == active.cacheSessionId
                     }
-                    active.rangeWork.keys.filter { it.endUtf16 > firstInvalid }
-                        .forEach(active.rangeWork::remove)
+                    active.rangeWork.clear()
+                    Log.v(
+                        TAG,
+                        "Native dirty snapshot applied: version=${dirtySnapshot.documentVersion} " +
+                            "byteRanges=${dirtySnapshot.byteRanges.size} lineRanges=${dirtySnapshot.ranges.size} " +
+                            "firstDirtyByte=$dirtyStartByte firstDirtyLine=$dirtyStartLine " +
+                            "captureCache=cleared reason=query-dependency-envelope-unavailable"
+                    )
                     // Publish the new revision only after its stale cache entries are gone.
                     active.appliedEditEpoch.set(editEpoch)
                     if (generation.get() == active.ticket && largeSession === active) {
-                        // Resolve the current line count on the editor thread, not from
-                        // this background transaction. Regex state can propagate to EOF,
-                        // so the style invalidation remains a dynamic suffix.
-                        scope.launch(Dispatchers.Main.immediate) {
-                            if (generation.get() != active.ticket || largeSession !== active) {
-                                return@launch
-                            }
-                            val currentLineCount = host?.buffer?.getLineCount() ?: 0
-                            if (currentLineCount > 0) {
-                                host?.invalidateStyles(
-                                    invalidationStartLine.coerceIn(1, currentLineCount),
-                                    currentLineCount
-                                )
-                            } else {
-                                host?.invalidateStyles()
-                            }
-                            host?.invalidateStructure()
-                        }
+                        // Cached row output can contain captures whose query dependency
+                        // crosses the edited range. Until dependency envelopes are stored,
+                        // redraw all rows rather than risk retaining a stale prefix.
+                        host?.invalidateStyles()
+                        host?.invalidateStructure()
                     }
                 }
             } catch (cancelled: CancellationException) {
