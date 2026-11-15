@@ -420,7 +420,7 @@ class DocumentPartitionManager(
 
     private companion object {
         const val POINT_CHECKPOINT_STRIDE = 64L * 1024L
-        const val SOURCE_SCAN_CHUNK_CHARS = 64 * 1024
+        const val SOURCE_SCAN_CHUNK_CHARS = 128 * 1024
     }
 
     private fun safeAdd(a: Long, b: Long): Long =

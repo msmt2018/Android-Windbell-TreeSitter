@@ -224,9 +224,9 @@ object TshTreeSitterEditCompiler {
                 result[absolute] = TSPoint.create(row, column)
                 targetIndex++
             }
-            require(targetIndex == targets.size) {
-                "An edit endpoint falls inside a UTF-16 surrogate pair"
-            }
+            // Endpoints between the two code units of a surrogate pair are
+            // intentionally left unresolved. The caller maps the missing endpoint
+            // to TSH-EDIT-COMPILE-005 instead of collapsing it into a generic error.
             return result
         }
     }
