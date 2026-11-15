@@ -1279,20 +1279,18 @@ void WindbellEngine::matchBlockRecursive(
     onig_region_free(end_region, 1);
 }
 
-static bool appendQueryRootDependencyRanges(
+static bool collectQueryRootRanges(
     TSTree* tree,
     TSSymbol root_symbol,
     uint32_t range_start,
     uint32_t range_end,
     uint32_t total_bytes,
-    uint32_t pattern_index,
-    uint8_t dependency_scope,
-    std::vector<HighlightDependencyRange>* output
+    std::vector<std::pair<uint32_t, uint32_t>>* ranges
 ) {
-    if (!tree || root_symbol == 0 || !output || range_start >= range_end) return false;
+    if (!tree || root_symbol == 0 || !ranges || range_start >= range_end) return false;
     TSTreeCursor cursor = ts_tree_cursor_new(ts_tree_root_node(tree));
     bool done = false;
-    const size_t before = output->size();
+    const size_t before = ranges->size();
     try {
         while (!done) {
             const TSNode node = ts_tree_cursor_current_node(&cursor);
@@ -1313,11 +1311,7 @@ static bool appendQueryRootDependencyRanges(
                         dependency_start = dependency_start >= 2u ? dependency_start - 2u : 0u;
                         dependency_end = std::min<uint32_t>(total_bytes, dependency_end + 2u);
                     }
-                    output->push_back({
-                        dependency_start, dependency_end, pattern_index,
-                        static_cast<uint8_t>(HighlightSource::NATIVE_QUERY),
-                        dependency_scope
-                    });
+                    ranges->emplace_back(dependency_start, dependency_end);
                 }
                 if (ts_tree_cursor_goto_first_child(&cursor)) continue;
             }
@@ -1333,7 +1327,7 @@ static bool appendQueryRootDependencyRanges(
         throw;
     }
     ts_tree_cursor_delete(&cursor);
-    return output->size() > before;
+    return ranges->size() > before;
 }
 
 static void appendQueryPatternDependencies(
@@ -1346,6 +1340,10 @@ static void appendQueryPatternDependencies(
     std::vector<HighlightDependencyRange>* output
 ) {
     if (!output) return;
+    // Query blocks commonly contain many patterns rooted at the same syntax
+    // type. Walk the viewport-overlapping AST once per distinct root symbol,
+    // then attach the resulting immutable envelopes to each pattern.
+    std::unordered_map<TSSymbol, std::vector<std::pair<uint32_t, uint32_t>>> roots_by_symbol;
     for (const auto& query : grammar.native_queries) {
         if (!query.enabled || !query.query) continue;
         for (const auto& item : query.pattern_metadata) {
@@ -1355,10 +1353,24 @@ static void appendQueryPatternDependencies(
             const bool local_root = metadata.dependency_scope ==
                     NativeQueryProgram::QueryDependencyScope::ROOTED_LOCAL &&
                 metadata.root_node_symbol != 0 && language != nullptr;
-            if (local_root && appendQueryRootDependencyRanges(
-                    tree, metadata.root_node_symbol, range_start, range_end,
-                    total_bytes, item.first, scope, output)) {
-                continue;
+            if (local_root) {
+                auto found = roots_by_symbol.find(metadata.root_node_symbol);
+                if (found == roots_by_symbol.end()) {
+                    std::vector<std::pair<uint32_t, uint32_t>> ranges;
+                    collectQueryRootRanges(tree, metadata.root_node_symbol,
+                        range_start, range_end, total_bytes, &ranges);
+                    found = roots_by_symbol.emplace(
+                        metadata.root_node_symbol, std::move(ranges)).first;
+                }
+                if (!found->second.empty()) {
+                    for (const auto& range : found->second) {
+                        output->push_back({
+                            range.first, range.second, item.first,
+                            static_cast<uint8_t>(HighlightSource::NATIVE_QUERY), scope
+                        });
+                    }
+                    continue;
+                }
             }
             // No static proof or no candidate root node in this viewport:
             // retain a document dependency rather than assume a missing match
