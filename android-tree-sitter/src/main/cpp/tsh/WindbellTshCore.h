@@ -149,7 +149,6 @@ struct NativeQueryProgram {
         bool enabled = true;
         bool is_rooted = false;
         bool is_non_local = false;
-        int32_t root_capture_id = -1;
         QueryDependencyScope dependency_scope = QueryDependencyScope::UNKNOWN;
     };
 

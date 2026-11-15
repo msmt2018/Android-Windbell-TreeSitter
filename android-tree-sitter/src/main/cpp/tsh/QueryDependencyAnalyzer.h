@@ -19,7 +19,7 @@ namespace windbell::tsh {
  */
 inline std::string findDirectRootCaptureName(std::string_view pattern) {
     size_t position = 0;
-    const auto skip_space_and_comments = [&]() mutable {
+    auto skip_space_and_comments = [&]() {
         for (;;) {
             while (position < pattern.size() &&
                    (pattern[position] == ' ' || pattern[position] == '\t' ||
