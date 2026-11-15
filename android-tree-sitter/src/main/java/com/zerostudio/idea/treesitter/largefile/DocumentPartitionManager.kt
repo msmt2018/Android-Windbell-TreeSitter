@@ -94,6 +94,9 @@ internal class CompactPointCheckpointIndex(initialCapacity: Int = 256) {
         if (offset < 0L || row < 0L || column < 0L) {
             throw IllegalArgumentException("Checkpoint coordinates must be non-negative")
         }
+        if (size > 0 && offset < offsetAt(size - 1)) {
+            throw IllegalArgumentException("Checkpoint offsets must be monotonic")
+        }
         if (offsets64 == null &&
             (offset > Int.MAX_VALUE || row > Int.MAX_VALUE || column > Int.MAX_VALUE)) {
             promoteTo64Bit()
@@ -116,7 +119,14 @@ internal class CompactPointCheckpointIndex(initialCapacity: Int = 256) {
         val wide = offsets64
         val currentCapacity = wide?.size ?: offsets32.size
         if (size < currentCapacity) return
-        val next = if (size < 1024) size * 2 else size + (size ushr 1)
+        if (size == Int.MAX_VALUE) {
+            throw OutOfMemoryError("Point checkpoint index capacity exhausted")
+        }
+        val next = when {
+            size < 1024 -> size * 2
+            size <= Int.MAX_VALUE - (size ushr 1) -> size + (size ushr 1)
+            else -> Int.MAX_VALUE
+        }
         val capacity = next.coerceAtLeast(size + 1)
         if (wide != null) {
             offsets64 = wide.copyOf(capacity)
@@ -139,6 +149,7 @@ internal class CompactPointCheckpointIndex(initialCapacity: Int = 256) {
     }
 
     fun floorIndex(offset: Long): Int {
+        check(size > 0) { "Point checkpoint index has not been seeded" }
         var low = 0
         var high = size - 1
         var best = 0

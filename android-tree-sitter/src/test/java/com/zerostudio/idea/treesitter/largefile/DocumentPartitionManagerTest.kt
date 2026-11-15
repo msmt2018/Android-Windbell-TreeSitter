@@ -180,6 +180,25 @@ class DocumentPartitionManagerTest {
 
 
 
+    @Test fun pointCheckpointIndexRejectsNonMonotonicOffsetsWithoutMutation() {
+        val index = CompactPointCheckpointIndex(1)
+        index.add(10L, 0L, 10L)
+        assertThrows(IllegalArgumentException::class.java) {
+            index.add(9L, 0L, 9L)
+        }
+        assertEquals(1, index.size)
+        assertEquals(10L, index.offsetAt(0))
+    }
+
+    @Test fun pointCheckpointFloorLookupRequiresAnInitialCheckpoint() {
+        val index = CompactPointCheckpointIndex(0)
+        assertThrows(IllegalStateException::class.java) {
+            index.floorIndex(0L)
+        }
+        index.add(0L, 0L, 0L)
+        assertEquals(0, index.floorIndex(0L))
+    }
+
     @Test fun tokenizerCheckpointStoreSnapshotsMutableStateBeforeWeighing() {
         val mutableStates = mutableListOf("root")
         val store = TokenizerCheckpointStore(maxEntries = 8, maxBytes = 512L)
