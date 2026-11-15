@@ -4,20 +4,22 @@ import android.text.SpannableStringBuilder
 import com.zerostudio.idea.treesitter.tsh.WindbellTshEngine
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
-import org.junit.runner.RunWith
 import org.junit.Before
 import org.junit.Test
-import org.junit.jupiter.api.Assertions.assertEquals
-import org.junit.jupiter.api.Assertions.assertFalse
-import org.junit.jupiter.api.Assertions.assertTrue
-import org.robolectric.RobolectricTestRunner
+import androidx.test.ext.junit.runners.AndroidJUnit4
+import org.junit.runner.RunWith
+import org.junit.Assert.assertEquals as junitAssertEquals
+import org.junit.Assert.assertFalse as junitAssertFalse
+import org.junit.Assert.assertTrue as junitAssertTrue
 
 /**
- * Android Spannable integration tests run under Robolectric rather than the
- * Android SDK's throwing local-test stubs.
+ * Android Spannable integration tests run on a real Android instrumentation runtime.
  */
-@RunWith(RobolectricTestRunner::class)
+@RunWith(AndroidJUnit4::class)
 class WindbellTshSpannableRenderingTest {
+    private fun assertTrue(condition: Boolean, message: String? = null) = junitAssertTrue(message, condition)
+    private fun assertFalse(condition: Boolean, message: String? = null) = junitAssertFalse(message, condition)
+    private fun assertEquals(expected: Any?, actual: Any?, message: String? = null) = junitAssertEquals(message, expected, actual)
     @Before
     fun setUp() {
         TreeSitter.loadLibrary()
