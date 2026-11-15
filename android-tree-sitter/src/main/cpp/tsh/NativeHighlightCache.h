@@ -216,6 +216,15 @@ public:
                         reusable = false;
                         break;
                     }
+                    // Stateful Regex dependencies are based on a tokenizer
+                    // checkpoint. Any edit at/before that checkpoint may change
+                    // the state summarized by it, even when the edit is outside
+                    // the recorded scan interval.
+                    if ((dependency.flags & HIGHLIGHT_DEPENDENCY_CHECKPOINT_BASED) != 0 &&
+                        editStart <= dependency.start_byte) {
+                        reusable = false;
+                        break;
+                    }
                     // Bounded Regex can match across either edge of its scan
                     // window. An insertion at the exact edge changes that
                     // window's context even when the old interval can be shifted.

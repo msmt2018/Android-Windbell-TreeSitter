@@ -48,7 +48,8 @@ static_assert(sizeof(HighlightSpan) == 24, "HighlightSpan ABI must remain 24 byt
 
 enum HighlightDependencyFlags : uint8_t {
     HIGHLIGHT_DEPENDENCY_DOCUMENT_WIDE = 1u << 0,
-    HIGHLIGHT_DEPENDENCY_BOUNDARY_SENSITIVE = 1u << 1
+    HIGHLIGHT_DEPENDENCY_BOUNDARY_SENSITIVE = 1u << 1,
+    HIGHLIGHT_DEPENDENCY_CHECKPOINT_BASED = 1u << 2
 };
 
 struct HighlightDependencyRange {

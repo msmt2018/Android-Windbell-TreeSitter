@@ -1763,6 +1763,11 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                 }
             }
         }
+        // The cached stateful-Regex result depends on the state at this
+        // checkpoint and on every byte scanned through the requested range.
+        // A matching stale checkpoint before the viewport can shorten this
+        // prefix only after its state stack has actually converged.
+        uint32_t state_dependency_start = position;
         auto save_regex_state_checkpoint = [&]() {
             if (!regex_state_checkpoints || position < next_checkpoint) return;
             RegexStateCheckpoint checkpoint;
@@ -1788,6 +1793,9 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                         }
                     }
                     converged = true;
+                    if (position <= range_start_byte) {
+                        state_dependency_start = position;
+                    }
                 } else {
                     // The edit changed lexical state at this checkpoint. Keep
                     // later candidates: a subsequent checkpoint may still be
@@ -2071,6 +2079,32 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                 position = state_window_start + static_cast<uint32_t>(next - state_text_start);
                 if (++zero_width_steps > 64) zero_width_steps = 0;
                 save_regex_state_checkpoint();
+            }
+        }
+        if (dependency_ranges) {
+            if (!grammar->regex_state_graph_bounded || state_full_source_fallback) {
+                dependency_ranges->push_back({
+                    0u, total_bytes, UINT32_MAX,
+                    static_cast<uint8_t>(HighlightSource::REGEX_STATE), 0xFFu,
+                    HIGHLIGHT_DEPENDENCY_DOCUMENT_WIDE
+                });
+            } else {
+                const uint64_t lookahead_end = std::max<uint64_t>(
+                    position,
+                    static_cast<uint64_t>(range_end_byte) + state_window_match_width);
+                const uint32_t dependency_end = static_cast<uint32_t>(
+                    std::min<uint64_t>(total_bytes, lookahead_end));
+                uint8_t flags = static_cast<uint8_t>(
+                    HIGHLIGHT_DEPENDENCY_CHECKPOINT_BASED |
+                    HIGHLIGHT_DEPENDENCY_BOUNDARY_SENSITIVE);
+                if (state_dependency_start == 0u && dependency_end == total_bytes) {
+                    flags = static_cast<uint8_t>(
+                        flags | HIGHLIGHT_DEPENDENCY_DOCUMENT_WIDE);
+                }
+                dependency_ranges->push_back({
+                    state_dependency_start, dependency_end, UINT32_MAX,
+                    static_cast<uint8_t>(HighlightSource::REGEX_STATE), 0xFFu, flags
+                });
             }
         }
         onig_region_free(state_case_region, 1);

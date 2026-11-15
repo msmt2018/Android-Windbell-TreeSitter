@@ -1874,7 +1874,7 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
         // TextSource window executors; no legacy whole-document heap bridge.
     }
     std::vector<HighlightSpan> candidates;
-    std::vector<HighlightDependencyRange> query_dependencies;
+    std::vector<HighlightDependencyRange> highlight_dependencies;
     uint32_t counts[4] = {};
     std::vector<HighlightSpan> spans;
     try {
@@ -1886,7 +1886,7 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
             evaluation_start,
             evaluation_end, highlight_source,
             &document->regex_state_checkpoints, document->source->version(),
-            document->partition_index.version(), &query_dependencies);
+            document->partition_index.version(), &highlight_dependencies);
         if (diagnostics == JNI_TRUE) spans = std::move(candidates);
         if (requested_start == requested_end) {
             spans.clear();
@@ -1928,7 +1928,7 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
 
     // Query dependencies were collected from every possible rooted AST
     // candidate intersecting the evaluated viewport, not merely emitted captures.
-    cache_value.dependencies = std::move(query_dependencies);
+    cache_value.dependencies = std::move(highlight_dependencies);
     // If Query execution was unavailable or did not produce dependency
     // metadata, never cache a partial result under an assumed local scope.
     if (!grammar->native_queries.empty() && cache_value.dependencies.empty()) {
@@ -1951,8 +1951,22 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
     // Stateful, block and document-context Regex can propagate lexical state
     // beyond the viewport. They stay document-dependent until checkpoint
     // convergence produces a verified post-edit dependency boundary.
-    if (!grammar->regex_states.empty() || source_requires_contiguous_regex ||
-        has_context_block) {
+    if (source_requires_contiguous_regex || has_context_block) {
+        cache_value.dependencies.push_back({
+            0u, static_cast<uint32_t>(total_bytes), UINT32_MAX,
+            static_cast<uint8_t>(HighlightSource::REGEX_STATE), 0xFFu,
+            HIGHLIGHT_DEPENDENCY_DOCUMENT_WIDE
+        });
+    }
+    const bool has_regex_state_dependency = std::any_of(
+        cache_value.dependencies.begin(), cache_value.dependencies.end(),
+        [](const HighlightDependencyRange& dependency) {
+            return dependency.source ==
+                static_cast<uint8_t>(HighlightSource::REGEX_STATE);
+        });
+    if (!grammar->regex_states.empty() && !has_regex_state_dependency) {
+        // If the stateful pipeline did not publish a verified checkpoint
+        // envelope, never admit its result under a guessed local dependency.
         cache_value.dependencies.push_back({
             0u, static_cast<uint32_t>(total_bytes), UINT32_MAX,
             static_cast<uint8_t>(HighlightSource::REGEX_STATE), 0xFFu,

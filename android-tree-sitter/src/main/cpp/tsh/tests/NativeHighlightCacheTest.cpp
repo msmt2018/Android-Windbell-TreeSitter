@@ -13,6 +13,7 @@ using windbell::tsh::analyzeSimpleQueryRoot;
 using windbell::tsh::queryPredicateRequiresAncestorContext;
 using windbell::tsh::HIGHLIGHT_DEPENDENCY_DOCUMENT_WIDE;
 using windbell::tsh::HIGHLIGHT_DEPENDENCY_BOUNDARY_SENSITIVE;
+using windbell::tsh::HIGHLIGHT_DEPENDENCY_CHECKPOINT_BASED;
 
 namespace {
 NativeHighlightCache::Key key(uint64_t version, uint32_t start, uint32_t end) {
@@ -137,6 +138,32 @@ void testRegexDependencyInvalidatesBoundaryInsertion() {
     adjacent_cache.rebaseAfterEdit(2, 2, 2, 260, 262, 0, {{260, 260}});
     assert(adjacent_cache.size() == 0);
 }
+void testCheckpointDependencyInvalidatesEarlierEdits() {
+    NativeHighlightCache cache;
+    auto cached = value(150, 160, 100, 200);
+    cached.dependencies[0].source = static_cast<uint8_t>(HighlightSource::REGEX_STATE);
+    cached.dependencies[0].flags = static_cast<uint8_t>(
+        HIGHLIGHT_DEPENDENCY_CHECKPOINT_BASED |
+        HIGHLIGHT_DEPENDENCY_BOUNDARY_SENSITIVE);
+    cache.put(key(1, 140, 180), std::move(cached));
+
+    // The edit is before the recorded scan interval, but it can change the
+    // tokenizer state represented by the checkpoint at byte 100.
+    cache.rebaseAfterEdit(2, 2, 2, 40, 42, 2, {{40, 42}});
+    assert(cache.size() == 0);
+}
+void testCheckpointDependencyKeepsLaterUnrelatedEdits() {
+    NativeHighlightCache cache;
+    auto cached = value(150, 160, 100, 200);
+    cached.dependencies[0].source = static_cast<uint8_t>(HighlightSource::REGEX_STATE);
+    cached.dependencies[0].flags = static_cast<uint8_t>(
+        HIGHLIGHT_DEPENDENCY_CHECKPOINT_BASED |
+        HIGHLIGHT_DEPENDENCY_BOUNDARY_SENSITIVE);
+    cache.put(key(1, 140, 180), std::move(cached));
+
+    cache.rebaseAfterEdit(2, 2, 2, 240, 242, 2, {{240, 242}});
+    assert(cache.find(key(2, 140, 180)) != nullptr);
+}
 void testSharedBudgetReleasedOnEviction() {
     auto budget = std::make_shared<SharedNativeMemoryBudget>(1024u * 1024u);
     NativeHighlightCache cache(1024u * 1024u, budget);
@@ -156,6 +183,8 @@ int main() {
     testInsertionInsideDependencyEvictsSnapshot();
     testDocumentWideDependencyInvalidatesBoundaryInsertion();
     testRegexDependencyInvalidatesBoundaryInsertion();
+    testCheckpointDependencyInvalidatesEarlierEdits();
+    testCheckpointDependencyKeepsLaterUnrelatedEdits();
     testSharedBudgetReleasedOnEviction();
     return 0;
 }
