@@ -1775,7 +1775,8 @@ class WindbellTshLinkageTest {
         val block = spans.firstOrNull { it.styleId == blockId }
         assertNotNull(block, "The block start delimiter must be captured.")
         assertEquals(0, block!!.startByte)
-        assertEquals("BEGIN".length * 2, block.endByte)
+        assertEquals((code.indexOf("END") + "END".length) * 2, block.endByte,
+            "The block scope covers both delimiters and the enclosed content.")
 
         val content = spans.firstOrNull { it.styleId == contentId }
         assertNotNull(content, "The multiline block content must be captured.")

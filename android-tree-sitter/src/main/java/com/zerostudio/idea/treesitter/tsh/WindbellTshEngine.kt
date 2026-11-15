@@ -357,7 +357,7 @@ class WindbellTshEngine private constructor() {
                 "autoClosing" -> {
                     val parts = second.split('\u001F')
                     autoClosingPairs += AutoClosingPair(first, parts.firstOrNull().orEmpty(),
-                        parts.getOrNull(1)?.split('\u001F')?.filter { it.isNotEmpty() }.orEmpty())
+                        parts.drop(1).filter { it.isNotEmpty() })
                 }
                 "wordPattern" -> wordPattern = first
                 "indentIncrease", "indentDecrease", "indentNextLine", "unIndentedLine" ->
