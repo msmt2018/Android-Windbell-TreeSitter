@@ -585,11 +585,15 @@ class TshSyntaxHighlighter(
 
     private fun startViewportWorker() {
         scope.launch(Dispatchers.IO) {
+            var drainedNormally = false
             try {
                 while (true) {
                     val batch = synchronized(viewportRequestLock) {
                         if (queuedViewportRanges.isEmpty()) {
+                            // Publish idle before returning. A new frame can now start
+                            // another worker; this worker's finally must not reset it.
                             viewportWorkerActive = false
+                            drainedNormally = true
                             return@launch
                         }
                         queuedViewportRanges.also { queuedViewportRanges = emptyList() }
@@ -600,14 +604,16 @@ class TshSyntaxHighlighter(
                     }
                 }
             } finally {
-                val restart = synchronized(viewportRequestLock) {
-                    viewportWorkerActive = false
-                    if (queuedViewportRanges.isNotEmpty()) {
-                        viewportWorkerActive = true
-                        true
-                    } else false
+                if (!drainedNormally) {
+                    val restart = synchronized(viewportRequestLock) {
+                        viewportWorkerActive = false
+                        if (queuedViewportRanges.isNotEmpty()) {
+                            viewportWorkerActive = true
+                            true
+                        } else false
+                    }
+                    if (restart) startViewportWorker()
                 }
-                if (restart) startViewportWorker()
             }
         }
     }
