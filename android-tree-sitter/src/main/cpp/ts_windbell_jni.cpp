@@ -1964,15 +1964,18 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
                     static_cast<uint8_t>(HighlightSource::REGEX_STATE) &&
                 (dependency.flags & HIGHLIGHT_DEPENDENCY_DOCUMENT_WIDE) != 0;
         });
-    if ((source_requires_contiguous_regex || has_context_block) &&
-        !has_document_wide_regex_dependency) {
+    const bool added_global_regex_dependency =
+        (source_requires_contiguous_regex || has_context_block) &&
+        !has_document_wide_regex_dependency;
+    if (added_global_regex_dependency) {
         cache_value.dependencies.push_back({
             0u, static_cast<uint32_t>(total_bytes), UINT32_MAX,
             static_cast<uint8_t>(HighlightSource::REGEX_STATE), 0xFFu,
             HIGHLIGHT_DEPENDENCY_DOCUMENT_WIDE
         });
     }
-    if (!grammar->regex_states.empty() && !has_regex_state_dependency) {
+    if (!grammar->regex_states.empty() &&
+        !has_regex_state_dependency && !added_global_regex_dependency) {
         // If the stateful pipeline did not publish a verified checkpoint
         // envelope, never admit its result under a guessed local dependency.
         cache_value.dependencies.push_back({
