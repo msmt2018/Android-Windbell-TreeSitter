@@ -1377,9 +1377,10 @@ static void appendQueryPatternDependencies(
     // duplicate record per Pattern or per emitted Capture.
     std::vector<std::pair<uint32_t, uint32_t>> root_ranges;
     for (const TSSymbol symbol : root_symbols) {
-        std::vector<std::pair<uint32_t, uint32_t>> symbol_ranges;
+        // Collect directly into the aggregate vector to avoid holding a second
+        // viewport-sized list of syntax-node ranges at the same time.
         if (!collectQueryRootRanges(
-                tree, symbol, range_start, range_end, total_bytes, &symbol_ranges)) {
+                tree, symbol, range_start, range_end, total_bytes, &root_ranges)) {
             // A missing candidate root is not proof that an edit elsewhere
             // cannot create a root covering this viewport.
             output->push_back({
@@ -1389,7 +1390,6 @@ static void appendQueryPatternDependencies(
             });
             return;
         }
-        root_ranges.insert(root_ranges.end(), symbol_ranges.begin(), symbol_ranges.end());
     }
 
     std::sort(root_ranges.begin(), root_ranges.end());
