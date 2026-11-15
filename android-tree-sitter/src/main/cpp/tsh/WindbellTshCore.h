@@ -130,12 +130,26 @@ struct RegexStateRule {
 // One independently compiled native Tree-sitter query block. The source text is
 // consumed directly by ts_query_new; no generated SCM artifact exists.
 struct NativeQueryProgram {
+    // This is a compile-time proof classification, not a guessed byte range.
+    // ROOTED_LOCAL is eligible for a future node-root envelope; until the
+    // matched root node is captured explicitly, cache admission still uses a
+    // document-wide dependency. NON_LOCAL and UNKNOWN are always document-wide.
+    enum class QueryDependencyScope : uint8_t {
+        ROOTED_LOCAL = 0,
+        NON_LOCAL = 1,
+        UNROOTED = 2,
+        UNKNOWN = 3
+    };
+
     struct PatternMetadata {
         uint32_t pattern_index = 0;
         int32_t priority = 0;
         uint32_t declaration_order = 0;
         bool has_priority = false;
         bool enabled = true;
+        bool is_rooted = false;
+        bool is_non_local = false;
+        QueryDependencyScope dependency_scope = QueryDependencyScope::UNKNOWN;
     };
 
     std::string id;

@@ -70,8 +70,19 @@ public:
         }
     };
 
+    struct DependencyRange {
+        uint32_t start_byte = 0;
+        uint32_t end_byte = 0;
+        uint32_t pattern_index = UINT32_MAX;
+        uint8_t source = static_cast<uint8_t>(HighlightSource::UNKNOWN);
+    };
+
     struct Value {
         std::vector<HighlightSpan> spans;
+        // Absolute UTF-16LE byte ranges whose source text/tree structure may
+        // influence this viewport result. Unknown dependencies are represented
+        // explicitly as [0, document_size), never inferred from capture spans.
+        std::vector<DependencyRange> dependencies;
         uint32_t match_counts[4] = {};
     };
 
@@ -98,10 +109,15 @@ public:
     void put(Key key, Value value) {
         constexpr size_t kEntryOverhead =
             sizeof(Value) + sizeof(Key) + 5u * sizeof(void *);
-        if (value.spans.capacity() >
-            (static_cast<size_t>(-1) - kEntryOverhead) / sizeof(HighlightSpan)) return;
-        const size_t bytes =
-            value.spans.capacity() * sizeof(HighlightSpan) + kEntryOverhead;
+        const size_t span_capacity = value.spans.capacity();
+        const size_t dependency_capacity = value.dependencies.capacity();
+        if (span_capacity > (static_cast<size_t>(-1) - kEntryOverhead) /
+                sizeof(HighlightSpan)) return;
+        const size_t span_bytes = span_capacity * sizeof(HighlightSpan);
+        if (dependency_capacity > (static_cast<size_t>(-1) - kEntryOverhead - span_bytes) /
+                sizeof(DependencyRange)) return;
+        const size_t bytes = span_bytes +
+            dependency_capacity * sizeof(DependencyRange) + kEntryOverhead;
         if (budget_bytes_ == 0 || bytes > budget_bytes_) return;
         auto existing = entries_.find(key);
         if (existing != entries_.end()) erase(existing);
@@ -131,30 +147,127 @@ public:
         }
     }
 
-    // Rebase cached viewport results across one committed text edit. Entries
-    // intersecting the edit or any Tree-sitter changed range are discarded;
-    // unaffected entries keep their spans and receive the new document versions.
-    // If rebuilding the bounded cache fails, clear it rather than expose stale data.
+    // Rebase immutable viewport snapshots into the new document coordinate
+    // space. Every producer must attach its dependency envelope. Missing
+    // dependency metadata is treated as document-wide and therefore evicted.
+    // dirtyRanges are Tree-sitter changed ranges in POST-edit coordinates.
     void rebaseAfterEdit(
         uint64_t newVersion, uint64_t newSourceVersion, uint64_t newPartitionVersion,
         uint32_t editStart, uint32_t oldEditEnd, uint32_t insertedBytes,
         const std::vector<std::pair<uint32_t, uint32_t>> &dirtyRanges
     ) noexcept {
-        // A Tree-sitter query result may depend on syntax outside every emitted
-        // capture (ancestors, siblings, predicates, and surrounding structure).
-        // Capture/viewport overlap therefore cannot prove that an entry is still
-        // valid after an edit. Until query execution records a conservative
-        // dependency envelope per cache entry, invalidate on every edit.
-        // This trades cache hit rate for correctness rather than exposing stale
-        // syntax captures under a new document version.
-        (void)newVersion;
-        (void)newSourceVersion;
-        (void)newPartitionVersion;
-        (void)editStart;
-        (void)oldEditEnd;
-        (void)insertedBytes;
-        (void)dirtyRanges;
-        clear();
+        if (oldEditEnd < editStart) {
+            clear();
+            return;
+        }
+        const int64_t delta = static_cast<int64_t>(insertedBytes) -
+            static_cast<int64_t>(oldEditEnd - editStart);
+        const uint64_t insertedEnd64 = static_cast<uint64_t>(editStart) + insertedBytes;
+        if (insertedEnd64 > UINT32_MAX) {
+            clear();
+            return;
+        }
+        const uint32_t insertedEnd = static_cast<uint32_t>(insertedEnd64);
+
+        auto overlaps = [](uint32_t a0, uint32_t a1, uint32_t b0, uint32_t b1) noexcept {
+            return a0 < b1 && b0 < a1;
+        };
+        auto transformRange = [&](uint32_t *start, uint32_t *end) noexcept -> bool {
+            if (*start > *end) return false;
+            // A dependency/capture crossing replaced text, or containing an
+            // insertion point, cannot be proven reusable.
+            if (oldEditEnd > editStart && overlaps(*start, *end, editStart, oldEditEnd))
+                return false;
+            if (oldEditEnd == editStart && *start < editStart && *end > editStart)
+                return false;
+            if (*end <= editStart) return true;
+            if (*start >= oldEditEnd) {
+                const int64_t shiftedStart = static_cast<int64_t>(*start) + delta;
+                const int64_t shiftedEnd = static_cast<int64_t>(*end) + delta;
+                if (shiftedStart < 0 || shiftedEnd < shiftedStart ||
+                    shiftedEnd > UINT32_MAX) return false;
+                *start = static_cast<uint32_t>(shiftedStart);
+                *end = static_cast<uint32_t>(shiftedEnd);
+                return true;
+            }
+            return false;
+        };
+
+        std::unordered_map<Key, Entry, KeyHash> rebased;
+        try {
+            rebased.reserve(entries_.size());
+            Entry *entry = head_;
+            while (entry) {
+                Entry *next = entry->next;
+                auto found = entries_.find(*entry->key);
+                if (found == entries_.end()) {
+                    unlink(entry);
+                    entry = next;
+                    continue;
+                }
+
+                Key next_key = found->first;
+                bool reusable = !entry->value.dependencies.empty();
+                // The requested viewport itself must not include replaced text.
+                reusable = reusable && transformRange(
+                    &next_key.start_byte, &next_key.end_byte);
+
+                for (auto &dependency : entry->value.dependencies) {
+                    if (!reusable) break;
+                    reusable = transformRange(
+                        &dependency.start_byte, &dependency.end_byte);
+                    if (!reusable) break;
+                    if (insertedBytes != 0 &&
+                        overlaps(dependency.start_byte, dependency.end_byte,
+                                 editStart, insertedEnd)) {
+                        reusable = false;
+                        break;
+                    }
+                    for (const auto &dirty : dirtyRanges) {
+                        if (dirty.first < dirty.second &&
+                            overlaps(dependency.start_byte, dependency.end_byte,
+                                     dirty.first, dirty.second)) {
+                            reusable = false;
+                            break;
+                        }
+                    }
+                }
+
+                for (auto &span : entry->value.spans) {
+                    if (!reusable) break;
+                    reusable = transformRange(&span.start_byte, &span.end_byte);
+                }
+
+                if (!reusable) {
+                    erase(found);
+                    entry = next;
+                    continue;
+                }
+
+                next_key.version = newVersion;
+                next_key.source_version = newSourceVersion;
+                next_key.partition_version = newPartitionVersion;
+                auto node = entries_.extract(found);
+                node.key() = next_key;
+                auto inserted = rebased.insert(std::move(node));
+                if (!inserted.inserted) {
+                    Entry *duplicate = &inserted.position->second;
+                    const size_t released = std::min(used_bytes_, entry->bytes);
+                    used_bytes_ -= released;
+                    if (shared_budget_) shared_budget_->release(released);
+                    unlink(entry);
+                    (void)duplicate;
+                } else {
+                    inserted.position->second.key = &inserted.position->first;
+                }
+                entry = next;
+            }
+            entries_.swap(rebased);
+        } catch (...) {
+            // A partially rebased cache is never published. Cache admission is
+            // optional; dropping it is safer than returning mixed-version data.
+            clear();
+        }
     }
 
     void clear() noexcept {

@@ -1914,6 +1914,62 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
 
     NativeHighlightCache::Value cache_value;
     cache_value.spans = std::move(spans);
+
+    // Build explicit dependency envelopes for the cached viewport. Capture
+    // spans are output locations, not proof of what the query depended on.
+    // Until a query match exposes its exact rooted syntax node, every enabled
+    // TSQuery pattern is conservatively document-dependent. This is deliberate:
+    // it prevents a sibling/ancestor/predicate change from reusing stale captures.
+    for (const auto &query : grammar->native_queries) {
+        if (!query.enabled || !query.query) continue;
+        for (const auto &pattern : query.pattern_metadata) {
+            if (!pattern.second.enabled) continue;
+            cache_value.dependencies.push_back({
+                0u, static_cast<uint32_t>(total_bytes), pattern.first,
+                static_cast<uint8_t>(HighlightSource::NATIVE_QUERY)
+            });
+        }
+    }
+    // AST selectors may inspect parent, ancestor, sibling, field and descendant
+    // relationships. Their dependency root is not represented by emitted spans.
+    if (!grammar->ast_selector_rules.empty()) {
+        cache_value.dependencies.push_back({
+            0u, static_cast<uint32_t>(total_bytes), UINT32_MAX,
+            static_cast<uint8_t>(HighlightSource::AST_SELECTOR)
+        });
+    }
+    // Stateful and document-context Regex have lexical dependencies extending
+    // to checkpoints/EOF. They remain document-wide until their checkpoint
+    // convergence result is surfaced as an explicit dependency envelope.
+    if (!grammar->regex_states.empty() || source_requires_contiguous_regex) {
+        cache_value.dependencies.push_back({
+            0u, static_cast<uint32_t>(total_bytes), UINT32_MAX,
+            static_cast<uint8_t>(HighlightSource::REGEX_STATE)
+        });
+    }
+    // Ordinary finite-width Regex has a compiler-proven maximum match width.
+    // Keep its dependency local to the viewport plus the maximum overlap.
+    if (cache_value.dependencies.empty()) {
+        uint64_t overlap = 0;
+        const auto include_width = [&](const auto &self, const CompiledRegexRule &rule) -> void {
+            if (rule.enabled &&
+                rule.execution_capability == RegexExecutionCapability::BOUNDED_WINDOW) {
+                overlap = std::max(overlap, rule.maximum_match_bytes >= 2u
+                    ? rule.maximum_match_bytes - 2u : 0u);
+            }
+            for (const auto &nested : rule.nested_rules) self(self, nested);
+        };
+        for (const auto &rule : grammar->regex_rules) include_width(include_width, rule);
+        const uint32_t dependency_start = static_cast<uint32_t>(
+            evaluation_start > overlap ? evaluation_start - overlap : 0u);
+        const uint32_t dependency_end = static_cast<uint32_t>(
+            std::min<uint64_t>(total_bytes,
+                static_cast<uint64_t>(evaluation_end) + overlap));
+        cache_value.dependencies.push_back({
+            dependency_start, dependency_end, UINT32_MAX,
+            static_cast<uint8_t>(HighlightSource::ONIG_REGEX)
+        });
+    }
     std::copy(std::begin(counts), std::end(counts), std::begin(cache_value.match_counts));
     try {
         document->highlight_cache.put(cache_key, std::move(cache_value));

@@ -2846,6 +2846,31 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                                 }
                             }
 
+                            // Materialize Tree-sitter's structural locality proof for
+                            // every compiled pattern. Missing user metadata must not
+                            // mean missing dependency metadata: each pattern gets an
+                            // immutable record before the grammar is published.
+                            for (uint32_t pattern = 0; pattern < pattern_count; ++pattern) {
+                                auto inserted = program.pattern_metadata.emplace(
+                                    pattern, NativeQueryProgram::PatternMetadata{});
+                                auto& metadata = inserted.first->second;
+                                metadata.pattern_index = pattern;
+                                metadata.is_rooted =
+                                    ts_query_is_pattern_rooted(program.query, pattern);
+                                metadata.is_non_local =
+                                    ts_query_is_pattern_non_local(program.query, pattern);
+                                if (metadata.is_non_local) {
+                                    metadata.dependency_scope =
+                                        NativeQueryProgram::QueryDependencyScope::NON_LOCAL;
+                                } else if (metadata.is_rooted) {
+                                    metadata.dependency_scope =
+                                        NativeQueryProgram::QueryDependencyScope::ROOTED_LOCAL;
+                                } else {
+                                    metadata.dependency_scope =
+                                        NativeQueryProgram::QueryDependencyScope::UNROOTED;
+                                }
+                            }
+
                             const uint32_t capture_count = ts_query_capture_count(program.query);
                             for (uint32_t capture_id = 0; capture_id < capture_count; ++capture_id) {
                                 uint32_t name_length = 0;
