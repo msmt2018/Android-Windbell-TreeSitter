@@ -20,7 +20,9 @@ import com.zerostudio.idea.treesitter.TreeSitter
 
 data class NativeDirtyByteRange(val startByte: Long, val endByte: Long) {
     init {
-        require(startByte >= 0L && endByte > startByte)
+        // Deletions have an empty post-edit byte interval but still invalidate
+        // the insertion/deletion boundary and its containing line.
+        require(startByte >= 0L && endByte >= startByte)
         require((startByte and 1L) == 0L && (endByte and 1L) == 0L)
     }
 }

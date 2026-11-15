@@ -2030,6 +2030,7 @@ class WindbellTshLinkageTest {
             val consumedAgain = engine.consumeNativeDirtyLineRanges(handle)
             assertEquals(dirtySnapshot.documentVersion, consumedAgain.documentVersion)
             assertTrue(consumedAgain.ranges.isEmpty(), "Dirty intervals must be consumed exactly once")
+            assertTrue(consumedAgain.byteRanges.isEmpty(), "Dirty byte intervals must be consumed exactly once")
 
             val updated = engine.highlightNativeDocument(handle, queryStart + 2L, queryEnd + 2L, false)
                 ?: error("Post-edit large-file query returned null")
@@ -2038,6 +2039,20 @@ class WindbellTshLinkageTest {
             assertTrue(
                 containsCapture(updated, updatedStart, updatedEnd),
                 "Tree-sitter query must return the edited identifier at the same absolute range"
+            )
+
+            // Removing the inserted line break produces a zero-width post-edit
+            // byte interval. It must remain representable in the JNI snapshot.
+            assertTrue(
+                engine.applyNativeDocumentEdit(handle, 0L, 2L, ByteArray(0)),
+                "Deletion-only native edit must commit"
+            )
+            val deletionSnapshot = engine.consumeNativeDirtyLineRanges(handle)
+            assertEquals(3L, deletionSnapshot.documentVersion)
+            assertTrue(deletionSnapshot.byteRanges.isNotEmpty())
+            assertTrue(
+                deletionSnapshot.byteRanges.any { it.startByte == it.endByte },
+                "Deletion invalidation must preserve its zero-width post-edit byte boundary"
             )
         } finally {
             engine.closeNativeDocument(handle)
