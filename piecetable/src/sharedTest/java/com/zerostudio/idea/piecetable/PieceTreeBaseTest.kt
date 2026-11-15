@@ -1750,7 +1750,7 @@ class PieceTreeBaseTest {
 
     // #region chunk based search`() {
     @Test
-    fun `bug 45892 For some cases the buffer is empty but we still try to search`() {
+    fun bug45892BufferEmptySearchRegression() {
         val pieceTree = TestSupport.buildTree(listOf(""))
         pieceTree.delete(0, 1)
         val ret = pieceTree.findMatchesLineByLine(
@@ -1792,7 +1792,7 @@ class PieceTreeBaseTest {
     }
 
     @Test
-    fun `search searching from the middle`() {
+    fun searchSearchingFromMiddle() {
         val pieceTree = TestSupport.buildTree(listOf(arrayOf("def", "dbcabc").joinToString("\n")))
         pieceTree.delete(4, 1)
         var ret = pieceTree.findMatchesLineByLine(
