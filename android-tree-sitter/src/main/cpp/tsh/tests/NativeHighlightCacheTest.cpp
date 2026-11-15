@@ -96,14 +96,16 @@ void testMissingDependencyIsNeverReused() {
 
 void testInsertionAtDependencyStartShiftsWholeSnapshot() {
     NativeHighlightCache cache;
-    cache.put(key(1, 100, 200), value(120, 130, 120, 160));
+    // The cached viewport is after the insertion, while its explicit query
+    // dependency envelope begins exactly at the insertion point.
+    cache.put(key(1, 200, 300), value(220, 230, 120, 160));
 
     cache.rebaseAfterEdit(2, 2, 2, 120, 120, 4, {{120, 124}});
 
-    const auto *rebased = cache.find(key(2, 104, 204));
+    const auto *rebased = cache.find(key(2, 204, 304));
     assert(rebased != nullptr);
-    assert(rebased->spans[0].start_byte == 124);
-    assert(rebased->spans[0].end_byte == 134);
+    assert(rebased->spans[0].start_byte == 224);
+    assert(rebased->spans[0].end_byte == 234);
     assert(rebased->dependencies[0].start_byte == 124);
     assert(rebased->dependencies[0].end_byte == 164);
 }
