@@ -2373,7 +2373,7 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
 #if defined(TSH_TREE_SITTER_HAS_QUERY_CURSOR_OPTIONS)
             std::unique_ptr<TSQueryCursor, decltype(&ts_query_cursor_delete)> q_cursor(
                 ts_query_cursor_new(), &ts_query_cursor_delete);
-            if (!q_cursor) continue;
+            if (!q_cursor) throw std::bad_alloc();
             TSQueryCursor* cursor = q_cursor.get();
 
             // Restrict query traversal to the requested range while retaining the
@@ -2381,7 +2381,8 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
             // limit or artificial progress timeout would remove valid captures
             // from dense files, so use the maximum representable pending capacity.
             if (!ts_query_cursor_set_byte_range(cursor, range_start_byte, range_end_byte)) {
-                continue;
+                throw std::runtime_error(
+                    "TSH could not apply the requested byte range to a Tree-sitter query cursor");
             }
             ts_query_cursor_set_match_limit(cursor, UINT32_MAX);
             ts_query_cursor_exec(cursor, native_query.query, ts_tree_root_node(tree));
