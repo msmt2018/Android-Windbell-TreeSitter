@@ -18,6 +18,17 @@ import java.io.File
 import java.nio.ByteBuffer
 import com.zerostudio.idea.treesitter.TreeSitter
 
+data class NativeDirtyLineRange(val startLine: Long, val endLineExclusive: Long) {
+    init {
+        require(startLine >= 0L && endLineExclusive > startLine)
+    }
+}
+
+data class NativeDirtyLineSnapshot(
+    val documentVersion: Long,
+    val ranges: List<NativeDirtyLineRange>
+)
+
 /** Supplies bounded UTF-16LE windows to the native document engine. */
 fun interface NativeTextWindowReader {
     /** Fill a reusable direct native window and return the number of UTF-16LE bytes written. */
@@ -771,6 +782,27 @@ class WindbellTshEngine private constructor() {
         )
     }
 
+    /**
+     * Atomically consumes the latest committed native dirty-line intervals.
+     * Ranges are half-open and expressed in the new document's line coordinates.
+     * They describe Tree-sitter structural changes plus the actual edited text range;
+     * they are not, by themselves, a safe Regex state-convergence boundary.
+     */
+    fun consumeNativeDirtyLineRanges(documentHandle: Long): NativeDirtyLineSnapshot {
+        require(documentHandle != 0L)
+        val encoded = nativeConsumeDirtyLineRanges(documentHandle)
+            ?: error("Native dirty-line snapshot could not be allocated")
+        require(encoded.isNotEmpty()) { "Native dirty-line snapshot is missing its version" }
+        require((encoded.size - 1) % 2 == 0) { "Native dirty-line snapshot is malformed" }
+        val ranges = ArrayList<NativeDirtyLineRange>((encoded.size - 1) / 2)
+        var index = 1
+        while (index < encoded.size) {
+            ranges += NativeDirtyLineRange(encoded[index], encoded[index + 1])
+            index += 2
+        }
+        return NativeDirtyLineSnapshot(encoded[0], ranges)
+    }
+
     fun highlightNativeDocument(
         documentHandle: Long,
         startByte: Long = 0L,
@@ -798,6 +830,8 @@ class WindbellTshEngine private constructor() {
         oldEndByte: Long,
         insertedUtf16Le: ByteArray
     ): Boolean
+
+    private external fun nativeConsumeDirtyLineRanges(documentHandle: Long): LongArray?
 
     private external fun nativeHighlightDocument(
         documentHandle: Long,

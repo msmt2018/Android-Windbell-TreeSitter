@@ -1488,6 +1488,46 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeApplyDocumentEdi
     return JNI_TRUE;
 }
 
+JNIEXPORT jlongArray JNICALL
+Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeConsumeDirtyLineRanges(
+    JNIEnv *env, jobject, jlong document_pointer
+) {
+    auto document = nativeDocumentRegistry().acquire(document_pointer);
+    if (!document) {
+        throw_npe(env, "Native document handle cannot be null");
+        return nullptr;
+    }
+    std::lock_guard<std::mutex> lock(document->mutex);
+    const size_t range_count = document->dirty_line_intervals.size();
+    if (range_count > (static_cast<size_t>(std::numeric_limits<jsize>::max()) - 1u) / 2u) {
+        throw_illegal_state(env, "Native dirty-line interval result exceeds JNI array capacity");
+        return nullptr;
+    }
+    const jsize value_count = static_cast<jsize>(1u + range_count * 2u);
+    jlongArray result = env->NewLongArray(value_count);
+    if (!result) return nullptr;
+    std::vector<jlong> values;
+    try {
+        values.reserve(static_cast<size_t>(value_count));
+        values.push_back(static_cast<jlong>(document->version));
+        for (const auto &range : document->dirty_line_intervals) {
+            values.push_back(static_cast<jlong>(range.first));
+            values.push_back(static_cast<jlong>(range.second));
+        }
+    } catch (const std::bad_alloc &) {
+        env->DeleteLocalRef(result);
+        throwNativeAllocationFailure(env, "Unable to encode native dirty-line intervals");
+        return nullptr;
+    }
+    env->SetLongArrayRegion(result, 0, value_count, values.data());
+    if (env->ExceptionCheck()) {
+        env->DeleteLocalRef(result);
+        return nullptr;
+    }
+    document->dirty_line_intervals.clear();
+    return result;
+}
+
 JNIEXPORT jintArray JNICALL
 Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocument(
     JNIEnv *env, jobject, jlong document_pointer, jboolean diagnostics,

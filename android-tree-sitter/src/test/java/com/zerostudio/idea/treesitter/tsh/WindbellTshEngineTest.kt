@@ -1997,6 +1997,17 @@ class WindbellTshLinkageTest {
                 "Native Piece Tree and Tree-sitter incremental edit must commit"
             )
 
+            val dirtySnapshot = engine.consumeNativeDirtyLineRanges(handle)
+            assertTrue(dirtySnapshot.documentVersion > 0L)
+            assertTrue(
+                dirtySnapshot.ranges.isNotEmpty(),
+                "Committed Tree-sitter changes and the actual text edit must be exposed as dirty line intervals"
+            )
+            assertTrue(dirtySnapshot.ranges.all { it.startLine >= 0L && it.endLineExclusive > it.startLine })
+            val consumedAgain = engine.consumeNativeDirtyLineRanges(handle)
+            assertEquals(dirtySnapshot.documentVersion, consumedAgain.documentVersion)
+            assertTrue(consumedAgain.ranges.isEmpty(), "Dirty intervals must be consumed exactly once")
+
             val updated = engine.highlightNativeDocument(handle, queryStart, queryEnd, false)
                 ?: error("Post-edit large-file query returned null")
             val updatedStart = targetChar + classText.indexOf("DistantTokenProbe")
