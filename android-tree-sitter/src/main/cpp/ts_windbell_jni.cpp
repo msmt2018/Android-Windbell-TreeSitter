@@ -42,6 +42,11 @@
 using namespace windbell::tsh;
 
 namespace {
+// Diagnostics belong to the calling thread: Kotlin reads them immediately after
+// nativeLoadTshSource(), and concurrent editor compilations must not overwrite
+// another document's result through the compiler's process-wide compatibility slot.
+static thread_local std::vector<TshCompileDiagnostic> g_last_jni_compile_diagnostics;
+
 /** Pins JVM UTF-16 storage without allocating a second native text copy. */
 class ScopedStringChars final {
 public:
@@ -563,6 +568,7 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeLoadTshSource(
     // compatibility "last diagnostics" slot here would race with other documents
     // compiling different language grammars on worker threads.
     auto compilation = TshCompiler::getInstance().compileDetailed(src_str, ts_lang);
+    g_last_jni_compile_diagnostics = compilation.diagnostics;
     if (!compilation.grammar) {
         for (const auto& diagnostic : compilation.diagnostics) {
             LOGE("WindbellTSH",
@@ -665,7 +671,7 @@ JNIEXPORT jobjectArray JNICALL
 Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeGetCompileDiagnostics(
     JNIEnv* env, jobject
 ) {
-    const auto diagnostics = TshCompiler::getInstance().getLastDiagnostics();
+    const auto& diagnostics = g_last_jni_compile_diagnostics;
     jclass string_class = env->FindClass("java/lang/String");
     if (!string_class) return nullptr;
     jobjectArray result = env->NewObjectArray(
