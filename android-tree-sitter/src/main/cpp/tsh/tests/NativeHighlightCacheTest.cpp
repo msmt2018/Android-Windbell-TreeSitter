@@ -10,6 +10,7 @@ using windbell::tsh::HighlightSource;
 using windbell::tsh::NativeHighlightCache;
 using windbell::tsh::SharedNativeMemoryBudget;
 using windbell::tsh::analyzeSimpleQueryRoot;
+using windbell::tsh::queryPredicateRequiresAncestorContext;
 using windbell::tsh::HIGHLIGHT_DEPENDENCY_DOCUMENT_WIDE;
 using windbell::tsh::HIGHLIGHT_DEPENDENCY_BOUNDARY_SENSITIVE;
 
@@ -55,6 +56,11 @@ void testSimpleRootAnalyzer() {
     assert(!analyzeSimpleQueryRoot("[(identifier) (type_identifier)] @name").valid);
     assert(!analyzeSimpleQueryRoot("((identifier) @name)").valid);
     assert(!analyzeSimpleQueryRoot("(identifier) @name .").valid);
+    assert(queryPredicateRequiresAncestorContext("#has-parent?"));
+    assert(queryPredicateRequiresAncestorContext("has-ancestor?"));
+    assert(queryPredicateRequiresAncestorContext("any-not-has-parent?"));
+    assert(!queryPredicateRequiresAncestorContext("#kind-eq?"));
+    assert(!queryPredicateRequiresAncestorContext("#match?"));
 }
 void testUnrelatedEditKeepsAndRebasesEntry() {
     NativeHighlightCache cache;

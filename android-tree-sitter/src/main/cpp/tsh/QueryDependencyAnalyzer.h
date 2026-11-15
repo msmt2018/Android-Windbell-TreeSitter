@@ -28,6 +28,14 @@ inline void skipQuerySpaceAndComments(std::string_view source, size_t *position)
  * Wildcards, supertypes, alternatives, grouped roots, anchors outside the
  * root and unrecognized syntax remain UNKNOWN and must use document scope.
  */
+inline bool queryPredicateRequiresAncestorContext(std::string_view operation) {
+    if (!operation.empty() && operation.front() == '#') operation.remove_prefix(1);
+    return operation == "has-parent?" || operation == "not-has-parent?" ||
+        operation == "any-has-parent?" || operation == "any-not-has-parent?" ||
+        operation == "has-ancestor?" || operation == "not-has-ancestor?" ||
+        operation == "any-has-ancestor?" || operation == "any-not-has-ancestor?";
+}
+
 inline QueryRootDescriptor analyzeSimpleQueryRoot(std::string_view pattern) {
     QueryRootDescriptor result;
     size_t position = 0;

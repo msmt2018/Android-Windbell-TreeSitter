@@ -2885,14 +2885,8 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                                         const char* op_text = ts_query_string_value_for_id(
                                             program.query, predicate[0].value_id, &op_length);
                                         if (!op_text) continue;
-                                        std::string op(op_text, op_length);
-                                        if (!op.empty() && op.front() == '#') op.erase(op.begin());
-                                        const bool ancestor_context =
-                                            op == "has-parent?" || op == "not-has-parent?" ||
-                                            op == "any-has-parent?" || op == "any-not-has-parent?" ||
-                                            op == "has-ancestor?" || op == "not-has-ancestor?" ||
-                                            op == "any-has-ancestor?" || op == "any-not-has-ancestor?";
-                                        if (ancestor_context) {
+                                        if (queryPredicateRequiresAncestorContext(
+                                                std::string_view(op_text, op_length))) {
                                             metadata.dependency_scope =
                                                 NativeQueryProgram::QueryDependencyScope::UNKNOWN;
                                             break;
