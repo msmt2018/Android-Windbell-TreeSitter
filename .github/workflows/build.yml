@@ -436,30 +436,35 @@ jobs:
           arch: x86_64
           disable-animations: true
           script: |
-            set -Eeuo pipefail
+            set -euo pipefail
             mkdir -p build/emulator-test-logs
-            device_serial=""
-            for attempt in $(seq 1 60); do
-              adb start-server
-              adb devices -l
-              device_serial="$(adb devices | awk 'NR > 1 && $2 == "device" { print $1; exit }')"
-              if [[ -n "$device_serial" ]]; then break; fi
-              echo "Waiting for emulator ADB registration ($attempt/60)..."
-              sleep 2
-            done
-            if [[ -z "$device_serial" ]]; then
-              echo "::error::Android emulator did not register as an ADB device."
+
+            # The emulator action boots the AVD before this script runs.
+            # Use adb's own wait-for-device instead of a nested remote-shell
+            # polling loop, which is not portable across Android shell versions.
+            adb start-server
+            if ! timeout 180 adb wait-for-device; then
+              adb devices -l || true
+              echo "::error::Android emulator did not become available to ADB."
               exit 1
             fi
-            adb -s "$device_serial" shell 'while [ "$(getprop sys.boot_completed)" != "1" ]; do sleep 1; done'
+            device_serial="${ANDROID_SERIAL:-emulator-5554}"
+            adb -s "$device_serial" get-state
+            boot_completed="$(adb -s "$device_serial" shell getprop sys.boot_completed | tr -d '\\r')"
+            if [[ "$boot_completed" != "1" ]]; then
+              echo "::error::ADB device connected but Android boot is incomplete (sys.boot_completed=$boot_completed)."
+              adb -s "$device_serial" logcat -d -t 300 || true
+              exit 1
+            fi
             adb -s "$device_serial" shell settings put global animator_duration_scale 0
             adb -s "$device_serial" shell settings put global transition_animation_scale 0
             adb -s "$device_serial" shell settings put global window_animation_scale 0
-            trap 'adb -s "$device_serial" logcat -d -v threadtime > build/emulator-test-logs/logcat.txt || true; adb -s "$device_serial" shell dumpsys activity activities > build/emulator-test-logs/activities.txt || true' EXIT
-            ./gradlew \
-              :editor:connectedDebugAndroidTest \
-              :piecetable:connectedDebugAndroidTest \
-              :app:connectedDebugAndroidTest \
+            trap 'adb -s "$device_serial" logcat -d -v threadtime > build/emulator-test-logs/logcat.txt 2>&1 || true; adb -s "$device_serial" shell dumpsys activity activities > build/emulator-test-logs/activities.txt 2>&1 || true' EXIT
+
+            ./gradlew \\
+              :editor:connectedDebugAndroidTest \\
+              :piecetable:connectedDebugAndroidTest \\
+              :app:connectedDebugAndroidTest \\
               --continue --stacktrace
       - name: Upload Android device test reports and logs
         if: ${{ always() }}
