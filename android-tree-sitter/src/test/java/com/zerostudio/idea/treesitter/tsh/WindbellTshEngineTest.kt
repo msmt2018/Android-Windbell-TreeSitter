@@ -2008,9 +2008,9 @@ class WindbellTshLinkageTest {
             assertEquals(dirtySnapshot.documentVersion, consumedAgain.documentVersion)
             assertTrue(consumedAgain.ranges.isEmpty(), "Dirty intervals must be consumed exactly once")
 
-            val updated = engine.highlightNativeDocument(handle, queryStart, queryEnd, false)
+            val updated = engine.highlightNativeDocument(handle, queryStart + 2L, queryEnd + 2L, false)
                 ?: error("Post-edit large-file query returned null")
-            val updatedStart = targetChar + classText.indexOf("DistantTokenProbe")
+            val updatedStart = targetChar + 1L + classText.indexOf("DistantTokenProbe")
             val updatedEnd = updatedStart + replacement.length
             assertTrue(
                 containsCapture(updated, updatedStart, updatedEnd),

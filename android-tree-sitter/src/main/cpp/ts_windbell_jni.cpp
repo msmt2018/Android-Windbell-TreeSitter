@@ -87,8 +87,11 @@ struct NativeTshDocument {
     NativeHighlightCache highlight_cache{4u * 1024u * 1024u, nativeHighlightBudget()};
     windbell::largefile::TextPartitionIndex partition_index{256};
     std::vector<RegexStateCheckpoint> regex_state_checkpoints;
-    // Half-open line intervals invalidated by the latest committed edit.
-    // Kept in new-document coordinates; consumed by incremental capture work.
+    // Pending dirty byte intervals are always rebased into the current
+    // document version. Keeping byte coordinates avoids losing earlier edits
+    // when later edits insert/delete lines before an unconsumed dirty range.
+    std::vector<std::pair<uint64_t, uint64_t>> dirty_byte_intervals;
+    // Half-open line intervals derived from dirty_byte_intervals for consumers.
     std::vector<std::pair<uint64_t, uint64_t>> dirty_line_intervals;
     std::mutex mutex;
 
@@ -180,6 +183,80 @@ static bool appendDirtyLineInterval(
     try { intervals->emplace_back(firstLine, endExclusive); }
     catch (...) { return false; }
     return true;
+}
+
+static bool normalizePendingDirtyByteIntervals(
+    std::vector<std::pair<uint64_t, uint64_t>> *intervals
+) noexcept {
+    if (!intervals) return false;
+    try {
+        std::sort(intervals->begin(), intervals->end(),
+            [](const auto &a, const auto &b) {
+                return a.first < b.first || (a.first == b.first && a.second < b.second);
+            });
+        size_t output = 0;
+        for (const auto &range : *intervals) {
+            if (range.first > range.second) return false;
+            if (output && range.first <= (*intervals)[output - 1].second) {
+                (*intervals)[output - 1].second = std::max(
+                    (*intervals)[output - 1].second, range.second);
+            } else {
+                (*intervals)[output++] = range;
+            }
+        }
+        intervals->resize(output);
+    } catch (...) { return false; }
+    return true;
+}
+
+// Transform all unconsumed dirty byte ranges through one committed edit.
+// Ranges wholly before the edit remain fixed; ranges after it shift by the
+// byte delta; intersecting ranges expand conservatively over the replacement.
+static bool rebasePendingDirtyByteIntervals(
+    const std::vector<std::pair<uint64_t, uint64_t>> &previous,
+    uint64_t editStart,
+    uint64_t oldEnd,
+    uint64_t insertedSize,
+    std::vector<std::pair<uint64_t, uint64_t>> *rebased
+) noexcept {
+    if (!rebased || editStart > oldEnd) return false;
+    const uint64_t newEnd = editStart + insertedSize;
+    const int64_t delta = static_cast<int64_t>(insertedSize) -
+        static_cast<int64_t>(oldEnd - editStart);
+    try {
+        rebased->clear();
+        rebased->reserve(previous.size());
+        for (const auto &range : previous) {
+            if (range.first > range.second) return false;
+            uint64_t start = range.first;
+            uint64_t end = range.second;
+            if (end <= editStart) {
+                // Entirely before the edit, including a range ending at its start.
+            } else if (start >= oldEnd) {
+                // For insertion oldEnd == editStart: a range beginning at the
+                // insertion point belongs after the newly inserted bytes.
+                const int64_t shiftedStart = static_cast<int64_t>(start) + delta;
+                const int64_t shiftedEnd = static_cast<int64_t>(end) + delta;
+                if (shiftedStart < 0 || shiftedEnd < shiftedStart) return false;
+                start = static_cast<uint64_t>(shiftedStart);
+                end = static_cast<uint64_t>(shiftedEnd);
+            } else {
+                // The old dirty range intersects replaced text. Preserve its
+                // unaffected prefix/suffix and include the entire new edit.
+                const uint64_t mappedStart = std::min(start, editStart);
+                uint64_t mappedEnd = newEnd;
+                if (end > oldEnd) {
+                    const int64_t shiftedEnd = static_cast<int64_t>(end) + delta;
+                    if (shiftedEnd < 0) return false;
+                    mappedEnd = std::max(mappedEnd, static_cast<uint64_t>(shiftedEnd));
+                }
+                start = mappedStart;
+                end = mappedEnd;
+            }
+            rebased->emplace_back(start, end);
+        }
+    } catch (...) { return false; }
+    return normalizePendingDirtyByteIntervals(rebased);
 }
 
 static bool normalizeDirtyLineIntervals(
@@ -1411,20 +1488,42 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeApplyDocumentEdi
             catch (...) { dirty_ranges_ok = false; }
         }
     }
-    if (dirty_ranges_ok) dirty_ranges_ok = normalizeDirtyLineIntervals(&next_dirty_intervals);
+    // Merge this edit's dirty bytes with all previously pending ranges after
+    // transforming the latter into the candidate document's byte coordinates.
+    // Do this before commit so allocation/index failures leave the live document
+    // and its pending invalidations untouched.
+    std::vector<std::pair<uint64_t, uint64_t>> next_pending_dirty_bytes;
     if (dirty_ranges_ok) {
         try {
-            std::sort(next_dirty_byte_ranges.begin(), next_dirty_byte_ranges.end());
-            size_t out = 0;
-            for (const auto &range : next_dirty_byte_ranges) {
-                if (out && range.first <= next_dirty_byte_ranges[out - 1].second) {
-                    next_dirty_byte_ranges[out - 1].second = std::max(
-                        next_dirty_byte_ranges[out - 1].second, range.second);
-                } else next_dirty_byte_ranges[out++] = range;
+            dirty_ranges_ok = rebasePendingDirtyByteIntervals(
+                document->dirty_byte_intervals,
+                static_cast<uint64_t>(start_byte),
+                static_cast<uint64_t>(old_end_byte),
+                static_cast<uint64_t>(inserted_size),
+                &next_pending_dirty_bytes);
+            if (dirty_ranges_ok) {
+                next_pending_dirty_bytes.reserve(
+                    next_pending_dirty_bytes.size() + next_dirty_byte_ranges.size());
+                for (const auto &range : next_dirty_byte_ranges) {
+                    next_pending_dirty_bytes.emplace_back(range.first, range.second);
+                }
+                dirty_ranges_ok = normalizePendingDirtyByteIntervals(
+                    &next_pending_dirty_bytes);
             }
-            next_dirty_byte_ranges.resize(out);
         } catch (...) { dirty_ranges_ok = false; }
     }
+    if (dirty_ranges_ok) {
+        next_dirty_intervals.clear();
+        try { next_dirty_intervals.reserve(next_pending_dirty_bytes.size()); }
+        catch (...) { dirty_ranges_ok = false; }
+    }
+    for (const auto &range : next_pending_dirty_bytes) {
+        if (!dirty_ranges_ok) break;
+        dirty_ranges_ok = appendDirtyLineInterval(
+            *next_source, *next_partition_index, range.first, range.second,
+            &next_dirty_intervals);
+    }
+    if (dirty_ranges_ok) dirty_ranges_ok = normalizeDirtyLineIntervals(&next_dirty_intervals);
     ts_tree_delete(edited_tree);
     if (!dirty_ranges_ok) {
         ts_tree_delete(next_tree);
@@ -1443,6 +1542,7 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeApplyDocumentEdi
     document->partition_index = std::move(*next_partition_index);
     document->length_chars = static_cast<uint32_t>(new_size / 2u);
     ++document->version;
+    document->dirty_byte_intervals.swap(next_pending_dirty_bytes);
     document->dirty_line_intervals.swap(next_dirty_intervals);
     // Until NativeHighlightCache supports interval-level eviction, clear its
     // entries conservatively. Dirty intervals are retained for the next
