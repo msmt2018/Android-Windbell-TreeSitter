@@ -1371,15 +1371,11 @@ static void appendQueryPatternDependencies(
         return;
     }
 
-    // Include the evaluated viewport itself. It catches edits that create
-    // or remove a root candidate inside the viewport even when the old tree
-    // had no node of the query's root symbol at that exact location.
     // Query blocks commonly contain many patterns rooted at the same syntax
     // type. Walk the viewport-overlapping AST once per distinct root symbol.
     // Cache invalidation only needs the union of these envelopes, not one
     // duplicate record per Pattern or per emitted Capture.
     std::vector<std::pair<uint32_t, uint32_t>> root_ranges;
-    root_ranges.emplace_back(range_start, range_end);
     for (const TSSymbol symbol : root_symbols) {
         std::vector<std::pair<uint32_t, uint32_t>> symbol_ranges;
         if (!collectQueryRootRanges(
@@ -1407,14 +1403,25 @@ static void appendQueryPatternDependencies(
         }
     }
     root_ranges.resize(merged_count);
+    const uint8_t viewport_flags = static_cast<uint8_t>(
+        range_start == 0u && range_end == total_bytes
+            ? HIGHLIGHT_DEPENDENCY_DOCUMENT_WIDE : 0u);
+    output->push_back({
+        range_start, range_end, UINT32_MAX,
+        static_cast<uint8_t>(HighlightSource::NATIVE_QUERY),
+        static_cast<uint8_t>(NativeQueryProgram::QueryDependencyScope::ROOTED_LOCAL),
+        viewport_flags
+    });
     for (const auto& range : root_ranges) {
+        uint8_t flags = HIGHLIGHT_DEPENDENCY_BOUNDARY_SENSITIVE;
+        if (range.first == 0u && range.second == total_bytes) {
+            flags = static_cast<uint8_t>(flags | HIGHLIGHT_DEPENDENCY_DOCUMENT_WIDE);
+        }
         output->push_back({
             range.first, range.second, UINT32_MAX,
             static_cast<uint8_t>(HighlightSource::NATIVE_QUERY),
             static_cast<uint8_t>(NativeQueryProgram::QueryDependencyScope::ROOTED_LOCAL),
-            static_cast<uint8_t>(
-                range.first == 0u && range.second == total_bytes
-                    ? HIGHLIGHT_DEPENDENCY_DOCUMENT_WIDE : 0u)
+            flags
         });
     }
 }
