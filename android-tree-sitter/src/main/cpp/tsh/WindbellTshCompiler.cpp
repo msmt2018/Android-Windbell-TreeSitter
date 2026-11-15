@@ -2864,6 +2864,26 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                                     ? explicit_binding->second : capture_name_string;
                                 auto style = grammar->style_name_to_id.find(style_name);
                                 if (style == grammar->style_name_to_id.end()) {
+                                    // A query capture referenced only as a predicate
+                                    // operand is not a paint output and therefore does
+                                    // not need a style. Keep it in the native query so
+                                    // Tree-sitter can evaluate the predicate, but omit
+                                    // it from capture-to-span conversion.
+                                    bool predicate_only = false;
+                                    for (const auto& pattern_predicates : program.predicates_by_pattern) {
+                                        for (const auto& predicate : pattern_predicates) {
+                                            for (size_t step = 1; step < predicate.size(); ++step) {
+                                                if (predicate[step].type == TSQueryPredicateStepTypeCapture &&
+                                                    predicate[step].value_id == capture_id) {
+                                                    predicate_only = true;
+                                                    break;
+                                                }
+                                            }
+                                            if (predicate_only) break;
+                                        }
+                                        if (predicate_only) break;
+                                    }
+                                    if (predicate_only) continue;
                                     g_tsh_last_error_detail = "native query capture @" + capture_name_string +
                                         " has no valid style binding (style: " + style_name + ")";
                                     release_predicate_regexes();

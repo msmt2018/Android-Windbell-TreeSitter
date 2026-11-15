@@ -99,7 +99,7 @@ private class TshAndroidTypefaceSpan(
     }
 
     override fun updateDrawState(textPaint: TextPaint) {
-        textPaint.typeface = resolve(textPaint.typeface)
+        textPaint.typeface = resolve(textPaint.typeface ?: Typeface.DEFAULT)
     }
     override fun updateMeasureState(textPaint: TextPaint) {
         textPaint.typeface = resolve(textPaint.typeface)
