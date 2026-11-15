@@ -1627,7 +1627,7 @@ class WindbellTshLinkageTest {
                 styles { token { scope: "variable.other" } }
                 treeSitter {
                     queries: [
-                        { id: "unsupported" source: `(identifier) @token (#match? @token "^[a-z]+$")` }
+                        { id: "unsupported" source: `(identifier) @token (#unsupported? @token "^[a-z]+$")` }
                     ]
                 }
             }
