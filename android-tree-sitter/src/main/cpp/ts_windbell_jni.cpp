@@ -817,7 +817,9 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeGetEditorMetadat
         if (!rule.after_text.empty()) records.push_back({"onEnterAfter", index, rule.after_text});
         if (!rule.previous_line_text.empty()) records.push_back({"onEnterPrevious", index, rule.previous_line_text});
         records.push_back({"onEnterIndent", index, rule.indent_action});
-        if (!rule.append_text.empty()) records.push_back({"onEnterAppend", index, rule.append_text});
+        // Preserve an explicitly empty appendText action; the Kotlin metadata model
+        // distinguishes an omitted action (null) from a declared empty string.
+        records.push_back({"onEnterAppend", index, rule.append_text});
         if (rule.remove_text != 0) records.push_back({"onEnterRemove", index, std::to_string(rule.remove_text)});
     }
     for (const auto& option : metadata.options) records.push_back({"editorOption", option.first, option.second});
