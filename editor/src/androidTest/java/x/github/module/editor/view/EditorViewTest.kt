@@ -675,11 +675,12 @@ class EditorViewTest {
             editor.setTextColor(plainColor)
             editor.setText("MMMM\nMMMM")
             val documentId = TshDocumentId("editor-tsh-render")
+            val snapshot = editor.getTextBuffer().createTextSnapshot()
             val highlighter = TshRenderPlanSyntaxHighlighter(documentId) {
-                editor.getTextBuffer().createTextSnapshot().version
+                snapshot.version
             }
             editor.setSyntaxHighlighter(highlighter)
-            val version = editor.getTextBuffer().createTextSnapshot().version
+            val version = snapshot.version
             val revisions = TshRenderRevisions(
                 documentId = documentId,
                 documentVersion = version,
