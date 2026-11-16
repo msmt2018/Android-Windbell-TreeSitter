@@ -713,9 +713,25 @@ class TshSyntaxHighlighter(
         } catch (error: Throwable) {
             work.state = RangeWorkState.FAILED
             val shift = (work.attempt - 1).coerceIn(0, 5)
-            work.retryAfterNanos = System.nanoTime() + (1L shl shift) * 1_000_000_000L
+            val retryDelayNanos = (1L shl shift) * 1_000_000_000L
+            work.retryAfterNanos = System.nanoTime() + retryDelayNanos
             if (generation.get() == active.ticket && largeSession === active) {
                 Log.e(TAG, "Native viewport TSH failed for ${key.startUtf16}..${key.endUtf16}", error)
+                // A failed range has no cache entry, so the renderer will keep asking
+                // for it. Do not invalidate immediately (that would defeat backoff and
+                // can create a hot redraw loop); wake the renderer once the retry window
+                // expires so a stationary viewport can recover without requiring a
+                // scroll, edit, or manual theme refresh.
+                scope.launch {
+                    delay((retryDelayNanos / 1_000_000L).coerceAtLeast(1L))
+                    if (generation.get() == active.ticket && largeSession === active &&
+                        work.state == RangeWorkState.FAILED &&
+                        active.rangeWork[key] === work &&
+                        findContainingCaptureRange(key) == null
+                    ) {
+                        host?.invalidateStyles()
+                    }
+                }
             }
         } finally {
             if (work.state != RangeWorkState.FAILED) active.rangeWork.remove(key, work)
