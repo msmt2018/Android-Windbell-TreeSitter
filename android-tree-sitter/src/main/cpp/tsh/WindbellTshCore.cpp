@@ -2012,10 +2012,20 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                     bool ancestor_found = false;
                     TSNode ancestor = parent;
                     while (!ts_node_is_null(ancestor)) {
-                        const char* ancestor_node_type = ts_node_type(ancestor);
-                        if (ts_node_symbol(ancestor) == ast_rule.ancestor_symbol ||
-                            (!ast_rule.ancestor_type.empty() && ancestor_node_type &&
-                             ast_rule.ancestor_type == ancestor_node_type)) {
+                        // A node can expose an alias as its public symbol/type while
+                        // retaining a different grammar symbol/type. ATS names are
+                        // resolved against the grammar, so match both identities.
+                        const TSSymbol visible_symbol = ts_node_symbol(ancestor);
+                        const TSSymbol grammar_symbol = ts_node_grammar_symbol(ancestor);
+                        const char* visible_type = ts_node_type(ancestor);
+                        const char* grammar_type = ts_node_grammar_type(ancestor);
+                        const bool symbol_matches =
+                            visible_symbol == ast_rule.ancestor_symbol ||
+                            grammar_symbol == ast_rule.ancestor_symbol;
+                        const bool type_matches = !ast_rule.ancestor_type.empty() &&
+                            ((visible_type && ast_rule.ancestor_type == visible_type) ||
+                             (grammar_type && ast_rule.ancestor_type == grammar_type));
+                        if (symbol_matches || type_matches) {
                             ancestor_found = true;
                             break;
                         }
