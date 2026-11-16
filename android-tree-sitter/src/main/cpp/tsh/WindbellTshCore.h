@@ -166,6 +166,9 @@ struct AstSelectorRule {
     TSSymbol child_symbol = 0;
     TSSymbol previous_sibling_symbol = 0;
     TSSymbol next_sibling_symbol = 0;
+    // Keep grammar-facing names so sibling selectors also match aliased nodes.
+    std::string previous_sibling_type;
+    std::string next_sibling_type;
     std::string text_equals;
     std::string text_prefix;
     std::string text_suffix;
