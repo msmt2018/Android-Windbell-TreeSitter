@@ -88,6 +88,7 @@ class TshSyntaxHighlighter(
         @Volatile var state: RangeWorkState = RangeWorkState.QUEUED
         @Volatile var retryAfterNanos: Long = 0L
         @Volatile var lastAttemptNanos: Long = System.nanoTime()
+        @Volatile var retryWakeJob: Job? = null
     }
 
     private data class NativeEdit(
@@ -722,7 +723,7 @@ class TshSyntaxHighlighter(
                 // can create a hot redraw loop); wake the renderer once the retry window
                 // expires so a stationary viewport can recover without requiring a
                 // scroll, edit, or manual theme refresh.
-                scope.launch {
+                work.retryWakeJob = scope.launch {
                     delay((retryDelayNanos / 1_000_000L).coerceAtLeast(1L))
                     if (generation.get() == active.ticket && largeSession === active &&
                         work.state == RangeWorkState.FAILED &&
@@ -734,7 +735,10 @@ class TshSyntaxHighlighter(
                 }
             }
         } finally {
-            if (work.state != RangeWorkState.FAILED) active.rangeWork.remove(key, work)
+            if (work.state != RangeWorkState.FAILED) {
+                work.retryWakeJob?.cancel()
+                active.rangeWork.remove(key, work)
+            }
         }
         return work.state == RangeWorkState.SUCCEEDED
     }
@@ -845,7 +849,14 @@ class TshSyntaxHighlighter(
             .filter { it.value.state == RangeWorkState.FAILED }
             .sortedBy { it.value.lastAttemptNanos }
             .take(overflow)
-            .forEach { entry -> active.rangeWork.remove(entry.key, entry.value) }
+            .forEach { entry ->
+                if (active.rangeWork.remove(entry.key, entry.value)) {
+                    // The delayed wake-up is part of the failed record's lifetime.
+                    // Cancel it when the bounded bookkeeping evicts that record, or
+                    // repeated failures while scrolling can accumulate orphan timers.
+                    entry.value.retryWakeJob?.cancel()
+                }
+            }
     }
 
     private fun decodeNativeSpans(flat: IntArray): List<WindbellTshEngine.HighlightSpan> {
