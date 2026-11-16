@@ -603,15 +603,20 @@ class TshSyntaxHighlighter(
             // Rebasing runs from the editor edit callback. Bound both entry count and
             // total captures so a single keystroke cannot walk/allocate the whole cache.
             // Keep the most recently used viewport windows; discard older snapshots.
-            val sessionEntries = displayCache.snapshotEntries { key, _ -> key.sessionId == sessionId }
+            val recentEntries = displayCache.snapshotMostRecentEntries(
+                predicate = { key, _ -> key.sessionId == sessionId },
+                maxEntries = 32
+            )
             var remainingCaptures = 16_384
             val retained = ArrayList<Pair<CaptureRangeKey, CaptureIntervalIndex>>(32)
-            for ((key, index) in sessionEntries.asReversed()) {
-                if (retained.size >= 32 || index.size > remainingCaptures) continue
+            for ((key, index) in recentEntries.asReversed()) {
+                if (index.size > remainingCaptures) continue
                 retained += key to index
                 remainingCaptures -= index.size
             }
-            sessionEntries.forEach { (key, _) -> displayCache.remove(key) }
+            // Remove all old-coordinate entries, including older entries that were
+            // intentionally not retained in the bounded snapshot.
+            displayCache.invalidate { key, _ -> key.sessionId == sessionId }
             for ((key, index) in retained.asReversed()) {
                 val rebased = CaptureDisplayRebaser.rebase(
                     key, index, startUtf16, edit.deletedChars, edit.insertedChars
