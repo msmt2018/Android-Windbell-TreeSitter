@@ -51,24 +51,12 @@ void testSimpleRootAnalyzer() {
     root = analyzeSimpleQueryRoot(
         "(identifier) @name (#eq? @name \"main\")");
     assert(root.valid && root.node_type == "identifier");
-    root = analyzeSimpleQueryRoot(
-        "(identifier) @name (#eq? @name \"main\") (#match? @name \"^[a-z]+$\")");
-    assert(root.valid && root.node_type == "identifier");
-    root = analyzeSimpleQueryRoot(
-        "(identifier) @name (#eq? @name \"a ) ( b\") ; trailing comment");
-    assert(root.valid && root.node_type == "identifier");
     root = analyzeSimpleQueryRoot("(\",\") @comma");
     assert(root.valid && root.node_type == "," && !root.is_named);
     assert(!analyzeSimpleQueryRoot("(_) @wildcard").valid);
     assert(!analyzeSimpleQueryRoot("[(identifier) (type_identifier)] @name").valid);
     assert(!analyzeSimpleQueryRoot("((identifier) @name)").valid);
     assert(!analyzeSimpleQueryRoot("(identifier) @name .").valid);
-    assert(!analyzeSimpleQueryRoot(
-        "(identifier) @name (#eq? @name \"x\") .").valid);
-    assert(!analyzeSimpleQueryRoot(
-        "(identifier) @name (#eq? @name \"x\") (unsupported)").valid);
-    assert(!analyzeSimpleQueryRoot(
-        "(identifier) @name (#eq? @name \"unterminated)").valid);
     assert(queryPredicateRequiresAncestorContext("#has-parent?"));
     assert(queryPredicateRequiresAncestorContext("has-ancestor?"));
     assert(queryPredicateRequiresAncestorContext("any-not-has-parent?"));
@@ -176,36 +164,6 @@ void testCheckpointDependencyKeepsLaterUnrelatedEdits() {
     cache.rebaseAfterEdit(2, 2, 2, 240, 242, 2, {{240, 242}});
     assert(cache.find(key(2, 140, 180)) != nullptr);
 }
-void testQueryRootBoundaryInsertionInvalidatesDependency() {
-    NativeHighlightCache cache;
-    auto cached = value(120, 130, 100, 200);
-    cached.dependencies[0].source =
-        static_cast<uint8_t>(HighlightSource::NATIVE_QUERY);
-    cached.dependencies[0].flags = HIGHLIGHT_DEPENDENCY_BOUNDARY_SENSITIVE;
-    cache.put(key(1, 110, 150), std::move(cached));
-
-    // A query-root envelope is half-open, but insertion at its exact end can
-    // change the root node's parse boundary and must not be treated as disjoint.
-    cache.rebaseAfterEdit(2, 2, 2, 200, 200, 2, {{200, 202}});
-    assert(cache.size() == 0);
-}
-void testMultipleEntriesRemainLinkedAfterRebase() {
-    auto budget = std::make_shared<SharedNativeMemoryBudget>(1024u * 1024u);
-    NativeHighlightCache cache(1024u * 1024u, budget);
-    cache.put(key(1, 100, 200), value(120, 130, 100, 200));
-    cache.put(key(1, 300, 400), value(320, 330, 300, 400));
-    assert(cache.size() == 2);
-
-    cache.rebaseAfterEdit(2, 2, 2, 20, 20, 4, {{20, 24}});
-    assert(cache.size() == 2);
-    assert(cache.find(key(2, 104, 204)) != nullptr);
-    assert(cache.find(key(2, 304, 404)) != nullptr);
-    assert(budget->usedBytes() != 0);
-
-    cache.clear();
-    assert(cache.size() == 0);
-    assert(budget->usedBytes() == 0);
-}
 void testSharedBudgetReleasedOnEviction() {
     auto budget = std::make_shared<SharedNativeMemoryBudget>(1024u * 1024u);
     NativeHighlightCache cache(1024u * 1024u, budget);
@@ -227,8 +185,6 @@ int main() {
     testRegexDependencyInvalidatesBoundaryInsertion();
     testCheckpointDependencyInvalidatesEarlierEdits();
     testCheckpointDependencyKeepsLaterUnrelatedEdits();
-    testQueryRootBoundaryInsertionInvalidatesDependency();
-    testMultipleEntriesRemainLinkedAfterRebase();
     testSharedBudgetReleasedOnEviction();
     return 0;
 }

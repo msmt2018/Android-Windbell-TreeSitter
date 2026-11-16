@@ -315,6 +315,150 @@ jobs:
           cmake --build build/host --target android-tree-sitter --parallel 2
           test -f build/host/libandroid-tree-sitter.so
 
+      - name: Run native TSH dependency and cache tests
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cmake -S android-tree-sitter/src/main/cpp -B build/host-tsh-tests \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DBUILD_TESTING=ON \
+            -DAUTOGEN_HEADERS="$GITHUB_WORKSPACE/android-tree-sitter/build/generated/native_headers"
+          cmake --build build/host-tsh-tests --target windbell_tsh_cache_tests --parallel 2
+          ctest --test-dir build/host-tsh-tests -R '^windbell_tsh_cache_tests
+        run: ./gradlew testDebug :editor:compileDebugAndroidTestKotlin :app:compileDebugAndroidTestKotlin --continue --parallel --stacktrace
+        env:
+          ANDROIDIDE_TEST: true
+      - name: Upload Test Reports
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-unit-tests
+          path: '**/build/reports/tests/'
+
+
+  android_emulator_tests:
+    name: Android device tests (API ${{ matrix.api-level }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        api-level: [26, 30, 35]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          submodules: true
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.BUILD_JAVA_VERSION }}
+          distribution: ${{ env.BUILD_JAVA_DIST }}
+      - name: Setup NDK
+        uses: nttld/setup-ndk@v1
+        id: setup-ndk
+        with:
+          ndk-version: r25
+      - name: Install dependencies
+        run: $ATS_SUDO $ATS_APT_UPDATE && $ATS_SUDO $ATS_APT_INSTALL $ATS_APT_DEPS
+      - name: Set up Python for native grammar builds
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Set up Node.js for native grammar bindings
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22.22.2'
+      - name: Set up Bun for grammar packages
+        uses: oven-sh/setup-bun@v2
+      - name: Install Node packages for all grammar submodules
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          failed=()
+          # Install each npm workspace root exactly once. A workspace root installs
+          # its child grammar packages and creates local symlinks; installing those
+          # children independently races with npm and fails with EEXIST/MODULE_NOT_FOUND.
+          mapfile -d '' manifests < <(
+            while IFS= read -r -d '' manifest; do
+              dir_path="$(dirname "$manifest")"
+              ancestor="$(dirname "$dir_path")"
+              workspace_managed=false
+              while [[ "$ancestor" == grammars/* ]]; do
+                parent_manifest="$GITHUB_WORKSPACE/$ancestor/package.json"
+                if [[ -f "$parent_manifest" ]] && node -e 'const p=require(process.argv[1]); process.exit(p.workspaces ? 0 : 1)' "$parent_manifest"; then
+                  workspace_managed=true
+                  break
+                fi
+                next_ancestor="$(dirname "$ancestor")"
+                [[ "$next_ancestor" == "$ancestor" ]] && break
+                ancestor="$next_ancestor"
+              done
+              if [[ "$workspace_managed" == false ]]; then
+                printf '%s\0' "$manifest"
+              else
+                echo "::notice::Skipping workspace child package $dir_path; installed by $ancestor" >&2
+              fi
+            done < <(find grammars -mindepth 2 -maxdepth 3 -type f -name package.json ! -path 'grammars/asm/*' ! -path 'grammars/*/test-npm-package/*' -print0 | sort -z)
+          )
+          if (( ${#manifests[@]} == 0 )); then
+            echo "::error::No grammar package.json files were found under grammars/"
+            exit 1
+          fi
+          # Run independent grammar npm installs with bounded concurrency.
+          failed_file="$(mktemp)"
+          export failed_file
+          install_grammar() {
+            local config_path="$1"
+            local dir_path
+            dir_path="$(dirname "$config_path")"
+            echo "::group::📦 Installing grammar dependencies: $dir_path"
+            if (cd "$dir_path" && npm install --legacy-peer-deps --no-audit --no-fund); then
+              echo "::endgroup::"
+              return 0
+            fi
+            echo "::endgroup::"
+            printf '%s\n' "$dir_path" >> "$failed_file"
+            return 1
+          }
+          export -f install_grammar
+          if ! printf '%s\0' "${manifests[@]}" | xargs -0 -r -n 1 -P 4 bash -c 'install_grammar "$1"' _; then
+            echo "One or more grammar dependency installations failed."
+          fi
+          if [[ -s "$failed_file" ]]; then
+            mapfile -t failed < "$failed_file"
+            printf '\n::error::Dependency installation failed for %d grammar(s):\n' "${#failed[@]}"
+            printf ' - %s\n' "${failed[@]}"
+            rm -f "$failed_file"
+            exit 1
+          fi
+          rm -f "$failed_file"
+          echo "✅ Installed dependencies for all ${#manifests[@]} grammar packages."
+      - name: Change Gradle wrapper permissions
+        run: chmod +x ./gradlew
+      - name: Run Android instrumentation tests
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: ${{ matrix.api-level }}
+          target: google_apis
+          arch: x86_64
+          disable-animations: true
+          script: bash -euo pipefail -c 'mkdir -p build/emulator-test-logs; adb start-server; timeout 180 adb -s emulator-5554 wait-for-device; adb -s emulator-5554 shell getprop sys.boot_completed; adb -s emulator-5554 shell settings put global animator_duration_scale 0; adb -s emulator-5554 shell settings put global transition_animation_scale 0; adb -s emulator-5554 shell settings put global window_animation_scale 0; set +e; ./gradlew :editor:connectedDebugAndroidTest :app:connectedDebugAndroidTest --continue --max-workers=1 --stacktrace; test_result=$?; adb -s emulator-5554 logcat -d -v threadtime > build/emulator-test-logs/logcat.txt 2>&1; adb -s emulator-5554 shell dumpsys activity activities > build/emulator-test-logs/activities.txt 2>&1; exit $test_result'
+      - name: Upload Android device test reports and logs
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-device-tests-api-${{ matrix.api-level }}
+          path: |
+            **/build/reports/androidTests/
+            **/build/outputs/androidTest-results/
+            build/emulator-test-logs/
+          if-no-files-found: warn
+
+  # Maven and GitHub release publication jobs are intentionally disabled.
+ --output-on-failure
+
       - name: Run debug tests
         run: ./gradlew testDebug :editor:compileDebugAndroidTestKotlin :app:compileDebugAndroidTestKotlin --continue --parallel --stacktrace
         env:
