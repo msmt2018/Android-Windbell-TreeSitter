@@ -593,9 +593,19 @@ class TshSyntaxHighlighter(
     /** Rebase the temporary paint cache synchronously with editor edit callbacks. */
     private fun rebaseDisplayCache(sessionId: Long, edit: NativeEdit) {
         val startUtf16 = (edit.startByte / 2L).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
-        val snapshot = displayCache.snapshotEntries().filter { it.first.sessionId == sessionId }
-        for ((key, index) in snapshot) {
-            displayCache.remove(key)
+        // Rebasing runs from the editor edit callback. Bound both entry count and
+        // total captures so a single keystroke cannot walk/allocate the whole cache.
+        // Keep the most recently used viewport windows; discard older snapshots.
+        val sessionEntries = displayCache.snapshotEntries().filter { it.first.sessionId == sessionId }
+        var remainingCaptures = 16_384
+        val retained = ArrayList<Pair<CaptureRangeKey, CaptureIntervalIndex>>(32)
+        for ((key, index) in sessionEntries.asReversed()) {
+            if (retained.size >= 32 || index.size > remainingCaptures) continue
+            retained += key to index
+            remainingCaptures -= index.size
+        }
+        sessionEntries.forEach { (key, _) -> displayCache.remove(key) }
+        for ((key, index) in retained.asReversed()) {
             val rebased = CaptureDisplayRebaser.rebase(
                 key, index, startUtf16, edit.deletedChars, edit.insertedChars
             ) ?: continue
