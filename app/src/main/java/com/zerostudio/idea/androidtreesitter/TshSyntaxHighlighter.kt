@@ -536,24 +536,6 @@ class TshSyntaxHighlighter(
         }
     }
 
-    private fun queryLargeCaptures(
-        active: LargeSession,
-        start: Long,
-        end: Long,
-        queryStartUtf16: Int,
-        queryEndUtf16: Int
-    ): List<WindbellTshEngine.HighlightSpan> {
-        if (generation.get() != active.ticket || largeSession !== active) return emptyList()
-        val key = CaptureRangeKey(active.cacheSessionId, start.toInt(), end.toInt())
-        val index = findContainingCaptureRange(key) ?: run {
-            enqueueViewportRange(key)
-            return emptyList()
-        }
-        return ArrayList<WindbellTshEngine.HighlightSpan>().also {
-            index.appendQuery(queryStartUtf16, queryEndUtf16, it)
-        }
-    }
-
     /**
      * Include the actual source line terminator when the painted slice reaches EOL.
      * This lets adjacent visible lines coalesce naturally, including CRLF, while

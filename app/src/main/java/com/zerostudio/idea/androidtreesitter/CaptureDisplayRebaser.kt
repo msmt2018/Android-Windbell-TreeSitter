@@ -16,6 +16,7 @@ internal object CaptureDisplayRebaser {
         insertedChars: Int
     ): Result? {
         if (editStartUtf16 < 0 || deletedChars < 0 || insertedChars < 0) return null
+        if (deletedChars == 0 && insertedChars == 0) return Result(key, index)
         val editStart = editStartUtf16.toLong()
         val oldEnd = editStart + deletedChars.toLong()
         val delta = insertedChars.toLong() - deletedChars.toLong()
