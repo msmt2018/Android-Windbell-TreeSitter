@@ -65,6 +65,7 @@ class WindbellTshEditorViewRenderingTest {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val context = instrumentation.targetContext
         TreeSitter.loadLibrary()
+        System.loadLibrary("tree-sitter-java")
         val engine = WindbellTshEngine.instance
         val extension = "java-editor-e2e"
         assertTrue("The .tsh source did not compile", engine.loadTshSource(
