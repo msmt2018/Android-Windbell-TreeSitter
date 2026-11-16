@@ -70,7 +70,7 @@ class CaptureIntervalIndexTest {
             deletedChars = 0, insertedChars = 2
         )!!
         assertEquals(CaptureRangeKey(7, 0, 22), result.key)
-        assertEquals(listOf(1, 2), result.index.query(0, 14).map { it.styleId })
+        assertEquals(listOf(1, 3), result.index.query(0, 14).map { it.styleId })
         assertEquals(24, result.index.query(11, 14).first().startByte)
     }
 

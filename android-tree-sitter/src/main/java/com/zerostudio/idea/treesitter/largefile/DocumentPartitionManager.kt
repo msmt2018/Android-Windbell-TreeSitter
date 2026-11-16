@@ -476,9 +476,12 @@ class ByteBudgetLruCache<K : Any, V : Any>(
 
     fun get(key: K): V? = lock.write { entries[key]?.value }
 
-    /** Returns an immutable key/value snapshot in current LRU order. */
-    fun snapshotEntries(): List<Pair<K, V>> = lock.read {
-        entries.entries.map { it.key to it.value.value }
+    /** Returns matching entries in current LRU order without copying unrelated values. */
+    fun snapshotEntries(predicate: (K, V) -> Boolean): List<Pair<K, V>> = lock.read {
+        entries.entries.mapNotNull { entry ->
+            val value = entry.value.value
+            if (predicate(entry.key, value)) entry.key to value else null
+        }
     }
 
     /** Finds and promotes the most-recently-used matching entry. */
