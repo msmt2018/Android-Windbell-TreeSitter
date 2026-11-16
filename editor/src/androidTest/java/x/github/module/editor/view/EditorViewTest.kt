@@ -679,7 +679,7 @@ class EditorViewTest {
                 editor.getTextBuffer().createTextSnapshot().version
             }
             editor.setSyntaxHighlighter(highlighter)
-            val version = editor.getTextBuffer().versionId.toLong()
+            val version = editor.getTextBuffer().createTextSnapshot().version
             val revisions = TshRenderRevisions(
                 documentId = documentId,
                 documentVersion = version,
