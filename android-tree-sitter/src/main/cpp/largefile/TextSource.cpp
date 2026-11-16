@@ -47,6 +47,47 @@ bool checkUtf16SurrogateBoundary(const TextSource &source,
     return true;
 }
 
+
+bool copyTreeSitterInputChunk(
+    const TextSource &source,
+    uint64_t offset,
+    void *destination,
+    uint32_t destinationCapacity,
+    uint32_t *bytesRead
+) noexcept {
+    if (!bytesRead) return false;
+    *bytesRead = 0;
+    const uint64_t documentSize = source.sizeBytes();
+    if ((offset & 1u) != 0 || offset > documentSize) return false;
+    if (offset == documentSize) return true;
+    if (!destination || destinationCapacity < 2u) return false;
+
+    // A source view is only valid until its next read(). Boundary inspection
+    // below may cross a PieceTree boundary and switch a FileWindowSource's
+    // backing window, so never return the borrowed view directly to Tree-sitter.
+    TextChunkView chunk{};
+    if (!source.read(offset, kTreeSitterInputChunkBytes, &chunk) ||
+        !chunk.data || chunk.size == 0 || (chunk.size & 1u) != 0 ||
+        chunk.size > kTreeSitterInputChunkBytes ||
+        chunk.size > documentSize - offset) return false;
+
+    bool splitsSurrogatePair = false;
+    const uint64_t chunkEnd = offset + chunk.size;
+    if (!checkUtf16SurrogateBoundary(source, chunkEnd, &splitsSurrogatePair)) return false;
+
+    const uint64_t stableSize = static_cast<uint64_t>(chunk.size) +
+        (splitsSurrogatePair ? 2u : 0u);
+    if (stableSize > destinationCapacity || stableSize > documentSize - offset ||
+        stableSize > std::numeric_limits<uint32_t>::max()) return false;
+
+    // Re-read after all look-ahead operations. copyTextRange copies each
+    // borrowed segment before requesting the next one, preserving correctness
+    // even when adjacent pieces map to unrelated FileWindowSource offsets.
+    if (!copyTextRange(source, offset, stableSize, destination)) return false;
+    *bytesRead = static_cast<uint32_t>(stableSize);
+    return true;
+}
+
 SegmentedTextSource::SegmentedTextSource(
     std::vector<TextSegment> segments,
     uint64_t totalBytes
