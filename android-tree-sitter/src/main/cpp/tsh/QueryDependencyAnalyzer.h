@@ -118,15 +118,49 @@ inline QueryRootDescriptor analyzeSimpleQueryRoot(std::string_view pattern) {
         // suffix, but capture IDs are not used as dependency-range proxies.
     }
 
-    skipQuerySpaceAndComments(pattern, &scan);
-    if (scan < pattern.size()) {
-        // Only standard predicate groups are accepted after the root. Other
-        // suffix syntax (notably sibling anchors) expands dependencies.
+    // Validate every suffix group. Checking only the first predicate allows
+    // trailing anchors/unknown syntax to be silently ignored and can falsely
+    // certify a pattern as root-local.
+    while (scan < pattern.size()) {
+        skipQuerySpaceAndComments(pattern, &scan);
+        if (scan >= pattern.size()) break;
         if (pattern[scan] != '(') return QueryRootDescriptor{};
+
         size_t predicate = scan + 1;
         skipQuerySpaceAndComments(pattern, &predicate);
         if (predicate >= pattern.size() || pattern[predicate] != '#')
             return QueryRootDescriptor{};
+
+        size_t predicate_depth = 1;
+        bool in_predicate_string = false;
+        bool predicate_escape = false;
+        bool closed_predicate = false;
+        for (; predicate < pattern.size(); ++predicate) {
+            const char ch = pattern[predicate];
+            if (in_predicate_string) {
+                if (predicate_escape) predicate_escape = false;
+                else if (ch == '\\') predicate_escape = true;
+                else if (ch == '"') in_predicate_string = false;
+                continue;
+            }
+            if (ch == '"') {
+                in_predicate_string = true;
+                continue;
+            }
+            if (ch == ';') {
+                while (predicate < pattern.size() && pattern[predicate] != '\n')
+                    ++predicate;
+                continue;
+            }
+            if (ch == '(') ++predicate_depth;
+            else if (ch == ')' && --predicate_depth == 0) {
+                ++predicate;
+                closed_predicate = true;
+                break;
+            }
+        }
+        if (!closed_predicate || in_predicate_string) return QueryRootDescriptor{};
+        scan = predicate;
     }
     result.valid = true;
     return result;

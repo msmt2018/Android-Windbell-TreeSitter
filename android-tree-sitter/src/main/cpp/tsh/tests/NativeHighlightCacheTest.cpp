@@ -51,12 +51,24 @@ void testSimpleRootAnalyzer() {
     root = analyzeSimpleQueryRoot(
         "(identifier) @name (#eq? @name \"main\")");
     assert(root.valid && root.node_type == "identifier");
+    root = analyzeSimpleQueryRoot(
+        "(identifier) @name (#eq? @name \"main\") (#match? @name \"^[a-z]+$\")");
+    assert(root.valid && root.node_type == "identifier");
+    root = analyzeSimpleQueryRoot(
+        "(identifier) @name (#eq? @name \"a ) ( b\") ; trailing comment");
+    assert(root.valid && root.node_type == "identifier");
     root = analyzeSimpleQueryRoot("(\",\") @comma");
     assert(root.valid && root.node_type == "," && !root.is_named);
     assert(!analyzeSimpleQueryRoot("(_) @wildcard").valid);
     assert(!analyzeSimpleQueryRoot("[(identifier) (type_identifier)] @name").valid);
     assert(!analyzeSimpleQueryRoot("((identifier) @name)").valid);
     assert(!analyzeSimpleQueryRoot("(identifier) @name .").valid);
+    assert(!analyzeSimpleQueryRoot(
+        "(identifier) @name (#eq? @name \"x\") .").valid);
+    assert(!analyzeSimpleQueryRoot(
+        "(identifier) @name (#eq? @name \"x\") (unsupported)").valid);
+    assert(!analyzeSimpleQueryRoot(
+        "(identifier) @name (#eq? @name \"unterminated)").valid);
     assert(queryPredicateRequiresAncestorContext("#has-parent?"));
     assert(queryPredicateRequiresAncestorContext("has-ancestor?"));
     assert(queryPredicateRequiresAncestorContext("any-not-has-parent?"));
