@@ -594,12 +594,18 @@ static void testDenseHundredMiBPartitionIndex() {
     }
 
     uint64_t written = 0;
+    size_t blockOffset = 0;
     while (written < documentBytes) {
-        const ssize_t count = ::write(fd, block.data(), block.size());
+        const ssize_t count = ::write(
+            fd, block.data() + blockOffset, block.size() - blockOffset);
         assert(count > 0);
-        written += static_cast<uint64_t>(count);
+        const size_t consumed = static_cast<size_t>(count);
+        written += consumed;
+        blockOffset += consumed;
+        if (blockOffset == block.size()) blockOffset = 0;
     }
     assert(written == documentBytes);
+    assert(blockOffset == 0);
     assert(::close(fd) == 0);
 
     auto window = std::make_shared<FileWindowSource>(path, writeChunkBytes);
