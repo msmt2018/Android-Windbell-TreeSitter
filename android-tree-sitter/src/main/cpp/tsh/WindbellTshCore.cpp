@@ -1975,7 +1975,7 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
             };
             auto append_indexed_type_rules = [&](const AstTypeRuleIndex& index, const char* type) {
                 if (!type) return;
-                const auto found = index.find(std::string_view(type));
+                const auto found = index.find(std::string(type));
                 if (found != index.end()) append_indexed_rules(found->second);
             };
             append_indexed_rules(grammar->ast_wildcard_rules);
