@@ -1146,6 +1146,108 @@ class WindbellTshLinkageTest {
     }
 
     @Test
+    fun testAstSelectorsMatchJavaGrammarAliasesAcrossStructuralConstraints() {
+        val engine = WindbellTshEngine.instance
+        val language = TSLanguageJava.getInstance()
+        val source = """
+            tsh 2 {
+                language { id: "java-ast-alias-identities" extensions: [".jaai"] }
+                styles {
+                    grammarIdentity { scope: "entity.name.type.grammar" }
+                    visibleIdentity { scope: "entity.name.type.visible" }
+                    parentIdentity { scope: "entity.name.type.parent" }
+                    ancestorIdentity { scope: "entity.name.type.ancestor" }
+                    childIdentity { scope: "entity.name.type.child" }
+                    siblingIdentity { scope: "punctuation.separator.type-arguments" }
+                }
+                ast: [
+                    {
+                        node: "identifier"
+                        style: "grammarIdentity"
+                        priority: 20
+                        overlap: allow
+                    },
+                    {
+                        node: "type_identifier"
+                        style: "visibleIdentity"
+                        priority: 21
+                        overlap: allow
+                    },
+                    {
+                        node: "type_identifier"
+                        parent: "type_arguments"
+                        style: "parentIdentity"
+                        priority: 22
+                        overlap: allow
+                    },
+                    {
+                        node: "type_identifier"
+                        ancestor: "class_declaration"
+                        style: "ancestorIdentity"
+                        priority: 23
+                        overlap: allow
+                    },
+                    {
+                        node: "generic_type"
+                        child: "identifier"
+                        style: "childIdentity"
+                        priority: 24
+                        overlap: allow
+                    },
+                    {
+                        node: ","
+                        previousSibling: "identifier"
+                        nextSibling: "identifier"
+                        style: "siblingIdentity"
+                        priority: 25
+                        overlap: allow
+                    }
+                ]
+            }
+        """.trimIndent()
+
+        assertTrue(engine.loadTshSource("java-ast-alias-identities", source, language))
+        val parser = TSParser.create().apply { setLanguage(language) }
+        val code = "class Demo { Map<String, Integer> values; }"
+        val tree = parser.parseString(code)
+        val spans = engine.computeHighlights(tree, code, "java-ast-alias-identities")
+        val catalog = engine.getStyleCatalog("java-ast-alias-identities")
+        fun hasStyle(name: String, token: String): Boolean {
+            val id = catalog.first { it.name == name }.styleId
+            val offset = code.indexOf(token) * 2
+            return spans.any { it.styleId == id && it.startByte == offset }
+        }
+
+        assertTrue(
+            hasStyle("grammarIdentity", "String"),
+            "A selector named with the original grammar symbol 'identifier' must match the aliased type_identifier node."
+        )
+        assertTrue(
+            hasStyle("visibleIdentity", "String"),
+            "A selector named with the visible alias 'type_identifier' must match the same node."
+        )
+        assertTrue(
+            hasStyle("parentIdentity", "String"),
+            "Parent matching must accept the aliased child while retaining its type_arguments parent."
+        )
+        assertTrue(
+            hasStyle("ancestorIdentity", "String"),
+            "Ancestor matching must preserve the aliased target node under its class_declaration ancestor."
+        )
+        assertTrue(
+            hasStyle("childIdentity", "Map"),
+            "Child matching by the original grammar symbol must match a direct aliased child of generic_type."
+        )
+        assertTrue(
+            hasStyle("siblingIdentity", ","),
+            "Previous/next sibling constraints must match aliased type_identifier siblings by grammar identity."
+        )
+
+        tree?.close()
+        parser.close()
+    }
+
+    @Test
     fun testAstSelectorTextRegexIsCompiledAndExecuted() {
         val engine = WindbellTshEngine.instance
         val language = TSLanguageJava.getInstance()
