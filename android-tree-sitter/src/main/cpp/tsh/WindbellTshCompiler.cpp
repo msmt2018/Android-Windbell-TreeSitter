@@ -3156,10 +3156,12 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                                 if (ast_rule.child_symbol == 0) return nullptr;
                             }
                             if (!previous_sibling_name.empty()) {
+                                ast_rule.previous_sibling_type = previous_sibling_name;
                                 ast_rule.previous_sibling_symbol = resolveAstGrammarSymbol(ts_lang, previous_sibling_name, true);
                                 if (ast_rule.previous_sibling_symbol == 0) return nullptr;
                             }
                             if (!next_sibling_name.empty()) {
+                                ast_rule.next_sibling_type = next_sibling_name;
                                 ast_rule.next_sibling_symbol = resolveAstGrammarSymbol(ts_lang, next_sibling_name, true);
                                 if (ast_rule.next_sibling_symbol == 0) return nullptr;
                             }
