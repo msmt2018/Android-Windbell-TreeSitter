@@ -880,6 +880,11 @@ class TshSyntaxHighlighter(
     }
 
     private fun disposeSession(active: LargeSession) {
+        // Retry wake-ups retain their LargeSession until their delay expires. A
+        // detached/replaced document must release those jobs immediately rather
+        // than keeping up to 256 stale session closures alive for the backoff window.
+        active.rangeWork.values.forEach { it.retryWakeJob?.cancel() }
+        active.rangeWork.clear()
         scope.launch(Dispatchers.IO) {
             runCatching {
                 active.nativeMutex.withLock {
