@@ -55,6 +55,7 @@ class TshSyntaxHighlighter(
         private val nextSessionId = AtomicLong(1L)
         private val captureRangeIndex = CaptureRangeLookupIndex()
         private val displayRangeIndex = CaptureRangeLookupIndex()
+        private val displayCacheLock = Any()
         private val displayCache = ByteBudgetLruCache<CaptureRangeKey, CaptureIntervalIndex>(
             DISPLAY_CACHE_BYTES,
             { index -> 96L + index.size.toLong() * 96L },
@@ -528,7 +529,9 @@ class TshSyntaxHighlighter(
             if (nativeHandle != 0L) engine.closeNativeDocument(nativeHandle)
             if (cacheSessionId != 0L) {
                 captureCache.invalidate { key, _ -> key.sessionId == cacheSessionId }
-                displayCache.invalidate { key, _ -> key.sessionId == cacheSessionId }
+                synchronized(displayCacheLock) {
+                    displayCache.invalidate { key, _ -> key.sessionId == cacheSessionId }
+                }
             }
         }
     }
@@ -563,12 +566,13 @@ class TshSyntaxHighlighter(
         return buffer.getEOL().length
     }
 
-    private fun findContainingDisplayRange(key: CaptureRangeKey): CaptureIntervalIndex? {
-        val cachedKey = displayRangeIndex.findContaining(
-            key.sessionId, key.startUtf16, key.endUtf16
-        ) ?: return null
-        return displayCache.get(cachedKey)
-    }
+    private fun findContainingDisplayRange(key: CaptureRangeKey): CaptureIntervalIndex? =
+        synchronized(displayCacheLock) {
+            val cachedKey = displayRangeIndex.findContaining(
+                key.sessionId, key.startUtf16, key.endUtf16
+            ) ?: return@synchronized null
+            displayCache.get(cachedKey)
+        }
 
     private fun queryDisplayCaptures(
         key: CaptureRangeKey,
@@ -583,33 +587,37 @@ class TshSyntaxHighlighter(
 
     /** Old results are paint-only; new native results replace overlapping snapshots. */
     private fun publishDisplayCaptureRange(key: CaptureRangeKey, index: CaptureIntervalIndex) {
-        displayCache.invalidate { cached, _ ->
-            cached.sessionId == key.sessionId &&
-                cached.startUtf16 < key.endUtf16 && key.startUtf16 < cached.endUtf16
+        synchronized(displayCacheLock) {
+            displayCache.invalidate { cached, _ ->
+                cached.sessionId == key.sessionId &&
+                    cached.startUtf16 < key.endUtf16 && key.startUtf16 < cached.endUtf16
+            }
+            displayCache.put(key, index)
         }
-        displayCache.put(key, index)
     }
 
     /** Rebase the temporary paint cache synchronously with editor edit callbacks. */
     private fun rebaseDisplayCache(sessionId: Long, edit: NativeEdit) {
-        val startUtf16 = (edit.startByte / 2L).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
-        // Rebasing runs from the editor edit callback. Bound both entry count and
-        // total captures so a single keystroke cannot walk/allocate the whole cache.
-        // Keep the most recently used viewport windows; discard older snapshots.
-        val sessionEntries = displayCache.snapshotEntries().filter { it.first.sessionId == sessionId }
-        var remainingCaptures = 16_384
-        val retained = ArrayList<Pair<CaptureRangeKey, CaptureIntervalIndex>>(32)
-        for ((key, index) in sessionEntries.asReversed()) {
-            if (retained.size >= 32 || index.size > remainingCaptures) continue
-            retained += key to index
-            remainingCaptures -= index.size
-        }
-        sessionEntries.forEach { (key, _) -> displayCache.remove(key) }
-        for ((key, index) in retained.asReversed()) {
-            val rebased = CaptureDisplayRebaser.rebase(
-                key, index, startUtf16, edit.deletedChars, edit.insertedChars
-            ) ?: continue
-            displayCache.put(rebased.key, rebased.index)
+        synchronized(displayCacheLock) {
+            val startUtf16 = (edit.startByte / 2L).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+            // Rebasing runs from the editor edit callback. Bound both entry count and
+            // total captures so a single keystroke cannot walk/allocate the whole cache.
+            // Keep the most recently used viewport windows; discard older snapshots.
+            val sessionEntries = displayCache.snapshotEntries().filter { it.first.sessionId == sessionId }
+            var remainingCaptures = 16_384
+            val retained = ArrayList<Pair<CaptureRangeKey, CaptureIntervalIndex>>(32)
+            for ((key, index) in sessionEntries.asReversed()) {
+                if (retained.size >= 32 || index.size > remainingCaptures) continue
+                retained += key to index
+                remainingCaptures -= index.size
+            }
+            sessionEntries.forEach { (key, _) -> displayCache.remove(key) }
+            for ((key, index) in retained.asReversed()) {
+                val rebased = CaptureDisplayRebaser.rebase(
+                    key, index, startUtf16, edit.deletedChars, edit.insertedChars
+                ) ?: continue
+                displayCache.put(rebased.key, rebased.index)
+            }
         }
     }
 
@@ -914,7 +922,9 @@ class TshSyntaxHighlighter(
                 }
             }.onFailure { Log.w(TAG, "Failed to close native TSH document", it) }
             captureCache.invalidate { key, _ -> key.sessionId == active.cacheSessionId }
-            displayCache.invalidate { key, _ -> key.sessionId == active.cacheSessionId }
+            synchronized(displayCacheLock) {
+                displayCache.invalidate { key, _ -> key.sessionId == active.cacheSessionId }
+            }
         }
     }
 }
