@@ -969,12 +969,12 @@ class WindbellTshLinkageTest {
                         {
                             id: "any-not-eq-missing-capture"
                             priority: 60
-                            source: `[(class_declaration name: (identifier) @target) (method_declaration name: (identifier) @acceptedMissing)] (#any-not-eq? @target "Demo")`
+                            source: `([(class_declaration name: (identifier) @target) (method_declaration name: (identifier) @acceptedMissing)] (#any-not-eq? @target "Demo"))`
                         },
                         {
                             id: "any-eq-missing-capture"
                             priority: 61
-                            source: `[(class_declaration name: (identifier) @target) (method_declaration name: (identifier) @rejectedMissing)] (#any-eq? @target "Demo")`
+                            source: `([(class_declaration name: (identifier) @target) (method_declaration name: (identifier) @rejectedMissing)] (#any-eq? @target "Demo"))`
                         }
                     ]
                 }
