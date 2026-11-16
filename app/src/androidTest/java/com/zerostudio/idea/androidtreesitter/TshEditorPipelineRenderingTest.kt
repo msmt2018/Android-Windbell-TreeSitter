@@ -794,13 +794,13 @@ class TshEditorPipelineRenderingTest {
         // The editor stores 50 Mi UTF-16 code units; no whole-document String is created.
         val documentBytes = 100L * 1024L * 1024L
         val documentChars = (documentBytes / 2L).toInt()
-        val opening = "/*\\n"
-        val closing = "\\n*/\\n"
-        val targetLine = "class LargeEditorCanvasProbe { int value; }\\n"
+        val opening = "/*\n"
+        val closing = "\n*/\n"
+        val targetLine = "class LargeEditorCanvasProbe { int value; }\n"
         val fillerChars = documentChars - opening.length - closing.length - targetLine.length
         assertTrue("Fixture must leave a substantial comment body", fillerChars > 0)
 
-        val fillerLine = " * 0123456789 abcdefghijklmnopqrstuvwxyz\\n"
+        val fillerLine = " * 0123456789 abcdefghijklmnopqrstuvwxyz\n"
         val fillerChunk = buildString(64 * 1024) {
             while (length < 64 * 1024) append(fillerLine)
             setLength(64 * 1024)
@@ -808,12 +808,12 @@ class TshEditorPipelineRenderingTest {
         val fullChunks = fillerChars / fillerChunk.length
         val remainderChars = fillerChars % fillerChunk.length
         val remainder = fillerChunk.substring(0, remainderChars)
-        val fillerLineFeeds = fillerChunk.count { it == '\\n' }.toLong() * fullChunks +
-            remainder.count { it == '\\n' }.toLong()
+        val fillerLineFeeds = fillerChunk.count { it == '\n' }.toLong() * fullChunks +
+            remainder.count { it == '\n' }.toLong()
         val targetStart = opening.length + fillerChars + closing.length
         val targetLineNumber = (
-            opening.count { it == '\\n' }.toLong() + fillerLineFeeds +
-                closing.count { it == '\\n' }.toLong() + 1L
+            opening.count { it == '\n' }.toLong() + fillerLineFeeds +
+                closing.count { it == '\n' }.toLong() + 1L
             ).toInt()
 
         val builder = PieceTreeTextBufferBuilder()
