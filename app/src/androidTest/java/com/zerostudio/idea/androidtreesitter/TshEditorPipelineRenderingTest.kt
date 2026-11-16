@@ -825,6 +825,16 @@ class TshEditorPipelineRenderingTest {
         val buffer = builder.build()
         assertEquals("Piece Tree fixture must be exactly 100 MiB in UTF-16LE", documentChars, buffer.length)
         assertEquals("Tail class offset must match the generated source", targetStart, buffer.length - targetLine.length)
+        assertEquals(
+            "Computed tail line must resolve to the exact Piece Tree offset",
+            targetStart,
+            buffer.getOffsetAt(targetLineNumber, 1)
+        )
+        assertEquals(
+            "Computed tail line must contain the expected Java declaration",
+            targetLine.trimEnd('\\n'),
+            buffer.getLineContent(targetLineNumber)
+        )
 
         val highlighter = TshSyntaxHighlighter(language, "java", engine, context.cacheDir)
         lateinit var editor: EditorView
