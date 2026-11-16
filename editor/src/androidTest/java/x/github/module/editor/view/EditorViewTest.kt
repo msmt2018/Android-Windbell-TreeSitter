@@ -1131,7 +1131,7 @@ class EditorViewTest {
 
     @Test
     fun aTapPastTheEndOfTheTextLandsAtItsEnd() {
-        prepareForTouch("abcdefghij\\nabcdefghij")
+        prepareForTouch("abcdefghij\nabcdefghij")
         onMainThread {
             tap(xOf(1, 11) + 400f, rowBottomOf(1, 11) - editor.getLineHeight() / 2f)
             editor.insert("X")
