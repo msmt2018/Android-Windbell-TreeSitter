@@ -38,6 +38,16 @@ import androidx.test.platform.app.InstrumentationRegistry
 
 import x.github.module.editor.input.EditorClipboard
 import x.github.module.editor.model.EditSession
+import x.github.module.editor.tsh.TshRenderPlanSyntaxHighlighter
+import com.zerostudio.idea.treesitter.tsh.api.TshCoordinateSystem
+import com.zerostudio.idea.treesitter.tsh.api.TshDocumentId
+import com.zerostudio.idea.treesitter.tsh.api.TshRenderInstruction
+import com.zerostudio.idea.treesitter.tsh.api.TshRenderPlan
+import com.zerostudio.idea.treesitter.tsh.api.TshRenderPlanId
+import com.zerostudio.idea.treesitter.tsh.api.TshRenderRevisions
+import com.zerostudio.idea.treesitter.tsh.api.TshResolvedStyle
+import com.zerostudio.idea.treesitter.tsh.api.TshSourcePosition
+import com.zerostudio.idea.treesitter.tsh.api.TshSourceRange
 import x.github.module.editor.render.DrawableFoldStyle
 import x.github.module.editor.structure.FoldingRange
 import x.github.module.editor.structure.IndentationFoldingProvider
@@ -655,6 +665,56 @@ class EditorViewTest {
             // and without the styler everything is plain again
             editor.setLineStyler(null)
             assertFalse(drawToBitmap(editor).hasPixel(isAbout(styledColor)))
+        }
+    }
+
+    @Test
+    fun tshRenderPlanColorsAreActuallyDrawnByTheEditorView() {
+        offMainThread { editor.setTextSize(48f) }
+        onMainThread {
+            editor.setTextColor(plainColor)
+            editor.setText("MMMM\nMMMM")
+            val documentId = TshDocumentId("editor-tsh-render")
+            val highlighter = TshRenderPlanSyntaxHighlighter(documentId) {
+                editor.getTextBuffer().versionId.toLong()
+            }
+            editor.setSyntaxHighlighter(highlighter)
+            val version = editor.getTextBuffer().versionId.toLong()
+            val revisions = TshRenderRevisions(
+                documentId = documentId,
+                documentVersion = version,
+                configRevision = "test-config",
+                themeRevision = "test-theme",
+                viewportRevision = "test-viewport",
+                rendererRevision = "editor-view"
+            )
+            val plan = TshRenderPlan(
+                id = TshRenderPlanId("editor-tsh-visible-color"),
+                revisions = revisions,
+                instructions = listOf(
+                    TshRenderInstruction(
+                        range = TshSourceRange(
+                            start = TshSourcePosition(0L, coordinateSystem = TshCoordinateSystem.UTF16_CODE_UNIT),
+                            end = TshSourcePosition(4L, coordinateSystem = TshCoordinateSystem.UTF16_CODE_UNIT),
+                            documentVersion = version
+                        ),
+                        style = TshResolvedStyle(foregroundArgb = styledColor.toUInt())
+                    )
+                )
+            )
+            assertTrue("the current TSH RenderPlan was rejected", highlighter.updateRenderPlan(plan).isSuccess())
+            layOut(editor)
+
+            val bitmap = drawToBitmap(editor)
+            assertTrue(
+                "TSH RenderPlan foreground color never reached EditorView's Canvas painter",
+                bitmap.hasPixel(isAbout(styledColor))
+            )
+            assertTrue(
+                "unmatched text should retain the editor's base color",
+                bitmap.hasPixel(isAbout(plainColor))
+            )
+            editor.setSyntaxHighlighter(null)
         }
     }
 
