@@ -63,7 +63,7 @@ class TshNativeHundredMiBViewportTest {
                 val linePattern = " * TSH large-file viewport fixture\n"
                     .toByteArray(StandardCharsets.UTF_16LE)
                 val block = ByteBuffer.allocate(64 * 1024)
-                for (index in block.indices) {
+                for (index in 0 until block.capacity()) {
                     block.put(index, linePattern[index % linePattern.size])
                 }
 
