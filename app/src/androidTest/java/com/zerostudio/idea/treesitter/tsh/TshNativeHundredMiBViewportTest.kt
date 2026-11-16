@@ -42,10 +42,14 @@ class TshNativeHundredMiBViewportTest {
             engine.loadTshSource(extension, tshSource, language)
         )
 
-        val tail = "class LargeTailViewportProbe { int value; }\n"
+        val tail = "class LargeTailViewportProbe { int value; }\\n"
         val tailBytes = tail.toByteArray(StandardCharsets.UTF_16LE)
+        val commentPrefix = "/*\\n".toByteArray(StandardCharsets.UTF_16LE)
+        val commentSuffix = "\\n*/\\n".toByteArray(StandardCharsets.UTF_16LE)
         val documentBytes = 100L * 1024L * 1024L
-        val fillerBytes = documentBytes - tailBytes.size
+        // Keep the large prefix as one Java block-comment token while providing
+        // realistic line density for the native sparse line/partition index.
+        val fillerBytes = documentBytes - commentPrefix.size - commentSuffix.size - tailBytes.size
         assertTrue(fillerBytes > 0L && (fillerBytes and 1L) == 0L)
 
         val file = File.createTempFile("tsh-dense-100mb-", ".utf16", context.cacheDir)
@@ -56,22 +60,36 @@ class TshNativeHundredMiBViewportTest {
                 StandardOpenOption.WRITE,
                 StandardOpenOption.TRUNCATE_EXISTING
             ).use { output ->
+                val linePattern = " * TSH large-file viewport fixture\\n"
+                    .toByteArray(StandardCharsets.UTF_16LE)
                 val block = ByteBuffer.allocate(64 * 1024)
-                for (index in 0 until block.capacity() step 2) {
-                    block.put(index, 0x20.toByte())
-                    block.put(index + 1, 0)
+                for (index in block.indices) {
+                    block.put(index, linePattern[index % linePattern.size])
                 }
 
                 var offset = 0L
-                while (offset < fillerBytes) {
+                val prefixBuffer = ByteBuffer.wrap(commentPrefix)
+                while (prefixBuffer.hasRemaining()) {
+                    val written = output.write(prefixBuffer, offset)
+                    assertTrue("Comment prefix write made no progress", written > 0)
+                    offset += written.toLong()
+                }
+                val fillerEnd = offset + fillerBytes
+                while (offset < fillerEnd) {
                     block.clear()
-                    val requested = minOf(block.capacity().toLong(), fillerBytes - offset).toInt()
+                    val requested = minOf(block.capacity().toLong(), fillerEnd - offset).toInt()
                     block.limit(requested)
                     while (block.hasRemaining()) {
                         val written = output.write(block, offset)
                         assertTrue("Fixture write made no progress", written > 0)
                         offset += written.toLong()
                     }
+                }
+                val closingBuffer = ByteBuffer.wrap(commentSuffix)
+                while (closingBuffer.hasRemaining()) {
+                    val written = output.write(closingBuffer, offset)
+                    assertTrue("Comment suffix write made no progress", written > 0)
+                    offset += written.toLong()
                 }
                 val tailBuffer = ByteBuffer.wrap(tailBytes)
                 while (tailBuffer.hasRemaining()) {
@@ -108,12 +126,13 @@ class TshNativeHundredMiBViewportTest {
 
                 val captures = requireNotNull(engine.highlightNativeDocument(
                     documentHandle = documentHandle,
-                    startByte = fillerBytes,
+                    startByte = tailStartByte,
                     endByte = documentBytes
                 )) { "Native TSH viewport query returned null" }
                 assertEquals("Native capture rows must use six integers", 0, captures.size % 6)
 
-                val nameStart = fillerBytes + tail.indexOf("LargeTailViewportProbe").toLong() * 2L
+                val tailStartByte = commentPrefix.size.toLong() + fillerBytes + commentSuffix.size
+                val nameStart = tailStartByte + tail.indexOf("LargeTailViewportProbe").toLong() * 2L
                 val nameEnd = nameStart + "LargeTailViewportProbe".length.toLong() * 2L
                 val typeStyleId = engine.getStyleCatalog(extension)
                     .firstOrNull { it.name == "type" }?.styleId
