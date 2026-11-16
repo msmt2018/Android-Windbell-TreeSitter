@@ -1976,6 +1976,14 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
             if (node_rules != grammar->ast_rules_by_node_symbol.end()) {
                 append_indexed_rules(node_rules->second);
             }
+            const TSSymbol node_grammar_sym = ts_node_grammar_symbol(node);
+            if (node_grammar_sym != sym) {
+                auto grammar_node_rules =
+                    grammar->ast_rules_by_node_symbol.find(node_grammar_sym);
+                if (grammar_node_rules != grammar->ast_rules_by_node_symbol.end()) {
+                    append_indexed_rules(grammar_node_rules->second);
+                }
+            }
             if (!ts_node_is_null(parent)) {
                 auto field_rules = grammar->ast_field_rules_by_parent_symbol.find(parent_sym);
                 if (field_rules != grammar->ast_field_rules_by_parent_symbol.end()) {
