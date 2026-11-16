@@ -676,7 +676,7 @@ class EditorViewTest {
             editor.setText("MMMM\nMMMM")
             val documentId = TshDocumentId("editor-tsh-render")
             val highlighter = TshRenderPlanSyntaxHighlighter(documentId) {
-                editor.getTextBuffer().versionId.toLong()
+                editor.getTextBuffer().createTextSnapshot().version
             }
             editor.setSyntaxHighlighter(highlighter)
             val version = editor.getTextBuffer().versionId.toLong()
