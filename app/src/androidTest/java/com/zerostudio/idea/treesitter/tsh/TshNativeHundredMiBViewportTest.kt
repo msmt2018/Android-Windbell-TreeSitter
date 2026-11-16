@@ -42,10 +42,10 @@ class TshNativeHundredMiBViewportTest {
             engine.loadTshSource(extension, tshSource, language)
         )
 
-        val tail = "class LargeTailViewportProbe { int value; }\\n"
+        val tail = "class LargeTailViewportProbe { int value; }\n"
         val tailBytes = tail.toByteArray(StandardCharsets.UTF_16LE)
-        val commentPrefix = "/*\\n".toByteArray(StandardCharsets.UTF_16LE)
-        val commentSuffix = "\\n*/\\n".toByteArray(StandardCharsets.UTF_16LE)
+        val commentPrefix = "/*\n".toByteArray(StandardCharsets.UTF_16LE)
+        val commentSuffix = "\n*/\n".toByteArray(StandardCharsets.UTF_16LE)
         val documentBytes = 100L * 1024L * 1024L
         // Keep the large prefix as one Java block-comment token while providing
         // realistic line density for the native sparse line/partition index.
@@ -60,7 +60,7 @@ class TshNativeHundredMiBViewportTest {
                 StandardOpenOption.WRITE,
                 StandardOpenOption.TRUNCATE_EXISTING
             ).use { output ->
-                val linePattern = " * TSH large-file viewport fixture\\n"
+                val linePattern = " * TSH large-file viewport fixture\n"
                     .toByteArray(StandardCharsets.UTF_16LE)
                 val block = ByteBuffer.allocate(64 * 1024)
                 for (index in block.indices) {
