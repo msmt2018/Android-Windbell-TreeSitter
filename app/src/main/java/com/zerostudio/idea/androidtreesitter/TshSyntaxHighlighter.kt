@@ -263,8 +263,11 @@ class TshSyntaxHighlighter(
         val active = largeSession ?: return null
         val editPending = active.pendingEditEpoch.get() != active.appliedEditEpoch.get()
 
-        val boundedStart = queryStart.coerceAtMost(active.lengthChars.get())
-        val boundedEnd = queryEnd.coerceAtMost(active.lengthChars.get())
+        // During an edit the native length intentionally remains at the last committed
+        // revision. Display coordinates already follow the editor's applied edit, so do
+        // not clamp them to that older native length.
+        val boundedStart = if (editPending) queryStart else queryStart.coerceAtMost(active.lengthChars.get())
+        val boundedEnd = if (editPending) queryEnd else queryEnd.coerceAtMost(active.lengthChars.get())
         val spans = if (boundedStart >= boundedEnd) emptyList() else {
             val requested = CaptureRangeKey(active.cacheSessionId, boundedStart.toInt(), boundedEnd.toInt())
             val semantic = if (editPending) null else findContainingCaptureRange(requested)
@@ -317,7 +320,7 @@ class TshSyntaxHighlighter(
         val queryStart = lineStartOffset.toLong() + start.toLong()
         val queryEnd = lineStartOffset.toLong() + end.toLong() +
             visibleLineBreakLength(bufferLine, end, host?.buffer?.getLineLength(bufferLine) ?: end).toLong()
-        val length = active.lengthChars.get()
+        val length = if (editPending) Long.MAX_VALUE else active.lengthChars.get()
         if (queryStart >= length) return true
         if (queryStart > Int.MAX_VALUE || queryEnd > Int.MAX_VALUE || queryEnd < queryStart) return false
         val boundedStart = queryStart.coerceAtLeast(0L)
