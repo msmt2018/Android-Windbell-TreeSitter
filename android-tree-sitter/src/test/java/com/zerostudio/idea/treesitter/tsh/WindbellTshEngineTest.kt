@@ -1196,6 +1196,7 @@ class WindbellTshLinkageTest {
                     },
                     {
                         node: ","
+                        named: false
                         previousSibling: "identifier"
                         nextSibling: "identifier"
                         style: "siblingIdentity"
