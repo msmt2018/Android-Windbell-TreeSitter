@@ -568,6 +568,98 @@ static uint64_t utf16LineStart(const std::string &bytes, uint64_t line) {
     return bytes.size();
 }
 
+static void testDenseHundredMiBPartitionIndex() {
+    // A real dense UTF-16LE fixture: 100 MiB of initialized text, not a sparse
+    // zero-filled file. Each line contains 127 ASCII code units plus LF.
+    constexpr uint64_t documentBytes = 100ULL * 1024ULL * 1024ULL;
+    constexpr uint64_t lineBytes = 128ULL * 2ULL;
+    constexpr uint64_t expectedLines = documentBytes / lineBytes;
+    constexpr size_t writeChunkBytes = 64u * 1024u;
+    static_assert(documentBytes % writeChunkBytes == 0, "fixture must use full chunks");
+    static_assert(writeChunkBytes % lineBytes == 0, "chunks must end on line boundaries");
+
+    char path[] = "/tmp/windbell-dense-100mb-index-XXXXXX";
+    const int fd = ::mkstemp(path);
+    assert(fd >= 0);
+
+    std::vector<char> block(writeChunkBytes);
+    for (size_t line = 0; line < writeChunkBytes / lineBytes; ++line) {
+        const size_t base = line * static_cast<size_t>(lineBytes);
+        for (size_t unit = 0; unit < 127; ++unit) {
+            block[base + unit * 2u] = 'x';
+            block[base + unit * 2u + 1u] = 0;
+        }
+        block[base + 254u] = '\n';
+        block[base + 255u] = 0;
+    }
+
+    uint64_t written = 0;
+    while (written < documentBytes) {
+        const ssize_t count = ::write(fd, block.data(), block.size());
+        assert(count > 0);
+        written += static_cast<uint64_t>(count);
+    }
+    assert(written == documentBytes);
+    assert(::close(fd) == 0);
+
+    auto window = std::make_shared<FileWindowSource>(path, writeChunkBytes);
+    assert(window->isOpen());
+    assert(window->sizeBytes() == documentBytes);
+    PieceTreeSource source(
+        std::static_pointer_cast<const TextSource>(window), 2u * 1024u * 1024u);
+    assert(source.isValid());
+    assert(source.sizeBytes() == documentBytes);
+    assert(source.pieceCount() == 1);
+    assert(source.allocatedBytes() < 64u * 1024u);
+
+    TextPartitionIndex index(256);
+    uint64_t line = UINT64_MAX;
+    uint64_t lineStart = UINT64_MAX;
+
+    // Force a complete dense scan, then verify exact EOF and final-line mapping.
+    assert(index.pointForByte(source, documentBytes, &line, &lineStart));
+    assert(line == expectedLines);
+    assert(lineStart == documentBytes);
+    assert(index.lineForByte(source, documentBytes, &line));
+    assert(line == expectedLines);
+
+    const uint64_t finalLine = expectedLines - 1u;
+    const uint64_t expectedFinalLineStart = documentBytes - lineBytes;
+    uint64_t byteOffset = UINT64_MAX;
+    assert(index.byteForLine(source, finalLine, &byteOffset));
+    assert(byteOffset == expectedFinalLineStart);
+    assert(index.pointForByte(source, expectedFinalLineStart + 200u, &line, &lineStart));
+    assert(line == finalLine);
+    assert(lineStart == expectedFinalLineStart);
+
+    // Exercise widely separated viewports in reverse and non-monotonic order.
+    // This catches checkpoint insertion/order bugs without materializing text.
+    const uint64_t probeLines[] = {
+        expectedLines - 2u, expectedLines / 2u, 17u,
+        expectedLines * 3u / 4u, 255u, expectedLines / 3u
+    };
+    for (const uint64_t expectedLine : probeLines) {
+        const uint64_t expectedStart = expectedLine * lineBytes;
+        assert(index.byteForLine(source, expectedLine, &byteOffset));
+        assert(byteOffset == expectedStart);
+        assert(index.pointForByte(source, expectedStart + 64u, &line, &lineStart));
+        assert(line == expectedLine);
+        assert(lineStart == expectedStart);
+    }
+
+    // One checkpoint per 256 lines, plus the origin. The index must stay sparse
+    // even though the backing file contains hundreds of thousands of lines.
+    assert(index.checkpoints().size() <= expectedLines / 256u + 1u);
+    const auto &checkpoints = index.checkpoints();
+    for (size_t i = 1; i < checkpoints.size(); ++i) {
+        assert(checkpoints[i - 1].byte_offset < checkpoints[i].byte_offset);
+        assert(checkpoints[i - 1].line < checkpoints[i].line);
+    }
+
+    window.reset();
+    ::unlink(path);
+}
+
 static void testSparsePartitionIndexSurvivesEdits() {
     char path[] = "/tmp/windbell-partition-index-XXXXXX";
     const int fd = ::mkstemp(path);
@@ -679,6 +771,7 @@ int main() {
     testPieceTreeHandlesThreeHundredMegabytesWithoutMaterializingDocument();
     testEditedPieceTreeCreatesImmutableMappedSnapshot();
     testCopyTextRangeAcrossPieceBoundaries();
+    testDenseHundredMiBPartitionIndex();
     testSparsePartitionIndexSurvivesEdits();
     testSparseFilesAcrossSigned32BitBoundaryUseBoundedWindow();
     return 0;
