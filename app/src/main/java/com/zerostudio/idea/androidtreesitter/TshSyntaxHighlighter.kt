@@ -50,6 +50,10 @@ class TshSyntaxHighlighter(
         private const val TAG = "WindbellTSH"
         // Capture storage is byte-budgeted; execution ranges come from the live renderer.
         private const val CAPTURE_CACHE_BYTES = 32L * 1024L * 1024L
+        // Failed viewport attempts are retained only for retry backoff. Keep their
+        // bookkeeping bounded when a broken grammar/native call is hit while scrolling
+        // through many distinct regions of a very large document.
+        private const val MAX_RANGE_WORK_ENTRIES = 256
         private val nextSessionId = AtomicLong(1L)
         private val captureRangeIndex = CaptureRangeLookupIndex()
         private val captureCache = ByteBudgetLruCache<CaptureRangeKey, CaptureIntervalIndex>(
@@ -83,6 +87,7 @@ class TshSyntaxHighlighter(
     private class RangeWork(val attempt: Int = 0) {
         @Volatile var state: RangeWorkState = RangeWorkState.QUEUED
         @Volatile var retryAfterNanos: Long = 0L
+        @Volatile var lastAttemptNanos: Long = System.nanoTime()
     }
 
     private data class NativeEdit(
@@ -669,11 +674,12 @@ class TshSyntaxHighlighter(
         val work = if (existing == null) {
             val initial = RangeWork()
             if (active.rangeWork.putIfAbsent(key, initial) != null) return false
-            initial
+            initial.also { trimRangeWork(active) }
         } else {
             if (existing.state != RangeWorkState.FAILED || System.nanoTime() < existing.retryAfterNanos) return false
             val retry = RangeWork(existing.attempt + 1)
             if (!active.rangeWork.replace(key, existing, retry)) return false
+            trimRangeWork(active)
             retry
         }
         val requestedRevision = active.documentRevision.get()
@@ -809,6 +815,21 @@ class TshSyntaxHighlighter(
             }.also { nativeEditJob = it }
         }
         job.start()
+    }
+
+    /**
+     * Only FAILED entries survive a viewport attempt. Evict the oldest failures
+     * before they can accumulate without bound during repeated scrolling failures;
+     * queued/running work is never selected for eviction.
+     */
+    private fun trimRangeWork(active: LargeSession) {
+        val overflow = active.rangeWork.size - MAX_RANGE_WORK_ENTRIES
+        if (overflow <= 0) return
+        active.rangeWork.entries.asSequence()
+            .filter { it.value.state == RangeWorkState.FAILED }
+            .sortedBy { it.value.lastAttemptNanos }
+            .take(overflow)
+            .forEach { entry -> active.rangeWork.remove(entry.key, entry.value) }
     }
 
     private fun decodeNativeSpans(flat: IntArray): List<WindbellTshEngine.HighlightSpan> {
