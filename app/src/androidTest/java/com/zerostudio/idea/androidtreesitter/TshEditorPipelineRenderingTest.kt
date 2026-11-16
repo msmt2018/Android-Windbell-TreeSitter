@@ -832,7 +832,7 @@ class TshEditorPipelineRenderingTest {
         )
         assertEquals(
             "Computed tail line must contain the expected Java declaration",
-            targetLine.trimEnd('\\n'),
+            targetLine.trimEnd('\n'),
             buffer.getLineContent(targetLineNumber)
         )
 
