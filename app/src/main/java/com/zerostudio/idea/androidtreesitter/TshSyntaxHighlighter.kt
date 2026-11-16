@@ -49,9 +49,18 @@ class TshSyntaxHighlighter(
     companion object {
         private const val TAG = "WindbellTSH"
         // Capture storage is byte-budgeted; execution ranges come from the live renderer.
-        private const val CAPTURE_CACHE_BYTES = 32L * 1024L * 1024L
+        // Semantic captures and temporary display captures share a strict 32 MiB budget.
+        private const val CAPTURE_CACHE_BYTES = 24L * 1024L * 1024L
+        private const val DISPLAY_CACHE_BYTES = 8L * 1024L * 1024L
         private val nextSessionId = AtomicLong(1L)
         private val captureRangeIndex = CaptureRangeLookupIndex()
+        private val displayRangeIndex = CaptureRangeLookupIndex()
+        private val displayCache = ByteBudgetLruCache<CaptureRangeKey, CaptureIntervalIndex>(
+            DISPLAY_CACHE_BYTES,
+            { index -> 96L + index.size.toLong() * 96L },
+            onEntryAdded = { key, _ -> displayRangeIndex.add(key) },
+            onEntryRemoved = { key, _ -> displayRangeIndex.remove(key) }
+        )
         private val captureCache = ByteBudgetLruCache<CaptureRangeKey, CaptureIntervalIndex>(
             CAPTURE_CACHE_BYTES,
             { index -> 96L + index.size.toLong() * 96L },
@@ -195,13 +204,15 @@ class TshSyntaxHighlighter(
             // session became active while the inserted slice was encoded, queueing
             // here still makes onEditFinished apply it to that newly-published tree.
             largeSession?.pendingEditEpoch?.incrementAndGet()
-            pendingNativeEdits += NativeEdit(
+            val edit = NativeEdit(
                 startByte = change.rangeOffset.toLong() * 2L,
                 oldEndByte = (change.rangeOffset.toLong() + change.deletedTextLength) * 2L,
                 insertedUtf16Le = bytes,
                 insertedChars = inserted.length,
                 deletedChars = change.deletedTextLength
             )
+            largeSession?.let { rebaseDisplayCache(it.cacheSessionId, edit) }
+            pendingNativeEdits += edit
         }
     }
 
@@ -250,14 +261,22 @@ class TshSyntaxHighlighter(
             return null
         }
         val active = largeSession ?: return null
-        if (active.pendingEditEpoch.get() != active.appliedEditEpoch.get()) return null
+        val editPending = active.pendingEditEpoch.get() != active.appliedEditEpoch.get()
 
         val boundedStart = queryStart.coerceAtMost(active.lengthChars.get())
         val boundedEnd = queryEnd.coerceAtMost(active.lengthChars.get())
-        val spans = if (boundedStart >= boundedEnd) emptyList()
-        else queryLargeCaptures(
-            active, boundedStart, boundedEnd, boundedStart.toInt(), boundedEnd.toInt()
-        )
+        val spans = if (boundedStart >= boundedEnd) emptyList() else {
+            val requested = CaptureRangeKey(active.cacheSessionId, boundedStart.toInt(), boundedEnd.toInt())
+            val semantic = if (editPending) null else findContainingCaptureRange(requested)
+            if (semantic != null) {
+                ArrayList<WindbellTshEngine.HighlightSpan>().also {
+                    semantic.appendQuery(boundedStart.toInt(), boundedEnd.toInt(), it)
+                }
+            } else {
+                if (!editPending) enqueueViewportRange(requested)
+                queryDisplayCaptures(requested, boundedStart.toInt(), boundedEnd.toInt())
+            }
+        }
 
         if (firstStyleCallLogged.compareAndSet(false, true)) {
             Log.i(TAG, "Editor renderer invoked styleLine: extension=.$extension line=$bufferLine range=$start..$end captures=${spans.size}")
@@ -289,7 +308,7 @@ class TshSyntaxHighlighter(
         end: Int
     ): Boolean {
         val active = largeSession ?: return !parsing
-        if (active.pendingEditEpoch.get() != active.appliedEditEpoch.get()) return false
+        val editPending = active.pendingEditEpoch.get() != active.appliedEditEpoch.get()
         if (lineStartOffset < 0 || start < 0 || end <= start) return false
 
         // start/end are columns in the current buffer line. Omitting start here used
@@ -305,9 +324,9 @@ class TshSyntaxHighlighter(
         val boundedEnd = queryEnd.coerceAtMost(length)
         if (boundedStart >= boundedEnd) return true
         val key = CaptureRangeKey(active.cacheSessionId, boundedStart.toInt(), boundedEnd.toInt())
-        if (findContainingCaptureRange(key) != null) return true
-        enqueueViewportRange(key)
-        return false
+        if (!editPending && findContainingCaptureRange(key) != null) return true
+        if (!editPending) enqueueViewportRange(key)
+        return findContainingDisplayRange(key) != null
     }
 
     fun createBracketMatcher(): PlainBracketMatcher? {
@@ -506,6 +525,7 @@ class TshSyntaxHighlighter(
             if (nativeHandle != 0L) engine.closeNativeDocument(nativeHandle)
             if (cacheSessionId != 0L) {
                 captureCache.invalidate { key, _ -> key.sessionId == cacheSessionId }
+                displayCache.invalidate { key, _ -> key.sessionId == cacheSessionId }
             }
         }
     }
@@ -538,6 +558,46 @@ class TshSyntaxHighlighter(
         val buffer = host?.buffer ?: return 0
         if (bufferLine >= buffer.getLineCount()) return 0
         return buffer.getEOL().length
+    }
+
+    private fun findContainingDisplayRange(key: CaptureRangeKey): CaptureIntervalIndex? {
+        val cachedKey = displayRangeIndex.findContaining(
+            key.sessionId, key.startUtf16, key.endUtf16
+        ) ?: return null
+        return displayCache.get(cachedKey)
+    }
+
+    private fun queryDisplayCaptures(
+        key: CaptureRangeKey,
+        startUtf16: Int,
+        endUtf16: Int
+    ): List<WindbellTshEngine.HighlightSpan> {
+        val index = findContainingDisplayRange(key) ?: return emptyList()
+        return ArrayList<WindbellTshEngine.HighlightSpan>().also {
+            index.appendQuery(startUtf16, endUtf16, it)
+        }
+    }
+
+    /** Old results are paint-only; new native results replace overlapping snapshots. */
+    private fun publishDisplayCaptureRange(key: CaptureRangeKey, index: CaptureIntervalIndex) {
+        displayCache.invalidate { cached, _ ->
+            cached.sessionId == key.sessionId &&
+                cached.startUtf16 < key.endUtf16 && key.startUtf16 < cached.endUtf16
+        }
+        displayCache.put(key, index)
+    }
+
+    /** Rebase the temporary paint cache synchronously with editor edit callbacks. */
+    private fun rebaseDisplayCache(sessionId: Long, edit: NativeEdit) {
+        val startUtf16 = (edit.startByte / 2L).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+        val snapshot = displayCache.snapshotEntries().filter { it.first.sessionId == sessionId }
+        for ((key, index) in snapshot) {
+            displayCache.remove(key)
+            val rebased = CaptureDisplayRebaser.rebase(
+                key, index, startUtf16, edit.deletedChars, edit.insertedChars
+            ) ?: continue
+            displayCache.put(rebased.key, rebased.index)
+        }
     }
 
     private fun findContainingCaptureRange(key: CaptureRangeKey): CaptureIntervalIndex? {
@@ -698,7 +758,9 @@ class TshSyntaxHighlighter(
             val spans = decodeNativeSpans(flat)
             if (generation.get() == active.ticket && largeSession === active &&
                 active.documentRevision.get() == requestedRevision) {
-                captureCache.put(key, CaptureIntervalIndex(spans))
+                val index = CaptureIntervalIndex(spans)
+                captureCache.put(key, index)
+                publishDisplayCaptureRange(key, index)
                 work.state = RangeWorkState.SUCCEEDED
             } else work.state = RangeWorkState.CANCELLED
         } catch (cancelled: CancellationException) {
@@ -839,6 +901,7 @@ class TshSyntaxHighlighter(
                 }
             }.onFailure { Log.w(TAG, "Failed to close native TSH document", it) }
             captureCache.invalidate { key, _ -> key.sessionId == active.cacheSessionId }
+            displayCache.invalidate { key, _ -> key.sessionId == active.cacheSessionId }
         }
     }
 }
