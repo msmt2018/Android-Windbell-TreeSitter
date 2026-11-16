@@ -2523,7 +2523,12 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                         accepted.end_byte >= fragment.end_byte;
                     const bool nested = !sameRange &&
                         (fragmentContains || acceptedContains);
-                    if (nested || fragment.allow_overlap || accepted.allow_overlap) continue;
+                    // Exact-range captures are independent semantic layers, not
+                    // partial interval conflicts. Keep them all so the downstream
+                    // style resolver can apply rule priority without erasing
+                    // otherwise valid ATS, Query, or Regex candidates.
+                    if (sameRange || nested ||
+                        fragment.allow_overlap || accepted.allow_overlap) continue;
                     const uint32_t cutStart = std::max(
                         fragment.start_byte, accepted.start_byte);
                     const uint32_t cutEnd = std::min(
