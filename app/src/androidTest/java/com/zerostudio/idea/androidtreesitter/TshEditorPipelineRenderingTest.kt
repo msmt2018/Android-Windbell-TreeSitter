@@ -11,6 +11,7 @@ import android.text.style.BackgroundColorSpan
 import android.text.style.ForegroundColorSpan
 import android.text.style.StyleSpan
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.filters.SdkSuppress
 import androidx.test.platform.app.InstrumentationRegistry
 import com.zerostudio.idea.treesitter.TreeSitter
 import com.zerostudio.idea.treesitter.java.TSLanguageJava
@@ -751,6 +752,157 @@ class TshEditorPipelineRenderingTest {
                 "Incremental edit must preserve the active TSH palette",
                 expected.lightColor,
                 editedColor
+            )
+        } finally {
+            InstrumentationRegistry.getInstrumentation().runOnMainSync {
+                editor.setSyntaxHighlighter(null)
+            }
+            bitmap.recycle()
+            engine.clearAppearanceOverride("java")
+        }
+    }
+
+
+    /**
+     * Full application rendering regression for a 100 MiB UTF-16LE document.
+     *
+     * The large prefix is one Java block comment (rather than millions of syntax nodes),
+     * while the target class sits at EOF. The test therefore stresses Piece Tree snapshot
+     * transfer, native parsing, sparse line lookup, viewport TSH, Android spans and the
+     * real EditorView Canvas without making the AST itself artificially huge.
+     */
+    @Test
+    @SdkSuppress(minSdkVersion = 35)
+    fun hundredMiBDocumentRendersTailTshColorThroughEditorCanvas() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        TreeSitter.loadLibrary()
+        System.loadLibrary("tree-sitter-java")
+        val language = TSLanguageJava.getInstance()
+        assertTrue("Java Tree-sitter language must be registered", language.nativeObject != 0L)
+
+        val engine = WindbellTshEngine.instance
+        val tshSource = context.assets.open("tsh/java.tsh")
+            .bufferedReader(Charsets.UTF_8).use { it.readText() }
+        assertTrue(
+            "Java TSH must compile: ${engine.lastCompileDiagnostics}",
+            engine.loadTshSource("java", tshSource, language)
+        )
+        assertTrue(engine.selectScheme("java", "darcula"))
+        engine.setAppearance("java", false)
+
+        // 100 MiB is the UTF-16LE byte length consumed by the native Piece Tree.
+        // The editor stores 50 Mi UTF-16 code units; no whole-document String is created.
+        val documentBytes = 100L * 1024L * 1024L
+        val documentChars = (documentBytes / 2L).toInt()
+        val opening = "/*\\n"
+        val closing = "\\n*/\\n"
+        val targetLine = "class LargeEditorCanvasProbe { int value; }\\n"
+        val fillerChars = documentChars - opening.length - closing.length - targetLine.length
+        assertTrue("Fixture must leave a substantial comment body", fillerChars > 0)
+
+        val fillerLine = " * 0123456789 abcdefghijklmnopqrstuvwxyz\\n"
+        val fillerChunk = buildString(64 * 1024) {
+            while (length < 64 * 1024) append(fillerLine)
+            setLength(64 * 1024)
+        }
+        val fullChunks = fillerChars / fillerChunk.length
+        val remainderChars = fillerChars % fillerChunk.length
+        val remainder = fillerChunk.substring(0, remainderChars)
+        val fillerLineFeeds = fillerChunk.count { it == '\\n' }.toLong() * fullChunks +
+            remainder.count { it == '\\n' }.toLong()
+        val targetStart = opening.length + fillerChars + closing.length
+        val targetLineNumber = (
+            opening.count { it == '\\n' }.toLong() + fillerLineFeeds +
+                closing.count { it == '\\n' }.toLong() + 1L
+            ).toInt()
+
+        val builder = PieceTreeTextBufferBuilder()
+        builder.acceptChunk(opening)
+        repeat(fullChunks) { builder.acceptChunk(fillerChunk) }
+        if (remainderChars > 0) builder.acceptChunk(remainder)
+        builder.acceptChunk(closing)
+        builder.acceptChunk(targetLine)
+        val buffer = builder.build()
+        assertEquals("Piece Tree fixture must be exactly 100 MiB in UTF-16LE", documentChars, buffer.length)
+        assertEquals("Tail class offset must match the generated source", targetStart, buffer.length - targetLine.length)
+
+        val highlighter = TshSyntaxHighlighter(language, "java", engine, context.cacheDir)
+        lateinit var editor: EditorView
+        val bitmap = Bitmap.createBitmap(1200, 180, Bitmap.Config.ARGB_8888)
+        val laidOut = CountDownLatch(1)
+        try {
+            InstrumentationRegistry.getInstrumentation().runOnMainSync {
+                editor = EditorView(context)
+                editor.setBackgroundColor(Color.WHITE)
+                editor.setTextColor(Color.DKGRAY)
+                editor.setTextSize(16f)
+                editor.setGutterEnabled(false)
+                editor.setSyntaxHighlighter(highlighter)
+                assertTrue(
+                    "100 MiB Piece Tree buffer must be accepted",
+                    editor.setBuffer(buffer) { laidOut.countDown() }
+                )
+                editor.measure(
+                    View.MeasureSpec.makeMeasureSpec(bitmap.width, View.MeasureSpec.EXACTLY),
+                    View.MeasureSpec.makeMeasureSpec(bitmap.height, View.MeasureSpec.EXACTLY)
+                )
+                editor.layout(0, 0, bitmap.width, bitmap.height)
+            }
+            assertTrue("100 MiB document layout did not finish", laidOut.await(60, TimeUnit.SECONDS))
+
+            // Native document creation parses the full source. Allow slower device/emulator
+            // storage while retaining a finite test deadline.
+            val parseDeadline = SystemClock.uptimeMillis() + 180_000L
+            while (!highlighter.isStyleReady(
+                    targetLineNumber, targetStart, 0, targetLine.length
+                ) && SystemClock.uptimeMillis() < parseDeadline) {
+                SystemClock.sleep(50L)
+            }
+            assertTrue(
+                "100 MiB tail viewport did not become TSH-ready",
+                highlighter.isStyleReady(targetLineNumber, targetStart, 0, targetLine.length)
+            )
+
+            val nameStart = targetLine.indexOf("LargeEditorCanvasProbe")
+            val nameEnd = nameStart + "LargeEditorCanvasProbe".length
+            var styledColor: Int? = null
+            InstrumentationRegistry.getInstrumentation().runOnMainSync {
+                val styled = highlighter.styleLine(
+                    targetLine, targetLineNumber, targetStart, 0, targetLine.length
+                )
+                assertNotNull("100 MiB tail line must receive Android spans", styled)
+                val span = styled!!.getSpans(
+                    nameStart, nameEnd, ForegroundColorSpan::class.java
+                ).firstOrNull {
+                    styled.getSpanStart(it) <= nameStart && styled.getSpanEnd(it) >= nameEnd
+                }
+                assertNotNull("Tail class name must receive the TSH type color", span)
+                styledColor = span!!.foregroundColor
+
+                editor.scrollTo(0, (targetLineNumber - 1) * editor.getLineHeight())
+                val canvas = Canvas(bitmap)
+                canvas.translate(-editor.scrollX.toFloat(), -editor.scrollY.toFloat())
+                editor.draw(canvas)
+            }
+
+            val expected = engine.getStylePalette("java", "type")
+            assertNotNull("The selected scheme must provide a type palette", expected)
+            assertEquals(expected!!.lightColor, styledColor)
+            var matchingPixels = 0
+            for (y in 0 until bitmap.height) {
+                for (x in 0 until bitmap.width) {
+                    val pixel = bitmap.getPixel(x, y)
+                    if (Color.alpha(pixel) == 0) continue
+                    val distance =
+                        abs(Color.red(pixel) - Color.red(expected.lightColor)) +
+                        abs(Color.green(pixel) - Color.green(expected.lightColor)) +
+                        abs(Color.blue(pixel) - Color.blue(expected.lightColor))
+                    if (distance <= 72) matchingPixels++
+                }
+            }
+            assertTrue(
+                "100 MiB tail TSH color must reach actual EditorView Canvas pixels; pixels=$matchingPixels",
+                matchingPixels > 0
             )
         } finally {
             InstrumentationRegistry.getInstrumentation().runOnMainSync {
