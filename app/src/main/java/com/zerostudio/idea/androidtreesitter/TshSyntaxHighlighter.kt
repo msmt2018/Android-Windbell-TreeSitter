@@ -764,13 +764,20 @@ class TshSyntaxHighlighter(
                 ) ?: throw IllegalStateException("Native viewport TSH returned null for visible range")
             }
             val spans = decodeNativeSpans(flat)
-            if (generation.get() == active.ticket && largeSession === active &&
-                active.documentRevision.get() == requestedRevision) {
-                val index = CaptureIntervalIndex(spans)
-                captureCache.put(key, index)
-                publishDisplayCaptureRange(key, index)
-                work.state = RangeWorkState.SUCCEEDED
-            } else work.state = RangeWorkState.CANCELLED
+            // Serialize cache admission with onTextChanged. Otherwise an old-revision
+            // viewport result could pass its revision check, race an edit+cache clear,
+            // and be inserted after that clear. The edit callback uses this same lock
+            // before rebasing the display cache.
+            synchronized(nativeEditLock) {
+                if (generation.get() == active.ticket && largeSession === active &&
+                    active.documentRevision.get() == requestedRevision &&
+                    active.pendingEditEpoch.get() == active.appliedEditEpoch.get()) {
+                    val index = CaptureIntervalIndex(spans)
+                    captureCache.put(key, index)
+                    publishDisplayCaptureRange(key, index)
+                    work.state = RangeWorkState.SUCCEEDED
+                } else work.state = RangeWorkState.CANCELLED
+            }
         } catch (cancelled: CancellationException) {
             work.state = RangeWorkState.CANCELLED
             throw cancelled
