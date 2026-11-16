@@ -7,8 +7,11 @@
 #pragma once
 
 #include <jni.h>
+#include <cstddef>
 #include <cstdint>
 #include <string>
+#include <string_view>
+#include <functional>
 #include <vector>
 #include <memory>
 #include <unordered_map>
@@ -155,15 +158,37 @@ struct NativeQueryProgram {
     std::vector<std::vector<std::vector<TSQueryPredicateStep>>> predicates_by_pattern;
 };
 
+struct AstTypeIndexHash {
+    using is_transparent = void;
+    std::size_t operator()(std::string_view value) const noexcept {
+        return std::hash<std::string_view>{}(value);
+    }
+};
+
+struct AstTypeIndexEqual {
+    using is_transparent = void;
+    bool operator()(std::string_view left, std::string_view right) const noexcept {
+        return left == right;
+    }
+};
+
+using AstTypeRuleIndex = std::unordered_map<
+    std::string, std::vector<uint32_t>, AstTypeIndexHash, AstTypeIndexEqual>;
+
 struct AstSelectorRule {
     TSSymbol target_symbol = 0;
+    // Preserve DSL node names alongside symbol IDs. Public/grammar symbol IDs
+    // can differ for aliases or duplicate grammar symbols with the same spelling.
+    std::string target_type;
     TSFieldId field_id = 0;
     TSSymbol parent_symbol = 0;
+    std::string parent_type;
     TSSymbol ancestor_symbol = 0;
     // Preserve the grammar-facing name as well as the symbol ID so aliased
     // Tree-sitter node types can satisfy ancestor selectors consistently.
     std::string ancestor_type;
     TSSymbol child_symbol = 0;
+    std::string child_type;
     TSSymbol previous_sibling_symbol = 0;
     TSSymbol next_sibling_symbol = 0;
     // Keep grammar-facing names so sibling selectors also match aliased nodes.
@@ -384,7 +409,9 @@ public:
     // Immutable dispatch tables built once at compile time. Field selectors
     // are indexed by their owner symbol; ordinary selectors by target symbol.
     std::unordered_map<TSSymbol, std::vector<uint32_t>> ast_rules_by_node_symbol;
+    AstTypeRuleIndex ast_rules_by_node_type;
     std::unordered_map<TSSymbol, std::vector<uint32_t>> ast_field_rules_by_parent_symbol;
+    AstTypeRuleIndex ast_field_rules_by_parent_type;
     std::vector<uint32_t> ast_wildcard_rules;
     std::vector<NativeQueryProgram> native_queries;
 

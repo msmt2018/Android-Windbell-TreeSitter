@@ -1574,10 +1574,14 @@ class SelectionController(
 
             val text = document.getLine(lineNumber)
             val gutterWidth = gutterWidth()
-            val rowEnd = Math.min(result.end, text.length)
-            if (TabStops.hasTab(text, result.start, rowEnd)) {
+            // TextLayout line ends may include the line-break position, while the
+            // per-line String returned by the document never contains that break.
+            // Clamp both ends before passing offsets to Android Paint APIs.
+            val rowStart = result.start.coerceIn(0, text.length)
+            val rowEnd = result.end.coerceIn(rowStart, text.length)
+            if (TabStops.hasTab(text, rowStart, rowEnd)) {
                 // the paint knows nothing of tab stops: go by the widths of the row
-                val (offset, advance) = offsetForAdvance(text, result.start, rowEnd, x - gutterWidth.toFloat())
+                val (offset, advance) = offsetForAdvance(text, rowStart, rowEnd, x - gutterWidth.toFloat())
                 this.column = offset + 1
                 moveCursorBar(
                     x = gutterWidth + advance.toInt(),
@@ -1586,13 +1590,13 @@ class SelectionController(
                 return
             }
             val offset = textPaint.getOffsetForAdvance(
-                text, result.start, result.end, result.start, result.end, false, x - gutterWidth.toFloat()
+                text, rowStart, rowEnd, rowStart, rowEnd, false, x - gutterWidth.toFloat()
             )
 
             this.column = offset + 1
             moveCursorBar(
                 x = gutterWidth + textPaint.getRunAdvance(
-                    text, result.start, result.end, result.start, result.end, false, offset
+                    text, rowStart, rowEnd, rowStart, rowEnd, false, offset
                 ).toInt(),
                 bottom = Math.min(line, layout.count()) * lineHeight
             )

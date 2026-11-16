@@ -1129,6 +1129,17 @@ class EditorViewTest {
         }
     }
 
+    @Test
+    fun aTapPastTheEndOfTheTextLandsAtItsEnd() {
+        prepareForTouch("abcdefghij\\nabcdefghij")
+        onMainThread {
+            tap(xOf(1, 11) + 400f, rowBottomOf(1, 11) - editor.getLineHeight() / 2f)
+            editor.insert("X")
+
+            assertEquals("abcdefghijX", editor.getLine(1))
+        }
+    }
+
     // The insertion handle hangs below the cursor. Taking it by any point and sliding
     // sideways moves the cursor by as much as the finger moved.
     @Test

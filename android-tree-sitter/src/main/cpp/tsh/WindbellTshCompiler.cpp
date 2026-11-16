@@ -3131,6 +3131,10 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                             ast_rule.has_style = true;
                         }
 
+                        if (!node_name.empty()) ast_rule.target_type = node_name;
+                        if (!parent_name.empty()) ast_rule.parent_type = parent_name;
+                        if (!child_name.empty()) ast_rule.child_type = child_name;
+
                         if (ts_lang) {
                             if (!node_name.empty()) {
                                 const bool symbol_is_named = !field_name.empty() ||
@@ -3539,7 +3543,9 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
     // Build immutable ATS dispatch indexes once. Runtime traversal only visits
     // rules that can target the current node (plus intentionally generic rules).
     grammar->ast_rules_by_node_symbol.clear();
+    grammar->ast_rules_by_node_type.clear();
     grammar->ast_field_rules_by_parent_symbol.clear();
+    grammar->ast_field_rules_by_parent_type.clear();
     grammar->ast_wildcard_rules.clear();
     for (uint32_t rule_index = 0;
          rule_index < grammar->ast_selector_rules.size(); ++rule_index) {
@@ -3547,13 +3553,23 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
         if (rule.field_id != 0) {
             if (rule.target_symbol != 0) {
                 grammar->ast_field_rules_by_parent_symbol[rule.target_symbol].push_back(rule_index);
-            } else {
+            }
+            if (!rule.target_type.empty()) {
+                grammar->ast_field_rules_by_parent_type[rule.target_type].push_back(rule_index);
+            }
+            if (rule.target_symbol == 0 && rule.target_type.empty()) {
                 grammar->ast_wildcard_rules.push_back(rule_index);
             }
-        } else if (rule.target_symbol != 0) {
-            grammar->ast_rules_by_node_symbol[rule.target_symbol].push_back(rule_index);
         } else {
-            grammar->ast_wildcard_rules.push_back(rule_index);
+            if (rule.target_symbol != 0) {
+                grammar->ast_rules_by_node_symbol[rule.target_symbol].push_back(rule_index);
+            }
+            if (!rule.target_type.empty()) {
+                grammar->ast_rules_by_node_type[rule.target_type].push_back(rule_index);
+            }
+            if (rule.target_symbol == 0 && rule.target_type.empty()) {
+                grammar->ast_wildcard_rules.push_back(rule_index);
+            }
         }
     }
 

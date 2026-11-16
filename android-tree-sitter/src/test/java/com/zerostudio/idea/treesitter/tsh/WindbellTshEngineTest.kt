@@ -1124,9 +1124,11 @@ class WindbellTshLinkageTest {
         }, "All matching ATS rules must emit candidates; the resolver handles overlap.")
         val operatorId = engine.getStyleCatalog("java-ast-node-flags")
             .first { it.name == "operator" }.styleId
-        assertTrue(spans.any {
-            it.styleId == operatorId && it.startByte == code.indexOf("+") * 2 && it.endByte == (code.indexOf("+") + 1) * 2
-        }, "ATS must resolve and match anonymous Tree-sitter symbols.")
+        val operatorSpans = spans.filter { it.styleId == operatorId }
+        assertTrue(operatorSpans.any {
+            it.startByte == code.indexOf("+") * 2 && it.endByte == (code.indexOf("+") + 1) * 2
+        }, "ATS must resolve and match anonymous Tree-sitter symbols; actual spans: " +
+            operatorSpans.joinToString { "[${it.startByte}, ${it.endByte})" })
         val methodNameId = engine.getStyleCatalog("java-ast-node-flags")
             .first { it.name == "methodName" }.styleId
         assertTrue(spans.any {

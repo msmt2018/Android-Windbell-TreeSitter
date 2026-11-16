@@ -1966,12 +1966,25 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
             candidate_rules.clear();
             auto append_indexed_rules = [&](const std::vector<uint32_t>& indices) {
                 for (uint32_t index : indices) {
-                    if (index < grammar->ast_selector_rules.size()) {
-                        candidate_rules.push_back(&grammar->ast_selector_rules[index]);
+                    if (index >= grammar->ast_selector_rules.size()) continue;
+                    const AstSelectorRule* rule = &grammar->ast_selector_rules[index];
+                    if (std::find(candidate_rules.begin(), candidate_rules.end(), rule) == candidate_rules.end()) {
+                        candidate_rules.push_back(rule);
                     }
                 }
             };
+            auto append_indexed_type_rules = [&](const AstTypeRuleIndex& index, const char* type) {
+                if (!type) return;
+                const auto found = index.find(std::string_view(type));
+                if (found != index.end()) append_indexed_rules(found->second);
+            };
             append_indexed_rules(grammar->ast_wildcard_rules);
+            const char* node_type = ts_node_type(node);
+            const char* node_grammar_type = ts_node_grammar_type(node);
+            append_indexed_type_rules(grammar->ast_rules_by_node_type, node_type);
+            if (!node_grammar_type || !node_type || std::strcmp(node_grammar_type, node_type) != 0) {
+                append_indexed_type_rules(grammar->ast_rules_by_node_type, node_grammar_type);
+            }
             auto node_rules = grammar->ast_rules_by_node_symbol.find(sym);
             if (node_rules != grammar->ast_rules_by_node_symbol.end()) {
                 append_indexed_rules(node_rules->second);
@@ -1988,6 +2001,12 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                 auto field_rules = grammar->ast_field_rules_by_parent_symbol.find(parent_sym);
                 if (field_rules != grammar->ast_field_rules_by_parent_symbol.end()) {
                     append_indexed_rules(field_rules->second);
+                }
+                const char* parent_type = ts_node_type(parent);
+                const char* parent_grammar_type = ts_node_grammar_type(parent);
+                append_indexed_type_rules(grammar->ast_field_rules_by_parent_type, parent_type);
+                if (!parent_grammar_type || !parent_type || std::strcmp(parent_grammar_type, parent_type) != 0) {
+                    append_indexed_type_rules(grammar->ast_field_rules_by_parent_type, parent_grammar_type);
                 }
                 // Field selectors are indexed by the compiled owner symbol.
                 // Also dispatch through the original grammar identity when an
@@ -2017,22 +2036,36 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                 // A selector with a field names the owner node and styles the
                 // selected child. A selector without a field targets the node itself.
                 if (ast_rule.field_id != 0) {
+                    const char* parent_type = ts_node_is_null(parent) ? nullptr : ts_node_type(parent);
+                    const char* parent_grammar_type = ts_node_is_null(parent) ? nullptr : ts_node_grammar_type(parent);
+                    const bool owner_symbol_matches = ast_rule.target_symbol != 0 &&
+                        (ast_rule.target_symbol == parent_sym || ast_rule.target_symbol == parent_grammar_sym);
+                    const bool owner_type_matches = !ast_rule.target_type.empty() &&
+                        ((parent_type && ast_rule.target_type == parent_type) ||
+                         (parent_grammar_type && ast_rule.target_type == parent_grammar_type));
                     if (ts_node_is_null(parent) ||
-                        (ast_rule.target_symbol != 0 &&
-                         ast_rule.target_symbol != parent_sym &&
-                         ast_rule.target_symbol != parent_grammar_sym) ||
+                        (!owner_symbol_matches && !owner_type_matches) ||
                         ast_rule.field_id != fid) {
                         continue;
                     }
-                } else if (ast_rule.target_symbol != 0 &&
-                           ast_rule.target_symbol != sym &&
-                           ast_rule.target_symbol != ts_node_grammar_symbol(node)) {
-                    continue;
+                } else {
+                    const bool node_symbol_matches = ast_rule.target_symbol != 0 &&
+                        (ast_rule.target_symbol == sym ||
+                         ast_rule.target_symbol == ts_node_grammar_symbol(node));
+                    const bool node_type_matches = !ast_rule.target_type.empty() &&
+                        ((node_type && ast_rule.target_type == node_type) ||
+                         (node_grammar_type && ast_rule.target_type == node_grammar_type));
+                    if (!node_symbol_matches && !node_type_matches) continue;
                 }
-                if (ast_rule.parent_symbol != 0 &&
-                    ast_rule.parent_symbol != parent_sym &&
-                    ast_rule.parent_symbol != parent_grammar_sym) {
-                    continue;
+                if (ast_rule.parent_symbol != 0 || !ast_rule.parent_type.empty()) {
+                    const char* parent_type = ts_node_is_null(parent) ? nullptr : ts_node_type(parent);
+                    const char* parent_grammar_type = ts_node_is_null(parent) ? nullptr : ts_node_grammar_type(parent);
+                    const bool parent_symbol_matches = ast_rule.parent_symbol != 0 &&
+                        (ast_rule.parent_symbol == parent_sym || ast_rule.parent_symbol == parent_grammar_sym);
+                    const bool parent_type_matches = !ast_rule.parent_type.empty() &&
+                        ((parent_type && ast_rule.parent_type == parent_type) ||
+                         (parent_grammar_type && ast_rule.parent_type == parent_grammar_type));
+                    if (!parent_symbol_matches && !parent_type_matches) continue;
                 }
                 if (ast_rule.ancestor_symbol != 0) {
                     bool ancestor_found = false;
@@ -2064,8 +2097,14 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                     const uint32_t child_count = ts_node_child_count(node);
                     for (uint32_t child_index = 0; child_index < child_count; ++child_index) {
                         TSNode child = ts_node_child(node, child_index);
-                        if (ts_node_symbol(child) == ast_rule.child_symbol ||
-                            ts_node_grammar_symbol(child) == ast_rule.child_symbol) {
+                        const char* child_visible_type = ts_node_type(child);
+                        const char* child_grammar_type = ts_node_grammar_type(child);
+                        if ((ast_rule.child_symbol != 0 &&
+                             (ts_node_symbol(child) == ast_rule.child_symbol ||
+                              ts_node_grammar_symbol(child) == ast_rule.child_symbol)) ||
+                            (!ast_rule.child_type.empty() &&
+                             ((child_visible_type && ast_rule.child_type == child_visible_type) ||
+                              (child_grammar_type && ast_rule.child_type == child_grammar_type)))) {
                             child_found = true;
                             break;
                         }
