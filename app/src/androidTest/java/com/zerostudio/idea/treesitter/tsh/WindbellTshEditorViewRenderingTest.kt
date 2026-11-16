@@ -39,7 +39,7 @@ class WindbellTshEditorViewRenderingTest {
         contains: [
             { match: keywordsToRegex("public class static void int if else return"), style: "keyword" },
             { start: { match: '"' }, end: { match: '"' }, style: "string" },
-            { match: /\\/\\/[^\\n]*/, style: "comment" }
+            { match: /\/\/[^\n]*/, style: "comment" }
         ]
     """.trimIndent()
 
@@ -78,7 +78,7 @@ class WindbellTshEditorViewRenderingTest {
             editor = EditorView(context)
             editor.setTextSize(48f)
             editor.setTextColor(plainColor)
-            editor.setText("public class Demo {\\n    String value = \\"hello\\";\\n}")
+            editor.setText("public class Demo {\n    String value = \"hello\";\n}")
             highlighter = TshSyntaxHighlighter(
                 language = TSLanguageJava.getInstance(),
                 extension = extension,
