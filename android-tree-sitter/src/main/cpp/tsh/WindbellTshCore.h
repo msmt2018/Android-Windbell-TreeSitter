@@ -46,6 +46,21 @@ struct HighlightSpan {
 
 static_assert(sizeof(HighlightSpan) == 24, "HighlightSpan ABI must remain 24 bytes.");
 
+enum HighlightDependencyFlags : uint8_t {
+    HIGHLIGHT_DEPENDENCY_DOCUMENT_WIDE = 1u << 0,
+    HIGHLIGHT_DEPENDENCY_BOUNDARY_SENSITIVE = 1u << 1,
+    HIGHLIGHT_DEPENDENCY_CHECKPOINT_BASED = 1u << 2
+};
+
+struct HighlightDependencyRange {
+    uint32_t start_byte = 0;
+    uint32_t end_byte = 0;
+    uint32_t pattern_index = UINT32_MAX;
+    uint8_t source = static_cast<uint8_t>(HighlightSource::UNKNOWN);
+    uint8_t query_dependency_scope = 0xFFu;
+    uint8_t flags = 0;
+};
+
 enum class RegexRuleType : uint8_t {
     MATCH,
     BLOCK
@@ -130,12 +145,26 @@ struct RegexStateRule {
 // One independently compiled native Tree-sitter query block. The source text is
 // consumed directly by ts_query_new; no generated SCM artifact exists.
 struct NativeQueryProgram {
+    // This is a compile-time proof classification, not a guessed byte range.
+    // ROOTED_LOCAL may use AST candidate-root envelopes only when the compiler
+    // also resolves one fixed root symbol. Unknown/non-local roots stay global.
+    enum class QueryDependencyScope : uint8_t {
+        ROOTED_LOCAL = 0,
+        NON_LOCAL = 1,
+        UNROOTED = 2,
+        UNKNOWN = 3
+    };
+
     struct PatternMetadata {
         uint32_t pattern_index = 0;
         int32_t priority = 0;
         uint32_t declaration_order = 0;
         bool has_priority = false;
         bool enabled = true;
+        bool is_rooted = false;
+        bool is_non_local = false;
+        TSSymbol root_node_symbol = 0;
+        QueryDependencyScope dependency_scope = QueryDependencyScope::UNKNOWN;
     };
 
     std::string id;
@@ -419,7 +448,8 @@ public:
         const windbell::largefile::TextSource* text_source = nullptr,
         std::vector<RegexStateCheckpoint>* regex_state_checkpoints = nullptr,
         uint64_t source_version = 0,
-        uint64_t partition_version = 0
+        uint64_t partition_version = 0,
+        std::vector<HighlightDependencyRange>* dependency_ranges = nullptr
     );
 
 private:

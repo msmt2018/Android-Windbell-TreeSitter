@@ -55,7 +55,9 @@ dependencies {
   testImplementation(libs.tests.junit)
   testImplementation("org.junit.jupiter:junit-jupiter-api:5.10.2")
   testRuntimeOnly("org.junit.jupiter:junit-jupiter-engine:5.10.2")
+  testRuntimeOnly("org.junit.vintage:junit-vintage-engine:5.10.2")
   testImplementation(libs.tests.mockito)
+  testImplementation(libs.tests.robolectric)
 }
 
 // The TSH engine tests use JUnit Jupiter annotations and assertions.

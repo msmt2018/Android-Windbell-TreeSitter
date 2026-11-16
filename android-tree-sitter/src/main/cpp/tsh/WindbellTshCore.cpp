@@ -1279,6 +1279,170 @@ void WindbellEngine::matchBlockRecursive(
     onig_region_free(end_region, 1);
 }
 
+static bool collectQueryRootRanges(
+    TSTree* tree,
+    const std::unordered_set<TSSymbol>& root_symbols,
+    uint32_t range_start,
+    uint32_t range_end,
+    uint32_t total_bytes,
+    std::vector<std::pair<uint32_t, uint32_t>>* ranges,
+    std::unordered_set<TSSymbol>* found_symbols
+) {
+    if (!tree || root_symbols.empty() || !ranges || !found_symbols ||
+        range_start >= range_end) return false;
+
+    TSTreeCursor cursor = ts_tree_cursor_new(ts_tree_root_node(tree));
+    bool done = false;
+    try {
+        while (!done) {
+            const TSNode node = ts_tree_cursor_current_node(&cursor);
+            const uint32_t start = ts_node_start_byte(node);
+            const uint32_t end = ts_node_end_byte(node);
+            const bool zero_width = start == end;
+
+            // Nodes are visited in source order. Once a non-empty node starts
+            // at/after the viewport end, no later sibling can contribute.
+            if (!zero_width && start >= range_end) break;
+
+            const bool intersects = zero_width
+                ? (start >= range_start && start <= range_end)
+                : (start < range_end && end > range_start);
+            if (intersects) {
+                const TSSymbol symbol = ts_node_symbol(node);
+                if (root_symbols.find(symbol) != root_symbols.end() &&
+                    start <= end && end <= total_bytes &&
+                    (start & 1u) == 0 && (end & 1u) == 0) {
+                    uint32_t dependency_start = start;
+                    uint32_t dependency_end = end;
+                    // Missing/zero-width nodes still depend on their insertion
+                    // boundary. Expand by one UTF-16 code unit on each side.
+                    if (dependency_start == dependency_end) {
+                        dependency_start = dependency_start >= 2u
+                            ? dependency_start - 2u : 0u;
+                        dependency_end = static_cast<uint32_t>(std::min<uint64_t>(
+                            total_bytes, static_cast<uint64_t>(dependency_end) + 2u));
+                    }
+                    ranges->emplace_back(dependency_start, dependency_end);
+                    found_symbols->insert(symbol);
+                }
+
+                // Jump directly to the first child that contains or follows
+                // range_start. The previous implementation descended from the
+                // first child of every intersecting ancestor, then scanned all
+                // preceding siblings. On a file-root node this could walk most
+                // of a huge AST for every small viewport request.
+                if (ts_tree_cursor_goto_first_child_for_byte(&cursor, range_start) >= 0)
+                    continue;
+            }
+
+            while (!ts_tree_cursor_goto_next_sibling(&cursor)) {
+                if (!ts_tree_cursor_goto_parent(&cursor)) {
+                    done = true;
+                    break;
+                }
+            }
+        }
+    } catch (...) {
+        ts_tree_cursor_delete(&cursor);
+        throw;
+    }
+    ts_tree_cursor_delete(&cursor);
+    return found_symbols->size() == root_symbols.size();
+}
+
+static void appendQueryPatternDependencies(
+    const TshGrammar& grammar,
+    const TSLanguage* language,
+    TSTree* tree,
+    uint32_t range_start,
+    uint32_t range_end,
+    uint32_t total_bytes,
+    std::vector<HighlightDependencyRange>* output
+) {
+    if (!output) return;
+
+    std::unordered_set<TSSymbol> root_symbols;
+    bool has_active_pattern = false;
+    bool requires_document_scope = false;
+    for (const auto& query : grammar.native_queries) {
+        if (!query.enabled || !query.query) continue;
+        for (const auto& item : query.pattern_metadata) {
+            const auto& metadata = item.second;
+            if (!metadata.enabled) continue;
+            has_active_pattern = true;
+            if (metadata.dependency_scope !=
+                    NativeQueryProgram::QueryDependencyScope::ROOTED_LOCAL ||
+                metadata.root_node_symbol == 0 || language == nullptr) {
+                requires_document_scope = true;
+                break;
+            }
+            root_symbols.insert(metadata.root_node_symbol);
+        }
+        if (requires_document_scope) break;
+    }
+    if (!has_active_pattern) return;
+    if (requires_document_scope || root_symbols.empty()) {
+        output->push_back({
+            0u, total_bytes, UINT32_MAX,
+            static_cast<uint8_t>(HighlightSource::NATIVE_QUERY), 0xFFu,
+            HIGHLIGHT_DEPENDENCY_DOCUMENT_WIDE
+        });
+        return;
+    }
+
+    // All fixed-root patterns share one source-ordered AST traversal. The
+    // union of root intervals is sufficient for cache invalidation and avoids
+    // repeating the same viewport walk once per distinct node symbol.
+    std::vector<std::pair<uint32_t, uint32_t>> root_ranges;
+    std::unordered_set<TSSymbol> found_symbols;
+    found_symbols.reserve(root_symbols.size());
+    if (!collectQueryRootRanges(
+            tree, root_symbols, range_start, range_end, total_bytes,
+            &root_ranges, &found_symbols)) {
+        // A missing candidate root is not proof that an edit elsewhere
+        // cannot create a root covering this viewport.
+        output->push_back({
+            0u, total_bytes, UINT32_MAX,
+            static_cast<uint8_t>(HighlightSource::NATIVE_QUERY), 0xFFu,
+            HIGHLIGHT_DEPENDENCY_DOCUMENT_WIDE
+        });
+        return;
+    }
+
+    std::sort(root_ranges.begin(), root_ranges.end());
+    size_t merged_count = 0;
+    for (const auto& range : root_ranges) {
+        if (merged_count != 0 && range.first <= root_ranges[merged_count - 1u].second) {
+            root_ranges[merged_count - 1u].second =
+                std::max(root_ranges[merged_count - 1u].second, range.second);
+        } else {
+            root_ranges[merged_count++] = range;
+        }
+    }
+    root_ranges.resize(merged_count);
+    const uint8_t viewport_flags = static_cast<uint8_t>(
+        range_start == 0u && range_end == total_bytes
+            ? HIGHLIGHT_DEPENDENCY_DOCUMENT_WIDE : 0u);
+    output->push_back({
+        range_start, range_end, UINT32_MAX,
+        static_cast<uint8_t>(HighlightSource::NATIVE_QUERY),
+        static_cast<uint8_t>(NativeQueryProgram::QueryDependencyScope::ROOTED_LOCAL),
+        viewport_flags
+    });
+    for (const auto& range : root_ranges) {
+        uint8_t flags = HIGHLIGHT_DEPENDENCY_BOUNDARY_SENSITIVE;
+        if (range.first == 0u && range.second == total_bytes) {
+            flags = static_cast<uint8_t>(flags | HIGHLIGHT_DEPENDENCY_DOCUMENT_WIDE);
+        }
+        output->push_back({
+            range.first, range.second, UINT32_MAX,
+            static_cast<uint8_t>(HighlightSource::NATIVE_QUERY),
+            static_cast<uint8_t>(NativeQueryProgram::QueryDependencyScope::ROOTED_LOCAL),
+            flags
+        });
+    }
+}
+
 std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
     const TSLanguage* language,
     TSTree* tree,
@@ -1292,9 +1456,11 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
     const windbell::largefile::TextSource* text_source,
     std::vector<RegexStateCheckpoint>* regex_state_checkpoints,
     uint64_t source_version,
-    uint64_t partition_version
+    uint64_t partition_version,
+    std::vector<HighlightDependencyRange>* dependency_ranges
 ) {
     std::vector<HighlightSpan> final_spans;
+    if (dependency_ranges) dependency_ranges->clear();
     if (diagnostic_match_counts) std::fill(diagnostic_match_counts, diagnostic_match_counts + 4, 0u);
     if (length_chars != 0 && input_chars == nullptr && !text_source) return final_spans;
     if (length_chars > (std::numeric_limits<uint32_t>::max() / sizeof(uint16_t))) return final_spans;
@@ -1621,6 +1787,11 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                 }
             }
         }
+        // The cached stateful-Regex result depends on the state at this
+        // checkpoint and on every byte scanned through the requested range.
+        // A matching stale checkpoint before the viewport can shorten this
+        // prefix only after its state stack has actually converged.
+        uint32_t state_dependency_start = position;
         auto save_regex_state_checkpoint = [&]() {
             if (!regex_state_checkpoints || position < next_checkpoint) return;
             RegexStateCheckpoint checkpoint;
@@ -1646,6 +1817,9 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                         }
                     }
                     converged = true;
+                    if (position <= range_start_byte) {
+                        state_dependency_start = position;
+                    }
                 } else {
                     // The edit changed lexical state at this checkpoint. Keep
                     // later candidates: a subsequent checkpoint may still be
@@ -1933,6 +2107,36 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
         }
         onig_region_free(state_case_region, 1);
         onig_region_free(state_region, 1);
+        if (dependency_ranges) {
+            if (!grammar->regex_state_graph_bounded || state_full_source_fallback) {
+                dependency_ranges->push_back({
+                    0u, total_bytes, UINT32_MAX,
+                    static_cast<uint8_t>(HighlightSource::REGEX_STATE), 0xFFu,
+                    HIGHLIGHT_DEPENDENCY_DOCUMENT_WIDE
+                });
+            } else {
+                const uint64_t range_lookahead =
+                    state_window_match_width >
+                        std::numeric_limits<uint64_t>::max() - range_end_byte
+                    ? UINT64_MAX
+                    : static_cast<uint64_t>(range_end_byte) + state_window_match_width;
+                const uint64_t lookahead_end = std::max<uint64_t>(
+                    position, range_lookahead);
+                const uint32_t dependency_end = static_cast<uint32_t>(
+                    std::min<uint64_t>(total_bytes, lookahead_end));
+                uint8_t flags = static_cast<uint8_t>(
+                    HIGHLIGHT_DEPENDENCY_CHECKPOINT_BASED |
+                    HIGHLIGHT_DEPENDENCY_BOUNDARY_SENSITIVE);
+                if (state_dependency_start == 0u && dependency_end == total_bytes) {
+                    flags = static_cast<uint8_t>(
+                        flags | HIGHLIGHT_DEPENDENCY_DOCUMENT_WIDE);
+                }
+                dependency_ranges->push_back({
+                    state_dependency_start, dependency_end, UINT32_MAX,
+                    static_cast<uint8_t>(HighlightSource::REGEX_STATE), 0xFFu, flags
+                });
+            }
+        }
     }
     for (size_t i = regex_state_span_begin; i < micro_spans.size(); ++i) {
         micro_spans[i].source = static_cast<uint8_t>(HighlightSource::REGEX_STATE);
@@ -2235,6 +2439,9 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
     }
     const size_t native_query_span_begin = macro_spans.size();
     if (tree && tree_source_valid && !grammar->native_queries.empty()) {
+        appendQueryPatternDependencies(
+            *grammar, language, tree, range_start_byte, range_end_byte,
+            total_bytes, dependency_ranges);
         // Each .tsh query block has its own native TSQuery and capture namespace.
         // This preserves per-block priority/order and avoids concatenating query
         // sources into a synthetic aggregate program.
@@ -2243,7 +2450,7 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
 #if defined(TSH_TREE_SITTER_HAS_QUERY_CURSOR_OPTIONS)
             std::unique_ptr<TSQueryCursor, decltype(&ts_query_cursor_delete)> q_cursor(
                 ts_query_cursor_new(), &ts_query_cursor_delete);
-            if (!q_cursor) continue;
+            if (!q_cursor) throw std::bad_alloc();
             TSQueryCursor* cursor = q_cursor.get();
 
             // Restrict query traversal to the requested range while retaining the
@@ -2251,7 +2458,8 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
             // limit or artificial progress timeout would remove valid captures
             // from dense files, so use the maximum representable pending capacity.
             if (!ts_query_cursor_set_byte_range(cursor, range_start_byte, range_end_byte)) {
-                continue;
+                throw std::runtime_error(
+                    "TSH could not apply the requested byte range to a Tree-sitter query cursor");
             }
             ts_query_cursor_set_match_limit(cursor, UINT32_MAX);
             ts_query_cursor_exec(cursor, native_query.query, ts_tree_root_node(tree));
