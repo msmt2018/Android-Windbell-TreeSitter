@@ -56,6 +56,14 @@ captures/
 # Comment next line if keeping position of elements in Navigation Editor is relevant for you
 .idea/navEditor.xml
 
+# Private key material (never commit credentials)
+/private.key
+**/private.key
+*.key
+
+# Generated release metadata
+/app/release/output-metadata.json
+
 # Keystore files
 # Uncomment the following lines if you do not want to check your keystore files in.
 *.jks
