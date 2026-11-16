@@ -1159,6 +1159,7 @@ class WindbellTshLinkageTest {
                     ancestorIdentity { scope: "entity.name.type.ancestor" }
                     childIdentity { scope: "entity.name.type.child" }
                     siblingIdentity { scope: "punctuation.separator.type-arguments" }
+                    fieldIdentity { scope: "entity.name.type.field" }
                 }
                 ast: [
                     {
@@ -1202,6 +1203,13 @@ class WindbellTshLinkageTest {
                         style: "siblingIdentity"
                         priority: 25
                         overlap: allow
+                    },
+                    {
+                        node: "class_declaration"
+                        field: "name"
+                        style: "fieldIdentity"
+                        priority: 26
+                        overlap: allow
                     }
                 ]
             }
@@ -1242,6 +1250,10 @@ class WindbellTshLinkageTest {
         assertTrue(
             hasStyle("siblingIdentity", ","),
             "Previous/next sibling constraints must match aliased type_identifier siblings by grammar identity."
+        )
+        assertTrue(
+            hasStyle("fieldIdentity", "Demo"),
+            "A field selector must dispatch from its owner and highlight the selected name child."
         )
 
         tree?.close()
