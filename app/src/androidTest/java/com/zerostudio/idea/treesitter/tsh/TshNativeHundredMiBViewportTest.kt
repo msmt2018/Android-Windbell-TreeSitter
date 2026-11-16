@@ -124,6 +124,8 @@ class TshNativeHundredMiBViewportTest {
                 )
                 assertTrue("Native document creation returned an invalid handle", documentHandle != 0L)
 
+                val tailStartByte = commentPrefix.size.toLong() + fillerBytes + commentSuffix.size
+
                 val captures = requireNotNull(engine.highlightNativeDocument(
                     documentHandle = documentHandle,
                     startByte = tailStartByte,
@@ -131,7 +133,6 @@ class TshNativeHundredMiBViewportTest {
                 )) { "Native TSH viewport query returned null" }
                 assertEquals("Native capture rows must use six integers", 0, captures.size % 6)
 
-                val tailStartByte = commentPrefix.size.toLong() + fillerBytes + commentSuffix.size
                 val nameStart = tailStartByte + tail.indexOf("LargeTailViewportProbe").toLong() * 2L
                 val nameEnd = nameStart + "LargeTailViewportProbe".length.toLong() * 2L
                 val typeStyleId = engine.getStyleCatalog(extension)
