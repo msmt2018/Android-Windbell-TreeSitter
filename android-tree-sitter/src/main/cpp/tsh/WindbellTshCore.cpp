@@ -1960,6 +1960,8 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
 
             TSNode parent = ts_node_parent(node);
             TSSymbol parent_sym = ts_node_is_null(parent) ? 0 : ts_node_symbol(parent);
+            const TSSymbol parent_grammar_sym = ts_node_is_null(parent) ? 0 :
+                ts_node_grammar_symbol(parent);
 
             candidate_rules.clear();
             auto append_indexed_rules = [&](const std::vector<uint32_t>& indices) {
@@ -1978,6 +1980,16 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                 auto field_rules = grammar->ast_field_rules_by_parent_symbol.find(parent_sym);
                 if (field_rules != grammar->ast_field_rules_by_parent_symbol.end()) {
                     append_indexed_rules(field_rules->second);
+                }
+                // Field selectors are indexed by the compiled owner symbol.
+                // Also dispatch through the original grammar identity when an
+                // aliased parent exposes a different public symbol.
+                if (parent_grammar_sym != parent_sym) {
+                    auto grammar_field_rules =
+                        grammar->ast_field_rules_by_parent_symbol.find(parent_grammar_sym);
+                    if (grammar_field_rules != grammar->ast_field_rules_by_parent_symbol.end()) {
+                        append_indexed_rules(grammar_field_rules->second);
+                    }
                 }
             }
 
@@ -2002,10 +2014,14 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                         ast_rule.field_id != fid) {
                         continue;
                     }
-                } else if (ast_rule.target_symbol != 0 && ast_rule.target_symbol != sym) {
+                } else if (ast_rule.target_symbol != 0 &&
+                           ast_rule.target_symbol != sym &&
+                           ast_rule.target_symbol != ts_node_grammar_symbol(node)) {
                     continue;
                 }
-                if (ast_rule.parent_symbol != 0 && ast_rule.parent_symbol != parent_sym) {
+                if (ast_rule.parent_symbol != 0 &&
+                    ast_rule.parent_symbol != parent_sym &&
+                    ast_rule.parent_symbol != parent_grammar_sym) {
                     continue;
                 }
                 if (ast_rule.ancestor_symbol != 0) {
@@ -2037,7 +2053,9 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                     bool child_found = false;
                     const uint32_t child_count = ts_node_child_count(node);
                     for (uint32_t child_index = 0; child_index < child_count; ++child_index) {
-                        if (ts_node_symbol(ts_node_child(node, child_index)) == ast_rule.child_symbol) {
+                        TSNode child = ts_node_child(node, child_index);
+                        if (ts_node_symbol(child) == ast_rule.child_symbol ||
+                            ts_node_grammar_symbol(child) == ast_rule.child_symbol) {
                             child_found = true;
                             break;
                         }
@@ -2168,14 +2186,20 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                     if (ast_rule.last_child >= 0 &&
                         (current_index + 1 == sibling_count) != (ast_rule.last_child != 0)) continue;
                     if (ast_rule.previous_sibling_symbol != 0) {
-                        if (current_index == 0 ||
-                            ts_node_symbol(ts_node_child(parent, current_index - 1)) !=
-                                ast_rule.previous_sibling_symbol) continue;
+                        if (current_index == 0) continue;
+                        TSNode previous = ts_node_child(parent, current_index - 1);
+                        if (ts_node_symbol(previous) != ast_rule.previous_sibling_symbol &&
+                            ts_node_grammar_symbol(previous) != ast_rule.previous_sibling_symbol) {
+                            continue;
+                        }
                     }
                     if (ast_rule.next_sibling_symbol != 0) {
-                        if (current_index + 1 >= sibling_count ||
-                            ts_node_symbol(ts_node_child(parent, current_index + 1)) !=
-                                ast_rule.next_sibling_symbol) continue;
+                        if (current_index + 1 >= sibling_count) continue;
+                        TSNode next = ts_node_child(parent, current_index + 1);
+                        if (ts_node_symbol(next) != ast_rule.next_sibling_symbol &&
+                            ts_node_grammar_symbol(next) != ast_rule.next_sibling_symbol) {
+                            continue;
+                        }
                     }
                 }
 
