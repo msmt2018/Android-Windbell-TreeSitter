@@ -1281,26 +1281,35 @@ void WindbellEngine::matchBlockRecursive(
 
 static bool collectQueryRootRanges(
     TSTree* tree,
-    TSSymbol root_symbol,
+    const std::unordered_set<TSSymbol>& root_symbols,
     uint32_t range_start,
     uint32_t range_end,
     uint32_t total_bytes,
-    std::vector<std::pair<uint32_t, uint32_t>>* ranges
+    std::vector<std::pair<uint32_t, uint32_t>>* ranges,
+    std::unordered_set<TSSymbol>* found_symbols
 ) {
-    if (!tree || root_symbol == 0 || !ranges || range_start >= range_end) return false;
+    if (!tree || root_symbols.empty() || !ranges || !found_symbols ||
+        range_start >= range_end) return false;
+
     TSTreeCursor cursor = ts_tree_cursor_new(ts_tree_root_node(tree));
     bool done = false;
-    const size_t before = ranges->size();
     try {
         while (!done) {
             const TSNode node = ts_tree_cursor_current_node(&cursor);
             const uint32_t start = ts_node_start_byte(node);
             const uint32_t end = ts_node_end_byte(node);
-            const bool intersects = start == end
+            const bool zero_width = start == end;
+
+            // Nodes are visited in source order. Once a non-empty node starts
+            // at/after the viewport end, no later sibling can contribute.
+            if (!zero_width && start >= range_end) break;
+
+            const bool intersects = zero_width
                 ? (start >= range_start && start <= range_end)
                 : (start < range_end && end > range_start);
             if (intersects) {
-                if (ts_node_symbol(node) == root_symbol &&
+                const TSSymbol symbol = ts_node_symbol(node);
+                if (root_symbols.find(symbol) != root_symbols.end() &&
                     start <= end && end <= total_bytes &&
                     (start & 1u) == 0 && (end & 1u) == 0) {
                     uint32_t dependency_start = start;
@@ -1308,14 +1317,24 @@ static bool collectQueryRootRanges(
                     // Missing/zero-width nodes still depend on their insertion
                     // boundary. Expand by one UTF-16 code unit on each side.
                     if (dependency_start == dependency_end) {
-                        dependency_start = dependency_start >= 2u ? dependency_start - 2u : 0u;
+                        dependency_start = dependency_start >= 2u
+                            ? dependency_start - 2u : 0u;
                         dependency_end = static_cast<uint32_t>(std::min<uint64_t>(
                             total_bytes, static_cast<uint64_t>(dependency_end) + 2u));
                     }
                     ranges->emplace_back(dependency_start, dependency_end);
+                    found_symbols->insert(symbol);
                 }
-                if (ts_tree_cursor_goto_first_child(&cursor)) continue;
+
+                // Jump directly to the first child that contains or follows
+                // range_start. The previous implementation descended from the
+                // first child of every intersecting ancestor, then scanned all
+                // preceding siblings. On a file-root node this could walk most
+                // of a huge AST for every small viewport request.
+                if (ts_tree_cursor_goto_first_child_for_byte(&cursor, range_start) >= 0)
+                    continue;
             }
+
             while (!ts_tree_cursor_goto_next_sibling(&cursor)) {
                 if (!ts_tree_cursor_goto_parent(&cursor)) {
                     done = true;
@@ -1328,7 +1347,7 @@ static bool collectQueryRootRanges(
         throw;
     }
     ts_tree_cursor_delete(&cursor);
-    return ranges->size() > before;
+    return found_symbols->size() == root_symbols.size();
 }
 
 static void appendQueryPatternDependencies(
@@ -1371,25 +1390,23 @@ static void appendQueryPatternDependencies(
         return;
     }
 
-    // Query blocks commonly contain many patterns rooted at the same syntax
-    // type. Walk the viewport-overlapping AST once per distinct root symbol.
-    // Cache invalidation only needs the union of these envelopes, not one
-    // duplicate record per Pattern or per emitted Capture.
+    // All fixed-root patterns share one source-ordered AST traversal. The
+    // union of root intervals is sufficient for cache invalidation and avoids
+    // repeating the same viewport walk once per distinct node symbol.
     std::vector<std::pair<uint32_t, uint32_t>> root_ranges;
-    for (const TSSymbol symbol : root_symbols) {
-        // Collect directly into the aggregate vector to avoid holding a second
-        // viewport-sized list of syntax-node ranges at the same time.
-        if (!collectQueryRootRanges(
-                tree, symbol, range_start, range_end, total_bytes, &root_ranges)) {
-            // A missing candidate root is not proof that an edit elsewhere
-            // cannot create a root covering this viewport.
-            output->push_back({
-                0u, total_bytes, UINT32_MAX,
-                static_cast<uint8_t>(HighlightSource::NATIVE_QUERY), 0xFFu,
-                HIGHLIGHT_DEPENDENCY_DOCUMENT_WIDE
-            });
-            return;
-        }
+    std::unordered_set<TSSymbol> found_symbols;
+    found_symbols.reserve(root_symbols.size());
+    if (!collectQueryRootRanges(
+            tree, root_symbols, range_start, range_end, total_bytes,
+            &root_ranges, &found_symbols)) {
+        // A missing candidate root is not proof that an edit elsewhere
+        // cannot create a root covering this viewport.
+        output->push_back({
+            0u, total_bytes, UINT32_MAX,
+            static_cast<uint8_t>(HighlightSource::NATIVE_QUERY), 0xFFu,
+            HIGHLIGHT_DEPENDENCY_DOCUMENT_WIDE
+        });
+        return;
     }
 
     std::sort(root_ranges.begin(), root_ranges.end());
