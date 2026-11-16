@@ -2198,18 +2198,32 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                     if (ast_rule.previous_sibling_symbol != 0) {
                         if (current_index == 0) continue;
                         TSNode previous = ts_node_child(parent, current_index - 1);
-                        if (ts_node_symbol(previous) != ast_rule.previous_sibling_symbol &&
-                            ts_node_grammar_symbol(previous) != ast_rule.previous_sibling_symbol) {
-                            continue;
-                        }
+                        const char* previous_type = ts_node_type(previous);
+                        const char* previous_grammar_type = ts_node_grammar_type(previous);
+                        const bool previous_symbol_matches =
+                            ts_node_symbol(previous) == ast_rule.previous_sibling_symbol ||
+                            ts_node_grammar_symbol(previous) == ast_rule.previous_sibling_symbol;
+                        const bool previous_type_matches =
+                            (!ast_rule.previous_sibling_type.empty() && previous_type &&
+                                ast_rule.previous_sibling_type == previous_type) ||
+                            (!ast_rule.previous_sibling_type.empty() && previous_grammar_type &&
+                                ast_rule.previous_sibling_type == previous_grammar_type);
+                        if (!previous_symbol_matches && !previous_type_matches) continue;
                     }
                     if (ast_rule.next_sibling_symbol != 0) {
                         if (current_index + 1 >= sibling_count) continue;
                         TSNode next = ts_node_child(parent, current_index + 1);
-                        if (ts_node_symbol(next) != ast_rule.next_sibling_symbol &&
-                            ts_node_grammar_symbol(next) != ast_rule.next_sibling_symbol) {
-                            continue;
-                        }
+                        const char* next_type = ts_node_type(next);
+                        const char* next_grammar_type = ts_node_grammar_type(next);
+                        const bool next_symbol_matches =
+                            ts_node_symbol(next) == ast_rule.next_sibling_symbol ||
+                            ts_node_grammar_symbol(next) == ast_rule.next_sibling_symbol;
+                        const bool next_type_matches =
+                            (!ast_rule.next_sibling_type.empty() && next_type &&
+                                ast_rule.next_sibling_type == next_type) ||
+                            (!ast_rule.next_sibling_type.empty() && next_grammar_type &&
+                                ast_rule.next_sibling_type == next_grammar_type);
+                        if (!next_symbol_matches && !next_type_matches) continue;
                     }
                 }
 
