@@ -6,7 +6,7 @@ concurrency:
 
 on:
   push:
-    branches: [ "dev", "main", "fix/tsh-core-architecture", "integrate/tsh-unified-api-large-text" ]
+    branches: [ "dev", "main", "fix/tsh-core-architecture", "integrate/tsh-unified-api-large-text", "fix/tsh-incremental-highlight-flicker" ]
     paths-ignore:
       - '**.md'
   pull_request:
@@ -310,10 +310,11 @@ jobs:
           ./gradlew :android-tree-sitter:generateNativeHeadersDebug --stacktrace
           cmake -S android-tree-sitter/src/main/cpp -B build/host \
             -DCMAKE_BUILD_TYPE=Debug \
-            -DBUILD_TESTING=OFF \
+            -DBUILD_TESTING=ON \
             -DAUTOGEN_HEADERS="$GITHUB_WORKSPACE/android-tree-sitter/build/generated/native_headers"
-          cmake --build build/host --target android-tree-sitter --parallel 2
+          cmake --build build/host --target android-tree-sitter windbell_tsh_cache_tests windbell_largefile_tests --parallel 2
           test -f build/host/libandroid-tree-sitter.so
+          ctest --test-dir build/host --output-on-failure
 
       - name: Run debug tests
         run: ./gradlew testDebug :editor:compileDebugAndroidTestKotlin :app:compileDebugAndroidTestKotlin --continue --parallel --stacktrace

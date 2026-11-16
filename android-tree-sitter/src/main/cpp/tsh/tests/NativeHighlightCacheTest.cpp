@@ -7,6 +7,7 @@
 #include <utility>
 
 using windbell::tsh::HighlightSource;
+using windbell::tsh::HighlightSpan;
 using windbell::tsh::NativeHighlightCache;
 using windbell::tsh::SharedNativeMemoryBudget;
 using windbell::tsh::analyzeSimpleQueryRoot;
