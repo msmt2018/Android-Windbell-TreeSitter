@@ -1014,6 +1014,8 @@ class WindbellTshLinkageTest {
                     methodName { scope: "entity.name.function" }
                     methodWithBody { scope: "meta.function.body" }
                     operatorWithOperands { scope: "keyword.operator.arithmetic" }
+                    operatorWithWrongLeft { scope: "keyword.operator.arithmetic.wrong-left" }
+                    operatorWithWrongRight { scope: "keyword.operator.arithmetic.wrong-right" }
                     classKeyword { scope: "keyword.declaration.class" }
                     firstClassName { scope: "entity.name.type.first" }
                     methodRunText { scope: "entity.name.function.run" }
@@ -1044,10 +1046,26 @@ class WindbellTshLinkageTest {
                     {
                         node: "+"
                         named: false
-                        previousSibling: "decimal_integer_literal"
-                        nextSibling: "decimal_integer_literal"
+                        previousSibling: "primary_expression"
+                        nextSibling: "primary_expression"
                         style: "operator"
                         priority: 20
+                    },
+                    {
+                        node: "+"
+                        named: false
+                        previousSibling: "identifier"
+                        nextSibling: "primary_expression"
+                        style: "operatorWithWrongLeft"
+                        priority: 19
+                    },
+                    {
+                        node: "+"
+                        named: false
+                        previousSibling: "primary_expression"
+                        nextSibling: "identifier"
+                        style: "operatorWithWrongRight"
+                        priority: 18
                     },
                     {
                         node: "class"
@@ -1132,6 +1150,16 @@ class WindbellTshLinkageTest {
         assertTrue(spans.any {
             it.styleId == operatorWithOperandsId && it.startByte == code.indexOf("+") * 2
         }, "ATS previousSibling and nextSibling constraints must both match.")
+        val wrongLeftId = engine.getStyleCatalog("java-ast-node-flags")
+            .first { it.name == "operatorWithWrongLeft" }.styleId
+        assertFalse(spans.any {
+            it.styleId == wrongLeftId && it.startByte == code.indexOf("+") * 2
+        }, "ATS must reject a matching next sibling when the previous sibling is wrong.")
+        val wrongRightId = engine.getStyleCatalog("java-ast-node-flags")
+            .first { it.name == "operatorWithWrongRight" }.styleId
+        assertFalse(spans.any {
+            it.styleId == wrongRightId && it.startByte == code.indexOf("+") * 2
+        }, "ATS must reject a matching previous sibling when the next sibling is wrong.")
         val methodRunTextId = engine.getStyleCatalog("java-ast-node-flags")
             .first { it.name == "methodRunText" }.styleId
         assertTrue(spans.any {
