@@ -2018,7 +2018,9 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                 // selected child. A selector without a field targets the node itself.
                 if (ast_rule.field_id != 0) {
                     if (ts_node_is_null(parent) ||
-                        (ast_rule.target_symbol != 0 && ast_rule.target_symbol != parent_sym) ||
+                        (ast_rule.target_symbol != 0 &&
+                         ast_rule.target_symbol != parent_sym &&
+                         ast_rule.target_symbol != parent_grammar_sym) ||
                         ast_rule.field_id != fid) {
                         continue;
                     }
