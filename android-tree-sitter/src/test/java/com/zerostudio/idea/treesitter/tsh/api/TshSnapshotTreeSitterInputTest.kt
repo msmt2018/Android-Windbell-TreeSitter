@@ -41,6 +41,63 @@ class TshSnapshotTreeSitterInputTest {
     }
 
     @Test
+    fun copiesBorrowedChunkBeforeBoundaryLookaheadReusesProviderBuffer() {
+        class ReusingBufferSnapshot : TshTextSnapshot {
+            override val documentId = "borrowed-window-doc"
+            override val version = 3L
+            private val content = "A😀B"
+            private val backing = CharArray(2)
+            override val lengthUtf16 = content.length.toLong()
+
+            override fun readUtf16(start: Long, end: Long): CharSequence {
+                val count = (end - start).toInt()
+                require(count in 0..backing.size)
+                java.util.Arrays.fill(backing, '\u0000')
+                for (index in 0 until count) {
+                    backing[index] = content[start.toInt() + index]
+                }
+                return object : CharSequence {
+                    override val length: Int = count
+                    override fun get(index: Int): Char = backing[index]
+                    override fun subSequence(startIndex: Int, endIndex: Int): CharSequence =
+                        String(backing, startIndex, endIndex - startIndex)
+                }
+            }
+        }
+
+        val snapshot = ReusingBufferSnapshot()
+        val provider = object : TshTextAccessProvider {
+            override val id = "reusing-window-provider"
+            override val threading = TshTextAccessThreading.ANY_THREAD
+            override fun supports(document: Any) = true
+            override fun snapshot(document: Any): TshResult<TshTextSnapshot> =
+                TshResult.Success(snapshot)
+
+            override fun readChunk(
+                lease: TshTextSnapshotLease,
+                startUtf16: Long,
+                maxUtf16Length: Int
+            ): TshResult<TshTextChunk> {
+                val end = minOf(snapshot.lengthUtf16, startUtf16 + maxUtf16Length)
+                val borrowed = snapshot.readUtf16(startUtf16, end)
+                return TshResult.Success(TshTextChunk(
+                    snapshot.documentId, snapshot.version, startUtf16, end, borrowed
+                ))
+            }
+        }
+        val lease = (provider.acquireSnapshot(Any()) as TshResult.Success).value
+        val input = TshSnapshotTreeSitterInput(provider, lease)
+
+        // The chunk read returns a borrowed view of the shared two-unit buffer. The previous
+        // and next boundary checks overwrite that buffer with "A" and "B" respectively.
+        assertArrayEquals(
+            byteArrayOf(0x3D, 0xD8.toByte(), 0x00, 0xDE.toByte()),
+            input.read(2L, 4)
+        )
+        lease.close()
+    }
+
+    @Test
     fun rejectsProviderChunksOutsideSnapshotAndRequestedBounds() {
         val snapshot = Snapshot()
         val provider = object : TshTextAccessProvider {
