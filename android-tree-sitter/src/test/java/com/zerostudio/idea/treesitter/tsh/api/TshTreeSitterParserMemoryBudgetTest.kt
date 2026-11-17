@@ -305,4 +305,43 @@ class TshTreeSitterParserMemoryBudgetTest {
         engine.close()
     }
 
+
+    @Test
+    fun engineCloseKeepsTreeReservationUntilLastNativeLeaseIsReleased() {
+        val engine = engine()
+        engine.initialize()
+        val expectedTreeBytes = 640L
+        val owner = openOwner(engine, TshNativeTreeMemoryEstimator { expectedTreeBytes })
+        val parsed = owner.parse(
+            "doc-retained-tree-lease",
+            1L,
+            1L,
+            "class RetainedTreeLeaseProbe {}"
+        )
+        assertTrue(parsed.toString(), parsed is TshResult.Success<*>)
+        val tree = (parsed as TshResult.Success<TshOwnedSyntaxTree>).value
+        val treeLease = engine.nativeResources.acquire(tree.registration.handle)
+        assertNotNull("The published Native tree must be leasable", treeLease)
+
+        owner.close()
+        engine.close()
+
+        val whileLeaseActive = engine.memoryBudget.snapshot()
+        assertTrue("Engine close must close admission", whileLeaseActive.closed)
+        assertEquals(
+            "Engine shutdown must not release memory for a Native tree still held by a lease",
+            expectedTreeBytes,
+            whileLeaseActive.bytesByCategory[TshMemoryCategory.SYNTAX_TREE]
+        )
+        assertEquals(1, whileLeaseActive.reservations)
+
+        treeLease!!.close()
+
+        val afterLastLease = engine.memoryBudget.snapshot()
+        assertEquals(0L, afterLastLease.reservedBytes)
+        assertEquals(0, afterLastLease.reservations)
+        assertTrue(afterLastLease.closed)
+    }
+
+
 }

@@ -33,6 +33,7 @@
 - [x] 可选 `TshNativeTreeMemoryEstimator` 在 parse 前准入语法树估算预算；成功后将 reservation 作为 Native Tree 依赖托管，实际 Tree close（包括活动 Lease 结束后）才释放。
 - [x] 增量解析新 Tree 申请预算时保留旧 Tree reservation，按新旧 Tree 并存峰值准入。
 - [x] Memory reservation ledger 强制最大活动 reservation 数（默认 65,536，绝对上限 262,144）。
+- [ ] `QUERY_RESULT` / `MATCH_SET` / `RENDER_PLAN` / `TEXT_SNAPSHOT` 尚未接入 Engine 共享 Reservation ledger；Query/Match 当前只有局部估算上限，RenderCoordinator 只有 pending 数量上限，不能当作全局字节准入。
 - [ ] 尚未统计 Provider 临时 UTF-16 String、Tree-sitter 内部 allocator、JNI/JVM 其他隐藏分配；当前预算是受限输入缓冲 + 宿主估算 Tree 的准入账本，不是进程 Native heap 硬上限。
 - [x] strictProviderValidation 统一覆盖 attach/refresh/resolveProviders；严格 attach 缺失必需能力时 detach 回滚，lenient 模式保留 INCOMPLETE report。
 - [x] 同一宿主对象支持多个 OwnerScope/Attachment 并以引用计数管理注册；宿主外部拥有的 ObjectRegistry 注册不会被 TSH detach 注销。
