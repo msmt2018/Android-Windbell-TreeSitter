@@ -434,8 +434,10 @@ jobs:
           api-level: ${{ matrix.api-level }}
           target: google_apis
           arch: x86_64
-          disable-animations: true
-          script: bash -euo pipefail -c 'mkdir -p build/emulator-test-logs; adb start-server; timeout 180 adb -s emulator-5554 wait-for-device; adb -s emulator-5554 shell getprop sys.boot_completed; adb -s emulator-5554 shell settings put global animator_duration_scale 0; adb -s emulator-5554 shell settings put global transition_animation_scale 0; adb -s emulator-5554 shell settings put global window_animation_scale 0; set +e; ./gradlew :editor:connectedDebugAndroidTest :app:connectedDebugAndroidTest --continue --max-workers=1 --stacktrace; test_result=$?; adb -s emulator-5554 logcat -d -v threadtime > build/emulator-test-logs/logcat.txt 2>&1; adb -s emulator-5554 shell dumpsys activity activities > build/emulator-test-logs/activities.txt 2>&1; exit $test_result'
+          # Avoid the runner action's settings-service writes; API 30/35 emulators
+          # intermittently return Broken pipe after boot and abort before tests start.
+          disable-animations: false
+          script: bash -euo pipefail -c 'mkdir -p build/emulator-test-logs; adb start-server; timeout 180 adb -s emulator-5554 wait-for-device; adb -s emulator-5554 shell getprop sys.boot_completed; set +e; ./gradlew :editor:connectedDebugAndroidTest :app:connectedDebugAndroidTest --continue --max-workers=1 --stacktrace; test_result=$?; adb -s emulator-5554 logcat -d -v threadtime > build/emulator-test-logs/logcat.txt 2>&1; adb -s emulator-5554 shell dumpsys activity activities > build/emulator-test-logs/activities.txt 2>&1; exit $test_result'
       - name: Upload Android device test reports and logs
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
