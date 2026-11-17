@@ -15,6 +15,7 @@
 #include <vector>
 #include <memory>
 #include <unordered_map>
+#include <map>
 #include <mutex>
 #include <utility>
 
@@ -158,22 +159,11 @@ struct NativeQueryProgram {
     std::vector<std::vector<std::vector<TSQueryPredicateStep>>> predicates_by_pattern;
 };
 
-struct AstTypeIndexHash {
-    using is_transparent = void;
-    std::size_t operator()(std::string_view value) const noexcept {
-        return std::hash<std::string_view>{}(value);
-    }
-};
-
-struct AstTypeIndexEqual {
-    using is_transparent = void;
-    bool operator()(std::string_view left, std::string_view right) const noexcept {
-        return left == right;
-    }
-};
-
-using AstTypeRuleIndex = std::unordered_map<
-    std::string, std::vector<uint32_t>, AstTypeIndexHash, AstTypeIndexEqual>;
+// std::map's transparent std::less<> lookup is supported by the older
+// Android NDK libc++ used by this project. Keep AST type lookups allocation-free
+// without relying on heterogeneous unordered_map::find, which is unavailable
+// in that toolchain. The grammar's distinct node-type vocabulary is bounded.
+using AstTypeRuleIndex = std::map<std::string, std::vector<uint32_t>, std::less<>>;
 
 struct AstSelectorRule {
     TSSymbol target_symbol = 0;
