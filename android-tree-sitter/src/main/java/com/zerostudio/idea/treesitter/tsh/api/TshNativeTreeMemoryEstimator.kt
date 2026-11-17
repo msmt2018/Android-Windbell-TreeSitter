@@ -42,11 +42,15 @@ fun interface TshNativeTreeMemoryEstimator {
 /** Shared validation and reservation path used by full and snapshot-backed parser entry points. */
 internal object TshNativeTreeMemoryReservations {
     fun reserve(
-        budget: TshMemoryBudget,
+        budget: TshMemoryBudget?,
         estimator: TshNativeTreeMemoryEstimator?,
         request: TshNativeTreeMemoryRequest
     ): TshResult<TshMemoryReservation?> {
         if (estimator == null) return TshResult.Success(null)
+        if (budget == null) return failure(
+            "TSH-MEMORY-011",
+            "A Native tree memory estimator requires an Engine-owned memory budget"
+        )
         val estimate = try {
             estimator.estimateBytes(request)
         } catch (error: Exception) {
