@@ -9,7 +9,7 @@ class TshTreeSitterParserMemoryBudgetTest {
     private fun grammar() = TshGrammarDescriptor(
         languageId = "java",
         grammarVersion = "test",
-        abiVersion = 15,
+        abiVersion = TSLanguageJava.getInstance().languageVersion,
         fingerprint = "java-memory-admission-test"
     )
 
