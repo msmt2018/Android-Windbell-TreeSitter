@@ -11,7 +11,8 @@ data class TshMemoryBudgetOptions(
     val targetBytes: Long = DEFAULT_TARGET_BYTES,
     val hardLimitBytes: Long = DEFAULT_HARD_LIMIT_BYTES,
     val availableMemoryBytes: Long? = null,
-    val availableMemoryFraction: Int = DEFAULT_AVAILABLE_MEMORY_DIVISOR
+    val availableMemoryFraction: Int = DEFAULT_AVAILABLE_MEMORY_DIVISOR,
+    val maxActiveReservations: Int = DEFAULT_MAX_ACTIVE_RESERVATIONS
 ) {
     init {
         require(targetBytes > 0L)
@@ -19,6 +20,7 @@ data class TshMemoryBudgetOptions(
         require(targetBytes <= hardLimitBytes)
         require(availableMemoryBytes == null || availableMemoryBytes > 0L)
         require(availableMemoryFraction > 0)
+        require(maxActiveReservations in 1..ABSOLUTE_MAX_ACTIVE_RESERVATIONS)
     }
 
     val effectiveLimitBytes: Long
@@ -34,6 +36,8 @@ data class TshMemoryBudgetOptions(
         const val DEFAULT_HARD_LIMIT_BYTES: Long = 512L * MIB
         const val ABSOLUTE_HARD_LIMIT_BYTES: Long = 512L * MIB
         const val DEFAULT_AVAILABLE_MEMORY_DIVISOR: Int = 4
+        const val DEFAULT_MAX_ACTIVE_RESERVATIONS: Int = 65_536
+        const val ABSOLUTE_MAX_ACTIVE_RESERVATIONS: Int = 262_144
     }
 }
 
@@ -70,6 +74,9 @@ class TshMemoryBudget(
         if (ownerId != null && ownerId.isBlank()) return failure("TSH-MEMORY-002", "ownerId must be null or non-blank")
         synchronized(lock) {
             if (closed) return failure("TSH-MEMORY-003", "Memory budget is closed")
+            if (active.size >= options.maxActiveReservations) {
+                return failure("TSH-MEMORY-010", "Active memory reservation count limit has been reached")
+            }
             if (reserved > limitBytes || bytes > limitBytes - reserved) {
                 return failure("TSH-MEMORY-004", "Reservation exceeds the remaining memory budget")
             }
