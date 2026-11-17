@@ -203,4 +203,100 @@ class TshTreeSitterParserMemoryBudgetTest {
         engine.close()
     }
 
+
+    @Test
+    fun incrementalSnapshotParseAdmitsOldAndNewTreeOverlapUntilOldTreeRetirement() {
+        val engine = engine()
+        engine.initialize()
+        val oldTreeBytes = 512L
+        val newTreeBytes = 768L
+        val owner = openOwner(engine, TshNativeTreeMemoryEstimator { request ->
+            assertEquals("doc-incremental-memory", request.documentId)
+            assertEquals("java", request.grammarLanguageId)
+            if (request.incremental) {
+                assertEquals(2L, request.documentVersion)
+                newTreeBytes
+            } else {
+                assertEquals(1L, request.documentVersion)
+                oldTreeBytes
+            }
+        })
+
+        val oldSource = "class IncrementalMemoryProbe { int value = 1; }"
+        val oldSnapshot = StreamingSnapshot(
+            documentId = "doc-incremental-memory",
+            version = 1L,
+            source = oldSource
+        )
+        val oldLease = TshSharedTextSnapshotLease.acquire(oldSnapshot)
+        val initial = owner.parse(
+            snapshotLease = oldLease,
+            textProvider = StreamingProvider(oldSnapshot),
+            treeRevision = 1L,
+            chunkSizeBytes = 8
+        )
+        assertTrue(initial.toString(), initial is TshResult.Success<*>)
+        val oldTree = (initial as TshResult.Success<TshOwnedSyntaxTree>).value
+        oldLease.close()
+        assertEquals(oldTreeBytes, engine.memoryBudget.snapshot().bytesByCategory[TshMemoryCategory.SYNTAX_TREE])
+
+        val editedOffset = oldSource.indexOf("1;")
+        assertTrue("The fixture must contain the literal being edited", editedOffset >= 0)
+        val startByte = editedOffset.toUInt() * 2U
+        val oldEndByte = startByte + 2U
+        val edit = TSInputEdit(
+            startByte = startByte,
+            oldEndByte = oldEndByte,
+            newEndByte = oldEndByte,
+            startPoint = TSPoint(0U, startByte),
+            oldEndPoint = TSPoint(0U, oldEndByte),
+            newEndPoint = TSPoint(0U, oldEndByte)
+        )
+        val editResult = owner.editTree(
+            ownedTree = oldTree,
+            edit = edit,
+            targetDocumentVersion = 2L,
+            targetTreeRevision = 2L
+        )
+        assertTrue(editResult.toString(), editResult is TshResult.Success<*>)
+
+        val newSource = oldSource.replaceRange(editedOffset, editedOffset + 1, "2")
+        val newSnapshot = StreamingSnapshot(
+            documentId = "doc-incremental-memory",
+            version = 2L,
+            source = newSource
+        )
+        var observedOverlapDuringRead = false
+        val newProvider = StreamingProvider(newSnapshot) {
+            val budget = engine.memoryBudget.snapshot()
+            observedOverlapDuringRead =
+                budget.bytesByCategory[TshMemoryCategory.PARSER_INPUT]!! > 0L &&
+                    budget.bytesByCategory[TshMemoryCategory.SYNTAX_TREE] == oldTreeBytes + newTreeBytes
+        }
+        val newLease = TshSharedTextSnapshotLease.acquire(newSnapshot)
+        val replacement = owner.parse(
+            snapshotLease = newLease,
+            textProvider = newProvider,
+            treeRevision = 2L,
+            oldTree = oldTree,
+            chunkSizeBytes = 8
+        )
+        assertTrue(replacement.toString(), replacement is TshResult.Success<*>)
+        assertTrue("Both tree reservations must overlap while the replacement is parsed", observedOverlapDuringRead)
+        val newTree = (replacement as TshResult.Success<TshOwnedSyntaxTree>).value
+        newLease.close()
+
+        val overlap = engine.memoryBudget.snapshot()
+        assertEquals(oldTreeBytes + newTreeBytes, overlap.bytesByCategory[TshMemoryCategory.SYNTAX_TREE])
+        assertEquals(0L, overlap.bytesByCategory[TshMemoryCategory.PARSER_INPUT])
+
+        assertTrue("Retiring the edited old tree releases only its reservation", owner.retireTree(oldTree))
+        assertEquals(newTreeBytes, engine.memoryBudget.snapshot().bytesByCategory[TshMemoryCategory.SYNTAX_TREE])
+        assertTrue(owner.retireTree(newTree))
+        assertEquals(0L, engine.memoryBudget.snapshot().reservedBytes)
+
+        owner.close()
+        engine.close()
+    }
+
 }
