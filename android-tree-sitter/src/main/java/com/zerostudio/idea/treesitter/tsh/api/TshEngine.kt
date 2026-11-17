@@ -68,6 +68,7 @@ class TshEngine private constructor(val options: TshEngineOptions) : AutoCloseab
     }
 
     /** Opens a Parser whose Grammar dependency is managed by this Engine's resource coordinator. */
+    @JvmOverloads
     fun openTreeSitterParser(
         languageHandle: TshNativeResourceLeaseStore.Handle<com.zerostudio.idea.treesitter.TSLanguage>,
         grammar: TshGrammarDescriptor,
