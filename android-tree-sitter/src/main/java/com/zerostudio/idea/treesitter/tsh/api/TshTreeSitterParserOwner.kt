@@ -709,6 +709,7 @@ class TshTreeSitterParserOwner private constructor(
          * The supplied Language handle must belong to [resources].
          */
         @JvmStatic
+        @JvmOverloads
         fun open(
             resources: TshNativeResourceRegistry,
             languageHandle: TshNativeResourceLeaseStore.Handle<TSLanguage>,
