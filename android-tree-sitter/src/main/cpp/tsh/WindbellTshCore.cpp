@@ -2210,7 +2210,9 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                 if (ast_rule.child_index != UINT32_MAX ||
                     ast_rule.named_child_index != UINT32_MAX ||
                     ast_rule.first_child >= 0 || ast_rule.last_child >= 0 ||
-                    ast_rule.previous_sibling_symbol != 0 || ast_rule.next_sibling_symbol != 0) {
+                    ast_rule.previous_sibling_symbol != 0 || ast_rule.next_sibling_symbol != 0 ||
+                    !ast_rule.previous_sibling_type.empty() ||
+                    !ast_rule.next_sibling_type.empty()) {
                     if (ts_node_is_null(parent)) continue;
                     const uint32_t sibling_count = ts_node_child_count(parent);
                     uint32_t current_index = UINT32_MAX;
