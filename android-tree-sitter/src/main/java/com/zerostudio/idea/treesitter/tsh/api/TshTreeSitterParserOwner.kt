@@ -38,7 +38,9 @@ class TshTreeSitterParserOwner private constructor(
     private val resources: TshNativeResourceRegistry,
     private val parserLanguageLease: TshNativeResourceLeaseStore.Lease<TSLanguage>,
     private val grammar: TshGrammarDescriptor,
-    private val parser: TshNativeResourceRegistry.Registration<TSParser>
+    private val parser: TshNativeResourceRegistry.Registration<TSParser>,
+    private val memoryBudget: TshMemoryBudget?,
+    private val memoryEstimator: TshNativeTreeMemoryEstimator?
 ) : AutoCloseable {
     /** TSParser is mutable Native state and cannot parse two documents concurrently. */
     private val parseLock = ReentrantLock()
@@ -54,13 +56,15 @@ class TshTreeSitterParserOwner private constructor(
         treeRevision: Long,
         source: String
     ): TshResult<TshOwnedSyntaxTree> = parseWithInput(
-        documentId, documentVersion, treeRevision
+        documentId, documentVersion, treeRevision, source.length.toLong(), incremental = false
     ) { parser -> parser.parseString(source) }
 
     private fun parseWithInput(
         documentId: String,
         documentVersion: Long,
         treeRevision: Long,
+        sourceLengthUtf16: Long,
+        incremental: Boolean,
         parse: (TSParser) -> TSTree?
     ): TshResult<TshOwnedSyntaxTree> {
         if (documentId.isBlank() || documentVersion < 0 || treeRevision < 0) {
@@ -91,7 +95,32 @@ class TshTreeSitterParserOwner private constructor(
 
         var tree: TSTree? = null
         var languageLeaseTransferred = false
+        var treeReservationTransferred = false
+        var inputReservation: TshMemoryReservation? = null
+        var treeReservation: TshMemoryReservation? = null
         try {
+            when (val reserved = TshParserInputMemoryReservations.reserveStringInput(
+                memoryBudget, documentId, documentVersion, sourceLengthUtf16
+            )) {
+                is TshResult.Success -> inputReservation = reserved.value
+                is TshResult.Failure -> return reserved
+            }
+            when (val reserved = TshNativeTreeMemoryReservations.reserve(
+                memoryBudget,
+                memoryEstimator,
+                TshNativeTreeMemoryRequest(
+                    documentId = documentId,
+                    documentVersion = documentVersion,
+                    treeRevision = treeRevision,
+                    sourceLengthUtf16 = sourceLengthUtf16,
+                    grammarLanguageId = grammar.languageId,
+                    grammarFingerprint = grammar.fingerprint,
+                    incremental = incremental
+                )
+            )) {
+                is TshResult.Success -> treeReservation = reserved.value
+                is TshResult.Failure -> return reserved
+            }
             val parsedTree = parseLock.withLock { parse(parserLease.resource) }
                 ?: return failure(
                     "TSH-PARSER-OWNER-004",
@@ -128,9 +157,10 @@ class TshTreeSitterParserOwner private constructor(
                     "treeRevision" to treeRevision.toString(),
                     "grammarFingerprint" to grammar.fingerprint
                 ),
-                dependencies = listOf(languageLease)
+                dependencies = listOfNotNull(languageLease, treeReservation)
             )
             languageLeaseTransferred = true
+            treeReservationTransferred = treeReservation != null
             tree = null
             val snapshot = TshSyntaxTreeSnapshot(
                 documentId = documentId,
@@ -160,6 +190,8 @@ class TshTreeSitterParserOwner private constructor(
             )
         } finally {
             tree?.let { runCatching { it.close() } }
+            if (!treeReservationTransferred) treeReservation?.close()
+            inputReservation?.close()
             if (!languageLeaseTransferred) languageLease.close()
             parserLease.close()
         }
@@ -552,7 +584,32 @@ class TshTreeSitterParserOwner private constructor(
 
         var tree: TSTree? = null
         var languageLeaseTransferred = false
+        var treeReservationTransferred = false
+        var inputReservation: TshMemoryReservation? = null
+        var treeReservation: TshMemoryReservation? = null
         try {
+            when (val reserved = TshParserInputMemoryReservations.reserveStreamingBridge(
+                memoryBudget, snapshot.documentId, snapshot.version, chunkSizeBytes
+            )) {
+                is TshResult.Success -> inputReservation = reserved.value
+                is TshResult.Failure -> return reserved
+            }
+            when (val reserved = TshNativeTreeMemoryReservations.reserve(
+                memoryBudget,
+                memoryEstimator,
+                TshNativeTreeMemoryRequest(
+                    documentId = snapshot.documentId,
+                    documentVersion = snapshot.version,
+                    treeRevision = treeRevision,
+                    sourceLengthUtf16 = snapshot.lengthUtf16,
+                    grammarLanguageId = grammar.languageId,
+                    grammarFingerprint = grammar.fingerprint,
+                    incremental = oldTree != null
+                )
+            )) {
+                is TshResult.Success -> treeReservation = reserved.value
+                is TshResult.Failure -> return reserved
+            }
             val input = TshSnapshotTreeSitterInput(textProvider, snapshotLease)
             val byteLength = Math.multiplyExact(snapshotLease.snapshot.lengthUtf16, 2L)
             val callback = TSParser.ParseWindowCallback { byteOffset, maxBytes ->
@@ -600,9 +657,10 @@ class TshTreeSitterParserOwner private constructor(
                     "inputMode" to "chunked-utf16le",
                     "treeState" to "READY"
                 ),
-                dependencies = listOf(languageLease)
+                dependencies = listOfNotNull(languageLease, treeReservation)
             )
             languageLeaseTransferred = true
+            treeReservationTransferred = treeReservation != null
             tree = null
             val syntaxSnapshot = TshSyntaxTreeSnapshot(
                 documentId = snapshot.documentId,
@@ -632,6 +690,8 @@ class TshTreeSitterParserOwner private constructor(
             )
         } finally {
             tree?.let { runCatching { it.close() } }
+            if (!treeReservationTransferred) treeReservation?.close()
+            inputReservation?.close()
             oldTreeLease?.close()
             if (!languageLeaseTransferred) languageLease.close()
             parserLease.close()
@@ -652,7 +712,9 @@ class TshTreeSitterParserOwner private constructor(
         fun open(
             resources: TshNativeResourceRegistry,
             languageHandle: TshNativeResourceLeaseStore.Handle<TSLanguage>,
-            grammar: TshGrammarDescriptor
+            grammar: TshGrammarDescriptor,
+            memoryBudget: TshMemoryBudget? = null,
+            memoryEstimator: TshNativeTreeMemoryEstimator? = null
         ): TshResult<TshTreeSitterParserOwner> {
             val languageLease = resources.acquire(languageHandle)
                 ?: return failure(
@@ -678,7 +740,9 @@ class TshTreeSitterParserOwner private constructor(
                 )
                 ownershipTransferred = true
                 return TshResult.Success(
-                    TshTreeSitterParserOwner(resources, languageLease, grammar, registration)
+                    TshTreeSitterParserOwner(
+                        resources, languageLease, grammar, registration, memoryBudget, memoryEstimator
+                    )
                 )
             } catch (error: Throwable) {
                 return failure(
