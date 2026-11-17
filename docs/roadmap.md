@@ -124,6 +124,8 @@
 - [x] JNI 大文本 Highlight/Fold/Outline Native 异常转换为 Java 异常，不让 C++ exception 越过 JNI。
 - [ ] GetStringChars 仍由 JVM 决定 pin/copy，不能称为 zero-copy。
 - [x] Tree-sitter 流式 Input callback / JNI callback / Snapshot chunk parser 源码已存在；输入回调会校验 Provider 返回的文档版本、范围、长度、UTF-16 合法性与 surrogate 边界（SOURCE_PARTIAL）。
+- [x] 新增独立高语法密度 Android stress fixture：以文件分块生成超过 1 MiB 的 Java 源码，包含 32,768 个真实局部变量声明，断言完整 Tree-sitter Query 捕获数量并验证文档尾部 viewport 类型高亮；当前仅有测试源码，待 CI/设备执行。
+- [x] 将 100 MiB 注释前缀 fixture 明确标注为 sparse AST 压力场景，不再把它描述成高语法节点密度测试。
 - [ ] 全量 Native operation/handle/generation manifest、ASAN、泄漏和设备压力测试尚未完成。
 
 ## 仍需完成的缺陷与绑定项
