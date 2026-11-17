@@ -1,5 +1,6 @@
 package com.zerostudio.idea.treesitter.tsh.api
 
+import com.zerostudio.idea.treesitter.TSLanguage
 import com.zerostudio.idea.treesitter.TreeSitter
 import com.zerostudio.idea.treesitter.java.TSLanguageJava
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -20,7 +21,9 @@ class TshTreeSitterQueryNativeIntegrationTest {
         var snapshotLease: TshTextSnapshotLease? = null
         var coordinateIndex: TshSparseCoordinateIndex? = null
         try {
-            val language = TSLanguageJava.getInstance()
+            // Register a disposable wrapper around the generated grammar pointer. The generated
+            // TSLanguageJava instance is shared by other tests and must not be closed by this Engine.
+            val language = TSLanguage.create("java-query-test", TSLanguageJava.getInstance().nativeObject)
             val grammar = TshGrammarDescriptor(
                 languageId = "java",
                 grammarVersion = "test-java-grammar",
@@ -82,8 +85,9 @@ class TshTreeSitterQueryNativeIntegrationTest {
             assertEquals(documentId, queryResult.documentId)
             assertEquals(documentVersion, queryResult.documentVersion)
 
+            val snapshotDocumentId = documentId
             val sourceSnapshot = object : TshTextSnapshot {
-                override val documentId = documentId
+                override val documentId: String = snapshotDocumentId
                 override val version = documentVersion
                 override val lengthUtf16 = source.length.toLong()
                 override fun readUtf16(start: Long, end: Long): CharSequence =
