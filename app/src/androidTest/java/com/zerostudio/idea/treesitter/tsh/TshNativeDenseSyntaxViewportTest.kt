@@ -55,6 +55,7 @@ class TshNativeDenseSyntaxViewportTest {
         val documentBytes = prefixBytes.size.toLong() + declarationBytesTotal +
             suffixBytes.size.toLong() + tailBytes.size.toLong()
         val tailStartByte = prefixBytes.size.toLong() + declarationBytesTotal + suffixBytes.size
+        assertTrue("High-density fixture must exceed the 1 MiB windowed-parse threshold", documentBytes > 1024L * 1024L)
 
         val file = File.createTempFile("tsh-high-density-java-", ".utf16", context.cacheDir)
         var documentHandle = 0L
