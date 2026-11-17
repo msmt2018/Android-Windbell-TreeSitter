@@ -109,7 +109,7 @@ internal object TshParserInputMemoryReservations {
         }
     }
 
-    /** Reserves the reusable Java byte[] plus a possible JNI GetByteArrayElements copy. */
+    /** Reserves two bounded byte-window arrays plus fixed overhead for the current JNI callback path. */
     fun reserveStreamingBridge(
         budget: TshMemoryBudget?,
         documentId: String,
