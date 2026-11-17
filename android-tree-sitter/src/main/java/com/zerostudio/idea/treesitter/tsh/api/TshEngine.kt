@@ -217,10 +217,10 @@ class TshEngine private constructor(val options: TshEngineOptions) : AutoCloseab
 }
 
 data class TshEngineOptions(
-    /** Shared bounded admission ledger for TSH-managed buffers and host-estimated syntax trees. */
-    val memoryBudgetOptions: TshMemoryBudgetOptions = TshMemoryBudgetOptions(),
     /** Controls non-fatal diagnostics returned by Engine.resolveProviders; errors are never suppressed. */
     val enableDiagnostics: Boolean = true,
     /** Makes Engine.attach/refresh/resolveProviders return Failure when a required capability is unavailable; failed strict attach is detached atomically. */
-    val strictProviderValidation: Boolean = true
+    val strictProviderValidation: Boolean = true,
+    /** Shared bounded admission ledger for TSH-managed buffers and host-estimated syntax trees. */
+    val memoryBudgetOptions: TshMemoryBudgetOptions = TshMemoryBudgetOptions()
 )
