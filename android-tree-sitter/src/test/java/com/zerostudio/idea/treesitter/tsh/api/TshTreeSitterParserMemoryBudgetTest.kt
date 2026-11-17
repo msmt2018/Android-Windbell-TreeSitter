@@ -244,15 +244,19 @@ class TshTreeSitterParserMemoryBudgetTest {
 
         val editedOffset = oldSource.indexOf("1;")
         assertTrue("The fixture must contain the literal being edited", editedOffset >= 0)
-        val startByte = editedOffset.toUInt() * 2U
-        val oldEndByte = startByte + 2U
-        val edit = TSInputEdit(
-            startByte = startByte,
-            oldEndByte = oldEndByte,
-            newEndByte = oldEndByte,
-            startPoint = TSPoint(0U, startByte),
-            oldEndPoint = TSPoint(0U, oldEndByte),
-            newEndPoint = TSPoint(0U, oldEndByte)
+        // This fixture is ASCII, so UTF-8 byte offsets equal the String's UTF-16 indices.
+        // Use the public factory methods; TSInputEdit/TSPoint constructors are protected.
+        val startByte = editedOffset
+        val oldEndByte = startByte + 1
+        val startPoint = TSPoint.create(0, startByte)
+        val endPoint = TSPoint.create(0, oldEndByte)
+        val edit = TSInputEdit.create(
+            startByte,
+            oldEndByte,
+            oldEndByte,
+            startPoint,
+            endPoint,
+            endPoint
         )
         val editResult = owner.editTree(
             ownedTree = oldTree,
