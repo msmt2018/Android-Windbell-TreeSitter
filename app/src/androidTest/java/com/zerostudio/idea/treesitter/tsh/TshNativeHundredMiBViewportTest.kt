@@ -17,7 +17,7 @@ import org.junit.runner.RunWith
 
 /**
  * Exercises native document creation, a full Tree-sitter parse and a tail TSH
- * viewport query with a dense 100 MiB UTF-16LE source.
+ * viewport query with a sparse 100 MiB UTF-16LE source whose large prefix is one block comment.
  *
  * The fixture is file-backed and transferred through the bounded direct-buffer
  * callback. No Kotlin String or ByteArray contains the whole document.
@@ -25,7 +25,7 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class TshNativeHundredMiBViewportTest {
     @Test
-    fun nativeTshHighlightsTailViewportOfDenseHundredMiBDocument() {
+    fun nativeTshHighlightsTailViewportOfSparseCommentHundredMiBDocument() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         TreeSitter.loadLibrary()
         System.loadLibrary("tree-sitter-java")
@@ -47,8 +47,8 @@ class TshNativeHundredMiBViewportTest {
         val commentPrefix = "/*\n".toByteArray(StandardCharsets.UTF_16LE)
         val commentSuffix = "\n*/\n".toByteArray(StandardCharsets.UTF_16LE)
         val documentBytes = 100L * 1024L * 1024L
-        // Keep the large prefix as one Java block-comment token while providing
-        // realistic line density for the native sparse line/partition index.
+        // Keep the large prefix as one Java block-comment token. This stresses
+        // file-backed input, sparse line indexing and tail viewport lookup, not AST node density.
         val fillerBytes = documentBytes - commentPrefix.size - commentSuffix.size - tailBytes.size
         assertTrue(fillerBytes > 0L && (fillerBytes and 1L) == 0L)
 
