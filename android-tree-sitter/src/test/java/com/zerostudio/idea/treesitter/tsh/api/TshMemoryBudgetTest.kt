@@ -80,8 +80,10 @@ class TshMemoryBudgetTest {
         assertTrue(rejected is TshResult.Failure)
         assertEquals("TSH-MEMORY-010", (rejected as TshResult.Failure).diagnostics.single().code)
         first.close()
-        assertTrue(budget.reserve(TshMemoryCategory.OTHER, 1) is TshResult.Success)
+        val third = budget.reserve(TshMemoryCategory.OTHER, 1) as TshResult.Success
+        third.value.close()
         second.close()
+        assertEquals(0, budget.snapshot().reservations)
     }
 
     @Test fun validatesReservationCountLimit() {
