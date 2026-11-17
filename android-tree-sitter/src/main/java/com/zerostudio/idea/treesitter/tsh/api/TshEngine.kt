@@ -13,6 +13,9 @@ class TshEngine private constructor(val options: TshEngineOptions) : AutoCloseab
     /** Linearizes public operations against close() so no resource can publish after shutdown. */
     private val lifecycleLock = Any()
 
+    /** One admission ledger shared by parser input and host-estimated Native tree lifetimes. */
+    val memoryBudget: TshMemoryBudget = TshMemoryBudget(options.memoryBudgetOptions)
+
     val objects: TshObjectRegistry = TshObjectRegistry()
     val providers: TshProviderRegistry = TshProviderRegistry()
     /** Manages host attachment records without taking ownership of host objects. */
@@ -67,14 +70,17 @@ class TshEngine private constructor(val options: TshEngineOptions) : AutoCloseab
     /** Opens a Parser whose Grammar dependency is managed by this Engine's resource coordinator. */
     fun openTreeSitterParser(
         languageHandle: TshNativeResourceLeaseStore.Handle<com.zerostudio.idea.treesitter.TSLanguage>,
-        grammar: TshGrammarDescriptor
+        grammar: TshGrammarDescriptor,
+        memoryEstimator: TshNativeTreeMemoryEstimator? = null
     ): TshResult<TshTreeSitterParserOwner> = synchronized(lifecycleLock) {
         if (state != TshEngineState.INITIALIZED) {
             return@synchronized engineFailure(
                 "TSH-ENGINE-002", "TSH engine must be initialized before opening a Tree-sitter parser"
             )
         }
-        TshTreeSitterParserOwner.open(nativeResources, languageHandle, grammar)
+        TshTreeSitterParserOwner.open(
+            nativeResources, languageHandle, grammar, memoryBudget, memoryEstimator
+        )
     }
 
     /** Creates an executor sharing the exact Native query/resource stores owned by this Engine. */
@@ -195,6 +201,8 @@ class TshEngine private constructor(val options: TshEngineOptions) : AutoCloseab
             nativeQueryLeases.close()
             compiledQueries.close()
             nativeResources.close()
+            // Native resources release their attached reservations before the ledger is closed.
+            memoryBudget.close()
             providers.close()
             objects.close()
         }
@@ -209,6 +217,8 @@ class TshEngine private constructor(val options: TshEngineOptions) : AutoCloseab
 }
 
 data class TshEngineOptions(
+    /** Shared bounded admission ledger for TSH-managed buffers and host-estimated syntax trees. */
+    val memoryBudgetOptions: TshMemoryBudgetOptions = TshMemoryBudgetOptions(),
     /** Controls non-fatal diagnostics returned by Engine.resolveProviders; errors are never suppressed. */
     val enableDiagnostics: Boolean = true,
     /** Makes Engine.attach/refresh/resolveProviders return Failure when a required capability is unavailable; failed strict attach is detached atomically. */
