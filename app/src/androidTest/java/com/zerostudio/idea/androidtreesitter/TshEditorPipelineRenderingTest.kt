@@ -609,12 +609,19 @@ class TshEditorPipelineRenderingTest {
 
         // Build a real chunk-backed document larger than the 1 Mi UTF-16
         // small/large threshold. The target declaration is in a distant partition.
-        val fillerLine = "// partition filler 0123456789 abcdefghijklmnopqrstuvwxyz\n"
+        // Preserve a multi-megabyte, multi-chunk Piece Tree and a target beyond the
+        // first large-file partition, but avoid 24k tiny lines: that made layout time
+        // depend mostly on line count rather than the large-file viewport being tested.
+        val fillerLine = buildString {
+            append("// ")
+            repeat(9) { append("partition filler 0123456789 abcdefghijklmnopqrstuvwxyz ") }
+            append('\n')
+        }
         val fillerChunk = buildString {
             repeat(1024) { append(fillerLine) }
         }
         val builder = PieceTreeTextBufferBuilder()
-        val chunkCount = 24
+        val chunkCount = 3
         repeat(chunkCount) { builder.acceptChunk(fillerChunk) }
         val targetStart = fillerChunk.length * chunkCount
         val targetLine = "class DistantRenderProbe { int value; }"
@@ -643,7 +650,11 @@ class TshEditorPipelineRenderingTest {
                 )
                 editor.layout(0, 0, bitmap.width, bitmap.height)
             }
-            assertTrue("Large document layout did not finish", laidOut.await(60, TimeUnit.SECONDS))
+            assertTrue(
+                "Large document layout did not finish within 60s " +
+                    "(utf16Chars=${targetStart + targetLine.length}, lines=${targetLineNumber}, chunks=${chunkCount})",
+                laidOut.await(60, TimeUnit.SECONDS)
+            )
 
             val deadline = SystemClock.uptimeMillis() + 30_000L
             while (!highlighter.isStyleReady(
