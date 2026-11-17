@@ -202,7 +202,8 @@ class TshEngine private constructor(val options: TshEngineOptions) : AutoCloseab
             nativeQueryLeases.close()
             compiledQueries.close()
             nativeResources.close()
-            // Native resources release their attached reservations before the ledger is closed.
+            // Retire resources before closing admission. Existing reservation tokens remain
+            // releasable after close, including Trees whose active leases defer final disposal.
             memoryBudget.close()
             providers.close()
             objects.close()
