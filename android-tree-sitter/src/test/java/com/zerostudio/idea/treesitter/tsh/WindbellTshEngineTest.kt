@@ -1014,6 +1014,8 @@ class WindbellTshLinkageTest {
                     methodName { scope: "entity.name.function" }
                     methodWithBody { scope: "meta.function.body" }
                     operatorWithOperands { scope: "keyword.operator.arithmetic" }
+                    operatorPreviousOnly { scope: "keyword.operator.arithmetic.previous-only" }
+                    operatorNextOnly { scope: "keyword.operator.arithmetic.next-only" }
                     operatorWithWrongLeft { scope: "keyword.operator.arithmetic.wrong-left" }
                     operatorWithWrongRight { scope: "keyword.operator.arithmetic.wrong-right" }
                     classKeyword { scope: "keyword.declaration.class" }
@@ -1053,6 +1055,28 @@ class WindbellTshLinkageTest {
                         nextSibling: "decimal_integer_literal"
                         style: "operator"
                         priority: 20
+                    },
+                    {
+                        node: "+"
+                        named: false
+                        previousSibling: "decimal_integer_literal"
+                        nextSibling: "decimal_integer_literal"
+                        style: "operatorWithOperands"
+                        priority: 21
+                    },
+                    {
+                        node: "+"
+                        named: false
+                        previousSibling: "decimal_integer_literal"
+                        style: "operatorPreviousOnly"
+                        priority: 17
+                    },
+                    {
+                        node: "+"
+                        named: false
+                        nextSibling: "decimal_integer_literal"
+                        style: "operatorNextOnly"
+                        priority: 16
                     },
                     {
                         node: "+"
@@ -1165,8 +1189,18 @@ class WindbellTshLinkageTest {
         val operatorWithOperandsId = engine.getStyleCatalog("java-ast-node-flags")
             .first { it.name == "operatorWithOperands" }.styleId
         assertTrue(spans.any {
-            it.styleId == operatorWithOperandsId && it.startByte == code.indexOf("+") * 2
+            it.styleId == operatorWithOperandsId && it.startByte == operatorStart
         }, "ATS previousSibling and nextSibling constraints must both match.")
+        val previousOnlyId = engine.getStyleCatalog("java-ast-node-flags")
+            .first { it.name == "operatorPreviousOnly" }.styleId
+        assertTrue(spans.any {
+            it.styleId == previousOnlyId && it.startByte == operatorStart
+        }, "ATS previousSibling type-only constraint must execute.")
+        val nextOnlyId = engine.getStyleCatalog("java-ast-node-flags")
+            .first { it.name == "operatorNextOnly" }.styleId
+        assertTrue(spans.any {
+            it.styleId == nextOnlyId && it.startByte == operatorStart
+        }, "ATS nextSibling type-only constraint must execute.")
         val wrongLeftId = engine.getStyleCatalog("java-ast-node-flags")
             .first { it.name == "operatorWithWrongLeft" }.styleId
         assertFalse(spans.any {
