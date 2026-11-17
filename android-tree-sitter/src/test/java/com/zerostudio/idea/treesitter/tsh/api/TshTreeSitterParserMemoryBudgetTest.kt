@@ -1,6 +1,8 @@
 package com.zerostudio.idea.treesitter.tsh.api
 
+import com.zerostudio.idea.treesitter.TSInputEdit
 import com.zerostudio.idea.treesitter.TSLanguage
+import com.zerostudio.idea.treesitter.TSPoint
 import com.zerostudio.idea.treesitter.TreeSitter
 import com.zerostudio.idea.treesitter.java.TSLanguageJava
 import org.junit.Assert.*
