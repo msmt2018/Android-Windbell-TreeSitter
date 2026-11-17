@@ -457,6 +457,22 @@ interface TshTextAccessProvider : TshProvider {
 
 /** Shared strict UTF-16 validation for text edits and chunk boundaries. */
 internal object TshUnicode {
+    fun isWellFormedUtf16(value: CharArray): Boolean {
+        var index = 0
+        while (index < value.size) {
+            val current = value[index]
+            when {
+                Character.isHighSurrogate(current) -> {
+                    if (index + 1 >= value.size || !Character.isLowSurrogate(value[index + 1])) return false
+                    index += 2
+                }
+                Character.isLowSurrogate(current) -> return false
+                else -> index++
+            }
+        }
+        return true
+    }
+
     fun isWellFormedUtf16(value: CharSequence): Boolean {
         var index = 0
         while (index < value.length) {
