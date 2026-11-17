@@ -84,7 +84,10 @@ internal object TshNativeTreeMemoryReservations {
         )))
 }
 
-/** Admission accounting for the contiguous UTF-16LE copy used by the legacy String parse path. */
+/**
+ * Conservative input admission for the legacy String parse path. It reserves the full logical
+ * UTF-16LE source size even when TSParser internally switches large String inputs to windows.
+ */
 internal object TshParserInputMemoryReservations {
     private const val ESTIMATED_FIXED_OVERHEAD_BYTES = 64L
 
