@@ -439,55 +439,64 @@ jobs:
           # handle/gesture instrumentation without racing system_server startup.
           disable-animations: false
           script: |
-            set -Eeuo pipefail
+            set -eu
             mkdir -p build/emulator-test-logs
             adb start-server
             timeout 180 adb -s emulator-5554 wait-for-device
-
-            boot_deadline=$((SECONDS + 240))
-            until [[ "$(adb -s emulator-5554 shell getprop sys.boot_completed 2>/dev/null | tr -d '\r' || true)" == "1" ]]; do
-              if (( SECONDS >= boot_deadline )); then
+            
+            boot_deadline=$(( $(date +%s) + 240 ))
+            while :; do
+              boot_completed="$(adb -s emulator-5554 shell getprop sys.boot_completed 2>/dev/null | tr -d '\r' || true)"
+              if [ "$boot_completed" = "1" ]; then
+                break
+              fi
+              if [ "$(date +%s)" -ge "$boot_deadline" ]; then
                 echo "::error::Android emulator did not report sys.boot_completed=1"
                 adb devices -l || true
                 exit 1
               fi
               sleep 2
             done
-
+            
             wait_for_service() {
-              local service="$1"
-              local deadline=$((SECONDS + 120))
-              until adb -s emulator-5554 shell service check "$service" 2>/dev/null | grep -q "found"; do
-                if (( SECONDS >= deadline )); then
+              service="$1"
+              deadline=$(( $(date +%s) + 120 ))
+              while :; do
+                if adb -s emulator-5554 shell service check "$service" 2>/dev/null | grep -q "found"; then
+                  return 0
+                fi
+                if [ "$(date +%s)" -ge "$deadline" ]; then
                   echo "::error::Android system service '$service' did not become available"
                   return 1
                 fi
                 sleep 2
               done
             }
-
+            
             wait_for_service activity
             wait_for_service package
             wait_for_service settings
-
+            
             set_animation_scale() {
-              local setting="$1"
-              for attempt in {1..10}; do
+              setting="$1"
+              attempt=1
+              while [ "$attempt" -le 10 ]; do
                 if adb -s emulator-5554 shell settings put global "$setting" 0; then
                   return 0
                 fi
                 adb reconnect offline || true
+                attempt=$((attempt + 1))
                 sleep 2
               done
               echo "::error::Could not set animation scale '$setting' after Android boot"
               return 1
             }
-
+            
             set_animation_scale animator_duration_scale
             set_animation_scale transition_animation_scale
             set_animation_scale window_animation_scale
             adb -s emulator-5554 shell settings get global animator_duration_scale
-
+            
             set +e
             ./gradlew :editor:connectedDebugAndroidTest :app:connectedDebugAndroidTest --continue --max-workers=1 --stacktrace
             test_result=$?
