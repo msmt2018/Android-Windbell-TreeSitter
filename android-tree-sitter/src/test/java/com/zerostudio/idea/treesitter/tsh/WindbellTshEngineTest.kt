@@ -1201,13 +1201,9 @@ class WindbellTshLinkageTest {
         assertTrue(spans.any {
             it.styleId == nextOnlyId && it.startByte == operatorStart
         }, "ATS nextSibling constraint must execute.")
-        val wrongLeftId = engine.getStyleCatalog("java-ast-node-flags")
-            .first { it.name == "operatorWithWrongLeft" }.styleId
         assertFalse(spans.any {
             it.styleId == wrongLeftId && it.startByte == code.indexOf("+") * 2
         }, "ATS must reject a matching next sibling when the previous sibling is wrong.")
-        val wrongRightId = engine.getStyleCatalog("java-ast-node-flags")
-            .first { it.name == "operatorWithWrongRight" }.styleId
         assertFalse(spans.any {
             it.styleId == wrongRightId && it.startByte == code.indexOf("+") * 2
         }, "ATS must reject a matching previous sibling when the next sibling is wrong.")
