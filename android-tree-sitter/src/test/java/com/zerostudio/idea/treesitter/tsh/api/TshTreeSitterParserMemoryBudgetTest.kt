@@ -1,6 +1,7 @@
 package com.zerostudio.idea.treesitter.tsh.api
 
 import com.zerostudio.idea.treesitter.TSLanguage
+import com.zerostudio.idea.treesitter.TreeSitter
 import com.zerostudio.idea.treesitter.java.TSLanguageJava
 import org.junit.Assert.*
 import org.junit.Test
@@ -23,6 +24,7 @@ class TshTreeSitterParserMemoryBudgetTest {
     )
 
     private fun openOwner(engine: TshEngine, estimator: TshNativeTreeMemoryEstimator): TshTreeSitterParserOwner {
+        TreeSitter.loadLibrary()
         val borrowedLanguage = TSLanguageJava.getInstance()
         // Give the Engine a distinct wrapper. TSLanguage.close() invalidates only this wrapper;
         // the generated grammar's static singleton remains usable by other tests.
