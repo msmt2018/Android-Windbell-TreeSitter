@@ -48,6 +48,22 @@ static TSSymbol resolveAstGrammarSymbol(
 ) {
     if (!language || name.empty()) return 0;
 
+    // A supertype may also be publicly visible, in which case
+    // ts_language_symbol_type() reports it as Regular (visible + named).
+    // Resolve against the authoritative ABI-15 supertype table first;
+    // otherwise an earlier same-name public symbol can shadow the supertype
+    // and prevent subtype expansion for ATS selectors such as "expression".
+    if (is_named) {
+        uint32_t supertype_count = 0;
+        const TSSymbol* supertypes =
+            ts_language_supertypes(language, &supertype_count);
+        for (uint32_t index = 0; supertypes && index < supertype_count; ++index) {
+            const TSSymbol symbol = supertypes[index];
+            const char* symbol_name = ts_language_symbol_name(language, symbol);
+            if (symbol_name && name == symbol_name) return symbol;
+        }
+    }
+
     const uint32_t symbol_count = ts_language_symbol_count(language);
     TSSymbol auxiliary_candidate = 0;
     for (uint32_t index = 0; index < symbol_count; ++index) {
