@@ -71,7 +71,12 @@ class TshTreeSitterQueryNativeIntegrationTest {
             queryId = query.queryId
 
             val executed = engine.createTreeSitterQueryExecutor().execute(query, ownedTree.snapshot)
-            assertTrue(executed is TshResult.Success, "Native TSQueryCursor execution must succeed")
+            assertTrue(
+                executed is TshResult.Success,
+                "Native TSQueryCursor execution must succeed: " +
+                    ((executed as? TshResult.Failure)?.diagnostics?.joinToString { "${it.code}: ${it.message}" }
+                        ?: executed.toString())
+            )
             val queryResult = (executed as TshResult.Success).value
             val capture = queryResult.captures.single()
             val nameStart = source.indexOf("QueryProbe").toLong()
