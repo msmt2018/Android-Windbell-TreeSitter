@@ -42,6 +42,10 @@ class TsGrammarPlugin : Plugin<Project> {
       val generateTask = tasks.register("generateTreeSitterGrammar",
         GenerateTreeSitterGrammarTask::class.java) {
 
+        // Make ABI changes part of Gradle's task fingerprint. Without this,
+        // a parser generated with ABI 14 can remain UP-TO-DATE after the
+        // generator command starts requesting ABI 15.
+        inputs.property("treeSitterLanguageAbi", 15)
         dependsOn(rootProject.tasks.getByName("buildTreeSitter"))
 
         if (!grammar.composite) {
