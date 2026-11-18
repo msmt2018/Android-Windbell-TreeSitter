@@ -135,6 +135,35 @@ static jintArray TSLanguage_subtypes(JNIEnv *env,
   return result;
 }
 
+static jintArray TSLanguage_supertypes(JNIEnv *env,
+                                       jclass self,
+                                       jlong ptr) {
+  req_nnp(env, ptr);
+
+  uint32_t length = 0;
+  const TSSymbol *supertypes = ts_language_supertypes(
+      reinterpret_cast<const TSLanguage *>(ptr),
+      &length);
+
+  jintArray result = env->NewIntArray(static_cast<jsize>(length));
+  if (result == nullptr || length == 0 || supertypes == nullptr) return result;
+
+  std::unique_ptr<jint[]> values(new (std::nothrow) jint[length]);
+  if (!values) {
+    jclass exception = env->FindClass("java/lang/OutOfMemoryError");
+    if (exception != nullptr) {
+      env->ThrowNew(exception, "Unable to allocate Tree-sitter supertype result");
+    }
+    return nullptr;
+  }
+
+  for (uint32_t index = 0; index < length; ++index) {
+    values[index] = static_cast<jint>(supertypes[index]);
+  }
+  env->SetIntArrayRegion(result, 0, static_cast<jsize>(length), values.get());
+  return result;
+}
+
 static jlongArray TSLanguage_loadLanguage(JNIEnv *env,
                                           jclass clazz,
                                           jstring libpath,
@@ -218,6 +247,7 @@ void TSLanguage_Native__SetJniMethods(JNINativeMethod *methods, int count) {
   SET_JNI_METHOD(methods, TSLanguage_Native_symType, TSLanguage_symType);
   SET_JNI_METHOD(methods, TSLanguage_Native_langVer, TSLanguage_langVer);
   SET_JNI_METHOD(methods, TSLanguage_Native_subtypes, TSLanguage_subtypes);
+  SET_JNI_METHOD(methods, TSLanguage_Native_supertypes, TSLanguage_supertypes);
   SET_JNI_METHOD(methods, TSLanguage_Native_loadLanguage, TSLanguage_loadLanguage);
   SET_JNI_METHOD(methods, TSLanguage_Native_dlclose, TSLanguage_dlclose);
   SET_JNI_METHOD(methods, TSLanguage_Native_stateCount, TSLanguage_stateCount);
