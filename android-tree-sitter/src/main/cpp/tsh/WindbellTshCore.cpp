@@ -2152,8 +2152,6 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                         // A node can expose an alias as its public symbol/type while
                         // retaining a different grammar symbol/type. ATS names are
                         // resolved against the grammar, so match both identities.
-                        const TSSymbol visible_symbol = ts_node_symbol(ancestor);
-                        const TSSymbol grammar_symbol = ts_node_grammar_symbol(ancestor);
                         const char* visible_type = ts_node_type(ancestor);
                         const char* grammar_type = ts_node_grammar_type(ancestor);
                         const bool symbol_matches =
