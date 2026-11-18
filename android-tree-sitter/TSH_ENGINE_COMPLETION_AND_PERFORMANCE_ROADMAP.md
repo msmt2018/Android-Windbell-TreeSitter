@@ -1,0 +1,666 @@
+# TSH 引擎整体完成度、性能整改与开发待办地图
+
+> 文档状态：项目级权威路线图（2026-11-19）
+>
+> 仓库：msmt2018/Android-Windbell-TreeSitter
+>
+> 模块：android-tree-sitter（Java/Kotlin API、JNI、C/C++ Native、Tree-sitter、TSH、ATS、Regex/Oniguruma）
+>
+> 本文记录已存在的源码能力、尚未完成的工程接线、真实构建/测试证据、性能目标和验收条件。源码存在不等于功能完成；测试源码存在不等于测试通过；单项测试通过不等于端到端设备体验通过。
+
+## 0. 本文件的权威性与设计决策
+
+本文件是 TSH 完成度、性能和后续开发顺序的权威地图。它细化并更新仓库既有 docs/roadmap.md 与 docs/TSH_LARGE_TEXT_NATIVE_TOKEN_ARCHITECTURE.md 中尚未验证的条目。
+
+### 0.1 本次明确的架构决策
+
+1. **不以人为设置很低的固定内存预算作为大文件优化方案。** 不能通过降低 Capture 数量、缩小缓存到无法命中、提前停止查询、减少语法树内容或牺牲高亮完整性来制造“内存安全”。
+2. **优先优化数据结构和算法本身。** 重点是持久化 Piece Tree / 多路树、分块缓冲、节点聚合摘要、局部路径复制、节点池化、索引复用、批处理和增量更新。
+3. **内存观测与异常保护仍然必要，但定位是护栏，不是主引擎。** 应观测真实 Native Heap、JVM Heap、PSS、映射页、缓存驻留、分配速率和峰值；系统压力时回收可重建缓存、降低预取并发、暂停非可见后台工作。不得将很低的常量预算当作正常运行上限。
+4. **完整语义优先。** 任何性能优化都必须保持完整文档坐标、跨块语法上下文、Query Capture、Regex 语义、视口颜色、编辑、撤销/重做和增量更新正确。
+5. **Native 引擎必须独立具备大文本能力。** 应用层 Piece Tree 可以作为 TextSource，但不能替代 JNI/Native 自身对分块输入、缓冲区生命周期、编码、节点、查询结果和大规模对象的处理能力。
+6. **保留两条查询管线。** ATS 与 Tree-sitter Query 是两个前端，最终进入同一 Tree-sitter Query 执行体系；Regex/Oniguruma 保持独立，不引入第三条通用执行管线。
+
+### 0.2 对旧内存预算描述的修订
+
+旧设计中出现的“常规 100 MiB 目标 / 512 MiB 硬上限”是此前阶段的资源预算设计，不再作为性能设计目标，也不能据此把正常缓存、Query 结果或 Native 数据结构压到很低的固定上限。后续实现必须区分：
+
+- **真实数据结构占用**：文本、语法树、节点、Capture、Match、RenderPlan 等实际存活对象；
+- **可回收缓存占用**：窗口、索引、重复查询结果、Regex 派生状态；
+- **瞬态工作集**：解析、编辑、查询、渲染批次的临时对象；
+- **系统资源压力**：Android 进程可用内存、Native Heap、JVM Heap、PSS、mmap 页和文件系统空间。
+
+内存管理要解决对象冗余、复制、碎片、生命周期和缓存淘汰，而不是靠人为小预算让功能无法完成。异常保护阈值应根据真实设备进程约束和测量结果设置，并提供明确诊断。
+
+## 1. 总体完成度结论
+
+TSH 已经具备相当数量的 Native 大文件、Piece Tree、增量解析、Query/ATS、Regex、统一 Kotlin API、RenderPlan 和 Android Span 接入基础；但目前仍是**基础架构已建立、多个执行路径仍处于分阶段接线、性能和设备闭环尚未达标**的状态。
+
+不能给出一个可信的“整体完成百分比”：当前不同子系统的源码完成、构建完成、测试完成和设备完成程度不一致。下面按可核查状态逐项标记。
+
+### 1.1 状态定义
+
+| 状态 | 含义 |
+|---|---|
+| SPEC | 有设计/契约，未实现 |
+| SOURCE | 已有部分源码，未证明完整 |
+| WIRED | 已接入真实调用路径，但验证范围有限 |
+| BUILD | 指定模块/变体构建通过 |
+| TEST | 指定自动化测试通过 |
+| DEVICE | 指定 Android API、ABI 和真实宿主控件端到端通过 |
+| PERF | 有可重复的性能数据并达到目标 |
+
+任何条目只有在记录 commit、命令、设备/API、测试结果后才能提升状态。不能把一个 API 26 通过结果外推为 API 30/35 通过，也不能把 Host Native 测试外推为 Android JNI 通过。
+
+### 1.2 子系统状态总览
+
+| 子系统 | 当前判断 | 已有基础 | 主要未完成项 |
+|---|---|---|---|
+| Native 大文本输入 | SOURCE/WIRED | TextSource、FileWindowSource、MappedFileSource、TSInput callback、PieceTreeSource | 输入建立耗时、回调次数、复制次数、真实吞吐优化和完整压力验证 |
+| Native Piece Tree | SOURCE | 持久化 treap、路径复制、64 KiB append chunks、Snapshot clone | 多路节点、聚合坐标指标、叶块合并、碎片压力、批量编辑与高频读取性能 |
+| Tree-sitter Parser | WIRED | 原生 Parser、UTF-16LE TSInput、旧 Tree edit、增量 parse 基础 | 密集 Token/节点分配、解析栈与 Subtree 性能观测、增量编辑尾延迟 |
+| Token / Subtree | SOURCE（上游能力） | Tree-sitter 原生 Subtree、SubtreePool、ReusableNode、局部 TokenCache | 本项目尚无完整自有 Token Page/多级 Token 缓存实现；需要先 profiling 再决定扩展 |
+| ATS / AST Selector | SOURCE/WIRED（部分） | AST Selector、supertype 索引、节点/兄弟约束执行基础 | ATS 语言前端/语义编译完整度、索引成本、密集节点扫描性能、完整回归 |
+| Tree-sitter Query API | SOURCE/WIRED（适配层） | Compiler/Executor、Cursor、Capture、Query/Tree/Language Lease | 新公共 API 与生产高亮链路全面收敛、取消/预算能力和密集 Capture 吞吐 |
+| Regex / Oniguruma | SOURCE/WIRED（部分） | 独立 Regex 管线、有限宽度窗口、连续输入优化、mmap Snapshot | 编辑后快照全量重建、跨窗口上下文语义、Regex State 增量和吞吐 |
+| 统一 Match / Scope / Style | SOURCE | Match/MatchSet/Scope/Selector/StyleResolver 模型 | Tree-sitter/ATS/Regex 生产结果全面接入、冲突策略和 revision 事务 |
+| JNI / Kotlin API | SOURCE/WIRED（部分） | Native Handle、批量数组输出、UTF-16LE 输入、统一 API 基础 | JNI ABI 全量审计、对象复制与编码路径收敛、旧 API 迁移 |
+| 高亮 Renderer | WIRED（部分） | Native spans、Viewport 查询、Android Spannable Binding、Receipt | 真实 Canvas/Compose/custom View 完整链路、API 30/35 设备失败修复、闪烁关闭 |
+| 增量高亮 | SOURCE/WIRED（部分） | Edit queue、Tree edit、Dirty ranges、缓存版本、部分 Cache Rebase | 依赖范围准确性、旧结果保留、原子提交、快速编辑完整体验 |
+| DSL / Schema | SOURCE | Schema、诊断、Runtime Consumer 基础 | 完整 Lexer/Parser/AST/SemanticAnalyzer/Lowering/Runtime Catalog |
+| 性能基准体系 | SOURCE | 100 MiB 与 32,768 声明压力 fixture | 阶段计时、CPU/内存/分配/JNI/渲染分项指标、重复运行统计 |
+| CI / 设备矩阵 | 不完整 | API 26/30/35 工作流、Host/Release 任务 | 多个 Draft PR 最新提交尚无新 CI；API 30/35 存在失败 |
+
+## 2. 性能验收目标（最高优先级）
+
+### 2.1 已报告的基准
+
+以下是当前项目讨论和压力测试所报告的基线，不应误解为已经完成的性能验收：
+
+| 场景 | 输入与实际工作 | 当前耗时 | 主要覆盖 |
+|---|---|---:|---|
+| 100 MiB 低语法密度文本 | 100 MiB UTF-16LE 文件，超大 Java block comment 前缀，Native 文档创建/全量解析，再查询文件尾部视口 | 约 16.8 秒 | 文件输入、Native backing source、Tree-sitter 扫描、尾部坐标/分区定位、视口 Query |
+| 高密度 Java | 32,768 个合法局部变量声明；每个声明位于独立 block，生成真实 Java 语法节点；全文件 Query 并取回真实变量 Capture，再查询尾部视口 | 约 7.6 秒 | Parser 节点构建、AST/Query 扫描、Capture 产生、JNI 结果输出、Kotlin 结果处理 |
+
+这两个测试不是同一种压力：
+
+- 100 MiB 场景主要是**大输入量、低 AST 节点密度**；它不是 100 MiB 的 32,768 节点密集语法测试。
+- 32,768 场景主要是**较小文本体积、高语法节点与 Capture 密度**；它验证真实节点和 Query 结果，而不是稀疏文件读取。
+- 高密度测试中，全文件 Capture 结果会跨 JNI 返回给 Kotlin，并统计 Capture 数量；不能只优化到尾部 viewport 快而让全文件 Query 失去完整结果。
+
+### 2.2 必须达到的目标
+
+| 场景 | 基线 | 第一验收目标 | 目标耗时下降 | 进一步目标 |
+|---|---:|---:|---:|---:|
+| 100 MiB 低语法密度 | 16.8 s | ≤ 5.0 s | ≥ 70.2% | 5–6 秒区间作为首轮门槛 |
+| 32,768 高密度 Java + 全量 Capture | 7.6 s | ≤ 2.0 s | ≥ 73.7% | 1–2 秒区间；目标向 1 秒靠近 |
+
+目标是同等输入、同等完整语义、同等设备和同等结果要求下的端到端耗时下降。不得通过下列方式“达标”：
+
+- 把全文件解析改成只解析尾部；
+- 把真实 Query 改成文本正则或合成结果；
+- 丢弃 Capture、减少 AST 节点或缩小输出范围；
+- 关闭 TSH 规则、谓词、局部变量解析或错误恢复；
+- 让视口外区域永久不更新，或把未完成结果冒充完整；
+- 只计时 Native 的某个局部阶段，忽略文件准备、JNI、结果转换和应用层渲染；
+- 降低视觉效果、破坏滚动、选择、输入、撤销/重做或增量高亮。
+
+### 2.3 交互体验不回退
+
+性能优化的最终对象是编辑器体验，而不是单次压测数字：
+
+- 视口内可见行优先得到正确高亮，不能因为后台全文件工作阻塞 UI。
+- 连续输入、删除、粘贴、撤销、重做时，不出现先清空旧颜色再等待新颜色的空白帧。
+- 滚动、水平滚动、长行、折行、选区、光标、括号匹配、代码折叠和点击定位使用同一份准确坐标。
+- 旧版本任务不得覆盖新版本结果；过期结果必须被拒绝。
+- 对 60 Hz 屏幕，渲染主线程必须控制在约 16.7 ms 帧预算内；高刷新率设备按实际刷新周期验证。
+- 后台完整解析可渐进完成，但可见视口和用户编辑操作不能被全量 Capture 物化拖慢。
+
+## 3. 两个慢基准的真实执行链路与待查瓶颈
+
+### 3.1 100 MiB 输入链路
+
+当前 Native JNI 文档创建实现可见以下步骤：
+
+1. Kotlin 提供 NativeTextWindowReader，通过 DirectByteBuffer 按窗口读取 UTF-16LE。
+2. JNI 取得 Reader 的 read(JI, ByteBuffer): Int 方法。
+3. Native 创建匿名 backing file（可用 memfd）；在不支持时回退到应用缓存文件。
+4. Native 循环调用 Java Reader，把完整源内容按窗口复制到 backing file。
+5. Native 将 backing file 映射为 MappedFileSource，建立 PieceTreeSource。
+6. 使用一个连续的 Tree-sitter Parser 状态机和 TSInputEncodingUTF16LE 对整个文档解析。
+7. 对尾部视口执行 TSH 查询并输出 Capture。
+
+因此 16.8 秒必须拆分计量，不能简单归因于 Tree-sitter Parser。至少要分别记录：
+
+- backing file 创建耗时；
+- Java Reader 回调次数、每次读取字节数和累计字节数；
+- JNI 调用次数与累计传输字节数；
+- memfd/file 写入耗时；
+- mmap 创建耗时和首次触页耗时；
+- PieceTreeSource 建立耗时；
+- Tree-sitter 全文 parse 耗时；
+- TextPartitionIndex 构建/查询耗时；
+- TSH Query 耗时；
+- Capture 结果写入 JNI 数组耗时。
+
+**优先验证的性能假设（待测，不视为已确认根因）：**
+
+- 64 KiB 传输窗口可能导致过多 Reader/JNI 调用和系统调用；
+- Java Reader → Native buffer → backing file → mmap 可能产生不必要的中间搬运；
+- 首次解析期间存在文件准备与解析串行阶段；
+- 单一大 block comment 让 Lexer 扫描大量字符，但 AST 节点很少；应检查 Lexer 每字符成本、UTF-16 解码、注释扫描和输入回调开销；
+- TextPartitionIndex 当前以每 256 行 checkpoint 为基础，查询时还需扫描局部窗口；需测量 checkpoint 密度和每次查询扫描字节数。
+
+### 3.2 高密度 Java 链路
+
+当前高密度压力 fixture 的核心操作是：
+
+1. 生成 32,768 个合法 Java 局部变量声明，每个声明处于独立 block，避免重复变量名非法。
+2. 将 UTF-16LE 文件分块写入。
+3. 创建 Native 文档并完成完整 Tree-sitter parse。
+4. 对整个文档调用 highlightNativeDocument(startByte=0, endByte=documentBytes)。
+5. 将所有真实 Capture 输出到 Kotlin 数组；当前 JNI 结果行使用六个整数表示一条 span。
+6. Kotlin 扫描数组，统计变量 style Capture 数量。
+7. 再对尾部视口执行一次 Query，并确认尾部类型 Capture。
+
+必须分别记录：
+
+- Native 文档初始化/输入阶段；
+- Parser parse；
+- AST Selector 索引构建；
+- ATS/Tree-sitter Query 执行；
+- Predicate/Regex 处理；
+- Match/Capture 收集；
+- Native span 合并/排序；
+- JNI 数组分配和复制；
+- Kotlin 数组遍历与样式 ID 统计；
+- 尾部 viewport Query；
+- 总端到端耗时。
+
+**优先验证的性能假设（待测）：**
+
+- ATS 对每个节点逐条遍历 Selector/Rule 的成本是否仍接近 O(nodes × selectors)；
+- Symbol/NodeType/Supertype 查找是否在热循环中重复字符串转换或 Hash 查找；
+- AST 子节点、兄弟节点、祖先查询是否重复遍历同一树区域；
+- Capture 是否先生成多份中间 vector，再排序、合并、转成 JNI 六整数数组；
+- Capture 结果是否逐条创建 JVM 对象，或发生不必要的装箱/字符串复制；
+- Query 是否重复执行相同 pattern，或没有共享预编译 predicate/selector dispatch；
+- Kotlin 端是否对完整 Capture 数组进行多次扫描；
+- 大量节点/捕获是否造成 allocator 高频分配和缓存局部性差。
+
+在分项数据出来前，不得只凭架构推测认定某一个函数是唯一根因。
+
+## 4. Native 大文本与 Piece Tree 当前实现评估
+
+### 4.1 已存在的实现
+
+当前 Native 侧已存在：
+
+- TextSource 抽象及分段/连续/映射/文件窗口数据源；
+- MappedFileSource：文件映射和按需页访问；
+- FileWindowSource：固定窗口 pread() 读取；
+- PieceTreeSource：UTF-16LE 持久化 Piece Tree；
+- ChunkedTextStore：分块追加存储；
+- TextPartitionIndex：稀疏行/字节 checkpoint；
+- JNI TSInput read callback；
+- Tree-sitter Parser 对 UTF-16LE 输入的连续状态解析；
+- Tree edit 与增量 parse 的基础；
+- 原始 buffer / append chunks / Snapshot clone 的共享所有权。
+
+### 4.2 当前 PieceTreeSource 的实际结构
+
+当前 PieceTreeSource 是持久化随机优先级 treap（二叉树），Node 记录：
+
+- buffer 来源（Original / Added）；
+- source offset；
+- piece length；
+- subtree bytes；
+- subtree piece count；
+- subtree height；
+- priority；
+- left/right shared_ptr。
+
+编辑通过 split/merge 和 shallow path copy 复用未变化分支；追加内容以 64 KiB chunk 存储；clone 共享根节点和原始数据源。单次读取沿树按累计字节查找对应 Piece。
+
+这已经比全文 String 拼接和数组搬移更合理，但它还不能被称为完整的极速多缓冲 B-tree/Rope 引擎。
+
+### 4.3 必须继续改进的结构性问题
+
+1. **二叉 treap 的节点访问成本。** 随机优先级树的平均高度通常较好，但仍需在大量编辑、碎片化和极端序列下测量高度与尾延迟；应比较高扇出 B+Tree/Rope。
+2. **节点聚合指标不完整。** 当前 subtree 主要聚合 byte length、piece count、height；尚未形成统一的 UTF-16 units、UTF-8 bytes、line feeds 等多维摘要索引。
+3. **Piece 合并和碎片控制。** 连续引用同一 backing buffer 且物理区间相邻的 Piece 应合并；需要避免编辑后 Piece 数持续增长。
+4. **节点分配方式。** 每个 Node 使用 shared_ptr 控制块会增加分配、引用计数和指针追踪成本；应评估 slab/page allocator、intrusive refcount、节点内联和批量回收。
+5. **树的扇出与缓存局部性。** 需要评估多路节点、连续 child/piece descriptor 数组、前缀累计长度数组，降低一次 offset 定位所需的指针跳转。
+6. **多段连续读取。** 当前 TextSource read 返回当前 Piece 可提供的连续段；跨多个 Piece 的顺序读取可能产生更多回调和重复树定位。应提供稳定的批量读/窗口拼接接口，且只拼接当前有界窗口。
+7. **批量编辑。** 多 Edit 应在一次事务中合并路径复制、减少重复 split/merge 和树遍历，保证旧快照仍然稳定。
+8. **Snapshot 版本共享。** 快照应只复制被修改的路径和追加块，未修改节点/缓冲区继续共享；需要验证多快照长时间驻留时的引用计数和回收成本。
+9. **读写并发。** 不可变 Snapshot 支持稳定并发读；可变 root 的编辑发布必须原子化，不能让 Native Parser 看到半完成版本。
+10. **真实碎片基准。** 必须增加 1、100、1,000、10,000、100,000 Piece 的随机读、顺序读、编辑、clone 和多快照基准。
+
+### 4.4 目标数据结构方向
+
+评估并逐步演进为高扇出持久化 B+Tree / Rope：
+
+- Leaf：引用 Original/Append/Mapped Buffer 的连续片段；避免按每行或每 Token 创建叶节点。
+- Internal Node：连续存储多个 child，维护每个子树的累计 UTF-16 长度、UTF-8 字节数、UTF-16LE 字节数、LF 数量和 Piece 数。
+- Search：使用前缀累计值 + 二分查找或小扇出线性扫描；降低随机指针追踪。
+- Edit：路径复制，只复制受影响的叶和祖先；批量 Edit 合并路径。
+- Coalesce：合并同 buffer 的相邻 Piece；设置叶容量和分裂/合并阈值。
+- Allocate：Node/Leaf 使用 slab 或 page，减少 shared_ptr 控制块和小对象分配；公共快照使用明确引用生命周期。
+- Read：顺序读取时沿 Leaf iterator 前进，不要每个窗口从根重新定位；随机读仍可 O(log N) 定位。
+- Snapshot：持久化根版本共享；版本发布与 Native Tree revision 对齐。
+
+这是一条需要基准证明的演进方向，不要求为了替换结构而重写所有代码。应保留现有 treap 作为对照实现，用相同测试比较吞吐、编辑延迟、内存、碎片和尾延迟后再决定迁移。
+
+## 5. 多缓冲区与多树杈节点机制
+
+必须区分以下对象，不得统一成一个模糊的 ChunkNode：
+
+| 结构 | 所属层 | 作用 |
+|---|---|---|
+| Piece Tree / Rope 节点 | 文本存储 | 文本片段、累计坐标、编辑与快照共享 |
+| Buffer Page / Window | 输入与存储 | 承载连续字节、双/三缓冲和预取 |
+| Tree-sitter Subtree | 语法树 | 语法节点、子树共享、增量复用 |
+| Parser StackVersion | 解析器 | GLR 冲突/错误恢复的状态分支 |
+| TokenCache / Token Page | 词法与解析 | Token 临时缓存和批量分配 |
+| Query Match/Capture Page | 查询结果 | 分页输出、批量 JNI 传输 |
+| Regex Window State | Regex | 连续缓冲区、边界上下文和扫描状态 |
+
+### 5.1 Buffer 双缓冲/三缓冲
+
+- ACTIVE：当前被 Parser/Regex 读取；
+- FILLING：下一窗口填充；
+- READY：数据完成、等待消费者；
+- FREE：可重新租借。
+
+所有窗口必须携带 owner、document revision、base offset、encoding、valid length、EOF/error 状态和 Lease。ACTIVE 窗口不得被覆盖。预取线程只能准备数据，不能推进同一个 Parser 的语法状态。
+
+窗口大小应做 64/128/256/512 KiB 等级的基准，不固定认定 64 KiB 最优。对顺序扫描增加 readahead；对随机视口读保留小窗口路径。
+
+### 5.2 Token 与 Subtree
+
+Tree-sitter 自身已有 Subtree、SubtreePool、inline subtree、引用计数和 ReusableNode 等机制。本项目不应再建立一棵与 Tree-sitter 脱节的重复语法树。
+
+当前项目尚未证明已经实现完整的自有 Token Page/多级 Token 缓存。先通过 profiling 观察 Token 分配、Subtree 分配、栈分支数量、复用率和缓存命中率，再决定扩展：
+
+- Token 热字段紧凑化；
+- 临时 Token/Match/Capture 使用 arena/slab；
+- 小对象 inline；
+- 批量构造/释放；
+- 复用必须检查 parser state、lex mode、external scanner state 和位置；
+- 结果逃逸到公共 API 前必须转换为稳定生命周期的对象或 Lease。
+
+### 5.3 不得把文本块当作独立语法文档
+
+同一个 Tree-sitter Parser 的语法状态必须跨输入窗口连续推进。不得把每个文本块独立解析后简单拼接 AST。多 Parser 并行仅适用于能够证明语法边界和状态传递语义的特定语言/任务；不能作为通用默认方案。
+
+## 6. UTF 编码、文本对象与 ATS 坐标体系（必须彻底治理）
+
+编码和坐标不应依赖运行时反复扫描全文或临时创建 String/ByteArray。当前 Native 大文本输入以 UTF-16LE 为主，Tree-sitter 的 byte offset 与公共 Kotlin 编辑器坐标不是同一个单位。
+
+### 6.1 必须明确的坐标域
+
+| 坐标域 | 单位 | 主要使用者 |
+|---|---|---|
+| UTF-16 code unit offset | 16-bit code unit | Android/Kotlin EditorDocument、String/CharSequence |
+| UTF-16LE byte offset | bytes | 当前 Native PieceTreeSource、Tree-sitter UTF16LE TSInput |
+| UTF-8 byte offset | bytes | UTF-8 文件、Query/Regex pattern/source、部分 grammar/外部接口 |
+| Unicode code point offset | scalar values | Unicode 语义处理 |
+| Grapheme cluster offset | 用户感知字符 | 光标移动、选择、删除等编辑器交互 |
+| Tree-sitter Point column | 当前 TSInput encoding 的字节列 | Tree-sitter parser/query 范围 |
+| Line offset | line index + line-local offset | 行布局、视口和渲染 |
+
+不能将 UTF-16 code unit、UTF-8 byte、UTF-16LE byte、Code Point 和 Grapheme offset 互相直接相加或比较。
+
+### 6.2 统一转换规则
+
+- 每个 TextSnapshot 必须声明 encoding、revision 和坐标能力。
+- 公共编辑器 API 以 UTF-16 code unit 为宿主坐标；Native Tree-sitter 范围必须携带输入编码身份。
+- UTF-16LE byte offset 与 UTF-16 code unit offset 的转换必须检查偶数边界和代理对边界。
+- UTF-8 byte offset 转 UTF-16 offset 不能通过简单乘除实现；必须依赖每个 Leaf 的转换摘要/checkpoint。
+- 跨 Leaf 的 UTF-8 多字节序列和 UTF-16 surrogate pair 必须按逻辑文本连续处理，不能在窗口边界截断。
+- CRLF 必须作为两个 code unit/byte 序列处理，同时在行索引里保持统一行语义。
+- 非法 UTF-8/UTF-16 输入要有明确拒绝或替换策略；不得静默产生错位。
+- 32-bit Tree-sitter byte offset 边界必须在 JNI 入口显式检查；上层 Long 坐标不能被静默截断。
+- Query source 的 UTF-8 byte offset 与被查询文档的 UTF-16LE byte offset 是不同坐标域，诊断和 Capture 不得混用。
+
+### 6.3 需要实现的编码索引
+
+每个 Text Leaf 应维护可组合摘要：
+
+- UTF-16 code unit count；
+- UTF-16LE byte count；
+- UTF-8 byte count；
+- LF count；
+- 可选 Code Point count；
+- 首尾编码状态/边界信息，用于跨 Leaf 校验；
+- UTF-8/UTF-16 转换 checkpoint（按字节或字符间隔）；
+- 行首位置摘要。
+
+Grapheme cluster 具有跨 Leaf 上下文状态，不能简单把各叶计数相加；应使用边界状态合并或在光标附近做有界扫描。
+
+### 6.4 ATS 与文本对象性能
+
+ATS/AST Selector 的热点不得在每个节点反复：
+
+- 将 node type 转成 Kotlin/Native String；
+- 重复查找相同 Symbol 名；
+- 重新解析 Selector 字符串；
+- 从文档开头扫描 UTF-8/UTF-16 偏移；
+- 为每个 Capture 构造临时字符串/对象。
+
+应在 Grammar/Query 编译阶段预解析 Symbol、Field、Supertype、Predicate、Selector flags，生成稳定的整数 dispatch 表；节点执行阶段只使用整数 ID、位标志和连续数组。公开结果边界再按需解析名称。
+
+## 7. ATS / Tree-sitter Query 性能与统一执行
+
+### 7.1 当前基础
+
+- Tree-sitter Query Compiler/Executor Adapter 已有源码；
+- Query Cursor、Match、Capture、Predicate Handler 和 ByteRange 适配已有基础；
+- Native Query / Tree / Language Lease 有基础；
+- ATS AST Selector 已有节点类型、字段、祖先、兄弟和 supertype 相关逻辑；
+- supertype symbols 已有预索引与 Native 元数据暴露；
+- ATS 与 Tree-sitter Query 作为两个输入前端，目标是复用同一 Tree-sitter Query 执行体系；
+- Regex 保持独立。
+
+### 7.2 仍未完成
+
+- ATS Lexer、Parser、AST、完整 Compiler/Lowering 和 Schema 驱动语义尚未形成完整生产闭环；
+- strict Node Schema Provider 尚未完成；
+- 新公共 Kotlin Query API 与现有生产 TSH 高亮执行路径仍处于迁移阶段；
+- Query 结果与统一 MatchSet 的完整接线尚未完成；
+- Native step budget 不能因 Kotlin 字段存在就声称已执行；
+- 旧版 Tree-sitter 不支持 0.28 progress callback 时，只能在 Native 查询返回后检查取消，不能声称可中断正在运行的查询。
+
+### 7.3 性能改造
+
+1. 编译期将 Selector 按 node symbol、supertype、field、named/anonymous、flags 分桶。
+2. 对相同 node symbol 的规则生成紧凑 dispatch table，避免每个节点扫描全部规则。
+3. 预计算祖先/兄弟约束的必要元数据；共享同一节点访问结果，避免重复遍历。
+4. Query Pattern/Predicate 在编译阶段完成解析和可缓存的预计算。
+5. Query Cursor 执行时直接使用 Native node/symbol ID，不在热循环中创建字符串。
+6. Capture 结果采用紧凑连续结构和分页/批量接口，减少多份 vector 和 JNI 数组复制。
+7. 对可见 viewport 执行范围查询；完整文档 Query 仍须保留完整结果语义。
+8. 为 ATS 建立节点访问次数、selector 候选数、实际匹配数、supertype 查找次数、capture 数和索引内存基准。
+
+## 8. Regex / Oniguruma 独立执行管线
+
+### 8.1 已有基础
+
+- Regex 与 Tree-sitter Query 分离；
+- Oniguruma 使用连续输入指针；
+- 有限宽度 Regex 存在窗口执行和 overlap 处理；
+- 对上下文依赖/无界规则，当前实现会使用完整连续视图；
+- MappedFileSource 可为完整文件提供 mmap 视图；
+- PieceTreeSource 在原始单 Piece 情况下可直接暴露 backing view；
+- 编辑后的多 Piece 文档可建立 mmap Snapshot，避免 Native Heap 中再复制一个完整大 String。
+
+### 8.2 关键未完成问题
+
+- 编辑后 mmap Snapshot 可能需要全量重建，单次编辑成本与文件大小相关；
+- Regex WindowLease 和边界上下文状态尚未形成完整统一生命周期；
+- 任意长度匹配、回溯、锚点、前后文和 BLOCK 状态不能简单靠固定 overlap 解决；
+- Regex State Checkpoint 的增量更新和 dirty range 传播尚未完成；
+- Regex 的结果需要进入统一 MatchSet，但不能因此引入第三条执行管线。
+
+### 8.3 目标
+
+- 有限最大宽度模式采用可证明语义的窗口 + overlap；
+- 无界/上下文模式采用可证明的完整视图或明确状态机，不得错误截断；
+- 编辑时只重建受影响映射块/索引，探索分块临时文件、持久化 Snapshot 和按块重映射；
+- 为每个 Regex Pattern 记录宽度、上下文、锚点、回溯风险和窗口能力；
+- 记录每个窗口读取字节、匹配候选、最终 Match、回溯耗时和峰值连续工作区。
+
+## 9. JNI / JVM / Kotlin 边界
+
+### 9.1 已有基础
+
+- JNI 大文本 Native Document Handle；
+- DirectByteBuffer 读取窗口；
+- UTF-16LE Native PieceTreeSource；
+- ScopedStringChars 用于避免额外 Native UTF-16 全文 vector copy；
+- Capture/Span 通过批量数组输出；
+- Native 错误转换为 Java 异常；
+- Query/Tree/Language Lease 与 Registry 已有部分统一实现；
+- Kotlin TSH SyntaxHighlighter 使用 viewport range、Capture range cache、编辑队列和 Native 增量 edit。
+
+### 9.2 必须审计与优化
+
+- 每个 JNI 方法的 Java/Kotlin 声明、C++ 符号、参数、返回值、异常和 Handle 所有权；
+- 每次 JNI 调用的次数、复制字节数、分配次数和耗时；
+- String/CharSequence 到 UTF-16LE/UTF-8 的编码路径是否重复；
+- GetStringChars 是否被误称为绝对 zero-copy（JVM 仍可选择复制）；
+- 大结果是否经过 Native vector → Java primitive array → Kotlin collection 多次物化；
+- Native Handle 是否含 generation/type/owner/closed 状态；
+- Close 与并发 Parse/Query/Edit 是否存在 use-after-free；
+- Native close 是否在 Registry 锁内执行；
+- API 21–35 与各 ABI 的偏移宽度、对齐和编码行为。
+
+目标是批量、稳定、少复制，不是将所有内容一次性物化到 JVM。
+
+## 10. 高亮渲染、增量更新与闪烁
+
+### 10.1 已有基础
+
+- Native Capture/Span 生成；
+- Viewport range 查询；
+- Kotlin CaptureRangeIndex 和缓存；
+- Spannable Renderer Provider；
+- TSH-owned Span 精确清理；
+- RenderPlan Revision、Receipt、Generation staging/rollback；
+- Edit queue、Native Tree edit、Dirty range 和缓存版本基础；
+- Canvas 绘制与 Span 应用已区分，不再把 Span applied 等同于真正 drawn。
+
+### 10.2 仍未完成
+
+- API 30/35 真实 EditorView 测试仍有失败；
+- 100 MiB 真实 EditorView Canvas 颜色可见性尚未完成设备验收；
+- PR #12 的依赖范围和 Cache Rebase 尚未形成完整 CI 证据；
+- 旧高亮与新高亮之间的无闪烁原子切换仍需真实连续编辑验证；
+- Canvas/Compose/custom View Renderer 的完整生产 Provider 尚未完成。
+
+### 10.3 无闪烁事务要求
+
+1. 每次编辑产生单调递增 Document Revision。
+2. 保留旧版本有效高亮，直到新版本相应区域结果准备完成。
+3. 对 Query、ATS、Regex、AST Selector 依赖范围进行失效分析。
+4. 只将新结果写入 staging generation。
+5. 仅当 Document/Tree/Query/Theme/Viewport Revision 全部匹配时原子提交。
+6. 过期结果丢弃；新任务失败时保留旧结果并报告状态。
+7. 局部编辑不得无理由清空整份 Capture Cache。
+8. 任何被保留的旧 Capture 必须经过依赖正确性证明；无法证明时保守重算，不能显示错误颜色。
+
+## 11. 内存策略：从“低预算限流”转为“数据结构效率与真实压力治理”
+
+### 11.1 当前值得审计的固定容量
+
+当前源码中可见多个固定容量或默认限制，例如：
+
+- Native Highlight Cache 每文档 4 MiB；
+- 进程共享 Native Highlight Cache 预算 32 MiB；
+- Kotlin Capture Cache 32 MiB；
+- QueryExecutionBudget 的默认结果字节上限 32 MiB；
+- PieceTreeSource 的默认 append allocation limit 64 MiB；
+- TshMemoryBudget 的默认 target/hard limit 配置。
+
+这些参数不应被直接视为合理的最终生产限制。必须逐项说明它们限制的是“可回收缓存”“新增编辑块”“结果输出”还是“真实 Native 对象”，并检查是否导致缓存持续失效、结果被拒绝或高密度文档吞吐下降。
+
+### 11.2 新的内存原则
+
+- 不为正常全量语法树、合法 Capture 或正常编辑数据设置不合理的小额度。
+- 缓存容量根据真实设备可用内存、命中率、文档数量和对象大小自适应；内存压力时优先淘汰可重建数据。
+- 大型不可变文本和 Snapshot 优先共享 backing store，不复制。
+- 使用 slab/arena/page、inline、SoA、持久化节点共享，降低 allocator 和碎片成本。
+- 对 Native Heap、JVM Heap、mmap resident pages 和临时文件分别观测，不将 mmap 虚拟大小误算为全部常驻内存。
+- 发生系统压力时先停止预取、淘汰 LRU 派生缓存、减少并发后台任务；不能静默截断完整 Query 结果。
+- 必须保留 OOM/分配失败处理，但失败应明确报告 PARTIAL/FAILED，不能伪装成完整成功。
+
+## 12. 性能改造路线（按依赖顺序）
+
+### P0 — 建立可解释的性能基线
+
+- [ ] 为 100 MiB 稀疏低 AST 密度测试增加分阶段计时和 Native 计数。
+- [ ] 为 32,768 Java 声明测试增加分阶段计时和 Native 计数。
+- [ ] 统计 Reader callback、JNI 次数、读取字节、文件写入、mmap、Parse、Query、Capture、数组输出、Kotlin 遍历时间。
+- [ ] 记录节点数、Token 数（可从 Parser instrumentation 统计）、Capture 数、ATS Selector 候选数、缓存命中率和分配次数。
+- [ ] 记录 CPU 时间、wall time、Native Heap、JVM Heap、PSS、mmap RSS、GC 次数和线程阻塞。
+- [ ] 每个场景至少重复 10 次，报告 median、p90/p95、min/max；区分冷启动与热缓存。
+- [ ] 所有性能测试固定设备、API、ABI、编译类型、温控/电量状态和测试输入 hash。
+
+**退出条件：** 两个慢基准的耗时能够分解到具体阶段，能用数据确定主要成本，不再依赖猜测。
+
+### P1 — Native 输入与 JNI 传输提速
+
+- [ ] 为真实文件输入增加 Native FD/Descriptor-backed Source 路径，避免 Java Reader → Native → memfd 的重复拷贝；路径权限和 FD 生命周期由明确 Lease 管理。
+- [ ] 对 Piece Tree 宿主输入提供批量/快照窗口读取接口，避免每 64 KiB 一次 JNI 往返。
+- [ ] 比较 64/128/256/512 KiB 窗口、顺序预取、批量读取和 mmap 路径。
+- [ ] 对 DirectByteBuffer 使用固定容量池和稳定 Lease，减少反复分配。
+- [ ] 在同一解析语义下比较 FileWindowSource、MappedFileSource、Native FD source。
+- [ ] 确认创建文档和 parse 的时间拆分，避免 backing file 写入成为隐藏主成本。
+
+**退出条件：** 100 MiB 输入与 parse 分项数据显著下降，且内存、正确性和设备稳定性没有回退。
+
+### P2 — Piece Tree / 多缓冲 / 多路节点
+
+- [ ] 对当前 treap 做 piece 数、树高、节点分配、路径复制、读路径深度和碎片基准。
+- [ ] 实现/评估高扇出持久化 B+Tree/Rope 对照版本。
+- [ ] 增加 UTF-16、UTF-8、LF、byte length 等 subtree metrics。
+- [ ] 实现顺序 Leaf Iterator 和跨 Piece 有界批量读取。
+- [ ] 实现 Piece coalescing、批量 Edit 和 Snapshot root sharing。
+- [ ] 评估 Node slab/page allocator、inline Piece descriptors、intrusive reference counting。
+- [ ] 进行 1–100,000 Piece 的随机/顺序读、编辑、clone、并发快照基准。
+- [ ] 对比 treap 与 B+Tree 的 p50/p95/p99，不以理论复杂度替代真实设备数据。
+
+**退出条件：** 大文件和高度碎片化文档的 offset 查找、顺序扫描和编辑尾延迟稳定；快照不复制全文。
+
+### P3 — UTF 编码和坐标索引统一
+
+- [ ] 实现每个 Leaf 的 UTF-8/UTF-16/byte/LF 聚合指标。
+- [ ] 实现 UTF-8 ↔ UTF-16 的 checkpoint 转换，不允许每次从文档起点扫描。
+- [ ] 统一 Tree-sitter ByteRange 与 Editor UTF-16 Range 的显式转换 API。
+- [ ] 完成 surrogate、跨 Leaf 多字节 UTF-8、CRLF、Tab、超长行、非法编码测试。
+- [ ] ATS Symbol/Field/NodeType 在编译阶段解析为整数 ID，热循环不创建字符串。
+- [ ] 对所有 Kotlin/Java/C++ 坐标接口进行 ABI 和溢出检查。
+
+**退出条件：** 编码转换复杂度由局部叶索引决定，而不是全文长度；所有跨块边界测试通过。
+
+### P4 — Tree-sitter Parser / Token / Subtree
+
+- [ ] 为 Lexer、TokenCache、ReusableNode、SubtreePool、StackVersion 加入低开销计数。
+- [ ] 测量 32,768 声明、更多节点、高嵌套、超长行和语法错误恢复。
+- [ ] 对上游 Subtree inline/pool/reuse 热点做定向优化；优先贡献或维护最小补丁。
+- [ ] 仅在 profiling 证明必要时实现 Token Page/Slab，避免重复存储每个 Token。
+- [ ] 对单字符插入、删除、粘贴、撤销/重做验证旧树复用和解析尾延迟。
+- [ ] 保证一个逻辑 Parser 跨窗口连续解析，不按块重置语法状态。
+
+**退出条件：** 高密度真实 Java 解析阶段达到目标吞吐，语法树与节点范围完全一致。
+
+### P5 — ATS / Query / Capture
+
+- [ ] 将 ATS Selector 执行改为 Symbol/Field/Supertype dispatch，减少全规则扫描。
+- [ ] 复用 AST 节点、祖先、兄弟和字段访问结果，避免重复遍历。
+- [ ] Query Cursor 输出紧凑 Capture Page，降低 vector 和 JNI 数组中间拷贝。
+- [ ] 对大结果提供分页/流式消费；页之间有 document/query/tree revision 和 completeness。
+- [ ] 对 Kotlin 全量 Capture 处理减少重复遍历和对象装箱。
+- [ ] 保留全文件 Query 的完整语义；viewport 查询单独优化。
+- [ ] 补齐 ATS predicate、缺失 capture、OR pattern、兄弟节点、supertype、深层嵌套回归。
+- [ ] 统一公共 Kotlin API 与生产高亮执行器，不绕过 Native Lease。
+
+**退出条件：** 32,768 节点完整 Query/Capture 端到端达到 1–2 秒目标，Capture 数和范围与基线完全一致。
+
+### P6 — Regex Window / Oniguruma
+
+- [ ] 建立 Regex Pattern capability analysis（有限宽度/无界/锚点/前后文/回溯）。
+- [ ] 完成 WindowLease、窗口上下文、跨窗口匹配和状态 checkpoint。
+- [ ] 避免编辑后每次全量重建 mmap Snapshot；研究持久化映射块和增量更新。
+- [ ] 对无界模式保留完整语义，不用固定 overlap 伪造正确性。
+- [ ] 对 Regex 与 AST/Query 结果做统一 MatchSet 合并。
+
+**退出条件：** Regex 大文本扫描与编辑增量均有稳定吞吐和语义等价测试。
+
+### P7 — Renderer / 无闪烁 / 应用体验
+
+- [ ] 完成 API 26/30/35 真实 EditorView Canvas/Spannable 绘制回归。
+- [ ] 验证 100/200/300 MiB 视口颜色正确、快速滚动和水平滚动。
+- [ ] 完成 Generation staging + atomic commit，旧结果不会先被清空。
+- [ ] 对输入、删除、粘贴、撤销、重做、连续快速编辑做闪烁和错色检测。
+- [ ] 统计 UI 主线程帧耗时、Span 数量、绘制次数和后台队列长度。
+- [ ] 验证选择、光标、手柄拖动、括号匹配、折叠、字体/主题切换不受影响。
+
+**退出条件：** 高亮颜色完整、无旧结果污染、无可见空白闪烁，编辑器交互和滚动体验不回退。
+
+## 13. 完整验收矩阵
+
+### 13.1 文档规模
+
+| 文档大小 | 稀疏语法 | 密集语法 | 多 Piece 编辑后 | 全量 Query | Viewport Render |
+|---:|---|---|---|---|---|
+| 1 MiB | 必测 | 必测 | 必测 | 必测 | 必测 |
+| 10 MiB | 必测 | 必测 | 必测 | 必测 | 必测 |
+| 50 MiB | 必测 | 必测 | 必测 | 必测 | 必测 |
+| 100 MiB | 必测 | 必测 | 必测 | 必测 | 必测 |
+| 200 MiB | 必测 | 必测 | 必测 | 必测 | 必测 |
+| 300 MiB | 必测 | 必测 | 必测 | 必测 | 必测 |
+
+另加 500 MiB+ 可选扩展测试，结果按设备资源报告，不以单一低预算提前终止。
+
+### 13.2 语法与编码维度
+
+- 低 AST 密度的超长注释/字符串；
+- 高密度变量、函数、类、字段和表达式；
+- 深层嵌套和大量兄弟节点；
+- 超长单行、空行、CRLF/LF 混合；
+- ASCII、中文、Emoji、补充平面字符和组合字符；
+- UTF-8、UTF-16LE、UTF-16BE（若声明支持）；
+- 文件尾部随机视口、远端随机 offset、频繁跳转；
+- 大量编辑造成 Piece fragmentation；
+- 多文档并发、多个 Snapshot 同时存活。
+
+### 13.3 Android 设备维度
+
+至少验证 API 26、30、35；记录 ABI（arm64-v8a 等）、设备型号、RAM、Android build、NDK、构建类型和 Tree-sitter commit。Host Native 测试、JVM 单测、Android Instrumentation 和真实 UI 像素验证分别记录，不得互相替代。
+
+### 13.4 质量门槛
+
+- 解析树节点数、节点类型、范围、父子/兄弟关系与标准 Tree-sitter 结果一致；
+- Query Capture 数、Capture 名称、范围、pattern index 与基准一致；
+- ATS 与原生 Tree-sitter Query 在对应语义子集上结果一致；
+- Regex 跨窗口结果与连续输入结果一致；
+- UTF 坐标往返转换不丢字符、不跨 surrogate；
+- 视口内颜色与 .tsh style catalog 对应，像素可见；
+- 旧版本结果不覆盖新 revision；
+- 内存压力不导致崩溃、Use-after-free、无界队列或静默丢结果；
+- 单字符输入/删除、粘贴、撤销、重做不产生持续闪烁。
+
+## 14. 当前 PR / CI 证据快照
+
+截至 2026-11-19，本轮相关 PR 状态如下：
+
+| PR | 分支 | 当前状态 | 最新证据/阻塞 |
+|---|---|---|---|
+| #12 | fix/tsh-incremental-highlight-flicker | Open / Draft | 已有缓存依赖范围和 Host Cache Rebase 代码；CTest 命令修正后最新 head 尚无新 CI |
+| #15 | fix/tsh-ast-type-index-ndk24 | Open / Draft | API 26 曾通过；API 30 EditorView 手势/Canvas 断言失败，测试 fixture 加载顺序已修正，最新 head 尚无新 CI |
+| #16 | feat/tsh-engine-memory-admission | Open / Draft | Query 编译集成测试失败定位到编译断言；最小 Java Grammar Query 和诊断已更新，最新 head 尚无新 CI |
+| #17 | test/tsh-high-density-large-file-stress | Open / Draft | 最新已知 Run #44017966854：Release APK、Local Tests、API 26 通过；API 30/35 Instrumentation 失败 |
+| #19 | fix/ci-emulator-settings-service-crash | Open / Draft | Bash 启动脚本修正已提交；最新 head 尚无新 CI |
+
+这些 PR 都没有因为本路线图而自动合并。CI 证据只对对应 head SHA 和测试范围有效。新提交必须重新运行构建和设备矩阵。
+
+## 15. 立即执行顺序
+
+1. 建立 P0 性能分项计时，不再仅有 16.8 秒和 7.6 秒两个总数。
+2. 先解决 100 MiB 初始化路径的文件复制、Reader 回调、mmap、Parser 时间占比。
+3. 先解决 32,768 节点路径的 Parser、ATS/Query、Capture 输出、Kotlin 处理时间占比。
+4. 根据 profile 优先优化最热路径；同时建立 treap 与 B+Tree 对照基准。
+5. 完成 UTF-8/UTF-16/UTF-16LE 多坐标索引，避免 ATS/文本对象在热循环反复转换。
+6. 接通统一 Kotlin API 与真实 Native 高亮生产路径，完成 Query/Regex/Match/Renderer 事务。
+7. 修复 PR #12/#15/#16/#19 的构建与设备失败；PR #17 的 API 30/35 必须通过。
+8. 完成 100/200/300 MiB 稀疏、密集、编辑后碎片化文档验收。
+
+## 16. 结论
+
+TSH 已有可继续演进的底层基础，但当前最突出的问题已经不是“能不能读取大文件”，而是**读取、解析、索引、查询、结果输出和渲染的全链路单位工作成本仍然过高**。
+
+100 MiB 约 16.8 秒和 32,768 个真实声明约 7.6 秒都不满足目标。后续不应继续靠低缓存预算、少返回结果或只处理视口来掩盖成本。必须通过分阶段 profiling，改进 Native 输入、Piece Tree 多路节点、坐标聚合索引、Tree-sitter Subtree/Token 分配、ATS dispatch、Query Capture 批量输出和 Regex 增量窗口来降低真实工作量。
+
+最终验收不是某个单测通过，而是：**在 100–300 MiB 文件上，完整语义、正确视口、准确颜色、连续编辑和稳定内存同时成立，并达到本文件的性能目标。**
