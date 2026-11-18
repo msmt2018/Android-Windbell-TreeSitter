@@ -21,6 +21,50 @@
 
 namespace windbell::tsh {
 
+namespace {
+
+// ATS node names may resolve to Tree-sitter supertypes (for example,
+// Java's "expression"). Parsed nodes carry their concrete subtype symbol,
+// so exact symbol equality is insufficient for those selectors.
+static bool tshAstNodeMatchesSelector(
+    const TSLanguage* language,
+    TSNode node,
+    TSSymbol selector_symbol,
+    const std::string& selector_type
+) noexcept {
+    if (ts_node_is_null(node)) return false;
+
+    const TSSymbol visible_symbol = ts_node_symbol(node);
+    const TSSymbol grammar_symbol = ts_node_grammar_symbol(node);
+    if (selector_symbol != 0) {
+        if (selector_symbol == visible_symbol || selector_symbol == grammar_symbol) {
+            return true;
+        }
+        if (language) {
+            uint32_t subtype_count = 0;
+            const TSSymbol* subtypes =
+                ts_language_subtypes(language, selector_symbol, &subtype_count);
+            for (uint32_t i = 0; subtypes && i < subtype_count; ++i) {
+                if (subtypes[i] == visible_symbol || subtypes[i] == grammar_symbol) {
+                    return true;
+                }
+            }
+        }
+    }
+
+    if (!selector_type.empty()) {
+        const char* visible_type = ts_node_type(node);
+        const char* grammar_type = ts_node_grammar_type(node);
+        if ((visible_type && selector_type == visible_type) ||
+            (grammar_type && selector_type == grammar_type)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+} // namespace
+
 static void tshIncrementDiagnostic(uint32_t* value, uint64_t amount = 1u) noexcept {
     if (!value) return;
     const uint64_t remaining = static_cast<uint64_t>(UINT32_MAX - *value);
@@ -1978,6 +2022,22 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                 const auto found = index.find(std::string(type));
                 if (found != index.end()) append_indexed_rules(found->second);
             };
+            auto append_indexed_supertype_rules = [&](TSNode candidate) {
+                if (!grammar->ts_language || ts_node_is_null(candidate)) return;
+                uint32_t supertype_count = 0;
+                const TSSymbol* supertypes =
+                    ts_language_supertypes(grammar->ts_language, &supertype_count);
+                for (uint32_t i = 0; supertypes && i < supertype_count; ++i) {
+                    if (!tshAstNodeMatchesSelector(
+                            grammar->ts_language, candidate, supertypes[i], std::string())) {
+                        continue;
+                    }
+                    const auto found = grammar->ast_rules_by_node_symbol.find(supertypes[i]);
+                    if (found != grammar->ast_rules_by_node_symbol.end()) {
+                        append_indexed_rules(found->second);
+                    }
+                }
+            };
             append_indexed_rules(grammar->ast_wildcard_rules);
             const char* node_type = ts_node_type(node);
             const char* node_grammar_type = ts_node_grammar_type(node);
@@ -1997,6 +2057,7 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                     append_indexed_rules(grammar_node_rules->second);
                 }
             }
+            append_indexed_supertype_rules(node);
             if (!ts_node_is_null(parent)) {
                 auto field_rules = grammar->ast_field_rules_by_parent_symbol.find(parent_sym);
                 if (field_rules != grammar->ast_field_rules_by_parent_symbol.end()) {
@@ -2016,6 +2077,21 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                         grammar->ast_field_rules_by_parent_symbol.find(parent_grammar_sym);
                     if (grammar_field_rules != grammar->ast_field_rules_by_parent_symbol.end()) {
                         append_indexed_rules(grammar_field_rules->second);
+                    }
+                }
+                uint32_t parent_supertype_count = 0;
+                const TSSymbol* parent_supertypes = grammar->ts_language
+                    ? ts_language_supertypes(grammar->ts_language, &parent_supertype_count)
+                    : nullptr;
+                for (uint32_t i = 0; parent_supertypes && i < parent_supertype_count; ++i) {
+                    if (!tshAstNodeMatchesSelector(
+                            grammar->ts_language, parent, parent_supertypes[i], std::string())) {
+                        continue;
+                    }
+                    const auto found =
+                        grammar->ast_field_rules_by_parent_symbol.find(parent_supertypes[i]);
+                    if (found != grammar->ast_field_rules_by_parent_symbol.end()) {
+                        append_indexed_rules(found->second);
                     }
                 }
             }
@@ -2039,7 +2115,8 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                     const char* parent_type = ts_node_is_null(parent) ? nullptr : ts_node_type(parent);
                     const char* parent_grammar_type = ts_node_is_null(parent) ? nullptr : ts_node_grammar_type(parent);
                     const bool owner_symbol_matches = ast_rule.target_symbol != 0 &&
-                        (ast_rule.target_symbol == parent_sym || ast_rule.target_symbol == parent_grammar_sym);
+                        tshAstNodeMatchesSelector(grammar->ts_language, parent,
+                            ast_rule.target_symbol, ast_rule.target_type);
                     const bool owner_type_matches = !ast_rule.target_type.empty() &&
                         ((parent_type && ast_rule.target_type == parent_type) ||
                          (parent_grammar_type && ast_rule.target_type == parent_grammar_type));
@@ -2050,8 +2127,8 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                     }
                 } else {
                     const bool node_symbol_matches = ast_rule.target_symbol != 0 &&
-                        (ast_rule.target_symbol == sym ||
-                         ast_rule.target_symbol == ts_node_grammar_symbol(node));
+                        tshAstNodeMatchesSelector(grammar->ts_language, node,
+                            ast_rule.target_symbol, ast_rule.target_type);
                     const bool node_type_matches = !ast_rule.target_type.empty() &&
                         ((node_type && ast_rule.target_type == node_type) ||
                          (node_grammar_type && ast_rule.target_type == node_grammar_type));
@@ -2061,7 +2138,8 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                     const char* parent_type = ts_node_is_null(parent) ? nullptr : ts_node_type(parent);
                     const char* parent_grammar_type = ts_node_is_null(parent) ? nullptr : ts_node_grammar_type(parent);
                     const bool parent_symbol_matches = ast_rule.parent_symbol != 0 &&
-                        (ast_rule.parent_symbol == parent_sym || ast_rule.parent_symbol == parent_grammar_sym);
+                        tshAstNodeMatchesSelector(grammar->ts_language, parent,
+                            ast_rule.parent_symbol, ast_rule.parent_type);
                     const bool parent_type_matches = !ast_rule.parent_type.empty() &&
                         ((parent_type && ast_rule.parent_type == parent_type) ||
                          (parent_grammar_type && ast_rule.parent_type == parent_grammar_type));
@@ -2079,8 +2157,8 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                         const char* visible_type = ts_node_type(ancestor);
                         const char* grammar_type = ts_node_grammar_type(ancestor);
                         const bool symbol_matches =
-                            visible_symbol == ast_rule.ancestor_symbol ||
-                            grammar_symbol == ast_rule.ancestor_symbol;
+                            tshAstNodeMatchesSelector(grammar->ts_language, ancestor,
+                                ast_rule.ancestor_symbol, ast_rule.ancestor_type);
                         const bool type_matches = !ast_rule.ancestor_type.empty() &&
                             ((visible_type && ast_rule.ancestor_type == visible_type) ||
                              (grammar_type && ast_rule.ancestor_type == grammar_type));
@@ -2099,9 +2177,8 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                         TSNode child = ts_node_child(node, child_index);
                         const char* child_visible_type = ts_node_type(child);
                         const char* child_grammar_type = ts_node_grammar_type(child);
-                        if ((ast_rule.child_symbol != 0 &&
-                             (ts_node_symbol(child) == ast_rule.child_symbol ||
-                              ts_node_grammar_symbol(child) == ast_rule.child_symbol)) ||
+                        if (tshAstNodeMatchesSelector(grammar->ts_language, child,
+                                ast_rule.child_symbol, ast_rule.child_type) ||
                             (!ast_rule.child_type.empty() &&
                              ((child_visible_type && ast_rule.child_type == child_visible_type) ||
                               (child_grammar_type && ast_rule.child_type == child_grammar_type)))) {
@@ -2240,8 +2317,8 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                         const char* previous_type = ts_node_type(previous);
                         const char* previous_grammar_type = ts_node_grammar_type(previous);
                         const bool previous_symbol_matches =
-                            ts_node_symbol(previous) == ast_rule.previous_sibling_symbol ||
-                            ts_node_grammar_symbol(previous) == ast_rule.previous_sibling_symbol;
+                            tshAstNodeMatchesSelector(grammar->ts_language, previous,
+                                ast_rule.previous_sibling_symbol, ast_rule.previous_sibling_type);
                         const bool previous_type_matches =
                             (!ast_rule.previous_sibling_type.empty() && previous_type &&
                                 ast_rule.previous_sibling_type == previous_type) ||
@@ -2255,8 +2332,8 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                         const char* next_type = ts_node_type(next);
                         const char* next_grammar_type = ts_node_grammar_type(next);
                         const bool next_symbol_matches =
-                            ts_node_symbol(next) == ast_rule.next_sibling_symbol ||
-                            ts_node_grammar_symbol(next) == ast_rule.next_sibling_symbol;
+                            tshAstNodeMatchesSelector(grammar->ts_language, next,
+                                ast_rule.next_sibling_symbol, ast_rule.next_sibling_type);
                         const bool next_type_matches =
                             (!ast_rule.next_sibling_type.empty() && next_type &&
                                 ast_rule.next_sibling_type == next_type) ||
