@@ -16,6 +16,7 @@
 #include <new>
 #include <exception>
 #include <cstdlib>
+#include <chrono>
 
 #include "tsh/WindbellTshCore.h"
 #include "tsh/WindbellTshCompiler.h"
@@ -1166,6 +1167,7 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeCreateDocument(
     env->DeleteLocalRef(reader_class);
     if (!read_method || env->ExceptionCheck()) return 0;
 
+    const auto native_create_started = std::chrono::steady_clock::now();
     std::string backing_path;
     int fd = createAnonymousBackingFile(static_cast<uint64_t>(byte_length));
     const bool anonymous_backing = fd >= 0;
@@ -1203,7 +1205,9 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeCreateDocument(
         if (!direct_window) ok = false;
     }
     uint64_t offset = 0;
+    uint64_t reader_calls = 0;
     while (ok && offset < static_cast<uint64_t>(byte_length)) {
+        ++reader_calls;
         const jint requested = static_cast<jint>(std::min<uint64_t>(
             windbell::largefile::kTreeSitterInputChunkBytes,
             static_cast<uint64_t>(byte_length) - offset));
@@ -1233,6 +1237,7 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeCreateDocument(
         }
         return 0;
     }
+    const auto source_transfer_finished = std::chrono::steady_clock::now();
 
     auto document = std::make_shared<NativeTshDocument>();
     // mmap a memfd whenever the Android kernel supports it. This avoids
@@ -1319,9 +1324,11 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeCreateDocument(
         throw_illegal_state(env, "Unable to initialize Tree-sitter for native document");
         return 0;
     }
+    const auto parser_started = std::chrono::steady_clock::now();
     NativeDocumentInput payload{document->source.get(), false};
     TSInput input{&payload, nativeDocumentRead, TSInputEncodingUTF16LE, nullptr};
     document->tree = ts_parser_parse(document->parser, nullptr, input);
+    const auto parse_finished = std::chrono::steady_clock::now();
     if (!document->tree || payload.read_failed ||
         !nativeTreeIsValidForDocument(document->tree, document->source->sizeBytes())) {
         if (document->tree) {
@@ -1332,6 +1339,20 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeCreateDocument(
             "Tree-sitter input failed or did not cover the complete native document");
         return 0;
     }
+#ifndef NDEBUG
+    const auto elapsed_ms = [](auto start, auto end) noexcept {
+        return std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+    };
+    LOGI("TSHPerf",
+         "nativeCreateDocument bytes=%lld anonymousBacking=%d readerCalls=%llu "
+         "readerTransferAndWriteMs=%lld backingMapPieceTreeMs=%lld parseMs=%lld totalMs=%lld",
+         static_cast<long long>(byte_length), anonymous_backing ? 1 : 0,
+         static_cast<unsigned long long>(reader_calls),
+         static_cast<long long>(elapsed_ms(native_create_started, source_transfer_finished)),
+         static_cast<long long>(elapsed_ms(source_transfer_finished, parser_started)),
+         static_cast<long long>(elapsed_ms(parser_started, parse_finished)),
+         static_cast<long long>(elapsed_ms(native_create_started, parse_finished)));
+#endif
     const jlong handle = nativeDocumentRegistry().insert(std::move(document));
     if (handle == 0) {
         throw_illegal_state(env, "Unable to register native document handle");
