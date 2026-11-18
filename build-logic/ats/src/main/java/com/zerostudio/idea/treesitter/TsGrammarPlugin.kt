@@ -69,6 +69,11 @@ class TsGrammarPlugin : Plugin<Project> {
           }
         }
       }
+      // This plugin is applied after android-tree-sitter.ts in generated
+      // grammar modules, so buildForHost is already registered here. Attach
+      // the generator directly to that task instead of mutating its provider
+      // from a tasks.configureEach callback while Gradle is realizing tasks.
+      tasks.named("buildForHost").configure { dependsOn(generateTask) }
       tasks.withType(JavaCompile::class.java) { dependsOn(generateTask) }
     }
   }
