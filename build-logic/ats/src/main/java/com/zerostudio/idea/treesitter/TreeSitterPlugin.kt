@@ -56,12 +56,23 @@ class TreeSitterPlugin : Plugin<Project> {
           // Build tree-sitter library first
           dependsOn(rootProject.tasks.getByName("buildTreeSitter"))
 
-          // Generate the tree sitter parser from grammar.js (supports single & composite sub-parsers)
-          tasks.findByName("generateTreeSitterGrammar")?.also { dependsOn(it) }
-
           this.cppDir.set(cppDir)
           this.outputFile.set(BuildForHostTask.getOutputFile(project).second)
         }
+
+      // The grammar plugin is applied after this plugin in dynamically
+      // generated modules. A findByName() during registration therefore misses
+      // generateTreeSitterGrammar and allows the host CMake build to race parser
+      // generation (for example compiling an ABI 14 parser while ABI 15 is being
+      // generated). Configure the dependency lazily so task registration order
+      // cannot affect the native parser ABI used by tests.
+      tasks.configureEach {
+        if (name == "generateTreeSitterGrammar") {
+          buildForHost.configure {
+            dependsOn(this@configureEach)
+          }
+        }
+      }
 
       val cleanHostBuild =
         tasks.register("cleanHostBuild", Delete::class.java) {
