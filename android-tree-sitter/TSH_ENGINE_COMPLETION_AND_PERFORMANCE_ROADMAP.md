@@ -8,6 +8,10 @@
 >
 > 本文记录已存在的源码能力、尚未完成的工程接线、真实构建/测试证据、性能目标和验收条件。源码存在不等于功能完成；测试源码存在不等于测试通过；单项测试通过不等于端到端设备体验通过。
 
+相关文档：
+- [既有 API 与宿主接入路线图](../docs/roadmap.md)
+- [Native 大文本 Token 与分块输入架构](../docs/TSH_LARGE_TEXT_NATIVE_TOKEN_ARCHITECTURE.md)
+
 ## 0. 本文件的权威性与设计决策
 
 本文件是 TSH 完成度、性能和后续开发顺序的权威地图。它细化并更新仓库既有 docs/roadmap.md 与 docs/TSH_LARGE_TEXT_NATIVE_TOKEN_ARCHITECTURE.md 中尚未验证的条目。
@@ -480,7 +484,7 @@ ATS/AST Selector 的热点不得在每个节点反复：
 - 进程共享 Native Highlight Cache 预算 32 MiB；
 - Kotlin Capture Cache 32 MiB；
 - QueryExecutionBudget 的默认结果字节上限 32 MiB；
-- PieceTreeSource 的默认 append allocation limit 64 MiB；
+- PieceTreeSource 的默认 append allocation limit 64 MiB（该值限制 Added chunks 的追加分配，不等于原始 mmap 文档大小或整个 Native 文档内存上限；仍需评估其是否错误限制正常编辑）；
 - TshMemoryBudget 的默认 target/hard limit 配置。
 
 这些参数不应被直接视为合理的最终生产限制。必须逐项说明它们限制的是“可回收缓存”“新增编辑块”“结果输出”还是“真实 Native 对象”，并检查是否导致缓存持续失效、结果被拒绝或高密度文档吞吐下降。
@@ -511,7 +515,7 @@ ATS/AST Selector 的热点不得在每个节点反复：
 
 ### P1 — Native 输入与 JNI 传输提速
 
-- [ ] 为真实文件输入增加 Native FD/Descriptor-backed Source 路径，避免 Java Reader → Native → memfd 的重复拷贝；路径权限和 FD 生命周期由明确 Lease 管理。
+- [ ] 为真实文件输入增加 Native FD/Descriptor-backed Source 路径，避免 Java Reader → Native → backing file 的重复拷贝；路径权限和 FD 生命周期由明确 Lease 管理。
 - [ ] 对 Piece Tree 宿主输入提供批量/快照窗口读取接口，避免每 64 KiB 一次 JNI 往返。
 - [ ] 比较 64/128/256/512 KiB 窗口、顺序预取、批量读取和 mmap 路径。
 - [ ] 对 DirectByteBuffer 使用固定容量池和稳定 Lease，减少反复分配。
