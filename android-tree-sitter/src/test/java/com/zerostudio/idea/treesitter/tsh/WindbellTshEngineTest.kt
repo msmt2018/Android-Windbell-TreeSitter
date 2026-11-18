@@ -1046,9 +1046,15 @@ class WindbellTshLinkageTest {
                     {
                         node: "+"
                         named: false
-                        previousSibling: "primary_expression"
-                        nextSibling: "primary_expression"
                         style: "operator"
+                        priority: 20
+                    },
+                    {
+                        node: "+"
+                        named: false
+                        previousSibling: "expression"
+                        nextSibling: "expression"
+                        style: "operatorWithOperands"
                         priority: 20
                     },
                     {
