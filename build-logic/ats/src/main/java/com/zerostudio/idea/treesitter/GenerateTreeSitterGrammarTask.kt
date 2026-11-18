@@ -74,7 +74,7 @@ abstract class GenerateTreeSitterGrammarTask : DefaultTask() {
       )
     }
     val source = parserFile.readText(Charsets.UTF_8)
-    val abi = Regex("""#define\\s+LANGUAGE_VERSION\\s+(\\d+)""")
+    val abi = Regex("""#define\s+LANGUAGE_VERSION\s+(\d+)""")
       .find(source)
       ?.groupValues
       ?.getOrNull(1)
