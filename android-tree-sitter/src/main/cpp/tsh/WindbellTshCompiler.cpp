@@ -3550,14 +3550,21 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
     auto index_symbol_and_subtypes = [&](auto& index, TSSymbol symbol,
                                           uint32_t rule_index) {
         if (symbol == 0) return;
-        index[symbol].push_back(rule_index);
-        // Supertypes are grammar-level selector names, while parsed nodes carry
-        // concrete subtype symbols. Expand this relation once at compile time so
-        // the large-document traversal remains an O(1) indexed dispatch.
-        uint32_t subtype_count = 0;
-        const TSSymbol* subtypes = ts_language_subtypes(ts_lang, symbol, &subtype_count);
-        for (uint32_t i = 0; subtypes && i < subtype_count; ++i) {
-            index[subtypes[i]].push_back(rule_index);
+        // Supertype relations may be nested. Expand the complete subtype closure
+        // once at compile time so large-document traversal remains O(1) indexed.
+        std::vector<TSSymbol> pending{symbol};
+        std::unordered_set<TSSymbol> visited;
+        while (!pending.empty()) {
+            const TSSymbol current = pending.back();
+            pending.pop_back();
+            if (!visited.insert(current).second) continue;
+            index[current].push_back(rule_index);
+            uint32_t subtype_count = 0;
+            const TSSymbol* subtypes =
+                ts_language_subtypes(ts_lang, current, &subtype_count);
+            for (uint32_t i = 0; subtypes && i < subtype_count; ++i) {
+                pending.push_back(subtypes[i]);
+            }
         }
     };
     for (uint32_t rule_index = 0;
