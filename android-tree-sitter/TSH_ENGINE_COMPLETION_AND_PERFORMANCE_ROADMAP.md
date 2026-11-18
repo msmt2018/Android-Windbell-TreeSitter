@@ -124,8 +124,8 @@ TSH 已经具备相当数量的 Native 大文件、Piece Tree、增量解析、Q
 
 1. Kotlin 提供 NativeTextWindowReader，通过 DirectByteBuffer 按窗口读取 UTF-16LE。
 2. JNI 取得 Reader 的 read(JI, ByteBuffer): Int 方法。
-3. Native 创建匿名 backing file（可用 memfd）；在不支持时回退到应用缓存文件。
-4. Native 循环调用 Java Reader，把完整源内容按窗口复制到 backing file。
+3. Native 调用 createAnonymousBackingFile；当前实现只允许不超过 64 MiB 的输入使用 memfd，超过该阈值会直接创建应用缓存目录中的临时文件。
+4. Native 循环调用 Java Reader，把完整源内容按 64 KiB 窗口传入 DirectByteBuffer，再写入 backing file。当前 100 MiB 基准超过 64 MiB memfd 阈值，因此走应用缓存文件路径；这不是原始文件的直接 mmap，而是先复制到 Native backing file。
 5. Native 将 backing file 映射为 MappedFileSource，建立 PieceTreeSource。
 6. 使用一个连续的 Tree-sitter Parser 状态机和 TSInputEncodingUTF16LE 对整个文档解析。
 7. 对尾部视口执行 TSH 查询并输出 Capture。
@@ -146,7 +146,7 @@ TSH 已经具备相当数量的 Native 大文件、Piece Tree、增量解析、Q
 **优先验证的性能假设（待测，不视为已确认根因）：**
 
 - 64 KiB 传输窗口可能导致过多 Reader/JNI 调用和系统调用；
-- Java Reader → Native buffer → backing file → mmap 可能产生不必要的中间搬运；
+- 100 MiB 输入因当前 64 MiB memfd 阈值而使用应用缓存临时文件；Java Reader 通过约 1,600 次 64 KiB 窗口调用将数据复制到该文件，再 mmap。该复制/写入成本必须单独计时；优先评估直接 FD/原始文件映射或可持久化 Native TextSource，不能仅通过盲目提高 memfd 阈值来换取速度；
 - 首次解析期间存在文件准备与解析串行阶段；
 - 单一大 block comment 让 Lexer 扫描大量字符，但 AST 节点很少；应检查 Lexer 每字符成本、UTF-16 解码、注释扫描和输入回调开销；
 - TextPartitionIndex 当前以每 256 行 checkpoint 为基础，查询时还需扫描局部窗口；需测量 checkpoint 密度和每次查询扫描字节数。
@@ -516,7 +516,7 @@ ATS/AST Selector 的热点不得在每个节点反复：
 - [ ] 比较 64/128/256/512 KiB 窗口、顺序预取、批量读取和 mmap 路径。
 - [ ] 对 DirectByteBuffer 使用固定容量池和稳定 Lease，减少反复分配。
 - [ ] 在同一解析语义下比较 FileWindowSource、MappedFileSource、Native FD source。
-- [ ] 确认创建文档和 parse 的时间拆分，避免 backing file 写入成为隐藏主成本。
+- [ ] 确认创建文档中的 Reader/写入、mmap/PieceTree setup、Parser parse 时间拆分；已在性能分支加入 Native debug timing 和 Kotlin stage timing，待 API 26/30/35 实测。
 
 **退出条件：** 100 MiB 输入与 parse 分项数据显著下降，且内存、正确性和设备稳定性没有回退。
 
