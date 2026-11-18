@@ -1,6 +1,8 @@
 package com.zerostudio.idea.treesitter.tsh
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import android.os.SystemClock
+import android.util.Log
 import androidx.test.platform.app.InstrumentationRegistry
 import com.zerostudio.idea.treesitter.TreeSitter
 import com.zerostudio.idea.treesitter.java.TSLanguageJava
@@ -60,6 +62,7 @@ class TshNativeDenseSyntaxViewportTest {
         val file = File.createTempFile("tsh-high-density-java-", ".utf16", context.cacheDir)
         var documentHandle = 0L
         try {
+            val fixtureWriteStarted = SystemClock.elapsedRealtimeNanos()
             FileChannel.open(
                 file.toPath(),
                 StandardOpenOption.WRITE,
@@ -85,6 +88,9 @@ class TshNativeDenseSyntaxViewportTest {
                 write(ByteBuffer.wrap(tailBytes), "Tail")
                 assertEquals("Generated UTF-16LE file length must match its fixture", documentBytes, offset)
             }
+            val fixtureWriteMs =
+                (SystemClock.elapsedRealtimeNanos() - fixtureWriteStarted) / 1_000_000L
+            Log.i("TSHPerf", "dense32768 fixtureWriteMs=$fixtureWriteMs bytes=$documentBytes")
 
             FileChannel.open(file.toPath(), StandardOpenOption.READ).use { input ->
                 val reader = NativeTextWindowReader { byteOffset, maxBytes, destination ->
@@ -101,6 +107,7 @@ class TshNativeDenseSyntaxViewportTest {
                     total and -2
                 }
 
+                val nativeCreateStarted = SystemClock.elapsedRealtimeNanos()
                 documentHandle = engine.createNativeDocument(
                     language = language,
                     extension = "java",
@@ -108,31 +115,46 @@ class TshNativeDenseSyntaxViewportTest {
                     temporaryDirectory = context.cacheDir,
                     reader = reader
                 )
+                val nativeCreateMs =
+                    (SystemClock.elapsedRealtimeNanos() - nativeCreateStarted) / 1_000_000L
+                Log.i("TSHPerf", "dense32768 nativeCreateAndParseMs=$nativeCreateMs bytes=$documentBytes")
                 assertTrue("Dense Native document creation returned an invalid handle", documentHandle != 0L)
 
+                val fullQueryStarted = SystemClock.elapsedRealtimeNanos()
                 val allCaptures = requireNotNull(engine.highlightNativeDocument(
                     documentHandle = documentHandle,
                     startByte = 0L,
                     endByte = documentBytes
                 )) { "Dense Java full-document Tree-sitter Query returned null" }
+                val fullQueryMs =
+                    (SystemClock.elapsedRealtimeNanos() - fullQueryStarted) / 1_000_000L
+                Log.i("TSHPerf", "dense32768 fullDocumentQueryAndJniMs=$fullQueryMs captureRows=${allCaptures.size / 6}")
                 assertEquals("Native capture rows must use six integers", 0, allCaptures.size % 6)
 
                 val variableStyleId = engine.getStyleCatalog("java")
                     .first { it.name == "variable" }.styleId
+                val kotlinCountStarted = SystemClock.elapsedRealtimeNanos()
                 val declarationCaptures = (allCaptures.indices step 6).count { index ->
                     (allCaptures[index + 2] and 0xFFFF) == variableStyleId
                 }
+                val kotlinCountMs =
+                    (SystemClock.elapsedRealtimeNanos() - kotlinCountStarted) / 1_000_000L
+                Log.i("TSHPerf", "dense32768 kotlinCaptureCountMs=$kotlinCountMs declarationCaptures=$declarationCaptures")
                 assertTrue(
                     "High-density fixture must produce a variable capture for each repeated declaration; " +
                         "expected at least $declarationCount, got $declarationCaptures",
                     declarationCaptures >= declarationCount
                 )
 
+                val tailQueryStarted = SystemClock.elapsedRealtimeNanos()
                 val tailViewport = requireNotNull(engine.highlightNativeDocument(
                     documentHandle = documentHandle,
                     startByte = tailStartByte,
                     endByte = documentBytes
                 )) { "Dense Java tail viewport query returned null" }
+                val tailQueryMs =
+                    (SystemClock.elapsedRealtimeNanos() - tailQueryStarted) / 1_000_000L
+                Log.i("TSHPerf", "dense32768 tailViewportQueryMs=$tailQueryMs captureRows=${tailViewport.size / 6}")
                 assertEquals("Tail capture rows must use six integers", 0, tailViewport.size % 6)
 
                 val nameStart = tailStartByte + tail.indexOf("DenseTailViewportProbe").toLong() * 2L
