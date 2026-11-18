@@ -43,7 +43,8 @@ abstract class GenerateTreeSitterGrammarTask : DefaultTask() {
     if (!grammar.composite) {
       val grammarDir = project.rootProject.file("grammars/$langName").absolutePath
       project.logger.log(LIFECYCLE, "Using '$tsCmd' to generate single grammar '${project.name}'")
-      project.executeCommand(grammarDir, tsCmd, "generate")
+      project.executeCommand(grammarDir, tsCmd, "generate", "--abi=15")
+      verifyGeneratedLanguageAbi(File(grammarDir, "src/parser.c"))
     } else {
       project.logger.log(LIFECYCLE, "Using '$tsCmd' to generate composite grammars for '${project.name}'")
       
@@ -54,11 +55,39 @@ abstract class GenerateTreeSitterGrammarTask : DefaultTask() {
       for (subPath in grammar.subPaths) {
         val subDir = File(grammarRootDir, subPath).absolutePath
         project.logger.log(LIFECYCLE, "Generating sub-parser grammar at: $subDir")
-        project.executeCommand(subDir, tsCmd, "generate")
+        project.executeCommand(subDir, tsCmd, "generate", "--abi=15")
+        verifyGeneratedLanguageAbi(File(subDir, "src/parser.c"))
       }
     }
   }
 
+  /**
+   * ATS depends on Tree-sitter ABI 15 language metadata for supertype/subtype
+   * introspection. Explicitly select ABI 15 because TREE_SITTER_ABI_VERSION
+   * can otherwise make the CLI silently emit ABI 14 parsers, for which
+   * ts_language_subtypes() intentionally returns no entries.
+   */
+  private fun verifyGeneratedLanguageAbi(parserFile: File) {
+    if (!parserFile.isFile) {
+      throw IllegalStateException(
+        "Tree-sitter did not generate parser source: ${parserFile.absolutePath}"
+      )
+    }
+    val source = parserFile.readText(Charsets.UTF_8)
+    val abi = Regex("""#define\\s+LANGUAGE_VERSION\\s+(\\d+)""")
+      .find(source)
+      ?.groupValues
+      ?.getOrNull(1)
+      ?.toIntOrNull()
+      ?: throw IllegalStateException(
+        "Cannot determine generated Tree-sitter ABI from ${parserFile.absolutePath}"
+      )
+    if (abi != 15) {
+      throw IllegalStateException(
+        "Generated parser ABI $abi is incompatible with TSH supertype selectors; expected ABI 15"
+      )
+    }
+  }
   /**
    * Tree-sitter CLI 0.28 requires the image-description ambiguity to be
    * declared explicitly. Keep the upstream grammar submodule untouched:
