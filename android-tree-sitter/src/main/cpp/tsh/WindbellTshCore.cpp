@@ -2022,22 +2022,6 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                 const auto found = index.find(std::string(type));
                 if (found != index.end()) append_indexed_rules(found->second);
             };
-            auto append_indexed_supertype_rules = [&](TSNode candidate) {
-                if (!grammar->ts_language || ts_node_is_null(candidate)) return;
-                uint32_t supertype_count = 0;
-                const TSSymbol* supertypes =
-                    ts_language_supertypes(grammar->ts_language, &supertype_count);
-                for (uint32_t i = 0; supertypes && i < supertype_count; ++i) {
-                    if (!tshAstNodeMatchesSelector(
-                            grammar->ts_language, candidate, supertypes[i], std::string())) {
-                        continue;
-                    }
-                    const auto found = grammar->ast_rules_by_node_symbol.find(supertypes[i]);
-                    if (found != grammar->ast_rules_by_node_symbol.end()) {
-                        append_indexed_rules(found->second);
-                    }
-                }
-            };
             append_indexed_rules(grammar->ast_wildcard_rules);
             const char* node_type = ts_node_type(node);
             const char* node_grammar_type = ts_node_grammar_type(node);
@@ -2057,7 +2041,6 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                     append_indexed_rules(grammar_node_rules->second);
                 }
             }
-            append_indexed_supertype_rules(node);
             if (!ts_node_is_null(parent)) {
                 auto field_rules = grammar->ast_field_rules_by_parent_symbol.find(parent_sym);
                 if (field_rules != grammar->ast_field_rules_by_parent_symbol.end()) {
@@ -2077,21 +2060,6 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                         grammar->ast_field_rules_by_parent_symbol.find(parent_grammar_sym);
                     if (grammar_field_rules != grammar->ast_field_rules_by_parent_symbol.end()) {
                         append_indexed_rules(grammar_field_rules->second);
-                    }
-                }
-                uint32_t parent_supertype_count = 0;
-                const TSSymbol* parent_supertypes = grammar->ts_language
-                    ? ts_language_supertypes(grammar->ts_language, &parent_supertype_count)
-                    : nullptr;
-                for (uint32_t i = 0; parent_supertypes && i < parent_supertype_count; ++i) {
-                    if (!tshAstNodeMatchesSelector(
-                            grammar->ts_language, parent, parent_supertypes[i], std::string())) {
-                        continue;
-                    }
-                    const auto found =
-                        grammar->ast_field_rules_by_parent_symbol.find(parent_supertypes[i]);
-                    if (found != grammar->ast_field_rules_by_parent_symbol.end()) {
-                        append_indexed_rules(found->second);
                     }
                 }
             }
