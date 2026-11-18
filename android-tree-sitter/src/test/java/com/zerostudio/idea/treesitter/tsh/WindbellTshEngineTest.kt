@@ -1061,14 +1061,14 @@ class WindbellTshLinkageTest {
                         node: "+"
                         named: false
                         previousSibling: "identifier"
-                        nextSibling: "primary_expression"
+                        nextSibling: "expression"
                         style: "operatorWithWrongLeft"
                         priority: 19
                     },
                     {
                         node: "+"
                         named: false
-                        previousSibling: "primary_expression"
+                        previousSibling: "expression"
                         nextSibling: "identifier"
                         style: "operatorWithWrongRight"
                         priority: 18
