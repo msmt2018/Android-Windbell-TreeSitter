@@ -57,6 +57,13 @@ class TreeSitterPlugin : Plugin<Project> {
           dependsOn(rootProject.tasks.getByName("buildTreeSitter"))
 
           this.cppDir.set(cppDir)
+          val grammarName = project.name.substringAfter("tree-sitter-", "")
+          if (grammarName.isNotBlank()) {
+            val grammarSourceRoot = rootProject.file("grammars/$grammarName")
+            grammarSources.from(rootProject.fileTree(grammarSourceRoot) {
+              include("**/grammar.js", "**/src/**", "**/tree-sitter.json")
+            })
+          }
           this.outputFile.set(BuildForHostTask.getOutputFile(project).second)
         }
 

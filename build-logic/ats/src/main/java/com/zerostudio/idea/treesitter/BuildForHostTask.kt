@@ -21,6 +21,7 @@ import org.gradle.api.DefaultTask
 import org.gradle.api.GradleException
 import org.gradle.api.Project
 import org.gradle.api.file.DirectoryProperty
+import org.gradle.api.file.ConfigurableFileCollection
 import org.gradle.api.file.RegularFileProperty
 import org.gradle.api.tasks.Input
 import org.gradle.api.tasks.InputFiles
@@ -37,6 +38,11 @@ abstract class BuildForHostTask : DefaultTask() {
 
   @get:InputFiles
   abstract val cppDir: DirectoryProperty
+
+  // Grammar sources live outside the generated module's CMake directory.
+  // Track them explicitly so parser.c regeneration invalidates the host .so.
+  @get:InputFiles
+  abstract val grammarSources: ConfigurableFileCollection
 
   @get:OutputFile
   abstract val outputFile: RegularFileProperty
