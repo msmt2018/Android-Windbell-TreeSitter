@@ -428,82 +428,94 @@ jobs:
           echo "✅ Installed dependencies for all ${#manifests[@]} grammar packages."
       - name: Change Gradle wrapper permissions
         run: chmod +x ./gradlew
+      - name: Prepare Android instrumentation runner
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p build
+          cat > build/run-android-instrumentation.sh <<'RUNNER'
+          #!/usr/bin/env bash
+          set -Eeuo pipefail
+
+          LOG_DIR="build/emulator-test-logs"
+          mkdir -p "$LOG_DIR"
+
+          adb start-server
+          timeout 180 adb -s emulator-5554 wait-for-device
+
+          boot_deadline=$(( $(date +%s) + 240 ))
+          while :; do
+            boot_completed="$(adb -s emulator-5554 shell getprop sys.boot_completed 2>/dev/null | tr -d '\r' || true)"
+            if [[ "$boot_completed" == "1" ]]; then
+              break
+            fi
+            if (( $(date +%s) >= boot_deadline )); then
+              echo "::error::Android emulator did not report sys.boot_completed=1"
+              adb devices -l || true
+              exit 1
+            fi
+            sleep 2
+          done
+
+          wait_for_service() {
+            local service="$1"
+            local deadline=$(( $(date +%s) + 120 ))
+            while :; do
+              if adb -s emulator-5554 shell service check "$service" 2>/dev/null | grep -q "found"; then
+                return 0
+              fi
+              if (( $(date +%s) >= deadline )); then
+                echo "::error::Android system service '$service' did not become available"
+                return 1
+              fi
+              sleep 2
+            done
+          }
+
+          wait_for_service activity
+          wait_for_service package
+          wait_for_service settings
+
+          set_animation_scale() {
+            local setting="$1"
+            local attempt=1
+            while (( attempt <= 10 )); do
+              if adb -s emulator-5554 shell settings put global "$setting" 0; then
+                return 0
+              fi
+              adb reconnect offline || true
+              attempt=$((attempt + 1))
+              sleep 2
+            done
+            echo "::error::Could not set animation scale '$setting' after Android boot"
+            return 1
+          }
+
+          set_animation_scale animator_duration_scale
+          set_animation_scale transition_animation_scale
+          set_animation_scale window_animation_scale
+          adb -s emulator-5554 shell settings get global animator_duration_scale
+
+          test_result=0
+          ./gradlew :editor:connectedDebugAndroidTest :app:connectedDebugAndroidTest --continue --max-workers=1 --stacktrace || test_result=$?
+
+          adb -s emulator-5554 logcat -d -v threadtime > "$LOG_DIR/logcat.txt" 2>&1 || true
+          adb -s emulator-5554 shell dumpsys activity activities > "$LOG_DIR/activities.txt" 2>&1 || true
+          adb devices -l > "$LOG_DIR/adb-devices.txt" 2>&1 || true
+          exit "$test_result"
+          RUNNER
+          chmod +x build/run-android-instrumentation.sh
+          bash -n build/run-android-instrumentation.sh
       - name: Run Android instrumentation tests
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: ${{ matrix.api-level }}
           target: google_apis
           arch: x86_64
-          # Do not let the runner change Settings while Android is booting.
-          # Wait for boot and core services, then disable animations for deterministic
-          # handle/gesture instrumentation without racing system_server startup.
           disable-animations: false
-          script: |
-            set -eu
-            mkdir -p build/emulator-test-logs
-            adb start-server
-            timeout 180 adb -s emulator-5554 wait-for-device
-            
-            boot_deadline=$(( $(date +%s) + 240 ))
-            while :; do
-              boot_completed="$(adb -s emulator-5554 shell getprop sys.boot_completed 2>/dev/null | tr -d '\r' || true)"
-              if [ "$boot_completed" = "1" ]; then
-                break
-              fi
-              if [ "$(date +%s)" -ge "$boot_deadline" ]; then
-                echo "::error::Android emulator did not report sys.boot_completed=1"
-                adb devices -l || true
-                exit 1
-              fi
-              sleep 2
-            done
-            
-            wait_for_service() {
-              service="$1"
-              deadline=$(( $(date +%s) + 120 ))
-              while :; do
-                if adb -s emulator-5554 shell service check "$service" 2>/dev/null | grep -q "found"; then
-                  return 0
-                fi
-                if [ "$(date +%s)" -ge "$deadline" ]; then
-                  echo "::error::Android system service '$service' did not become available"
-                  return 1
-                fi
-                sleep 2
-              done
-            }
-            
-            wait_for_service activity
-            wait_for_service package
-            wait_for_service settings
-            
-            set_animation_scale() {
-              setting="$1"
-              attempt=1
-              while [ "$attempt" -le 10 ]; do
-                if adb -s emulator-5554 shell settings put global "$setting" 0; then
-                  return 0
-                fi
-                adb reconnect offline || true
-                attempt=$((attempt + 1))
-                sleep 2
-              done
-              echo "::error::Could not set animation scale '$setting' after Android boot"
-              return 1
-            }
-            
-            set_animation_scale animator_duration_scale
-            set_animation_scale transition_animation_scale
-            set_animation_scale window_animation_scale
-            adb -s emulator-5554 shell settings get global animator_duration_scale
-            
-            set +e
-            ./gradlew :editor:connectedDebugAndroidTest :app:connectedDebugAndroidTest --continue --max-workers=1 --stacktrace
-            test_result=$?
-            set -e
-            adb -s emulator-5554 logcat -d -v threadtime > build/emulator-test-logs/logcat.txt 2>&1 || true
-            adb -s emulator-5554 shell dumpsys activity activities > build/emulator-test-logs/activities.txt 2>&1 || true
-            exit "$test_result"
+          # The action executes script input as separate /usr/bin/sh commands.
+          # Keep this a single command; the actual loops live in the Bash file.
+          script: bash -euo pipefail build/run-android-instrumentation.sh
       - name: Upload Android device test reports and logs
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
