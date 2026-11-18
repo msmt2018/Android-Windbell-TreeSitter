@@ -3547,13 +3547,25 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
     grammar->ast_field_rules_by_parent_symbol.clear();
     grammar->ast_field_rules_by_parent_type.clear();
     grammar->ast_wildcard_rules.clear();
+    auto index_symbol_and_subtypes = [&](auto& index, TSSymbol symbol,
+                                          uint32_t rule_index) {
+        if (symbol == 0) return;
+        index[symbol].push_back(rule_index);
+        // Supertypes are grammar-level selector names, while parsed nodes carry
+        // concrete subtype symbols. Expand this relation once at compile time so
+        // the large-document traversal remains an O(1) indexed dispatch.
+        uint32_t subtype_count = 0;
+        const TSSymbol* subtypes = ts_language_subtypes(ts_lang, symbol, &subtype_count);
+        for (uint32_t i = 0; subtypes && i < subtype_count; ++i) {
+            index[subtypes[i]].push_back(rule_index);
+        }
+    };
     for (uint32_t rule_index = 0;
          rule_index < grammar->ast_selector_rules.size(); ++rule_index) {
         const AstSelectorRule& rule = grammar->ast_selector_rules[rule_index];
         if (rule.field_id != 0) {
-            if (rule.target_symbol != 0) {
-                grammar->ast_field_rules_by_parent_symbol[rule.target_symbol].push_back(rule_index);
-            }
+            index_symbol_and_subtypes(
+                grammar->ast_field_rules_by_parent_symbol, rule.target_symbol, rule_index);
             if (!rule.target_type.empty()) {
                 grammar->ast_field_rules_by_parent_type[rule.target_type].push_back(rule_index);
             }
@@ -3561,9 +3573,8 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                 grammar->ast_wildcard_rules.push_back(rule_index);
             }
         } else {
-            if (rule.target_symbol != 0) {
-                grammar->ast_rules_by_node_symbol[rule.target_symbol].push_back(rule_index);
-            }
+            index_symbol_and_subtypes(
+                grammar->ast_rules_by_node_symbol, rule.target_symbol, rule_index);
             if (!rule.target_type.empty()) {
                 grammar->ast_rules_by_node_type[rule.target_type].push_back(rule_index);
             }
