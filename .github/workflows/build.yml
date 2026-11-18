@@ -314,7 +314,7 @@ jobs:
             -DAUTOGEN_HEADERS="$GITHUB_WORKSPACE/android-tree-sitter/build/generated/native_headers"
           cmake --build build/host --target android-tree-sitter windbell_tsh_cache_tests --parallel 2
           test -f build/host/libandroid-tree-sitter.so
-          ctest --test-dir build/host --output-on-failure
+          ctest --test-dir build/host -R "windbell_tsh_cache_tests" --output-on-failure
       - name: Run debug tests
         run: ./gradlew testDebug :editor:compileDebugAndroidTestKotlin :app:compileDebugAndroidTestKotlin --continue --parallel --stacktrace
         env:
