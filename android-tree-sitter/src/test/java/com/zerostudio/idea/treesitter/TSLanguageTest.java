@@ -55,7 +55,13 @@ public class TSLanguageTest extends TreeSitterTest {
     }
 
     assertThat(expressionSupertype).isAtLeast(0);
+    assertThat(language.getSupertypes()).asList().contains(expressionSupertype);
     assertThat(language.getSubtypes(expressionSupertype)).isNotEmpty();
+
+    for (int supertype : language.getSupertypes()) {
+      assertThat(language.getSymbolType(supertype)).isEqualTo(TSSymbolType.SUPERTYPE);
+      assertThat(language.getSubtypes(supertype)).isNotEmpty();
+    }
   }
 
   @Test
