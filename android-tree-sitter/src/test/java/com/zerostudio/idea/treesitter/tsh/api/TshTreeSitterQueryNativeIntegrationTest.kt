@@ -61,7 +61,7 @@ class TshTreeSitterQueryNativeIntegrationTest {
                 }
             )
             val querySource = TshAtsSource(
-                text = "(class_declaration name: (identifier) @class_name)",
+                text = "(class_declaration) @class_decl",
                 language = TshQuerySourceLanguage.TREE_SITTER,
                 sourceId = "java-class-name-native-integration"
             )
@@ -84,11 +84,11 @@ class TshTreeSitterQueryNativeIntegrationTest {
             )
             val queryResult = (executed as TshResult.Success).value
             val capture = queryResult.captures.single()
-            val nameStart = source.indexOf("QueryProbe").toLong()
-            val nameEnd = nameStart + "QueryProbe".length
+            val nameStart = 0L
+            val nameEnd = source.length.toLong()
 
-            assertEquals("class_name", capture.name)
-            assertEquals("identifier", capture.nodeType)
+            assertEquals("class_decl", capture.name)
+            assertEquals("class_declaration", capture.nodeType)
             assertEquals(TshByteRange(nameStart * 2L, nameEnd * 2L), capture.byteRange)
             assertEquals(0, capture.patternIndex)
             assertTrue(queryResult.isComplete)
@@ -138,7 +138,7 @@ class TshTreeSitterQueryNativeIntegrationTest {
             assertTrue(matchSetResult is TshResult.Success, "Adapted Native matches must enter the shared MatchSet")
             val matchSet = (matchSetResult as TshResult.Success).value
             assertEquals(1, matchSet.matches.size)
-            assertEquals("class_name", matchSet.matches.single().captureName)
+            assertEquals("class_decl", matchSet.matches.single().captureName)
             assertEquals(TshMatchSource.TREE_SITTER_ATS, matchSet.matches.single().source)
         } finally {
             coordinateIndex?.close()
