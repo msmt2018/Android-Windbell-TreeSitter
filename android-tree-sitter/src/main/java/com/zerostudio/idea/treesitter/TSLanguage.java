@@ -177,6 +177,19 @@ public class TSLanguage extends TSNativeObject {
   }
 
   /**
+   * Get all supertype symbol IDs declared by this language.
+   *
+   * <p>Returns an empty array when the language ABI does not expose supertype
+   * metadata.</p>
+   *
+   * @return Supertype symbol IDs, represented as non-negative integers.
+   */
+  public int[] getSupertypes() {
+    checkAccess();
+    return Native.supertypes(getNativeObject());
+  }
+
+  /**
    * Returns whether this language is external i.e. loaded with
    * {@link TSLanguage#loadLanguage(String, String)}.
    *
@@ -298,6 +311,9 @@ public class TSLanguage extends TSNativeObject {
 
     @FastNative
     static native int[] subtypes(long ptr, int supertype);
+
+    @FastNative
+    static native int[] supertypes(long ptr);
 
     @FastNative
     static native long[] loadLanguage(String sharedLib, String func);
