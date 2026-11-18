@@ -26,6 +26,34 @@ namespace {
 // ATS node names may resolve to Tree-sitter supertypes (for example,
 // Java's "expression"). Parsed nodes carry their concrete subtype symbol,
 // so exact symbol equality is insufficient for those selectors.
+static bool tshAstSymbolMatchesNode(
+    const TSLanguage* language,
+    TSNode node,
+    TSSymbol selector_symbol,
+    uint32_t depth = 0
+) noexcept {
+    if (selector_symbol == 0 || ts_node_is_null(node)) return false;
+    const TSSymbol visible_symbol = ts_node_symbol(node);
+    const TSSymbol grammar_symbol = ts_node_grammar_symbol(node);
+    if (selector_symbol == visible_symbol || selector_symbol == grammar_symbol) {
+        return true;
+    }
+    // Supertype relations can be nested (for example expression ->
+    // primary_expression -> _literal -> decimal_integer_literal). Resolve the
+    // transitive closure rather than assuming a single subtype level.
+    constexpr uint32_t kMaxSupertypeDepth = 64;
+    if (!language || depth >= kMaxSupertypeDepth) return false;
+    uint32_t subtype_count = 0;
+    const TSSymbol* subtypes =
+        ts_language_subtypes(language, selector_symbol, &subtype_count);
+    for (uint32_t i = 0; subtypes && i < subtype_count; ++i) {
+        if (tshAstSymbolMatchesNode(language, node, subtypes[i], depth + 1)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 static bool tshAstNodeMatchesSelector(
     const TSLanguage* language,
     TSNode node,
@@ -33,24 +61,7 @@ static bool tshAstNodeMatchesSelector(
     const std::string& selector_type
 ) noexcept {
     if (ts_node_is_null(node)) return false;
-
-    const TSSymbol visible_symbol = ts_node_symbol(node);
-    const TSSymbol grammar_symbol = ts_node_grammar_symbol(node);
-    if (selector_symbol != 0) {
-        if (selector_symbol == visible_symbol || selector_symbol == grammar_symbol) {
-            return true;
-        }
-        if (language) {
-            uint32_t subtype_count = 0;
-            const TSSymbol* subtypes =
-                ts_language_subtypes(language, selector_symbol, &subtype_count);
-            for (uint32_t i = 0; subtypes && i < subtype_count; ++i) {
-                if (subtypes[i] == visible_symbol || subtypes[i] == grammar_symbol) {
-                    return true;
-                }
-            }
-        }
-    }
+    if (tshAstSymbolMatchesNode(language, node, selector_symbol)) return true;
 
     if (!selector_type.empty()) {
         const char* visible_type = ts_node_type(node);
