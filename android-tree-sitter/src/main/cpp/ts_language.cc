@@ -16,6 +16,8 @@
  */
 
 #include <dlfcn.h>
+#include <memory>
+#include <new>
 
 #include "tree_sitter/api.h"
 #include "utils/ts_obj_utils.h"
@@ -93,6 +95,44 @@ static jint TSLanguage_symType(JNIEnv *env, jclass self, jlong ptr, jint sym) {
 static jint TSLanguage_langVer(JNIEnv *env, jclass self, jlong ptr) {
   req_nnp(env, ptr);
   return (jint) ts_language_abi_version((TSLanguage *) ptr);
+}
+
+static jintArray TSLanguage_subtypes(JNIEnv *env,
+                                     jclass self,
+                                     jlong ptr,
+                                     jint supertype) {
+  req_nnp(env, ptr);
+  if (supertype < 0 || supertype > 0xFFFF) {
+    jclass exception = env->FindClass("java/lang/IllegalArgumentException");
+    if (exception != nullptr) {
+      env->ThrowNew(exception, "Supertype symbol must be in the unsigned 16-bit range");
+    }
+    return nullptr;
+  }
+
+  uint32_t length = 0;
+  const TSSymbol *subtypes = ts_language_subtypes(
+      reinterpret_cast<const TSLanguage *>(ptr),
+      static_cast<TSSymbol>(supertype),
+      &length);
+
+  jintArray result = env->NewIntArray(static_cast<jsize>(length));
+  if (result == nullptr || length == 0 || subtypes == nullptr) return result;
+
+  std::unique_ptr<jint[]> values(new (std::nothrow) jint[length]);
+  if (!values) {
+    jclass exception = env->FindClass("java/lang/OutOfMemoryError");
+    if (exception != nullptr) {
+      env->ThrowNew(exception, "Unable to allocate Tree-sitter subtype result");
+    }
+    return nullptr;
+  }
+
+  for (uint32_t index = 0; index < length; ++index) {
+    values[index] = static_cast<jint>(subtypes[index]);
+  }
+  env->SetIntArrayRegion(result, 0, static_cast<jsize>(length), values.get());
+  return result;
 }
 
 static jlongArray TSLanguage_loadLanguage(JNIEnv *env,
@@ -177,6 +217,7 @@ void TSLanguage_Native__SetJniMethods(JNINativeMethod *methods, int count) {
   SET_JNI_METHOD(methods, TSLanguage_Native_fldIdForName, TSLanguage_fldIdForName);
   SET_JNI_METHOD(methods, TSLanguage_Native_symType, TSLanguage_symType);
   SET_JNI_METHOD(methods, TSLanguage_Native_langVer, TSLanguage_langVer);
+  SET_JNI_METHOD(methods, TSLanguage_Native_subtypes, TSLanguage_subtypes);
   SET_JNI_METHOD(methods, TSLanguage_Native_loadLanguage, TSLanguage_loadLanguage);
   SET_JNI_METHOD(methods, TSLanguage_Native_dlclose, TSLanguage_dlclose);
   SET_JNI_METHOD(methods, TSLanguage_Native_stateCount, TSLanguage_stateCount);

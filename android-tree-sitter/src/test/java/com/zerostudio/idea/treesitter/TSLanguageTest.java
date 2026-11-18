@@ -41,6 +41,24 @@ public class TSLanguageTest extends TreeSitterTest {
   }
 
   @Test
+  public void javaLanguageExposesAbi15SupertypeMetadata() {
+    final var language = TSLanguageJava.getInstance();
+    assertThat(language.getLanguageVersion()).isAtLeast(15);
+
+    int expressionSupertype = -1;
+    for (int symbol = 0; symbol < language.getSymbolCount(); symbol++) {
+      if ("expression".equals(language.getSymbolName(symbol)) &&
+          language.getSymbolType(symbol) == TSSymbolType.SUPERTYPE) {
+        expressionSupertype = symbol;
+        break;
+      }
+    }
+
+    assertThat(expressionSupertype).isAtLeast(0);
+    assertThat(language.getSubtypes(expressionSupertype)).isNotEmpty();
+  }
+
+  @Test
   public void testFunctionality() {
     final var lang = TSLanguageJava.getInstance();
     lang.getLanguageVersion();
