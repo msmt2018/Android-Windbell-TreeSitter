@@ -362,16 +362,20 @@ class TshTreeSitterQueryExecutor(
             if (query.options.enablePredicates) {
                 effectivePredicateHandlers.forEach(cursor::addPredicateHandler)
             }
+            if (cancellation.isCancelled()) {
+                return failure("TSH-QUERY-EXEC-012", "Query cancelled before native Tree-sitter execution")
+            }
+            var progressCallbackAvailable = true
             try {
                 cursor.exec(nativeQuery, root, TSQueryCursor.ProgressCallback { _ ->
                     cancellation.isCancelled()
                 })
             } catch (error: UnsupportedOperationException) {
-                return failure(
-                    "TSH-QUERY-EXEC-033",
-                    "Native Tree-sitter build does not expose the 0.28 query progress callback; cooperative in-query cancellation is unavailable",
-                    cause = error
-                )
+                // The Java binding can be newer than the bundled Tree-sitter C library.
+                // Do not disable ordinary queries on builds older than 0.28: fall back to
+                // the stable cursor API and keep checking cancellation between returned matches.
+                progressCallbackAvailable = false
+                cursor.exec(nativeQuery, root)
             } catch (error: Throwable) {
                 return failure(
                     "TSH-QUERY-EXEC-034",
@@ -459,6 +463,11 @@ class TshTreeSitterQueryExecutor(
                     inputEncoding = tree.inputEncoding
                 ),
                 diagnostics = buildList {
+                    if (!progressCallbackAvailable) add(diagnostic(
+                        "TSH-QUERY-EXEC-033",
+                        "This Tree-sitter build does not expose the 0.28 progress callback. Query execution continued through the stable cursor API; cancellation is checked before execution and between returned matches, but cannot interrupt an in-progress native query.",
+                        TshDiagnosticSeverity.WARNING
+                    ))
                     if (!complete) add(diagnostic(
                         "TSH-QUERY-EXEC-015",
                         "Query result is partial because a match, capture-count, or estimated result-memory budget was reached, or Tree-sitter dropped pending matches.",
