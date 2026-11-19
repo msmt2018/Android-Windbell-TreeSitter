@@ -432,23 +432,26 @@ class TshTreeSitterParserOwner private constructor(
         edits: List<com.zerostudio.idea.treesitter.TSInputEdit>
     ): Long? {
         if (currentLengthUtf16 < 0L || currentLengthUtf16 > Long.MAX_VALUE / 2L) return null
-        return try {
-            var byteDelta = 0L
-            edits.forEach { edit ->
-                val oldEnd = edit.oldEndByte.toLong()
-                val newEnd = edit.newEndByte.toLong()
-                val start = edit.startByte.toLong()
-                if (start < 0L || oldEnd < start || newEnd < start ||
-                    (start and 1L) != 0L || (oldEnd and 1L) != 0L || (newEnd and 1L) != 0L) {
-                    return null
-                }
-                byteDelta = Math.addExact(byteDelta, newEnd - oldEnd)
+        var byteDelta = 0L
+        edits.forEach { edit ->
+            val oldEnd = edit.oldEndByte.toLong()
+            val newEnd = edit.newEndByte.toLong()
+            val start = edit.startByte.toLong()
+            if (start < 0L || oldEnd < start || newEnd < start ||
+                (start and 1L) != 0L || (oldEnd and 1L) != 0L || (newEnd and 1L) != 0L) {
+                return null
             }
-            val newByteLength = Math.addExact(Math.multiplyExact(currentLengthUtf16, 2L), byteDelta)
-            if (newByteLength < 0L || (newByteLength and 1L) != 0L) null else newByteLength / 2L
-        } catch (_: ArithmeticException) {
-            null
+            val delta = newEnd - oldEnd
+            if ((delta > 0L && byteDelta > Long.MAX_VALUE - delta) ||
+                (delta < 0L && byteDelta < Long.MIN_VALUE - delta)) {
+                return null
+            }
+            byteDelta += delta
         }
+        val oldByteLength = currentLengthUtf16 * 2L
+        if (byteDelta > Long.MAX_VALUE - oldByteLength || byteDelta < -oldByteLength) return null
+        val newByteLength = oldByteLength + byteDelta
+        return if ((newByteLength and 1L) != 0L) null else newByteLength / 2L
     }
 
     /** Retires a syntax tree after its replacement tree has been successfully published. */
