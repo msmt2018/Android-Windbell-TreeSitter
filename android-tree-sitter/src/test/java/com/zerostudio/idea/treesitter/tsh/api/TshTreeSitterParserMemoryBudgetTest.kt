@@ -308,6 +308,54 @@ class TshTreeSitterParserMemoryBudgetTest {
 
 
     @Test
+    fun editTreeGrowthAdmissionFailsBeforeMutatingNativeTree() {
+        val engine = engine(targetBytes = 600L)
+        engine.initialize()
+        val owner = openOwner(engine, TshNativeTreeMemoryEstimator { request ->
+            if (request.incremental) 768L else 512L
+        })
+        val source = "class EditAdmissionProbe {}"
+        val snapshot = StreamingSnapshot(
+            documentId = "doc-edit-admission",
+            version = 1L,
+            source = source
+        )
+        val lease = TshSharedTextSnapshotLease.acquire(snapshot)
+        val parsed = owner.parse(
+            snapshotLease = lease,
+            textProvider = StreamingProvider(snapshot),
+            treeRevision = 1L,
+            chunkSizeBytes = 8
+        )
+        assertTrue(parsed.toString(), parsed is TshResult.Success<*>)
+        val tree = (parsed as TshResult.Success<TshOwnedSyntaxTree>).value
+        lease.close()
+
+        val point = TSPoint.create(0, 0)
+        val insertedEnd = TSPoint.create(0, 2)
+        val insertion = TSInputEdit.create(0, 0, 2, point, point, insertedEnd)
+        val result = owner.editTree(
+            ownedTree = tree,
+            edit = insertion,
+            targetDocumentVersion = 2L,
+            targetTreeRevision = 2L
+        )
+
+        assertTrue(result.toString(), result is TshResult.Failure)
+        assertTrue(
+            (result as TshResult.Failure).diagnostics.any { it.code == "TSH-MEMORY-004" }
+        )
+        assertEquals("Rejected admission must not publish a new document version", 1L, tree.snapshot.documentVersion)
+        assertEquals("Rejected admission must preserve the old source length", source.length.toLong(), tree.sourceLengthUtf16)
+        assertEquals("Rejected admission must preserve the existing tree reservation", 512L, tree.memoryReservation?.bytes)
+        assertEquals(512L, engine.memoryBudget.snapshot().bytesByCategory[TshMemoryCategory.SYNTAX_TREE])
+
+        assertTrue(owner.retireTree(tree))
+        owner.close()
+        engine.close()
+    }
+
+    @Test
     fun engineCloseKeepsTreeReservationUntilLastNativeLeaseIsReleased() {
         val engine = engine()
         engine.initialize()
