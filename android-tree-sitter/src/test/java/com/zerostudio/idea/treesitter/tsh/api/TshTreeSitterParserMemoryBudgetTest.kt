@@ -213,19 +213,20 @@ class TshTreeSitterParserMemoryBudgetTest {
         val oldTreeBytes = 512L
         val editedTreeBytes = 768L
         val newTreeBytes = 768L
+        val oldSource = "class IncrementalMemoryProbe { int value = 1; }"
         val owner = openOwner(engine, TshNativeTreeMemoryEstimator { request ->
             assertEquals("doc-incremental-memory", request.documentId)
             assertEquals("java", request.grammarLanguageId)
             if (request.incremental) {
                 assertEquals(2L, request.documentVersion)
+                assertEquals(oldSource.length.toLong() + 1L, request.sourceLengthUtf16)
                 newTreeBytes
             } else {
                 assertEquals(1L, request.documentVersion)
+                assertEquals(oldSource.length.toLong(), request.sourceLengthUtf16)
                 oldTreeBytes
             }
         })
-
-        val oldSource = "class IncrementalMemoryProbe { int value = 1; }"
         val oldSnapshot = StreamingSnapshot(
             documentId = "doc-incremental-memory",
             version = 1L,
@@ -245,19 +246,22 @@ class TshTreeSitterParserMemoryBudgetTest {
 
         val editedOffset = oldSource.indexOf("1;")
         assertTrue("The fixture must contain the literal being edited", editedOffset >= 0)
-        // This fixture is ASCII, so UTF-8 byte offsets equal the String's UTF-16 indices.
+        // Tree-sitter byte offsets and columns use UTF-16LE bytes on this input path.
+        // Replace one UTF-16 code unit with two, exercising the source-length delta.
         // Use the public factory methods; TSInputEdit/TSPoint constructors are protected.
-        val startByte = editedOffset
-        val oldEndByte = startByte + 1
+        val startByte = editedOffset * 2
+        val oldEndByte = startByte + 2
+        val newEndByte = oldEndByte + 2
         val startPoint = TSPoint.create(0, startByte)
-        val endPoint = TSPoint.create(0, oldEndByte)
+        val oldEndPoint = TSPoint.create(0, oldEndByte)
+        val newEndPoint = TSPoint.create(0, newEndByte)
         val edit = TSInputEdit.create(
             startByte,
             oldEndByte,
-            oldEndByte,
+            newEndByte,
             startPoint,
-            endPoint,
-            endPoint
+            oldEndPoint,
+            newEndPoint
         )
         val editResult = owner.editTree(
             ownedTree = oldTree,
@@ -266,8 +270,10 @@ class TshTreeSitterParserMemoryBudgetTest {
             targetTreeRevision = 2L
         )
         assertTrue(editResult.toString(), editResult is TshResult.Success<*>)
+        assertEquals(oldSource.length.toLong() + 1L, oldTree.sourceLengthUtf16)
+        assertEquals(editedTreeBytes, oldTree.memoryReservation?.bytes)
 
-        val newSource = oldSource.replaceRange(editedOffset, editedOffset + 1, "2")
+        val newSource = oldSource.replaceRange(editedOffset, editedOffset + 1, "22")
         val newSnapshot = StreamingSnapshot(
             documentId = "doc-incremental-memory",
             version = 2L,
@@ -278,7 +284,7 @@ class TshTreeSitterParserMemoryBudgetTest {
             val budget = engine.memoryBudget.snapshot()
             observedOverlapDuringRead =
                 budget.bytesByCategory[TshMemoryCategory.PARSER_INPUT]!! > 0L &&
-                    budget.bytesByCategory[TshMemoryCategory.SYNTAX_TREE] == oldTreeBytes + newTreeBytes
+                    budget.bytesByCategory[TshMemoryCategory.SYNTAX_TREE] == editedTreeBytes + newTreeBytes
         }
         val newLease = TshSharedTextSnapshotLease.acquire(newSnapshot)
         val replacement = owner.parse(
