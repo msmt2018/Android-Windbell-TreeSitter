@@ -13,6 +13,11 @@ class TshOwnedSyntaxTree(
     internal val memoryReservation: TshMemoryReservation?,
     sourceLengthUtf16: Long
 ) {
+    constructor(
+        snapshot: TshSyntaxTreeSnapshot,
+        registration: TshNativeResourceRegistry.Registration<TSTree>
+    ) : this(snapshot, registration, null, 0L)
+
     @Volatile var snapshot: TshSyntaxTreeSnapshot = snapshot
         private set
     @Volatile var registration: TshNativeResourceRegistry.Registration<TSTree> = registration
