@@ -474,27 +474,6 @@ jobs:
 
           wait_for_service activity
           wait_for_service package
-          wait_for_service settings
-
-          set_animation_scale() {
-            local setting="$1"
-            local attempt=1
-            while (( attempt <= 10 )); do
-              if adb -s emulator-5554 shell settings put global "$setting" 0; then
-                return 0
-              fi
-              adb reconnect offline || true
-              attempt=$((attempt + 1))
-              sleep 2
-            done
-            echo "::error::Could not set animation scale '$setting' after Android boot"
-            return 1
-          }
-
-          set_animation_scale animator_duration_scale
-          set_animation_scale transition_animation_scale
-          set_animation_scale window_animation_scale
-          adb -s emulator-5554 shell settings get global animator_duration_scale
 
           test_result=0
           ./gradlew :editor:connectedDebugAndroidTest :app:connectedDebugAndroidTest --continue --max-workers=1 --stacktrace || test_result=$?
@@ -512,6 +491,9 @@ jobs:
           api-level: ${{ matrix.api-level }}
           target: google_apis
           arch: x86_64
+          # Keep the emulator deterministic and within hosted-runner resources.
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -no-snapshot -no-snapshot-load -no-snapshot-save -memory 2048 -cores 2
+          # Animation settings are not a test prerequisite; avoid Settings-provider startup races.
           disable-animations: false
           # The action executes script input as separate /usr/bin/sh commands.
           # Keep this a single command; the actual loops live in the Bash file.
