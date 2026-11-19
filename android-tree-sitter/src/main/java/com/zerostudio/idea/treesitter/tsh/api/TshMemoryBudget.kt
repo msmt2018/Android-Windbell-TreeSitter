@@ -172,6 +172,8 @@ class TshMemoryReservation internal constructor(
     }
 
     override fun close() {
-        if (released.compareAndSet(false, true)) releaseAction()
+        synchronized(this) {
+            if (released.compareAndSet(false, true)) releaseAction()
+        }
     }
 }
