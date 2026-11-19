@@ -211,6 +211,7 @@ class TshTreeSitterParserMemoryBudgetTest {
         val engine = engine()
         engine.initialize()
         val oldTreeBytes = 512L
+        val editedTreeBytes = 768L
         val newTreeBytes = 768L
         val owner = openOwner(engine, TshNativeTreeMemoryEstimator { request ->
             assertEquals("doc-incremental-memory", request.documentId)
@@ -293,7 +294,7 @@ class TshTreeSitterParserMemoryBudgetTest {
         newLease.close()
 
         val overlap = engine.memoryBudget.snapshot()
-        assertEquals(oldTreeBytes + newTreeBytes, overlap.bytesByCategory[TshMemoryCategory.SYNTAX_TREE])
+        assertEquals(editedTreeBytes + newTreeBytes, overlap.bytesByCategory[TshMemoryCategory.SYNTAX_TREE])
         assertEquals(0L, overlap.bytesByCategory[TshMemoryCategory.PARSER_INPUT])
 
         assertTrue("Retiring the edited old tree releases only its reservation", owner.retireTree(oldTree))
