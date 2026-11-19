@@ -347,7 +347,9 @@ jobs:
 
   android_emulator_tests:
     name: Android device tests (API ${{ matrix.api-level }})
-    runs-on: ubuntu-latest
+    # Ubuntu 26.04 hosted images currently trigger ddmlib shell property timeouts
+    # and Unknown API Level on API 30/35 emulators. Pin emulator jobs to 24.04.
+    runs-on: ubuntu-24.04
     timeout-minutes: 90
     strategy:
       fail-fast: false
