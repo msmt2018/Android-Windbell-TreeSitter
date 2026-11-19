@@ -425,23 +425,25 @@ class TshTreeSitterParserOwner private constructor(
     private fun editedSourceLength(
         currentLengthUtf16: Long,
         edits: List<com.zerostudio.idea.treesitter.TSInputEdit>
-    ): Long? = try {
+    ): Long? {
         if (currentLengthUtf16 < 0L || currentLengthUtf16 > Long.MAX_VALUE / 2L) return null
-        var byteDelta = 0L
-        edits.forEach { edit ->
-            val oldEnd = edit.oldEndByte.toLong()
-            val newEnd = edit.newEndByte.toLong()
-            val start = edit.startByte.toLong()
-            if (start < 0L || oldEnd < start || newEnd < start ||
-                (start and 1L) != 0L || (oldEnd and 1L) != 0L || (newEnd and 1L) != 0L) {
-                return null
+        return try {
+            var byteDelta = 0L
+            edits.forEach { edit ->
+                val oldEnd = edit.oldEndByte.toLong()
+                val newEnd = edit.newEndByte.toLong()
+                val start = edit.startByte.toLong()
+                if (start < 0L || oldEnd < start || newEnd < start ||
+                    (start and 1L) != 0L || (oldEnd and 1L) != 0L || (newEnd and 1L) != 0L) {
+                    return null
+                }
+                byteDelta = Math.addExact(byteDelta, newEnd - oldEnd)
             }
-            byteDelta = Math.addExact(byteDelta, newEnd - oldEnd)
+            val newByteLength = Math.addExact(Math.multiplyExact(currentLengthUtf16, 2L), byteDelta)
+            if (newByteLength < 0L || (newByteLength and 1L) != 0L) null else newByteLength / 2L
+        } catch (_: ArithmeticException) {
+            null
         }
-        val newByteLength = Math.addExact(Math.multiplyExact(currentLengthUtf16, 2L), byteDelta)
-        if (newByteLength < 0L || (newByteLength and 1L) != 0L) null else newByteLength / 2L
-    } catch (_: ArithmeticException) {
-        null
     }
 
     /** Retires a syntax tree after its replacement tree has been successfully published. */
