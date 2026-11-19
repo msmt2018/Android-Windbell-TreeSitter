@@ -9,16 +9,24 @@ import kotlin.concurrent.withLock
 /** A syntax tree registered with the Engine resource coordinator and ready for query execution. */
 class TshOwnedSyntaxTree(
     snapshot: TshSyntaxTreeSnapshot,
-    registration: TshNativeResourceRegistry.Registration<TSTree>
+    registration: TshNativeResourceRegistry.Registration<TSTree>,
+    internal val memoryReservation: TshMemoryReservation?,
+    sourceLengthUtf16: Long
 ) {
     @Volatile var snapshot: TshSyntaxTreeSnapshot = snapshot
         private set
     @Volatile var registration: TshNativeResourceRegistry.Registration<TSTree> = registration
         private set
+    @Volatile var sourceLengthUtf16: Long = sourceLengthUtf16
+        private set
     @Volatile internal var lastEditedDocumentVersion: Long? = null
 
     internal fun updateSnapshot(value: TshSyntaxTreeSnapshot) {
         snapshot = value
+    }
+
+    internal fun updateSourceLength(value: Long) {
+        sourceLengthUtf16 = value
     }
 
     internal fun updateRegistration(value: TshNativeResourceRegistry.Registration<TSTree>) {
@@ -171,7 +179,7 @@ class TshTreeSitterParserOwner private constructor(
                 nativeObjectId = registration.descriptor.id,
                 inputEncoding = TshTreeSitterInputEncoding.UTF16_LE
             )
-            return TshResult.Success(TshOwnedSyntaxTree(snapshot, registration))
+            return TshResult.Success(TshOwnedSyntaxTree(snapshot, registration, treeReservation, sourceLengthUtf16))
         } catch (error: LinkageError) {
             return failure(
                 "TSH-PARSER-OWNER-022",
@@ -280,6 +288,20 @@ class TshTreeSitterParserOwner private constructor(
                     ownedTree.registration.descriptor.id
                 )
             }
+            val updatedSourceLength = editedSourceLength(ownedTree.sourceLengthUtf16, edits)
+                ?: return failure(
+                    "TSH-PARSER-OWNER-029",
+                    "Batch edit produces an invalid or overflowing UTF-16 document length",
+                    TshDiagnosticStage.PARSE,
+                    ownedTree.registration.descriptor.id
+                )
+            when (val resized = resizeTreeMemoryReservation(
+                ownedTree, updatedSourceLength, targetDocumentVersion, targetTreeRevision
+            )) {
+                is TshResult.Success -> Unit
+                is TshResult.Failure -> return resized
+            }
+
             // Tree-sitter applies edits in sequence. The compiler supplies descending offsets
             // so each earlier edit retains its coordinates in the original snapshot.
             edits.forEach { edit ->
@@ -321,6 +343,7 @@ class TshTreeSitterParserOwner private constructor(
                 descriptor = (metadata as TshResult.Success<TshObjectDescriptor>).value
             ))
             ownedTree.updateSnapshot(updatedSnapshot)
+            ownedTree.updateSourceLength(updatedSourceLength)
             ownedTree.lastEditedDocumentVersion = targetDocumentVersion
             TshResult.Success(Unit)
         } catch (error: Exception) {
@@ -344,6 +367,81 @@ class TshTreeSitterParserOwner private constructor(
         } finally {
             lease.close()
         }
+    }
+
+    /**
+     * Reconciles the retained Native tree reservation before mutating the tree. The caller holds
+     * the exclusive tree lease, so a rejected growth leaves the Native tree and its accounting
+     * unchanged.
+     */
+    private fun resizeTreeMemoryReservation(
+        ownedTree: TshOwnedSyntaxTree,
+        sourceLengthUtf16: Long,
+        documentVersion: Long,
+        treeRevision: Long
+    ): TshResult<Unit> {
+        val reservation = ownedTree.memoryReservation ?: return TshResult.Success(Unit)
+        val estimator = memoryEstimator ?: return failure(
+            "TSH-PARSER-OWNER-030",
+            "A retained syntax-tree reservation has no estimator for edit-time reconciliation",
+            TshDiagnosticStage.MEMORY,
+            ownedTree.registration.descriptor.id
+        )
+        val estimate = try {
+            estimator.estimateBytes(TshNativeTreeMemoryRequest(
+                documentId = ownedTree.snapshot.documentId,
+                documentVersion = documentVersion,
+                treeRevision = treeRevision,
+                sourceLengthUtf16 = sourceLengthUtf16,
+                grammarLanguageId = grammar.languageId,
+                grammarFingerprint = grammar.fingerprint,
+                incremental = true
+            ))
+        } catch (error: Exception) {
+            return failure(
+                "TSH-PARSER-OWNER-031",
+                "Native syntax-tree memory estimator failed during edit admission: ${error.message}",
+                TshDiagnosticStage.MEMORY,
+                ownedTree.registration.descriptor.id,
+                error
+            )
+        }
+        if (estimate <= 0L) return failure(
+            "TSH-PARSER-OWNER-032",
+            "Native syntax-tree memory estimator returned a non-positive edit estimate",
+            TshDiagnosticStage.MEMORY,
+            ownedTree.registration.descriptor.id
+        )
+        return when (val resized = reservation.resize(estimate)) {
+            is TshResult.Success -> TshResult.Success(Unit)
+            is TshResult.Failure -> TshResult.Failure(resized.diagnostics)
+        }
+    }
+
+    /**
+     * Computes the resulting UTF-16 code-unit length from Tree-sitter's UTF-16LE byte deltas.
+     * All edit coordinates refer to the same before-version; deltas therefore add independently.
+     */
+    private fun editedSourceLength(
+        currentLengthUtf16: Long,
+        edits: List<com.zerostudio.idea.treesitter.TSInputEdit>
+    ): Long? = try {
+        if (currentLengthUtf16 < 0L || currentLengthUtf16 > Long.MAX_VALUE / 2L) return null
+        var byteDelta = 0L
+        edits.forEach { edit ->
+            val oldEnd = edit.oldEndByte.toLong()
+            val newEnd = edit.newEndByte.toLong()
+            val start = edit.startByte.toLong()
+            if (start < 0L || oldEnd < start || newEnd < start ||
+                (start and 1L) != 0L || (oldEnd and 1L) != 0L || (newEnd and 1L) != 0L) {
+                return null
+            }
+            byteDelta = Math.addExact(byteDelta, newEnd - oldEnd)
+        }
+        val newByteLength = Math.addExact(Math.multiplyExact(currentLengthUtf16, 2L), byteDelta)
+        if (newByteLength < 0L || (newByteLength and 1L) != 0L) null else newByteLength / 2L
+    } catch (_: ArithmeticException) {
+        null
     }
 
     /** Retires a syntax tree after its replacement tree has been successfully published. */
@@ -413,6 +511,19 @@ class TshTreeSitterParserOwner private constructor(
                     ownedTree.registration.descriptor.id
                 )
             }
+            val updatedSourceLength = editedSourceLength(ownedTree.sourceLengthUtf16, listOf(edit))
+                ?: return failure(
+                    "TSH-PARSER-OWNER-029",
+                    "Edit produces an invalid or overflowing UTF-16 document length",
+                    TshDiagnosticStage.PARSE,
+                    ownedTree.registration.descriptor.id
+                )
+            when (val resized = resizeTreeMemoryReservation(
+                ownedTree, updatedSourceLength, targetDocumentVersion, targetTreeRevision
+            )) {
+                is TshResult.Success -> Unit
+                is TshResult.Failure -> return resized
+            }
             editAttempted = true
             lease.resource.edit(edit)
             val root = lease.resource.rootNode
@@ -449,6 +560,7 @@ class TshTreeSitterParserOwner private constructor(
                 descriptor = (metadata as TshResult.Success<TshObjectDescriptor>).value
             ))
             ownedTree.updateSnapshot(updatedSnapshot)
+            ownedTree.updateSourceLength(updatedSourceLength)
             ownedTree.lastEditedDocumentVersion = targetDocumentVersion
             TshResult.Success(Unit)
         } catch (error: Exception) {
@@ -671,7 +783,7 @@ class TshTreeSitterParserOwner private constructor(
                 nativeObjectId = registration.descriptor.id,
                 inputEncoding = TshTreeSitterInputEncoding.UTF16_LE
             )
-            return TshResult.Success(TshOwnedSyntaxTree(syntaxSnapshot, registration))
+            return TshResult.Success(TshOwnedSyntaxTree(syntaxSnapshot, registration, treeReservation, snapshot.lengthUtf16))
         } catch (error: LinkageError) {
             return failure(
                 "TSH-PARSER-OWNER-024",
