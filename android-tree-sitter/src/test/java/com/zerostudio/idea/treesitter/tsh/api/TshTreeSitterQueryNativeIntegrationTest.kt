@@ -66,6 +66,11 @@ class TshTreeSitterQueryNativeIntegrationTest {
                 sourceId = "java-class-name-native-integration"
             )
             val compiled = queryCompiler!!.compile(querySource, grammar)
+            val compileDiagnostics = (compiled as? TshResult.Failure)?.diagnostics
+                ?.joinToString { "${it.code}: ${it.message}" }
+            if (compiled !is TshResult.Success) {
+                println("[TSH-QUERY-NATIVE-INTEGRATION] compile failure: $compileDiagnostics")
+            }
             assertTrue(
                 compiled is TshResult.Success,
                 "Native Tree-sitter S-expression query must compile: " +
