@@ -63,4 +63,14 @@ dependencies {
 // The TSH engine tests use JUnit Jupiter annotations and assertions.
 tasks.withType<Test>().configureEach {
   useJUnitPlatform()
+
+  // Robolectric creates an isolated sandbox classloader for each test class.
+  // The JNI shared library cannot be loaded into multiple sandbox classloaders
+  // inside one worker JVM ("already loaded in another classloader"). Fork each
+  // native-backed unit-test class into its own JVM so the OS/JVM native-library
+  // ownership boundary is isolated without weakening or skipping the tests.
+  if (name == "testDebugUnitTest") {
+    forkEvery = 1
+    maxParallelForks = 1
+  }
 }
