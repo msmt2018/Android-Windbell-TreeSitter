@@ -385,7 +385,9 @@ class TshTreeSitterQueryExecutor(
                 )
             }
 
-            val captures = ArrayList<TshCapture>(minOf(budget.maxCaptures, 16_384))
+            // Avoid allocating a 16K-reference backing array for small or empty query results.
+            // Grow with actual matches while keeping the initial transient allocation bounded.
+            val captures = ArrayList<TshCapture>(minOf(budget.maxCaptures, budget.maxMatches, 256))
             var matchesSeen = 0
             var estimatedResultBytes = 0L
             var truncated = false
