@@ -1115,6 +1115,11 @@ class SelectionController(
         // the selection handles may change places on the way: see moveSelectionHandle
         var held = kind
         if (kind == Handle.INSERTION) {
+            // Unlike selection handles, the insertion handle has no range endpoint
+            // to update. Keep the actual caret in sync with the position computed
+            // from the dragged finger; otherwise the handle moves visually while
+            // subsequent typing still uses the old caret position.
+            cursor.setPosition(lineOf(position), columnOf(position))
             noteHandleAt(position)
         } else {
             held = moveSelectionHandle(kind, position)
