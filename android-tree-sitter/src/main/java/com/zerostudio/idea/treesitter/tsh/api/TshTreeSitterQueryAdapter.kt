@@ -8,6 +8,7 @@ import com.zerostudio.idea.treesitter.TSTree
 import com.zerostudio.idea.treesitter.predicate.TSPredicateHandler
 import com.zerostudio.idea.treesitter.predicate.SetDirectiveHandler
 import java.security.MessageDigest
+import java.util.Collections
 
 /** Resolves a registered, lease-managed language handle for a grammar descriptor. */
 fun interface TshGrammarLanguageResolver {
@@ -456,7 +457,9 @@ class TshTreeSitterQueryExecutor(
                     documentVersion = tree.documentVersion,
                     treeRevision = tree.treeRevision,
                     grammarFingerprint = tree.grammar.fingerprint,
-                    captures = captures.toList(),
+                    // The capture buffer is locally owned and never mutated after publication. Wrap it
+                    // without copying: toList() duplicated every capture reference at peak result size.
+                    captures = Collections.unmodifiableList(captures),
                     // Null means the native cursor does not expose VM step counts.
                     stepsUsed = null,
                     isComplete = complete,
