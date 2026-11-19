@@ -60,8 +60,26 @@ jobs:
         id: setup-ndk
         with:
           ndk-version: r25
-      - name: Install dependencies
-        run: $ATS_SUDO $ATS_APT_UPDATE && $ATS_SUDO $ATS_APT_INSTALL $ATS_APT_DEPS
+      - name: Install dependencies (retry transient Ubuntu mirror failures)
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          retry() {
+            local max_attempts=5 attempt=1 delay=10
+            while (( attempt <= max_attempts )); do
+              if "$@"; then return 0; fi
+              if (( attempt == max_attempts )); then
+                echo "::error::Command failed after $max_attempts attempts: $*"
+                return 1
+              fi
+              echo "::warning::Attempt $attempt/$max_attempts failed; retrying in $delay seconds"
+              sleep "$delay"
+              delay=$((delay * 2))
+              attempt=$((attempt + 1))
+            done
+          }
+          retry $ATS_SUDO $ATS_APT_UPDATE
+          retry $ATS_SUDO $ATS_APT_INSTALL $ATS_APT_DEPS
       - name: Set up Python for native grammar builds
         uses: actions/setup-python@v5
         with:
