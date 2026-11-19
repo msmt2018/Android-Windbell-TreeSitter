@@ -39,6 +39,31 @@ class TshMemoryBudgetTest {
         assertEquals(0, budget.snapshot().reservations)
     }
 
+    @Test fun reservationResizeIsAtomicAndPreservesCategoryAccounting() {
+        val budget = TshMemoryBudget(TshMemoryBudgetOptions(100, 200))
+        val token = (budget.reserve(TshMemoryCategory.SYNTAX_TREE, 40, "tree") as TshResult.Success).value
+
+        assertTrue(token.resize(70) is TshResult.Success)
+        assertEquals(70L, token.bytes)
+        assertEquals(70L, budget.snapshot().reservedBytes)
+        assertEquals(70L, budget.snapshot().bytesByCategory[TshMemoryCategory.SYNTAX_TREE])
+        assertEquals(70L, budget.snapshot().highWatermarkBytes)
+
+        val rejected = token.resize(101)
+        assertTrue(rejected is TshResult.Failure)
+        assertEquals(70L, token.bytes)
+        assertEquals(70L, budget.snapshot().reservedBytes)
+
+        assertTrue(token.resize(15) is TshResult.Success)
+        assertEquals(15L, budget.snapshot().reservedBytes)
+        budget.close()
+        assertTrue("Shrinking retained memory remains legal after shutdown", token.resize(10) is TshResult.Success)
+        assertTrue("Growing after shutdown must be rejected", token.resize(11) is TshResult.Failure)
+        token.close()
+        assertEquals(0L, budget.snapshot().reservedBytes)
+        assertTrue(token.resize(1) is TshResult.Failure)
+    }
+
     @Test fun closingBudgetRejectsNewWorkButAllowsExistingRelease() {
         val budget = TshMemoryBudget(TshMemoryBudgetOptions(100, 200))
         val token = (budget.reserve(TshMemoryCategory.TEXT_SNAPSHOT, 40) as TshResult.Success).value
