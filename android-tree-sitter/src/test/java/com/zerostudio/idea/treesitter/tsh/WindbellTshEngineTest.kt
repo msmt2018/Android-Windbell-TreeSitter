@@ -2118,7 +2118,7 @@ engine.applyNativeDocumentEdit(
             val afterPrefixEdit = engine.highlightNativeDocument(
                 handle,
                 (initialTagStart - 16).toLong() * 2L,
-                (initialTagStart + 32).toLong() * 2L,
+                (initialInlineStart + inlineLength).toLong() * 2L,
                 false
             ) ?: error("Javadoc capture query after prefix edit returned null")
             assertTrue(
@@ -2147,7 +2147,7 @@ engine.applyNativeDocumentEdit(
             val afterCommentEdit = engine.highlightNativeDocument(
                 handle,
                 (initialTagStart - 16).toLong() * 2L,
-                (initialTagStart + 32).toLong() * 2L,
+                (initialInlineStart + inlineLength).toLong() * 2L,
                 false
             ) ?: error("Javadoc capture query after in-comment edit returned null")
             assertTrue(
