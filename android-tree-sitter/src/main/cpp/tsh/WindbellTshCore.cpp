@@ -1605,13 +1605,10 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
         // Checkpoints are reusable only for the exact immutable source and
         // partition snapshots from which their tokenizer state was produced.
         if (regex_state_checkpoints) {
-            // Any source edit invalidates checkpoint byte offsets and the
-            // lexical state associated with them. The previous implementation
-            // attempted suffix convergence by promoting stale checkpoints at
-            // equal offsets; that is unsafe because a same-offset checkpoint
-            // does not prove the suffix is unchanged (captures may be lost).
-            // Prefer a full state rescan after edits until edit-aware offset
-            // mapping and suffix validation are implemented.
+            // A checkpoint is valid only for the exact immutable source and
+            // partition snapshots that produced it. Byte offsets alone cannot
+            // establish that an edited suffix is unchanged, so invalidate the
+            // complete checkpoint set whenever either version changes.
             const bool has_stale_checkpoint = std::any_of(
                 regex_state_checkpoints->begin(), regex_state_checkpoints->end(),
                 [&](const RegexStateCheckpoint& checkpoint) {
@@ -1619,11 +1616,10 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                         checkpoint.partition_version != partition_version;
                 });
             if (has_stale_checkpoint) regex_state_checkpoints->clear();
+
             const RegexStateCheckpoint* nearest = nullptr;
             for (const auto& checkpoint : *regex_state_checkpoints) {
-                if (checkpoint.source_version != source_version ||
-                    checkpoint.partition_version != partition_version ||
-                    checkpoint.byte_offset > range_start_byte ||
+                if (checkpoint.byte_offset > range_start_byte ||
                     checkpoint.state_stack.empty()) continue;
                 if (!nearest || checkpoint.byte_offset > nearest->byte_offset)
                     nearest = &checkpoint;
@@ -1631,80 +1627,36 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
             if (nearest) {
                 position = static_cast<uint32_t>(nearest->byte_offset);
                 state_stack = nearest->state_stack;
-                next_checkpoint = ((static_cast<uint64_t>(position) / (64u * 1024u)) + 1u) * (64u * 1024u);
-            } else {
-                // Keep stale checkpoints as convergence candidates while
-                // rescanning from the document start. save_regex_state_checkpoint()
-                // will promote the unchanged suffix only after it reaches an
-                // identical byte offset with an identical state stack. Clearing
-                // this set here would make that convergence path unreachable
-                // whenever the edit precedes the first reusable checkpoint.
-            }
-            // Probe the next stale checkpoint exactly, even when no current-
-            // version checkpoint was available. Otherwise an unaligned old
-            // checkpoint could be stepped over by the regular 64 KiB stride.
-            for (const auto& checkpoint : *regex_state_checkpoints) {
-                if (checkpoint.source_version != source_version &&
-                    checkpoint.byte_offset > position) {
-                    next_checkpoint = std::min(next_checkpoint, checkpoint.byte_offset);
-                }
+                next_checkpoint =
+                    ((static_cast<uint64_t>(position) / (64u * 1024u)) + 1u) *
+                    (64u * 1024u);
             }
         }
         auto save_regex_state_checkpoint = [&]() {
             if (!regex_state_checkpoints || position < next_checkpoint) return;
-            RegexStateCheckpoint checkpoint;
-            checkpoint.byte_offset = position;
-            checkpoint.source_version = source_version;
-            checkpoint.partition_version = partition_version;
-            checkpoint.state_stack = state_stack;
-            bool converged = false;
-            auto stale = std::find_if(
+
+            const bool already_current = std::any_of(
                 regex_state_checkpoints->begin(), regex_state_checkpoints->end(),
                 [&](const RegexStateCheckpoint& candidate) {
-                    return candidate.source_version != source_version &&
+                    return candidate.source_version == source_version &&
+                        candidate.partition_version == partition_version &&
                         candidate.byte_offset == position;
                 });
-            if (stale != regex_state_checkpoints->end()) {
-                if (stale->state_stack == state_stack) {
-                    const uint64_t stale_version = stale->source_version;
-                    for (auto& candidate : *regex_state_checkpoints) {
-                        if (candidate.source_version == stale_version &&
-                            candidate.byte_offset >= position) {
-                            candidate.source_version = source_version;
-                            candidate.partition_version = partition_version;
-                        }
-                    }
-                    converged = true;
-                } else {
-                    // The edit changed lexical state at this checkpoint. Keep
-                    // later candidates: a subsequent checkpoint may still be
-                    // the first point where the tokenizer state converges.
-                    regex_state_checkpoints->erase(stale);
-                }
-            }
-            if (!converged) {
-                const bool already_current = std::any_of(
+            if (!already_current) {
+                RegexStateCheckpoint checkpoint;
+                checkpoint.byte_offset = position;
+                checkpoint.source_version = source_version;
+                checkpoint.partition_version = partition_version;
+                checkpoint.state_stack = state_stack;
+                auto insertion = std::lower_bound(
                     regex_state_checkpoints->begin(), regex_state_checkpoints->end(),
-                    [&](const RegexStateCheckpoint& candidate) {
-                        return candidate.source_version == source_version &&
-                            candidate.partition_version == partition_version &&
-                            candidate.byte_offset == position;
+                    position,
+                    [](const RegexStateCheckpoint& candidate, uint64_t offset) {
+                        return candidate.byte_offset < offset;
                     });
-                if (!already_current) {
-                    // The vector can contain stale suffix candidates whose
-                    // offsets are greater than the current rescan position.
-                    // Appending based on back() would then suppress every
-                    // newly generated checkpoint before that stale suffix.
-                    auto insertion = std::lower_bound(
-                        regex_state_checkpoints->begin(), regex_state_checkpoints->end(),
-                        position,
-                        [](const RegexStateCheckpoint& candidate, uint64_t offset) {
-                            return candidate.byte_offset < offset;
-                        });
-                    regex_state_checkpoints->insert(
-                        insertion, std::move(checkpoint));
-                }
+                regex_state_checkpoints->insert(insertion, std::move(checkpoint));
             }
+
             // Bound persistent tokenizer metadata independently from the
             // source size. 8192 checkpoints cover 512 MiB at 64 KiB spacing.
             constexpr size_t kMaxRegexStateCheckpoints = 8192;
@@ -1717,19 +1669,6 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
             next_checkpoint =
                 ((static_cast<uint64_t>(position) / (64u * 1024u)) + 1u) *
                 (64u * 1024u);
-            // A mismatching stale checkpoint is discarded above, but later
-            // stale candidates may still converge. Re-arm the exact next
-            // candidate after every checkpoint, not only at scan startup;
-            // otherwise the regular stride can jump over an unaligned one.
-            if (regex_state_checkpoints) {
-                for (const auto& candidate : *regex_state_checkpoints) {
-                    if (candidate.source_version != source_version &&
-                        candidate.byte_offset > position) {
-                        next_checkpoint = std::min(
-                            next_checkpoint, candidate.byte_offset);
-                    }
-                }
-            }
         };
         OnigRegion* state_region = onig_region_new();
         OnigRegion* state_case_region = onig_region_new();
