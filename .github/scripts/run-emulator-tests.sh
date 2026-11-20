@@ -47,4 +47,43 @@ done
 adb -s emulator-5554 logcat -d -v threadtime > "$log_dir/logcat.txt" 2>&1 || true
 adb -s emulator-5554 shell dumpsys activity activities > "$log_dir/activities.txt" 2>&1 || true
 adb devices -l > "$log_dir/adb-devices-final.txt" 2>&1 || true
+
+# Gradle can return success even when an instrumentation task discovers no tests.
+# Require non-empty XML reports for both modules and a positive test count.
+if (( test_result == 0 )); then
+  report_guard=0
+  python3 - <<'PY'
+import glob
+import os
+import sys
+import xml.etree.ElementTree as ET
+
+modules = ("editor", "app")
+total = 0
+for module in modules:
+    paths = glob.glob(os.path.join(module, "build", "outputs", "androidTest-results", "connected", "debug", "*.xml"))
+    if not paths:
+        print(f"::error::No instrumentation XML reports found for :{module}")
+        sys.exit(1)
+    module_count = 0
+    for path in paths:
+        try:
+            root = ET.parse(path).getroot()
+            module_count += int(root.attrib.get("tests", "0"))
+        except (ET.ParseError, OSError, ValueError) as exc:
+            print(f"::error::Invalid instrumentation report {path}: {exc}")
+            sys.exit(1)
+    if module_count <= 0:
+        print(f"::error::Instrumentation report for :{module} contains zero tests")
+        sys.exit(1)
+    print(f":{module}: {module_count} instrumentation tests reported")
+    total += module_count
+print(f"Total instrumentation tests reported: {total}")
+PY
+  report_guard=$?
+  if (( report_guard != 0 )); then
+    test_result=$report_guard
+  fi
+fi
+
 exit "$test_result"
