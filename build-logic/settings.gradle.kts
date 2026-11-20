@@ -15,11 +15,22 @@
  *  along with android-tree-sitter.  If not, see <https://www.gnu.org/licenses/>.
  */
 
+pluginManagement {
+    repositories {
+        // Google-hosted mirror of Maven Central for Kotlin DSL plugin transitives.
+        maven { url = uri("https://maven-central.storage-download.googleapis.com/maven2/") }
+        gradlePluginPortal()
+        google()
+        mavenCentral()
+    }
+}
+
 enableFeaturePreview("TYPESAFE_PROJECT_ACCESSORS")
 
 dependencyResolutionManagement {
     repositories {
         google()
+        maven { url = uri("https://maven-central.storage-download.googleapis.com/maven2/") }
         mavenCentral()
     }
     versionCatalogs {
