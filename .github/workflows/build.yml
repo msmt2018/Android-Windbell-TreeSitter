@@ -482,6 +482,23 @@ jobs:
           echo "✅ Installed dependencies for all ${#manifests[@]} grammar packages."
       - name: Change Gradle wrapper permissions
         run: chmod +x ./gradlew
+      - name: Enable KVM access for Android emulator
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          if [[ ! -e /dev/kvm ]]; then
+            echo "::error::GitHub runner does not expose /dev/kvm; x86_64 Android emulation cannot use hardware acceleration."
+            exit 1
+          fi
+          # Hosted runners expose KVM but may not grant the runner user access.
+          # The emulator action probes read/write access before selecting acceleration.
+          sudo chmod 0666 /dev/kvm
+          if [[ ! -r /dev/kvm || ! -w /dev/kvm ]]; then
+            echo "::error::Unable to grant the runner read/write access to /dev/kvm."
+            ls -l /dev/kvm || true
+            exit 1
+          fi
+          ls -l /dev/kvm
       - name: Run Android instrumentation tests
         uses: reactivecircus/android-emulator-runner@v2
         with:
@@ -493,8 +510,8 @@ jobs:
           # Animation scales are disabled explicitly in the script. Avoid the action's
           # post-job ADB reset, which races emulator teardown and can fail with adb 224.
           disable-animations: false
-          # The runner action's auto mode selected -accel off, which emulator 37 rejects
-          # unless TCG is explicitly forced. Hosted GitHub runners provide KVM; require it.
+          # Enable KVM access in the preceding step and require hardware acceleration.
+          # Do not fall back to -accel off: emulator 37 rejects software mode by default.
           disable-linux-hw-accel: false
           script: bash .github/scripts/run-emulator-tests.sh
       - name: Upload Android device test reports and logs
