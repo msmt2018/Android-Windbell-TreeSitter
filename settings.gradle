@@ -19,6 +19,8 @@
 pluginManagement {
     includeBuild("build-logic")
     repositories {
+        // Google-hosted Maven Central mirror avoids transient Central HTTP 429s.
+        maven { url = uri("https://maven-central.storage-download.googleapis.com/maven2/") }
         gradlePluginPortal()
         google()
         mavenCentral()
@@ -36,6 +38,8 @@ dependencyResolutionManagement {
     repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
     repositories {
         google()
+        // Keep Maven Central as fallback; prefer Google's official GCS mirror.
+        maven { url = uri("https://maven-central.storage-download.googleapis.com/maven2/") }
         mavenCentral()
     }
 }
