@@ -1989,6 +1989,128 @@ class WindbellTshLinkageTest {
 
 
     @Test
+    fun docTagRegexCaptureRemainsStableAfterIncrementalEditsAcrossCheckpoint() {
+        val engine = WindbellTshEngine.instance
+        val extension = "javadoc-edit-regression"
+        val dsl = """
+            name: ["Javadoc Edit Regression", ".javadoc-edit-regression"]
+            styles: [
+                "docComment", #008000, #008000,
+                "docTag", #FFFF00, #FFFF00,
+            ]
+            contains: [
+                {
+                    style: "docComment",
+                    priority: 140,
+                    start: { match: /\\/\\*\\*/ },
+                    end: { match: /\\*\\// },
+                    contains: [
+                        { match: /@(?:param|return)\\b/, 0: "docTag", priority: 145 }
+                    ]
+                }
+            ]
+        """.trimIndent()
+        assertTrue(
+            "Javadoc regression grammar must compile: ${engine.lastCompileDiagnostics}",
+            engine.loadTshSource(extension, dsl, TSLanguageJava.getInstance())
+        )
+        val docTagStyle = engine.getStyleCatalog(extension).first { it.name == "docTag" }.styleId
+        val prefix = " ".repeat(70_000) + "\\n"
+        val comment = "/**\\n * @param value description\\n */\\nclass Demo {}"
+        val source = prefix + comment
+        val sourceBytes = ByteArray(source.length * 2)
+        for (index in source.indices) {
+            val unit = source[index].code
+            sourceBytes[index * 2] = (unit and 0xFF).toByte()
+            sourceBytes[index * 2 + 1] = (unit ushr 8).toByte()
+        }
+        val reader = NativeTextWindowReader { offset, requested, destination ->
+            destination.clear()
+            destination.limit(requested)
+            val start = offset.toInt()
+            val count = minOf(requested, sourceBytes.size - start)
+            if (count > 0) destination.put(sourceBytes, start, count)
+            destination.position()
+        }
+        val handle = engine.createNativeDocument(
+            TSLanguageJava.getInstance(),
+            extension,
+            sourceBytes.size.toLong(),
+            File(System.getProperty("java.io.tmpdir")),
+            reader
+        )
+        fun containsDocTag(values: IntArray, startChar: Int): Boolean {
+            val expectedStart = startChar.toLong() * 2L
+            val expectedEnd = (startChar + 6).toLong() * 2L
+            return (0 until values.size / 6).any { index ->
+                val base = index * 6
+                Integer.toUnsignedLong(values[base]) == expectedStart &&
+                    Integer.toUnsignedLong(values[base + 1]) == expectedEnd &&
+                    (values[base + 2] and 0xFFFF) == docTagStyle
+            }
+        }
+        try {
+            val initialTagStart = prefix.length + comment.indexOf("@param")
+            val initial = engine.highlightNativeDocument(
+                handle, 0L, sourceBytes.size.toLong(), false
+            ) ?: error("Initial Javadoc capture query returned null")
+            assertTrue(
+                "Initial @param capture must use docTag style",
+                containsDocTag(initial, initialTagStart)
+            )
+
+            // Change text before the first 64 KiB checkpoint without changing the
+            // Regex state. The scanner must re-establish state convergence before
+            // promoting old suffix checkpoints to the new Piece Tree revision.
+            val prefixEditOffset = 20_000L
+            val replacement = byteArrayOf('x'.code.toByte(), 0)
+            assertTrue(
+                "Prefix edit before Regex checkpoint must commit",
+                engine.applyNativeDocumentEdit(
+                    handle, prefixEditOffset * 2L, (prefixEditOffset + 1L) * 2L, replacement
+                )
+            )
+            engine.consumeNativeDirtyLineRanges(handle)
+            val afterPrefixEdit = engine.highlightNativeDocument(
+                handle,
+                (initialTagStart - 16).toLong() * 2L,
+                (initialTagStart + 32).toLong() * 2L,
+                false
+            ) ?: error("Javadoc capture query after prefix edit returned null")
+            assertTrue(
+                "docTag capture must survive checkpoint convergence after a preceding edit",
+                containsDocTag(afterPrefixEdit, initialTagStart)
+            )
+
+            // Edit inside the same documentation block, then verify that the
+            // outer comment style does not replace the inner tag capture.
+            val valueStart = prefix.length + comment.indexOf("value")
+            val replacementValue = "name".toByteArray(Charsets.UTF_16LE)
+            assertTrue(
+                "In-comment edit must commit",
+                engine.applyNativeDocumentEdit(
+                    handle, valueStart.toLong() * 2L,
+                    (valueStart + "value".length).toLong() * 2L,
+                    replacementValue
+                )
+            )
+            engine.consumeNativeDirtyLineRanges(handle)
+            val afterCommentEdit = engine.highlightNativeDocument(
+                handle,
+                (initialTagStart - 16).toLong() * 2L,
+                (initialTagStart + 32).toLong() * 2L,
+                false
+            ) ?: error("Javadoc capture query after in-comment edit returned null")
+            assertTrue(
+                "The @param tag must remain a docTag capture after edits inside its comment",
+                containsDocTag(afterCommentEdit, initialTagStart)
+            )
+        } finally {
+            engine.closeNativeDocument(handle)
+        }
+    }
+
+    @Test
     fun largeNativeTreeSitterQueryCapturesSurviveIncrementalEditsNearEof() {
         val engine = WindbellTshEngine.instance
         val extension = "large-query-window"
