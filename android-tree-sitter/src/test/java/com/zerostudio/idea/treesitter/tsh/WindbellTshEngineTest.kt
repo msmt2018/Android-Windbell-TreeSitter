@@ -2076,6 +2076,33 @@ class WindbellTshLinkageTest {
                 containsStyledCapture(initial, initialInlineStart, inlineLength, inlineTagStyle)
             )
 
+            // Request only a middle slice of each nested tag. The Native Regex
+            // executor must search beyond the right viewport edge to complete the
+            // bounded match, then clip the capture to the visible slice.
+            val clippedTagStart = initialTagStart + 2
+            val clippedTagEnd = initialTagStart + 5
+            val clippedTag = engine.highlightNativeDocument(
+                handle, clippedTagStart.toLong() * 2L, clippedTagEnd.toLong() * 2L, false
+            ) ?: error("Clipped @param viewport query returned null")
+            assertTrue(
+                "A @param capture crossing the viewport edge must remain visible",
+                containsStyledCapture(
+                    clippedTag, clippedTagStart, clippedTagEnd - clippedTagStart, docTagStyle
+                )
+            )
+            val clippedInlineStart = initialInlineStart + 2
+            val clippedInlineEnd = initialInlineStart + 7
+            val clippedInline = engine.highlightNativeDocument(
+                handle, clippedInlineStart.toLong() * 2L, clippedInlineEnd.toLong() * 2L, false
+            ) ?: error("Clipped {@link} viewport query returned null")
+            assertTrue(
+                "An inline {@link} capture crossing the viewport edge must remain visible",
+                containsStyledCapture(
+                    clippedInline, clippedInlineStart, clippedInlineEnd - clippedInlineStart,
+                    inlineTagStyle
+                )
+            )
+
             // Change text before the first 64 KiB checkpoint without changing the
             // Regex state. The scanner must re-establish state convergence before
             // promoting old suffix checkpoints to the new Piece Tree revision.
