@@ -493,6 +493,9 @@ jobs:
           # Animation scales are disabled explicitly in the script. Avoid the action's
           # post-job ADB reset, which races emulator teardown and can fail with adb 224.
           disable-animations: false
+          # The runner action's auto mode selected -accel off, which emulator 37 rejects
+          # unless TCG is explicitly forced. Hosted GitHub runners provide KVM; require it.
+          disable-linux-hw-accel: false
           script: bash .github/scripts/run-emulator-tests.sh
       - name: Upload Android device test reports and logs
         if: ${{ always() }}
