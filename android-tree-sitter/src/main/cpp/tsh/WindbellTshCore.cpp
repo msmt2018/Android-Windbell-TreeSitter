@@ -1196,12 +1196,6 @@ void WindbellEngine::matchBlockRecursive(
                             const UChar* viewport_end = text_start + output_end_byte;
                             const uint64_t overlap = nested.maximum_match_bytes >= 2u
                                 ? nested.maximum_match_bytes - 2u : 0u;
-                            // A bounded nested match may begin before the viewport or
-                            // finish after it. Search with the proven maximum-width
-                            // overlap on BOTH sides, then clip emitted captures back to
-                            // the requested viewport. Extending only the left edge made
-                            // inline comment tags disappear whenever their closing
-                            // delimiter fell just beyond the visible slice.
                             if (viewport_start > inner_start) {
                                 const uint64_t available = static_cast<uint64_t>(
                                     viewport_start - inner_start);
@@ -1209,12 +1203,6 @@ void WindbellEngine::matchBlockRecursive(
                                     static_cast<ptrdiff_t>(std::min<uint64_t>(overlap, available));
                             }
                             nested_scan_end = std::min(inner_end, viewport_end);
-                            if (nested_scan_end == viewport_end && viewport_end < inner_end) {
-                                const uint64_t available = static_cast<uint64_t>(
-                                    inner_end - viewport_end);
-                                nested_scan_end = viewport_end +
-                                    static_cast<ptrdiff_t>(std::min<uint64_t>(overlap, available));
-                            }
                         }
                         const UChar* inner_curr = nested_scan_start;
                         while (inner_curr < nested_scan_end) {
