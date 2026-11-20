@@ -13,6 +13,8 @@ import com.zerostudio.idea.androidtreesitter.TshSyntaxHighlighter
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import x.github.module.editor.view.EditorView
 
 /**
@@ -75,11 +77,23 @@ class WindbellTshEditorViewRenderingTest {
 
         lateinit var editor: EditorView
         lateinit var highlighter: TshSyntaxHighlighter
+        val textSizeReady = CountDownLatch(1)
         instrumentation.runOnMainSync {
             editor = EditorView(context)
-            editor.setTextSize(48f)
-            editor.setTextColor(plainColor)
-            editor.setText("public class Demo {\n    String value = \"hello\";\n}")
+            // setTextSize may schedule a background relayout. Do not immediately call
+            // setText while that layout is busy: EditorView correctly rejects edits
+            // during relayout, and an ignored false return would leave an empty buffer.
+            editor.setTextSize(48f) { textSizeReady.countDown() }
+        }
+        assertTrue(
+            "EditorView did not finish its initial text-size layout",
+            textSizeReady.await(10, TimeUnit.SECONDS)
+        )
+        instrumentation.runOnMainSync {
+            assertTrue(
+                "EditorView refused the E2E source text",
+                editor.setText("public class Demo {\\n    String value = \\"hello\\";\\n}")
+            )
             highlighter = TshSyntaxHighlighter(
                 language = TSLanguageJava.getInstance(),
                 extension = extension,
