@@ -92,7 +92,11 @@ class WindbellTshEditorViewRenderingTest {
         instrumentation.runOnMainSync {
             assertTrue(
                 "EditorView refused the E2E source text",
-                editor.setText("public class Demo {\\n    String value = \\"hello\\";\\n}")
+                editor.setText("""
+                    public class Demo {
+                        String value = "hello";
+                    }
+                """.trimIndent())
             )
             highlighter = TshSyntaxHighlighter(
                 language = TSLanguageJava.getInstance(),
