@@ -1605,6 +1605,20 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
         // Checkpoints are reusable only for the exact immutable source and
         // partition snapshots from which their tokenizer state was produced.
         if (regex_state_checkpoints) {
+            // Any source edit invalidates checkpoint byte offsets and the
+            // lexical state associated with them. The previous implementation
+            // attempted suffix convergence by promoting stale checkpoints at
+            // equal offsets; that is unsafe because a same-offset checkpoint
+            // does not prove the suffix is unchanged (captures may be lost).
+            // Prefer a full state rescan after edits until edit-aware offset
+            // mapping and suffix validation are implemented.
+            const bool has_stale_checkpoint = std::any_of(
+                regex_state_checkpoints->begin(), regex_state_checkpoints->end(),
+                [&](const RegexStateCheckpoint& checkpoint) {
+                    return checkpoint.source_version != source_version ||
+                        checkpoint.partition_version != partition_version;
+                });
+            if (has_stale_checkpoint) regex_state_checkpoints->clear();
             const RegexStateCheckpoint* nearest = nullptr;
             for (const auto& checkpoint : *regex_state_checkpoints) {
                 if (checkpoint.source_version != source_version ||
