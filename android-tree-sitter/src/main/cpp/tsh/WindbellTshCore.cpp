@@ -1202,7 +1202,22 @@ void WindbellEngine::matchBlockRecursive(
                                 nested_scan_start = viewport_start -
                                     static_cast<ptrdiff_t>(std::min<uint64_t>(overlap, available));
                             }
-                            nested_scan_end = std::min(inner_end, viewport_end);
+                            // Oniguruma's forward-search range is also passed to
+                            // match_at() as its upper match bound. Keep bounded matches
+                            // that begin before the viewport but finish just after its
+                            // right edge by extending the search range with the same
+                            // proven finite-width context. Captures are clipped to the
+                            // viewport in append_nested_capture() below.
+                            if (viewport_end < inner_end) {
+                                const uint64_t available_after_viewport =
+                                    static_cast<uint64_t>(inner_end - viewport_end);
+                                const uint64_t right_context =
+                                    std::min<uint64_t>(overlap, available_after_viewport);
+                                nested_scan_end = viewport_end +
+                                    static_cast<ptrdiff_t>(right_context);
+                            } else {
+                                nested_scan_end = inner_end;
+                            }
                         }
                         const UChar* inner_curr = nested_scan_start;
                         while (inner_curr < nested_scan_end) {
