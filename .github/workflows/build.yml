@@ -493,52 +493,7 @@ jobs:
           # Animation scales are disabled explicitly in the script. Avoid the action's
           # post-job ADB reset, which races emulator teardown and can fail with adb 224.
           disable-animations: false
-          script: |
-            bash <<'BASH'
-            set -Eeuo pipefail
-            mkdir -p build/emulator-test-logs
-            adb start-server
-            timeout 180 adb -s emulator-5554 wait-for-device
-            for boot_attempt in $(seq 1 60); do
-              boot_completed="$(adb -s emulator-5554 shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')"
-              if [[ "$boot_completed" == "1" ]]; then
-                break
-              fi
-              if (( boot_attempt == 60 )); then
-                echo "::error::Emulator did not finish booting within 120 seconds."
-                exit 1
-              fi
-              sleep 2
-            done
-            adb -s emulator-5554 shell settings put global animator_duration_scale 0
-            adb -s emulator-5554 shell settings put global transition_animation_scale 0
-            adb -s emulator-5554 shell settings put global window_animation_scale 0
-            test_result=1
-            for attempt in 1 2 3 4; do
-              status=0
-              set +e
-              ./gradlew :editor:connectedDebugAndroidTest :app:connectedDebugAndroidTest --continue --max-workers=1 --stacktrace 2>&1 | tee "build/emulator-test-logs/gradle-attempt-${attempt}.log"
-              status=${PIPESTATUS[0]}
-              set -e
-              if (( status == 0 )); then test_result=0; break; fi
-              if ! grep -Eqi 'HTTP 429|status code 429|Too Many Requests|Could not GET.*repo\.maven\.apache\.org' "build/emulator-test-logs/gradle-attempt-${attempt}.log"; then
-                echo "::error::Instrumentation tests failed for a reason other than Maven Central rate limiting; not retrying."
-                test_result=$status
-                break
-              fi
-              if (( attempt == 4 )); then
-                echo "::error::Maven Central continued returning HTTP 429 after 4 attempts."
-                test_result=$status
-                break
-              fi
-              delay=$((attempt * 20))
-              echo "::warning::Maven Central rate limited Gradle (attempt ${attempt}/4); retrying in ${delay} seconds."
-              sleep "$delay"
-            done
-            adb -s emulator-5554 logcat -d -v threadtime > build/emulator-test-logs/logcat.txt 2>&1 || true
-            adb -s emulator-5554 shell dumpsys activity activities > build/emulator-test-logs/activities.txt 2>&1 || true
-            exit "$test_result"
-            BASH
+          script: bash .github/scripts/run-emulator-tests.sh
       - name: Upload Android device test reports and logs
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
