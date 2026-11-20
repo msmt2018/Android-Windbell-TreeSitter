@@ -2127,7 +2127,8 @@ containsStyledCapture(afterPrefixEdit, initialTagStart, 6, docTagStyle),
 )
             assertTrue(
 containsStyledCapture(afterPrefixEdit, initialInlineStart, inlineLength, inlineTagStyle),
-"Inline {@link} capture must survive Regex checkpoint convergence"
+"Inline {@link} capture must survive Regex checkpoint convergence; returned spans=" +
+    afterPrefixEdit.contentToString()
 )
 
             // Edit inside the same documentation block, then verify that the
