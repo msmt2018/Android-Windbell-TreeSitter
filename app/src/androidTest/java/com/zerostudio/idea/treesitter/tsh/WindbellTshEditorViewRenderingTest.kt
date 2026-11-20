@@ -80,6 +80,9 @@ class WindbellTshEditorViewRenderingTest {
         val textSizeReady = CountDownLatch(1)
         instrumentation.runOnMainSync {
             editor = EditorView(context)
+            // Set an explicit base color so this test verifies that unmatched runs
+            // retain the editor's configured paint color rather than a theme default.
+            editor.setTextColor(plainColor)
             // setTextSize may schedule a background relayout. Do not immediately call
             // setText while that layout is busy: EditorView correctly rejects edits
             // during relayout, and an ignored false return would leave an empty buffer.
