@@ -1999,14 +1999,14 @@ class WindbellTshLinkageTest {
                 "docTag", #FFFF00, #FFFF00,
             ]
             defines: [
-                "docTags": /(?:@param|@return)\\b/
+                "docTags": /(?:@param|@return)\b/
             ]
             contains: [
                 {
                     style: "docComment",
                     priority: 140,
-                    start: { match: /\\/\\*\\*/ },
-                    end: { match: /\\*\\// },
+                    start: { match: /\/\*\*/ },
+                    end: { match: /\*\// },
                     contains: [
                         { match: include("docTags"), 0: "docTag", priority: 145 }
                     ]
@@ -2018,8 +2018,8 @@ class WindbellTshLinkageTest {
             engine.loadTshSource(extension, dsl, TSLanguageJava.getInstance())
         )
         val docTagStyle = engine.getStyleCatalog(extension).first { it.name == "docTag" }.styleId
-        val prefix = " ".repeat(70_000) + "\\n"
-        val comment = "/**\\n * @param value description\\n */\\nclass Demo {}"
+        val prefix = " ".repeat(70_000) + "\n"
+        val comment = "/**\n * @param value description\n */\nclass Demo {}"
         val source = prefix + comment
         val sourceBytes = ByteArray(source.length * 2)
         for (index in source.indices) {
