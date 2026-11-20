@@ -2076,9 +2076,9 @@ class WindbellTshLinkageTest {
                 containsStyledCapture(initial, initialInlineStart, inlineLength, inlineTagStyle)
             )
 
-            // Request only a middle slice of each nested tag. The Native Regex
-            // executor must search beyond the right viewport edge to complete the
-            // bounded match, then clip the capture to the visible slice.
+            // Request only a middle slice of each nested tag. Oniguruma must retain
+            // the full source as match context while limiting candidate start positions
+            // to the requested viewport, then clip emitted captures to the visible slice.
             val clippedTagStart = initialTagStart + 2
             val clippedTagEnd = initialTagStart + 5
             val clippedTag = engine.highlightNativeDocument(
