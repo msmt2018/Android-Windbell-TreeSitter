@@ -1997,6 +1997,7 @@ class WindbellTshLinkageTest {
             styles: [
                 "docComment", #008000, #008000,
                 "docTag", #FFFF00, #FFFF00,
+                "inlineTag", #FFFF00, #FFFF00,
             ]
             defines: [
                 "docTags": /(?:@param|@return)\b/
@@ -2008,7 +2009,8 @@ class WindbellTshLinkageTest {
                     start: { match: /\/\*\*/ },
                     end: { match: /\*\// },
                     contains: [
-                        { match: include("docTags"), 0: "docTag", priority: 145 }
+                        { match: include("docTags"), 0: "docTag", priority: 145 },
+                        { match: /\{@\w{1,32}[^}]{0,4096}\}/, 0: "inlineTag", priority: 145 }
                     ]
                 }
             ]
@@ -2018,8 +2020,9 @@ class WindbellTshLinkageTest {
             engine.loadTshSource(extension, dsl, TSLanguageJava.getInstance())
         )
         val docTagStyle = engine.getStyleCatalog(extension).first { it.name == "docTag" }.styleId
+        val inlineTagStyle = engine.getStyleCatalog(extension).first { it.name == "inlineTag" }.styleId
         val prefix = " ".repeat(70_000) + "\n"
-        val comment = "/**\n * @param value description\n */\nclass Demo {}"
+        val comment = "/**\n * @param value description {@link Demo}\n */\nclass Demo {}"
         val source = prefix + comment
         val sourceBytes = ByteArray(source.length * 2)
         for (index in source.indices) {
@@ -2042,24 +2045,35 @@ class WindbellTshLinkageTest {
             File(System.getProperty("java.io.tmpdir")),
             reader
         )
-        fun containsDocTag(values: IntArray, startChar: Int): Boolean {
+        fun containsStyledCapture(
+            values: IntArray,
+            startChar: Int,
+            length: Int,
+            styleId: Int
+        ): Boolean {
             val expectedStart = startChar.toLong() * 2L
-            val expectedEnd = (startChar + 6).toLong() * 2L
+            val expectedEnd = (startChar + length).toLong() * 2L
             return (0 until values.size / 6).any { index ->
                 val base = index * 6
                 Integer.toUnsignedLong(values[base]) == expectedStart &&
                     Integer.toUnsignedLong(values[base + 1]) == expectedEnd &&
-                    (values[base + 2] and 0xFFFF) == docTagStyle
+                    (values[base + 2] and 0xFFFF) == styleId
             }
         }
         try {
             val initialTagStart = prefix.length + comment.indexOf("@param")
+            val initialInlineStart = prefix.length + comment.indexOf("{@link Demo}")
+            val inlineLength = "{@link Demo}".length
             val initial = engine.highlightNativeDocument(
                 handle, 0L, sourceBytes.size.toLong(), false
             ) ?: error("Initial Javadoc capture query returned null")
             assertTrue(
                 "Initial @param capture must use docTag style",
-                containsDocTag(initial, initialTagStart)
+                containsStyledCapture(initial, initialTagStart, 6, docTagStyle)
+            )
+            assertTrue(
+                "Initial {@link} capture must use inlineTag style",
+                containsStyledCapture(initial, initialInlineStart, inlineLength, inlineTagStyle)
             )
 
             // Change text before the first 64 KiB checkpoint without changing the
@@ -2082,13 +2096,17 @@ class WindbellTshLinkageTest {
             ) ?: error("Javadoc capture query after prefix edit returned null")
             assertTrue(
                 "docTag capture must survive checkpoint convergence after a preceding edit",
-                containsDocTag(afterPrefixEdit, initialTagStart)
+                containsStyledCapture(afterPrefixEdit, initialTagStart, 6, docTagStyle)
+            )
+            assertTrue(
+                "Inline {@link} capture must survive Regex checkpoint convergence",
+                containsStyledCapture(afterPrefixEdit, initialInlineStart, inlineLength, inlineTagStyle)
             )
 
             // Edit inside the same documentation block, then verify that the
             // outer comment style does not replace the inner tag capture.
             val valueStart = prefix.length + comment.indexOf("value")
-            val replacementValue = "name".toByteArray(Charsets.UTF_16LE)
+            val replacementValue = "field".toByteArray(Charsets.UTF_16LE)
             assertTrue(
                 "In-comment edit must commit",
                 engine.applyNativeDocumentEdit(
@@ -2106,7 +2124,11 @@ class WindbellTshLinkageTest {
             ) ?: error("Javadoc capture query after in-comment edit returned null")
             assertTrue(
                 "The @param tag must remain a docTag capture after edits inside its comment",
-                containsDocTag(afterCommentEdit, initialTagStart)
+                containsStyledCapture(afterCommentEdit, initialTagStart, 6, docTagStyle)
+            )
+            assertTrue(
+                "Inline {@link} capture must remain styled after an edit inside its comment",
+                containsStyledCapture(afterCommentEdit, initialInlineStart, inlineLength, inlineTagStyle)
             )
         } finally {
             engine.closeNativeDocument(handle)
