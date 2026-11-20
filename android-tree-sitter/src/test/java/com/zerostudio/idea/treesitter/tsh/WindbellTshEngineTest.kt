@@ -1998,6 +1998,9 @@ class WindbellTshLinkageTest {
                 "docComment", #008000, #008000,
                 "docTag", #FFFF00, #FFFF00,
             ]
+            defines: [
+                "docTags": /(?:@param|@return)\\b/
+            ]
             contains: [
                 {
                     style: "docComment",
@@ -2005,7 +2008,7 @@ class WindbellTshLinkageTest {
                     start: { match: /\\/\\*\\*/ },
                     end: { match: /\\*\\// },
                     contains: [
-                        { match: /@(?:param|return)\\b/, 0: "docTag", priority: 145 }
+                        { match: include("docTags"), 0: "docTag", priority: 145 }
                     ]
                 }
             ]
