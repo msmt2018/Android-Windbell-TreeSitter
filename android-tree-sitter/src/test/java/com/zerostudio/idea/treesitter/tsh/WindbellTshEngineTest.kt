@@ -2088,7 +2088,7 @@ containsStyledCapture(initial, initialInlineStart, inlineLength, inlineTagStyle)
 containsStyledCapture(
                     clippedTag, clippedTagStart, clippedTagEnd - clippedTagStart, docTagStyle
                 ),
-"A @param capture crossing the viewport edge must remain visible; returned spans=${'
+                "A @param capture crossing the viewport edge must remain visible; returned spans=" + clippedTag.contentToString()
 )
             val clippedInlineStart = initialInlineStart + 2
             val clippedInlineEnd = initialInlineStart + 7
