@@ -559,7 +559,18 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeLoadTshSource(
         throw_npe(env, "Failed to extract extension string");
         return JNI_FALSE;
     }
-    std::string ext_str(ext);
+    std::string ext_str;
+    try {
+        ext_str.assign(ext);
+    } catch (const std::bad_alloc&) {
+        env->ReleaseStringUTFChars(extension_jstr, ext);
+        throwNativeAllocationFailure(env, "Unable to allocate native TSH extension identifier");
+        return JNI_FALSE;
+    } catch (...) {
+        env->ReleaseStringUTFChars(extension_jstr, ext);
+        throwNativeHighlightFailure(env, "Failed to copy native TSH extension identifier");
+        return JNI_FALSE;
+    }
     env->ReleaseStringUTFChars(extension_jstr, ext);
 
     const char* src = env->GetStringUTFChars(tsh_source_jstr, nullptr);
@@ -567,32 +578,50 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeLoadTshSource(
         throw_npe(env, "Failed to extract TSH source string");
         return JNI_FALSE;
     }
-    std::string src_str(src);
+    std::string src_str;
+    try {
+        src_str.assign(src);
+    } catch (const std::bad_alloc&) {
+        env->ReleaseStringUTFChars(tsh_source_jstr, src);
+        throwNativeAllocationFailure(env, "Unable to allocate native TSH source buffer");
+        return JNI_FALSE;
+    } catch (...) {
+        env->ReleaseStringUTFChars(tsh_source_jstr, src);
+        throwNativeHighlightFailure(env, "Failed to copy native TSH source buffer");
+        return JNI_FALSE;
+    }
     env->ReleaseStringUTFChars(tsh_source_jstr, src);
 
     const TSLanguage* ts_lang = reinterpret_cast<const TSLanguage*>(language_ptr);
-    
-    // Keep diagnostics attached to this exact invocation. Reading the compiler's
-    // compatibility "last diagnostics" slot here would race with other documents
-    // compiling different language grammars on worker threads.
-    auto compilation = TshCompiler::getInstance().compileDetailed(src_str, ts_lang);
-    g_last_jni_compile_diagnostics = compilation.diagnostics;
-    if (!compilation.grammar) {
-        for (const auto& diagnostic : compilation.diagnostics) {
-            LOGE("WindbellTSH",
-                 "[%s] %s (offset=%u, line=%u, column=%u)",
-                 diagnostic.code.c_str(),
-                 diagnostic.message.c_str(),
-                 diagnostic.offset,
-                 diagnostic.line,
-                 diagnostic.column);
-        }
-        LOGE("WindbellTSH", "Failed to compile TSH grammar rules for: %s", ext_str.c_str());
-        return JNI_FALSE;
-    }
 
-    WindbellEngine::getInstance().registerGrammar(ext_str, compilation.grammar);
-    return JNI_TRUE;
+    try {
+        // Keep diagnostics attached to this exact invocation. Reading the compiler's
+        // compatibility "last diagnostics" slot here would race with other documents.
+        auto compilation = TshCompiler::getInstance().compileDetailed(src_str, ts_lang);
+        g_last_jni_compile_diagnostics = compilation.diagnostics;
+        if (!compilation.grammar) {
+            for (const auto& diagnostic : compilation.diagnostics) {
+                LOGE("WindbellTSH",
+                     "[%s] %s (offset=%u, line=%u, column=%u)",
+                     diagnostic.code.c_str(),
+                     diagnostic.message.c_str(),
+                     diagnostic.offset,
+                     diagnostic.line,
+                     diagnostic.column);
+            }
+            LOGE("WindbellTSH", "Failed to compile TSH grammar rules for: %s", ext_str.c_str());
+            return JNI_FALSE;
+        }
+        WindbellEngine::getInstance().registerGrammar(ext_str, compilation.grammar);
+        return JNI_TRUE;
+    } catch (const std::bad_alloc&) {
+        throwNativeAllocationFailure(env, "Native TSH compilation exhausted memory");
+    } catch (const std::exception& error) {
+        throwNativeHighlightFailure(env, error.what());
+    } catch (...) {
+        throwNativeHighlightFailure(env, "Unknown native TSH compilation failure");
+    }
+    return JNI_FALSE;
 }
 
 /**
