@@ -74,6 +74,31 @@ static bool tshAstNodeMatchesSelector(
     return false;
 }
 
+// Build a reverse index for ATS selectors that name a Tree-sitter supertype.
+// The parse cursor visits concrete nodes only, so looking up only the concrete
+// symbol misses rules such as node: "expression". Expand nested subtype
+// relationships once per highlight pass instead of scanning every rule per node.
+static void tshCollectAstSubtypeSymbols(
+    const TSLanguage* language,
+    TSSymbol symbol,
+    uint32_t depth,
+    std::unordered_set<TSSymbol>& visited,
+    std::vector<TSSymbol>& output
+) {
+    constexpr uint32_t kMaxSupertypeDepth = 64;
+    if (!language || symbol == 0 || depth >= kMaxSupertypeDepth ||
+        !visited.insert(symbol).second) return;
+
+    uint32_t subtype_count = 0;
+    const TSSymbol* subtypes = ts_language_subtypes(language, symbol, &subtype_count);
+    for (uint32_t i = 0; subtypes && i < subtype_count; ++i) {
+        const TSSymbol subtype = subtypes[i];
+        if (subtype == 0) continue;
+        output.push_back(subtype);
+        tshCollectAstSubtypeSymbols(language, subtype, depth + 1, visited, output);
+    }
+}
+
 } // namespace
 
 static void tshIncrementDiagnostic(uint32_t* value, uint64_t amount = 1u) noexcept {
@@ -2003,6 +2028,23 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
         std::vector<const AstSelectorRule*> candidate_rules;
         candidate_rules.reserve(grammar->ast_wildcard_rules.size() + 16);
 
+        std::unordered_map<TSSymbol, std::vector<uint32_t>> ast_supertype_node_rules;
+        std::unordered_map<TSSymbol, std::vector<uint32_t>> ast_supertype_field_rules;
+        for (uint32_t rule_index = 0;
+             rule_index < grammar->ast_selector_rules.size(); ++rule_index) {
+            const AstSelectorRule& rule = grammar->ast_selector_rules[rule_index];
+            if (rule.target_symbol == 0) continue;
+            std::unordered_set<TSSymbol> visited;
+            std::vector<TSSymbol> subtypes;
+            tshCollectAstSubtypeSymbols(grammar->ts_language, rule.target_symbol,
+                0, visited, subtypes);
+            auto& reverse_index = rule.field_id != 0
+                ? ast_supertype_field_rules : ast_supertype_node_rules;
+            for (TSSymbol subtype : subtypes) {
+                reverse_index[subtype].push_back(rule_index);
+            }
+        }
+
         while (true) {
             TSNode node = ts_tree_cursor_current_node(&cursor);
             const uint32_t current_start_byte = ts_node_start_byte(node);
@@ -2052,6 +2094,17 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                     append_indexed_rules(grammar_node_rules->second);
                 }
             }
+            auto supertype_node_rules = ast_supertype_node_rules.find(sym);
+            if (supertype_node_rules != ast_supertype_node_rules.end()) {
+                append_indexed_rules(supertype_node_rules->second);
+            }
+            if (node_grammar_sym != sym) {
+                auto grammar_supertype_node_rules =
+                    ast_supertype_node_rules.find(node_grammar_sym);
+                if (grammar_supertype_node_rules != ast_supertype_node_rules.end()) {
+                    append_indexed_rules(grammar_supertype_node_rules->second);
+                }
+            }
             if (!ts_node_is_null(parent)) {
                 auto field_rules = grammar->ast_field_rules_by_parent_symbol.find(parent_sym);
                 if (field_rules != grammar->ast_field_rules_by_parent_symbol.end()) {
@@ -2071,6 +2124,17 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                         grammar->ast_field_rules_by_parent_symbol.find(parent_grammar_sym);
                     if (grammar_field_rules != grammar->ast_field_rules_by_parent_symbol.end()) {
                         append_indexed_rules(grammar_field_rules->second);
+                    }
+                }
+                auto supertype_field_rules = ast_supertype_field_rules.find(parent_sym);
+                if (supertype_field_rules != ast_supertype_field_rules.end()) {
+                    append_indexed_rules(supertype_field_rules->second);
+                }
+                if (parent_grammar_sym != parent_sym) {
+                    auto grammar_supertype_field_rules =
+                        ast_supertype_field_rules.find(parent_grammar_sym);
+                    if (grammar_supertype_field_rules != ast_supertype_field_rules.end()) {
+                        append_indexed_rules(grammar_supertype_field_rules->second);
                     }
                 }
             }
