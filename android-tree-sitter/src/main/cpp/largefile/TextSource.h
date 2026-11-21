@@ -53,6 +53,10 @@ bool checkUtf16SurrogateBoundary(const TextSource &source,
                                  uint64_t byteOffset,
                                  bool *splitsPair) noexcept;
 
+bool copyTreeSitterInputChunk(const TextSource &source, uint64_t offset,
+                               void *destination, uint32_t destinationCapacity,
+                               uint32_t *bytesRead) noexcept;
+
 /**
  * Zero-copy adapter for existing contiguous UTF-16LE storage.
  *

@@ -6,6 +6,7 @@
 
 #include <limits>
 #include <cassert>
+#include <array>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -13,6 +14,7 @@
 #include <vector>
 #include <random>
 #include <utility>
+#include <memory>
 #include <unistd.h>
 
 using namespace windbell::largefile;
@@ -760,7 +762,89 @@ static void testPieceTreeRejectsDocumentSizeOverflow() {
     assert(source.allocatedBytes() == beforeAllocation);
 }
 
+
+static void runTreeSitterInputChunkFileWindowPieceBoundaryTest(bool splitSurrogatePair) {
+    char path[] = "/tmp/windbell-ts-input-window-XXXXXX";
+    const int fd = ::mkstemp(path);
+    assert(fd >= 0);
+
+    constexpr size_t suffixOffset = 64u * 1024u + 4u;
+    std::vector<char> fileBytes(suffixOffset + 4u, 0);
+    fileBytes[0] = 'A';
+    fileBytes[1] = 0;
+    if (splitSurrogatePair) {
+        fileBytes[2] = static_cast<char>(0x3D);
+        fileBytes[3] = static_cast<char>(0xD8);
+        fileBytes[suffixOffset] = 0;
+        fileBytes[suffixOffset + 1u] = static_cast<char>(0xDE);
+    } else {
+        fileBytes[2] = 'B';
+        fileBytes[3] = 0;
+        fileBytes[suffixOffset] = 'C';
+        fileBytes[suffixOffset + 1u] = 0;
+    }
+    fileBytes[suffixOffset + 2u] = 'D';
+    fileBytes[suffixOffset + 3u] = 0;
+
+    size_t written = 0;
+    while (written < fileBytes.size()) {
+        const ssize_t count = ::write(
+            fd, fileBytes.data() + written, fileBytes.size() - written);
+        assert(count > 0);
+        written += static_cast<size_t>(count);
+    }
+    ::close(fd);
+
+    auto backing = std::make_shared<FileWindowSource>(path, 8u);
+    assert(backing->isOpen());
+    {
+        PieceTreeSource source(backing, 2u * 1024u * 1024u);
+        assert(source.isValid());
+        // Keep the first two UTF-16 code units and splice in a distant source
+        // piece. The look-ahead read crosses to a different FileWindow offset.
+        assert(source.replace(4u, suffixOffset, nullptr, 0u));
+        assert(source.sizeBytes() == 8u);
+
+        TextChunkView borrowed{};
+        assert(source.read(0u, kTreeSitterInputChunkBytes, &borrowed));
+        assert(borrowed.data != nullptr && borrowed.size == 4u);
+        const char *borrowedView = borrowed.data;
+        bool splits = false;
+        assert(checkUtf16SurrogateBoundary(source, 4u, &splits));
+        assert(splits == splitSurrogatePair);
+        const char expectedPrefix[] = {
+            'A', 0,
+            splitSurrogatePair ? static_cast<char>(0x3D) : 'B',
+            splitSurrogatePair ? static_cast<char>(0xD8) : 0
+        };
+        // Prove the original borrowed pointer was invalidated by the boundary
+        // look-ahead; returning it to Tree-sitter would parse the wrong bytes.
+        assert(std::memcmp(borrowedView, expectedPrefix, sizeof(expectedPrefix)) != 0);
+
+        std::array<char, kTreeSitterInputChunkBytes + 2u> stable{};
+        uint32_t bytesRead = 0;
+        assert(copyTreeSitterInputChunk(
+            source, 0u, stable.data(), static_cast<uint32_t>(stable.size()), &bytesRead));
+        const uint32_t expectedSize = splitSurrogatePair ? 6u : 4u;
+        assert(bytesRead == expectedSize);
+        assert(std::memcmp(stable.data(), expectedPrefix, sizeof(expectedPrefix)) == 0);
+        if (splitSurrogatePair) {
+            const char lowSurrogate[] = {0, static_cast<char>(0xDE)};
+            assert(std::memcmp(stable.data() + 4u, lowSurrogate, sizeof(lowSurrogate)) == 0);
+        }
+    }
+    backing->close();
+    ::unlink(path);
+}
+
+static void testTreeSitterInputChunkOwnsFileWindowPieceBoundaryBytes() {
+    runTreeSitterInputChunkFileWindowPieceBoundaryTest(false);
+    runTreeSitterInputChunkFileWindowPieceBoundaryTest(true);
+}
+
+
 int main() {
+    testTreeSitterInputChunkOwnsFileWindowPieceBoundaryBytes();
     testPieceTreeRejectsDocumentSizeOverflow();
     testSegmentedTextSource();
     testUtf16SurrogateBoundaryAcrossSourceSegments();
