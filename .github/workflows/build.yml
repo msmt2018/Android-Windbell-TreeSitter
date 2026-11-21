@@ -449,7 +449,7 @@ jobs:
           adb start-server
           timeout 180 adb -s emulator-5554 wait-for-device
 
-          boot_deadline=$(( $(date +%s) + 240 ))
+          boot_deadline=$(( $(date +%s) + 300 ))
           while :; do
             boot_completed="$(adb -s emulator-5554 shell getprop sys.boot_completed 2>/dev/null | tr -d '\r' || true)"
             if [[ "$boot_completed" == "1" ]]; then
@@ -463,23 +463,44 @@ jobs:
             sleep 2
           done
 
-          wait_for_service() {
+          service_is_ready() {
             local service="$1"
-            local deadline=$(( $(date +%s) + 120 ))
-            while :; do
-              if adb -s emulator-5554 shell service check "$service" 2>/dev/null | grep -q "found"; then
-                return 0
-              fi
-              if (( $(date +%s) >= deadline )); then
-                echo "::error::Android system service '$service' did not become available"
-                return 1
-              fi
-              sleep 2
-            done
+            adb -s emulator-5554 shell service check "$service" 2>/dev/null | grep -q "found"
           }
 
-          wait_for_service activity
-          wait_for_service package
+          # Do not trust sys.boot_completed alone. On software-rendered hosted
+          # emulators adb can see a device while framework services and SDK
+          # properties are still intermittently unavailable to Gradle.
+          expected_sdk="${EXPECTED_API_LEVEL:?EXPECTED_API_LEVEL must match the emulator matrix}"
+          stable_probes=0
+          readiness_deadline=$(( $(date +%s) + 240 ))
+          while (( stable_probes < 5 )); do
+            adb_state="$(adb -s emulator-5554 get-state 2>/dev/null || true)"
+            actual_sdk="$(adb -s emulator-5554 shell getprop ro.build.version.sdk 2>/dev/null | tr -d '\r' || true)"
+            fingerprint="$(adb -s emulator-5554 shell getprop ro.build.fingerprint 2>/dev/null | tr -d '\r' || true)"
+            if [[ "$adb_state" == "device" &&
+                  "$actual_sdk" == "$expected_sdk" &&
+                  -n "$fingerprint" ]] &&
+               service_is_ready activity &&
+               service_is_ready package; then
+              stable_probes=$((stable_probes + 1))
+            else
+              stable_probes=0
+              echo "Waiting for stable emulator: adb=$adb_state sdk=$actual_sdk expected=$expected_sdk"
+            fi
+            if (( $(date +%s) >= readiness_deadline )); then
+              echo "::error::Android emulator did not remain stable at API $expected_sdk"
+              adb devices -l || true
+              adb -s emulator-5554 shell getprop || true
+              exit 1
+            fi
+            sleep 3
+          done
+
+          echo "Emulator is stable and reports API $expected_sdk."
+          adb -s emulator-5554 shell getprop ro.build.version.sdk
+          adb -s emulator-5554 shell service check activity
+          adb -s emulator-5554 shell service check package
 
           test_result=0
           ./gradlew :editor:connectedDebugAndroidTest :app:connectedDebugAndroidTest --continue --max-workers=1 --stacktrace || test_result=$?
@@ -493,9 +514,11 @@ jobs:
           bash -n build/run-android-instrumentation.sh
       - name: Run Android instrumentation tests
         uses: reactivecircus/android-emulator-runner@v2
+        env:
+          EXPECTED_API_LEVEL: ${{ matrix.api-level }}
         with:
           api-level: ${{ matrix.api-level }}
-          target: google_apis
+          target: default
           arch: x86_64
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -no-snapshot -no-snapshot-load -no-snapshot-save -memory 2048 -cores 2
           # Animation settings are not a test prerequisite; avoid Settings-provider startup races.
