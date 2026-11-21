@@ -1037,7 +1037,18 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlight(
         throw_npe(env, "Failed to extract extension string");
         return nullptr;
     }
-    std::string ext_str(ext);
+    std::string ext_str;
+    try {
+        ext_str.assign(ext);
+    } catch (const std::bad_alloc&) {
+        env->ReleaseStringUTFChars(extension_jstr, ext);
+        throwNativeAllocationFailure(env, "Unable to allocate native TSH extension identifier");
+        return nullptr;
+    } catch (...) {
+        env->ReleaseStringUTFChars(extension_jstr, ext);
+        throwNativeHighlightFailure(env, "Failed to copy native TSH extension identifier");
+        return nullptr;
+    }
     env->ReleaseStringUTFChars(extension_jstr, ext);
 
     const jsize len = env->GetStringLength(text_jstr);
