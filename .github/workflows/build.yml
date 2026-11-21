@@ -1,7 +1,7 @@
 name: Build and test
 
 concurrency:
-  group: build-and-test-${{ github.ref }}-v2
+  group: build-and-test-${{ github.ref }}-v3
   cancel-in-progress: true
 
 on:
