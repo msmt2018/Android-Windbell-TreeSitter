@@ -2030,6 +2030,11 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
 
         std::unordered_map<TSSymbol, std::vector<uint32_t>> ast_supertype_node_rules;
         std::unordered_map<TSSymbol, std::vector<uint32_t>> ast_supertype_field_rules;
+        // Symbol IDs are grammar-local and can differ across visible/grammar
+        // aliases. Keep a type-name dispatch fallback for every expanded
+        // subtype so ATS supertype rules remain addressable by either identity.
+        std::unordered_map<std::string, std::vector<uint32_t>> ast_supertype_node_rules_by_type;
+        std::unordered_map<std::string, std::vector<uint32_t>> ast_supertype_field_rules_by_type;
         for (uint32_t rule_index = 0;
              rule_index < grammar->ast_selector_rules.size(); ++rule_index) {
             const AstSelectorRule& rule = grammar->ast_selector_rules[rule_index];
@@ -2042,6 +2047,14 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                 ? ast_supertype_field_rules : ast_supertype_node_rules;
             for (TSSymbol subtype : subtypes) {
                 reverse_index[subtype].push_back(rule_index);
+                const char* subtype_name =
+                    ts_language_symbol_name(grammar->ts_language, subtype);
+                if (subtype_name && subtype_name[0] != '\\0') {
+                    auto& type_index = rule.field_id != 0
+                        ? ast_supertype_field_rules_by_type
+                        : ast_supertype_node_rules_by_type;
+                    type_index[subtype_name].push_back(rule_index);
+                }
             }
         }
 
@@ -2070,7 +2083,7 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                     }
                 }
             };
-            auto append_indexed_type_rules = [&](const AstTypeRuleIndex& index, const char* type) {
+            auto append_indexed_type_rules = [&](const auto& index, const char* type) {
                 if (!type) return;
                 const auto found = index.find(std::string(type));
                 if (found != index.end()) append_indexed_rules(found->second);
@@ -2079,8 +2092,10 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
             const char* node_type = ts_node_type(node);
             const char* node_grammar_type = ts_node_grammar_type(node);
             append_indexed_type_rules(grammar->ast_rules_by_node_type, node_type);
+            append_indexed_type_rules(ast_supertype_node_rules_by_type, node_type);
             if (!node_grammar_type || !node_type || std::strcmp(node_grammar_type, node_type) != 0) {
                 append_indexed_type_rules(grammar->ast_rules_by_node_type, node_grammar_type);
+                append_indexed_type_rules(ast_supertype_node_rules_by_type, node_grammar_type);
             }
             auto node_rules = grammar->ast_rules_by_node_symbol.find(sym);
             if (node_rules != grammar->ast_rules_by_node_symbol.end()) {
@@ -2113,8 +2128,10 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                 const char* parent_type = ts_node_type(parent);
                 const char* parent_grammar_type = ts_node_grammar_type(parent);
                 append_indexed_type_rules(grammar->ast_field_rules_by_parent_type, parent_type);
+                append_indexed_type_rules(ast_supertype_field_rules_by_type, parent_type);
                 if (!parent_grammar_type || !parent_type || std::strcmp(parent_grammar_type, parent_type) != 0) {
                     append_indexed_type_rules(grammar->ast_field_rules_by_parent_type, parent_grammar_type);
+                    append_indexed_type_rules(ast_supertype_field_rules_by_type, parent_grammar_type);
                 }
                 // Field selectors are indexed by the compiled owner symbol.
                 // Also dispatch through the original grammar identity when an
