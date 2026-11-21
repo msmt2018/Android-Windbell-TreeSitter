@@ -407,7 +407,7 @@ public:
         if (fd_ >= 0) {
             const int value = fd_;
             fd_ = -1;
-            while (::close(value) < 0 && errno == EINTR) {}
+            (void)::close(value);
         }
     }
 private:
@@ -419,11 +419,23 @@ private:
 class ScopedNativePath final {
 public:
     explicit ScopedNativePath(const char *path) noexcept : path_(path) {}
-    ~ScopedNativePath() { if (path_ && *path_) ::unlink(path_); }
+    ~ScopedNativePath() { if (active_ && path_ && *path_) ::unlink(path_); }
+    void release() noexcept { active_ = false; }
     ScopedNativePath(const ScopedNativePath &) = delete;
     ScopedNativePath &operator=(const ScopedNativePath &) = delete;
 private:
     const char *path_;
+    bool active_ = true;
+};
+
+class ScopedNativeBackingPath final {
+public:
+    explicit ScopedNativeBackingPath(const std::string &path) noexcept : path_(path) {}
+    ~ScopedNativeBackingPath() { if (!path_.empty()) ::unlink(path_.c_str()); }
+    ScopedNativeBackingPath(const ScopedNativeBackingPath &) = delete;
+    ScopedNativeBackingPath &operator=(const ScopedNativeBackingPath &) = delete;
+private:
+    const std::string &path_;
 };
 
 static int createAnonymousBackingFile(uint64_t size_bytes) noexcept {
@@ -1253,6 +1265,7 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeCreateDocument(
 
     try {
     std::string backing_path;
+    ScopedNativeBackingPath backing_path_guard(backing_path);
     int fd = createAnonymousBackingFile(static_cast<uint64_t>(byte_length));
     ScopedNativeFd fd_guard(fd);
     const bool anonymous_backing = fd >= 0;
@@ -1269,6 +1282,7 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeCreateDocument(
         }
         ScopedNativePath temporary_path_guard(path.data());
         backing_path.assign(path.data());
+        temporary_path_guard.release();
     }
     bool ok = ::ftruncate(fd, static_cast<off_t>(byte_length)) == 0;
     std::vector<uint8_t> window;
@@ -1340,12 +1354,15 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeCreateDocument(
             pattern += ".windbell-tsh-fallback-XXXXXX";
             std::vector<char> path(pattern.begin(), pattern.end());
             path.push_back('\0');
-            const int fallback_fd = ::mkstemp(path.data());
-            ScopedNativeFd fallback_fd_guard(const_cast<int &>(fallback_fd));
+            int fallback_fd = ::mkstemp(path.data());
+            ScopedNativeFd fallback_fd_guard(fallback_fd);
             ScopedNativePath fallback_path_guard(fallback_fd >= 0 ? path.data() : nullptr);
             bool copied = fallback_fd >= 0 &&
                 ::ftruncate(fallback_fd, static_cast<off_t>(byte_length)) == 0;
-            if (fallback_fd >= 0) backing_path.assign(path.data());
+            if (fallback_fd >= 0) {
+                backing_path.assign(path.data());
+                fallback_path_guard.release();
+            }
             uint64_t copied_bytes = 0;
             while (copied && copied_bytes < static_cast<uint64_t>(byte_length)) {
                 const size_t request = static_cast<size_t>(std::min<uint64_t>(
