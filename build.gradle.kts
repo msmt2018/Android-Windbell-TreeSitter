@@ -14,7 +14,7 @@ import java.time.format.DateTimeFormatter
 
 buildscript {
   dependencies {
-    classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:2.3.20")
+    classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:2.4.21")
   }
 }
 
