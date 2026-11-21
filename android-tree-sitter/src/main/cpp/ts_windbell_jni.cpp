@@ -850,11 +850,11 @@ JNIEXPORT jobjectArray JNICALL
 Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeGetSchemeNames(
     JNIEnv* env, jobject, jstring extension_jstr
 ) {
+    try {
     if (!extension_jstr) return nullptr;
-    const char* ext = env->GetStringUTFChars(extension_jstr, nullptr);
+    ScopedUtfChars ext(env, extension_jstr);
     if (!ext) return nullptr;
-    const std::string extension(ext);
-    env->ReleaseStringUTFChars(extension_jstr, ext);
+    const std::string extension(ext.get());
 
     auto grammar = WindbellEngine::getInstance().getGrammarByExtension(extension);
     if (!grammar) return env->NewObjectArray(0, env->FindClass("java/lang/String"), nullptr);
@@ -866,15 +866,33 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeGetSchemeNames(
 
     jclass string_class = env->FindClass("java/lang/String");
     if (!string_class) return nullptr;
+    if (names.size() > static_cast<size_t>(std::numeric_limits<jsize>::max())) {
+        env->DeleteLocalRef(string_class);
+        throw_illegal_state(env, "Scheme name result exceeds JNI array capacity");
+        return nullptr;
+    }
     jobjectArray result = env->NewObjectArray(static_cast<jsize>(names.size()), string_class, nullptr);
     if (!result) { env->DeleteLocalRef(string_class); return nullptr; }
     for (size_t i = 0; i < names.size(); ++i) {
         jstring value = env->NewStringUTF(names[i].c_str());
+        if (!value) { env->DeleteLocalRef(result); env->DeleteLocalRef(string_class); return nullptr; }
         env->SetObjectArrayElement(result, static_cast<jsize>(i), value);
         env->DeleteLocalRef(value);
+        if (env->ExceptionCheck()) { env->DeleteLocalRef(result); env->DeleteLocalRef(string_class); return nullptr; }
     }
     env->DeleteLocalRef(string_class);
     return result;
+
+    } catch (const std::bad_alloc &) {
+        throwNativeAllocationFailure(env, "nativeGetSchemeNames: native allocation failed");
+        return nullptr;
+    } catch (const std::exception &error) {
+        throwNativeHighlightFailure(env, error.what());
+        return nullptr;
+    } catch (...) {
+        throwNativeHighlightFailure(env, "nativeGetSchemeNames: unknown native failure");
+        return nullptr;
+    }
 }
 
 /**
@@ -884,27 +902,49 @@ JNIEXPORT jstring JNICALL
 Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeGetDefaultScheme(
     JNIEnv* env, jobject, jstring extension_jstr
 ) {
+    try {
     if (!extension_jstr) return nullptr;
-    const char* ext = env->GetStringUTFChars(extension_jstr, nullptr);
+    ScopedUtfChars ext(env, extension_jstr);
     if (!ext) return nullptr;
-    const std::string extension(ext);
-    env->ReleaseStringUTFChars(extension_jstr, ext);
+    const std::string extension(ext.get());
     auto grammar = WindbellEngine::getInstance().getGrammarByExtension(extension);
     if (!grammar || grammar->default_scheme_name.empty()) return nullptr;
     return env->NewStringUTF(grammar->default_scheme_name.c_str());
+
+    } catch (const std::bad_alloc &) {
+        throwNativeAllocationFailure(env, "nativeGetDefaultScheme: native allocation failed");
+        return nullptr;
+    } catch (const std::exception &error) {
+        throwNativeHighlightFailure(env, error.what());
+        return nullptr;
+    } catch (...) {
+        throwNativeHighlightFailure(env, "nativeGetDefaultScheme: unknown native failure");
+        return nullptr;
+    }
 }
 
 JNIEXPORT jboolean JNICALL
 Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeGetDefaultIsDark(
     JNIEnv* env, jobject, jstring extension_jstr
 ) {
+    try {
     if (!extension_jstr) return JNI_FALSE;
-    const char* ext = env->GetStringUTFChars(extension_jstr, nullptr);
+    ScopedUtfChars ext(env, extension_jstr);
     if (!ext) return JNI_FALSE;
-    const std::string extension(ext);
-    env->ReleaseStringUTFChars(extension_jstr, ext);
+    const std::string extension(ext.get());
     auto grammar = WindbellEngine::getInstance().getGrammarByExtension(extension);
     return grammar && grammar->default_is_dark ? JNI_TRUE : JNI_FALSE;
+
+    } catch (const std::bad_alloc &) {
+        throwNativeAllocationFailure(env, "nativeGetDefaultIsDark: native allocation failed");
+        return JNI_FALSE;
+    } catch (const std::exception &error) {
+        throwNativeHighlightFailure(env, error.what());
+        return JNI_FALSE;
+    } catch (...) {
+        throwNativeHighlightFailure(env, "nativeGetDefaultIsDark: unknown native failure");
+        return JNI_FALSE;
+    }
 }
 
 /**
@@ -914,11 +954,11 @@ JNIEXPORT jobjectArray JNICALL
 Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeGetEditorMetadata(
     JNIEnv* env, jobject, jstring extension_jstr
 ) {
+    try {
     if (!extension_jstr) return nullptr;
-    const char* ext = env->GetStringUTFChars(extension_jstr, nullptr);
+    ScopedUtfChars ext(env, extension_jstr);
     if (!ext) return nullptr;
-    const std::string extension(ext);
-    env->ReleaseStringUTFChars(extension_jstr, ext);
+    const std::string extension(ext.get());
     auto grammar = WindbellEngine::getInstance().getGrammarByExtension(extension);
 
     jclass string_class = env->FindClass("java/lang/String");
@@ -966,17 +1006,35 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeGetEditorMetadat
     }
     for (const auto& option : metadata.options) records.push_back({"editorOption", option.first, option.second});
 
+    if (records.size() > static_cast<size_t>(std::numeric_limits<jsize>::max()) / 3u) {
+        env->DeleteLocalRef(string_class);
+        throw_illegal_state(env, "Editor metadata result exceeds JNI array capacity");
+        return nullptr;
+    }
     jobjectArray result = env->NewObjectArray(static_cast<jsize>(records.size() * 3), string_class, nullptr);
     if (!result) { env->DeleteLocalRef(string_class); return nullptr; }
     for (size_t i = 0; i < records.size(); ++i) {
         for (size_t field = 0; field < 3; ++field) {
             jstring value = env->NewStringUTF(records[i][field].c_str());
+            if (!value) { env->DeleteLocalRef(result); env->DeleteLocalRef(string_class); return nullptr; }
             env->SetObjectArrayElement(result, static_cast<jsize>(i * 3 + field), value);
             env->DeleteLocalRef(value);
+            if (env->ExceptionCheck()) { env->DeleteLocalRef(result); env->DeleteLocalRef(string_class); return nullptr; }
         }
     }
     env->DeleteLocalRef(string_class);
     return result;
+
+    } catch (const std::bad_alloc &) {
+        throwNativeAllocationFailure(env, "nativeGetEditorMetadata: native allocation failed");
+        return nullptr;
+    } catch (const std::exception &error) {
+        throwNativeHighlightFailure(env, error.what());
+        return nullptr;
+    } catch (...) {
+        throwNativeHighlightFailure(env, "nativeGetEditorMetadata: unknown native failure");
+        return nullptr;
+    }
 }
 
 /**
@@ -987,11 +1045,11 @@ JNIEXPORT jobjectArray JNICALL
 Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeGetStyleCatalog(
     JNIEnv* env, jobject, jstring extension_jstr
 ) {
+    try {
     if (!extension_jstr) return nullptr;
-    const char* ext = env->GetStringUTFChars(extension_jstr, nullptr);
+    ScopedUtfChars ext(env, extension_jstr);
     if (!ext) return nullptr;
-    const std::string extension(ext);
-    env->ReleaseStringUTFChars(extension_jstr, ext);
+    const std::string extension(ext.get());
     auto grammar = WindbellEngine::getInstance().getGrammarByExtension(extension);
     jclass string_class = env->FindClass("java/lang/String");
     if (!string_class) return nullptr;
@@ -1001,6 +1059,11 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeGetStyleCatalog(
         return empty;
     }
 
+    if (grammar->styles.size() > static_cast<size_t>(std::numeric_limits<jsize>::max()) / 8u) {
+        env->DeleteLocalRef(string_class);
+        throw_illegal_state(env, "Style catalog result exceeds JNI array capacity");
+        return nullptr;
+    }
     jobjectArray result = env->NewObjectArray(static_cast<jsize>(grammar->styles.size() * 8), string_class, nullptr);
     if (!result) { env->DeleteLocalRef(string_class); return nullptr; }
     for (size_t i = 0; i < grammar->styles.size(); ++i) {
@@ -1026,12 +1089,25 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeGetStyleCatalog(
         };
         for (size_t field = 0; field < 8; ++field) {
             jstring value = env->NewStringUTF(values[field].c_str());
+            if (!value) { env->DeleteLocalRef(result); env->DeleteLocalRef(string_class); return nullptr; }
             env->SetObjectArrayElement(result, static_cast<jsize>(i * 8 + field), value);
             env->DeleteLocalRef(value);
+            if (env->ExceptionCheck()) { env->DeleteLocalRef(result); env->DeleteLocalRef(string_class); return nullptr; }
         }
     }
     env->DeleteLocalRef(string_class);
     return result;
+
+    } catch (const std::bad_alloc &) {
+        throwNativeAllocationFailure(env, "nativeGetStyleCatalog: native allocation failed");
+        return nullptr;
+    } catch (const std::exception &error) {
+        throwNativeHighlightFailure(env, error.what());
+        return nullptr;
+    } catch (...) {
+        throwNativeHighlightFailure(env, "nativeGetStyleCatalog: unknown native failure");
+        return nullptr;
+    }
 }
 
 /**
@@ -1041,18 +1117,13 @@ JNIEXPORT jobjectArray JNICALL
 Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeGetThemeTokens(
     JNIEnv* env, jobject, jstring extension_jstr, jstring scheme_jstr, jboolean is_dark
 ) {
+    try {
     if (!extension_jstr || !scheme_jstr) return nullptr;
-    const char* ext = env->GetStringUTFChars(extension_jstr, nullptr);
-    const char* scheme_name = env->GetStringUTFChars(scheme_jstr, nullptr);
-    if (!ext || !scheme_name) {
-        if (ext) env->ReleaseStringUTFChars(extension_jstr, ext);
-        if (scheme_name) env->ReleaseStringUTFChars(scheme_jstr, scheme_name);
-        return nullptr;
-    }
-    const std::string extension(ext);
-    const std::string selected_scheme(scheme_name);
-    env->ReleaseStringUTFChars(extension_jstr, ext);
-    env->ReleaseStringUTFChars(scheme_jstr, scheme_name);
+    ScopedUtfChars ext(env, extension_jstr);
+    ScopedUtfChars scheme_name(env, scheme_jstr);
+    if (!ext || !scheme_name) return nullptr;
+    const std::string extension(ext.get());
+    const std::string selected_scheme(scheme_name.get());
 
     auto grammar = WindbellEngine::getInstance().getGrammarByExtension(extension);
     if (!grammar) return nullptr;
@@ -1071,19 +1142,39 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeGetThemeTokens(
 
     jclass string_class = env->FindClass("java/lang/String");
     if (!string_class) return nullptr;
+    if (keys.size() > static_cast<size_t>(std::numeric_limits<jsize>::max()) / 2u) {
+        env->DeleteLocalRef(string_class);
+        throw_illegal_state(env, "Theme token result exceeds JNI array capacity");
+        return nullptr;
+    }
     jobjectArray result = env->NewObjectArray(static_cast<jsize>(keys.size() * 2), string_class, nullptr);
     if (!result) { env->DeleteLocalRef(string_class); return nullptr; }
     for (size_t i = 0; i < keys.size(); ++i) {
         const auto color = effective_tokens.at(keys[i]);
         jstring key = env->NewStringUTF(keys[i].c_str());
-        jstring value = env->NewStringUTF(std::to_string(color).c_str());
+        if (!key) { env->DeleteLocalRef(result); env->DeleteLocalRef(string_class); return nullptr; }
+        const std::string color_text = std::to_string(color);
+        jstring value = env->NewStringUTF(color_text.c_str());
+        if (!value) { env->DeleteLocalRef(key); env->DeleteLocalRef(result); env->DeleteLocalRef(string_class); return nullptr; }
         env->SetObjectArrayElement(result, static_cast<jsize>(i * 2), key);
-        env->SetObjectArrayElement(result, static_cast<jsize>(i * 2 + 1), value);
+        if (!env->ExceptionCheck()) env->SetObjectArrayElement(result, static_cast<jsize>(i * 2 + 1), value);
         env->DeleteLocalRef(key);
         env->DeleteLocalRef(value);
+        if (env->ExceptionCheck()) { env->DeleteLocalRef(result); env->DeleteLocalRef(string_class); return nullptr; }
     }
     env->DeleteLocalRef(string_class);
     return result;
+
+    } catch (const std::bad_alloc &) {
+        throwNativeAllocationFailure(env, "nativeGetThemeTokens: native allocation failed");
+        return nullptr;
+    } catch (const std::exception &error) {
+        throwNativeHighlightFailure(env, error.what());
+        return nullptr;
+    } catch (...) {
+        throwNativeHighlightFailure(env, "nativeGetThemeTokens: unknown native failure");
+        return nullptr;
+    }
 }
 
 /**
