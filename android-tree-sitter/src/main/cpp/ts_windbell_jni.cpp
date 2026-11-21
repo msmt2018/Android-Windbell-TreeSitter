@@ -1799,14 +1799,6 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
         return std::any_of(rule.nested_rules.begin(), rule.nested_rules.end(),
             [&](const CompiledRegexRule &nested) { return self(self, nested); });
     };
-    const auto has_block_rule = [](const auto &self, const CompiledRegexRule &rule) -> bool {
-        if (rule.enabled && rule.type == RegexRuleType::BLOCK) return true;
-        return std::any_of(rule.nested_rules.begin(), rule.nested_rules.end(),
-            [&](const CompiledRegexRule &nested) { return self(self, nested); });
-    };
-    const bool has_context_block = std::any_of(
-        grammar->regex_rules.begin(), grammar->regex_rules.end(),
-        [&](const CompiledRegexRule &rule) { return has_block_rule(has_block_rule, rule); });
     const bool has_regex_state = !grammar->regex_states.empty();
     const bool source_has_regex = grammar &&
         (!grammar->regex_rules.empty() || has_regex_state ||
@@ -1817,7 +1809,6 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
     const bool source_requires_contiguous_regex = grammar &&
         std::any_of(grammar->regex_rules.begin(), grammar->regex_rules.end(),
             [&](const CompiledRegexRule &rule) { return has_context_rule(has_context_rule, rule); }) ||
-        has_context_block ||
         (grammar && has_regex_state && !grammar->regex_state_graph_bounded) ||
         (grammar && std::any_of(grammar->native_queries.begin(), grammar->native_queries.end(),
             [](const NativeQueryProgram &query) {
@@ -1948,8 +1939,8 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
             HIGHLIGHT_DEPENDENCY_DOCUMENT_WIDE
         });
     }
-    // Stateful, block and document-context Regex can propagate lexical state
-    // beyond the viewport. Keep one global dependency when the core did not
+    // Stateful and document-context Regex can propagate lexical state beyond
+    // the viewport. Keep one global dependency when the core did not
     // already publish a verified document-wide envelope.
     const bool has_regex_state_dependency = std::any_of(
         cache_value.dependencies.begin(), cache_value.dependencies.end(),
@@ -1965,7 +1956,7 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
                 (dependency.flags & HIGHLIGHT_DEPENDENCY_DOCUMENT_WIDE) != 0;
         });
     const bool added_global_regex_dependency =
-        (source_requires_contiguous_regex || has_context_block) &&
+        source_requires_contiguous_regex &&
         !has_document_wide_regex_dependency;
     if (added_global_regex_dependency) {
         cache_value.dependencies.push_back({
