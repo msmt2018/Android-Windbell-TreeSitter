@@ -665,7 +665,7 @@ static TshPredicateResult tshEvaluateNativePredicates(const NativeQueryProgram& 
         // Tree-sitter predicate metadata terminates each expression with a
         // Done step. Treat it as a delimiter, not as an operand; otherwise
         // every custom predicate is rejected before its evaluator runs.
-        const size_t predicate_size = predicate_size -
+        const size_t predicate_size = predicate.size() -
             (!predicate.empty() && predicate.back().type == TSQueryPredicateStepTypeDone ? 1u : 0u);
         if (predicate.empty() || predicate[0].type != TSQueryPredicateStepTypeString) return TshPredicateResult::REJECT;
 
