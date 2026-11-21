@@ -707,7 +707,7 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeGetLanguageMetad
             auto join = [](const std::vector<std::string>& items) {
                 std::string out;
                 for (size_t i = 0; i < items.size(); ++i) {
-                    if (i) out.push_back('\\x1F');
+                    if (i) out.push_back('\x1F');
                     out += items[i];
                 }
                 return out;
