@@ -331,6 +331,12 @@ jobs:
     name: Android device tests (API ${{ matrix.api-level }})
     runs-on: ubuntu-latest
     timeout-minutes: 90
+    # GitHub-hosted Linux runners do not expose KVM to the emulator. The
+    # emulator-runner action therefore launches with -accel off; current
+    # emulator releases require this explicit opt-in for TCG software CPU
+    # emulation, otherwise the emulator exits before creating emulator-5554.
+    env:
+      ANDROID_I_WANT_MY_TCG: "yes"
     strategy:
       fail-fast: false
       matrix:
