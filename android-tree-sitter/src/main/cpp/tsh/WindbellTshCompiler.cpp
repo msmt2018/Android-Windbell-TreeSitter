@@ -1129,6 +1129,9 @@ static regex_t* compileOnigurumaUtf16(const std::string& pattern_str, OnigOption
 
 std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& source, const TSLanguage* ts_lang) {
     auto grammar = std::make_shared<TshGrammar>();
+    // ATS selectors resolve ancestor/supertype metadata against the same
+    // long-lived language object used to compile the Tree-sitter queries.
+    grammar->ts_language = ts_lang;
     std::unordered_map<std::string, std::string> defines_map;
     std::unordered_map<std::string, bool> tree_sitter_query_ids;
     uint32_t native_query_declaration_order = 0;
