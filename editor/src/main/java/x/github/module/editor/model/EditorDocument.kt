@@ -171,11 +171,6 @@ class EditorDocument(
         private set
 
     /**
-     * Swaps in a whole new buffer (another file, a restored state). This is not an
-     * edit: the callback is not called and the history is left alone, the caller decides
-     * what to do with both.
-     */
-    /**
      * Creates an immutable PieceTree snapshot while excluding concurrent document mutations.
      * The snapshot keeps its own storage references after this lock is released.
      */
@@ -187,6 +182,11 @@ class EditorDocument(
         current.pieceTree.createSnapshot()
     }
 
+    /**
+     * Swaps in a whole new buffer (another file, a restored state). This is not an
+     * edit: the callback is not called and the history is left alone, the caller decides
+     * what to do with both.
+     */
     fun replaceBuffer(newBuffer: EditorBuffer) = bufferSnapshotLock.withLock {
         val previous = buffer
         if (previous !== newBuffer) {
@@ -300,7 +300,14 @@ class EditorDocument(
         edits: List<SliceEdit>,
         computeUndoEdits: Boolean = true
     ) {
-        apply(edits.map { it.withWholeCharacters() }, if (computeUndoEdits) Record.STEP else Record.UNTRACKED)
+        // Normalize surrogate boundaries against the same buffer generation that receives
+        // the edits. apply() re-enters this lock for the complete callback/mutation pipeline.
+        bufferSnapshotLock.withLock {
+            apply(
+                edits.map { it.withWholeCharacters() },
+                if (computeUndoEdits) Record.STEP else Record.UNTRACKED
+            )
+        }
     }
 
     // An edit whose range starts or ends between the two halves of a character made
