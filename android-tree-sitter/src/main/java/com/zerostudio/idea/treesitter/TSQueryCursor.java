@@ -97,6 +97,9 @@ public class TSQueryCursor extends TSNativeObject implements Iterable<TSQueryMat
     }
 
     predicateHandlers.add(handler);
+    // Preserve the historical handler-driven behavior while keeping raw native
+    // query iteration unfiltered until a caller opts in by registering a handler.
+    predicateEvaluationEnabled = true;
   }
 
   /**

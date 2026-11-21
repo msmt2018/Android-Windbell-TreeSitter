@@ -2639,6 +2639,10 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                                                 if (consumed != pattern_value.text.size()) return nullptr;
                                                 metadata.has_priority = true;
                                             } catch (...) { return nullptr; }
+                                        } else if (pattern_field.text == "overlap") {
+                                            if (pattern_value.text == "allow") metadata.allow_overlap = true;
+                                            else if (pattern_value.text == "deny") metadata.allow_overlap = false;
+                                            else return nullptr;
                                         } else if (pattern_field.text == "order") {
                                             if (pattern_value.type != TshLexer::TokenType::TOK_NUMBER) return nullptr;
                                             try {

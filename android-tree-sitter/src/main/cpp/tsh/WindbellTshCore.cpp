@@ -2520,6 +2520,8 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                     span.style_id = style_binding->second;
                     span.flags = 0;
                     span.priority = pattern_priority;
+                    span.allow_overlap = pattern_metadata != native_query.pattern_metadata.end() &&
+                        pattern_metadata->second.allow_overlap ? 1u : 0u;
                     const uint64_t order = static_cast<uint64_t>(native_query.declaration_order) +
                         pattern_order + current_order + capture_index;
                     span.declaration_order = static_cast<uint32_t>(

@@ -280,7 +280,7 @@ public class ParserTest extends TreeSitterTest {
 
         //noinspection DataFlowIssue
         final var variables = substrings(
-          execQueryGroupByCaptures("(variable_declaration name: (_) @variable)",
+          execQueryGroupByCaptures("(parameter name: (_) @variable)",
             TSLanguageAidl.getInstance(), rootNode).get("variable"), source);
         assertThat(variables).containsExactly("somethingWeReceive", "somethingWeProvide",
           "somethingWeBothUse");

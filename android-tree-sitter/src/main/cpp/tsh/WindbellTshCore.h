@@ -161,6 +161,7 @@ struct NativeQueryProgram {
         uint32_t declaration_order = 0;
         bool has_priority = false;
         bool enabled = true;
+        bool allow_overlap = false;
         bool is_rooted = false;
         bool is_non_local = false;
         TSSymbol root_node_symbol = 0;
