@@ -2350,17 +2350,18 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                     }
                 }
 
-                if (ast_rule.child_index != UINT32_MAX ||
+                const bool needs_child_position =
+                    ast_rule.child_index != UINT32_MAX ||
                     ast_rule.named_child_index != UINT32_MAX ||
-                    ast_rule.first_child >= 0 || ast_rule.last_child >= 0 ||
-                    ast_rule.previous_sibling_symbol != 0 || ast_rule.next_sibling_symbol != 0) {
+                    ast_rule.first_child >= 0 || ast_rule.last_child >= 0;
+                if (needs_child_position) {
                     if (ts_node_is_null(parent)) continue;
                     const uint32_t sibling_count = ts_node_child_count(parent);
                     uint32_t current_index = UINT32_MAX;
                     uint32_t current_named_index = UINT32_MAX;
                     uint32_t named_seen = 0;
                     for (uint32_t sibling_index = 0; sibling_index < sibling_count; ++sibling_index) {
-                        TSNode sibling = ts_node_child(parent, sibling_index);
+                        const TSNode sibling = ts_node_child(parent, sibling_index);
                         if (ts_node_eq(sibling, node)) {
                             current_index = sibling_index;
                             if (ts_node_is_named(sibling)) current_named_index = named_seen;
@@ -2377,16 +2378,30 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                         (current_index == 0) != (ast_rule.first_child != 0)) continue;
                     if (ast_rule.last_child >= 0 &&
                         (current_index + 1 == sibling_count) != (ast_rule.last_child != 0)) continue;
-                    if (ast_rule.previous_sibling_symbol != 0) {
-                        if (current_index == 0 ||
-                            ts_node_symbol(ts_node_child(parent, current_index - 1)) !=
-                                ast_rule.previous_sibling_symbol) continue;
-                    }
-                    if (ast_rule.next_sibling_symbol != 0) {
-                        if (current_index + 1 >= sibling_count ||
-                            ts_node_symbol(ts_node_child(parent, current_index + 1)) !=
-                                ast_rule.next_sibling_symbol) continue;
-                    }
+                }
+
+                // Resolve immediate siblings from the active Tree-sitter cursor.
+                // Reconstructing the current child index via ts_node_eq is only
+                // required by positional selectors; sibling selectors must not
+                // depend on that identity scan (notably for anonymous/aliased nodes).
+                if (ast_rule.previous_sibling_symbol != 0) {
+                    TSTreeCursor sibling_cursor = ts_tree_cursor_copy(&cursor);
+                    const bool has_previous =
+                        ts_tree_cursor_goto_previous_sibling(&sibling_cursor);
+                    const bool matches_previous = has_previous &&
+                        ts_node_symbol(ts_tree_cursor_current_node(&sibling_cursor)) ==
+                            ast_rule.previous_sibling_symbol;
+                    ts_tree_cursor_delete(&sibling_cursor);
+                    if (!matches_previous) continue;
+                }
+                if (ast_rule.next_sibling_symbol != 0) {
+                    TSTreeCursor sibling_cursor = ts_tree_cursor_copy(&cursor);
+                    const bool has_next = ts_tree_cursor_goto_next_sibling(&sibling_cursor);
+                    const bool matches_next = has_next &&
+                        ts_node_symbol(ts_tree_cursor_current_node(&sibling_cursor)) ==
+                            ast_rule.next_sibling_symbol;
+                    ts_tree_cursor_delete(&sibling_cursor);
+                    if (!matches_next) continue;
                 }
 
                 if (diagnostic_match_counts) tshIncrementDiagnostic(&diagnostic_match_counts[2]);
