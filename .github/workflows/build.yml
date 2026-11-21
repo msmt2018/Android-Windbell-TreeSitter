@@ -434,14 +434,98 @@ jobs:
           echo "✅ Installed dependencies for all ${#manifests[@]} grammar packages."
       - name: Change Gradle wrapper permissions
         run: chmod +x ./gradlew
+      - name: Prepare Android instrumentation runner
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p build
+          cat > build/run-android-instrumentation.sh <<'RUNNER'
+          #!/usr/bin/env bash
+          set -Eeuo pipefail
+
+          LOG_DIR="build/emulator-test-logs"
+          mkdir -p "$LOG_DIR"
+
+          adb start-server
+          timeout 180 adb -s emulator-5554 wait-for-device
+
+          boot_deadline=$(( $(date +%s) + 300 ))
+          while :; do
+            boot_completed="$(adb -s emulator-5554 shell getprop sys.boot_completed 2>/dev/null | tr -d '\r' || true)"
+            if [[ "$boot_completed" == "1" ]]; then
+              break
+            fi
+            if (( $(date +%s) >= boot_deadline )); then
+              echo "::error::Android emulator did not report sys.boot_completed=1"
+              adb devices -l || true
+              exit 1
+            fi
+            sleep 2
+          done
+
+          service_is_ready() {
+            local service="$1"
+            adb -s emulator-5554 shell service check "$service" 2>/dev/null | grep -q "found"
+          }
+
+          # Do not trust sys.boot_completed alone. On software-rendered hosted
+          # emulators adb can see a device while framework services and SDK
+          # properties are still intermittently unavailable to Gradle.
+          expected_sdk="${EXPECTED_API_LEVEL:?EXPECTED_API_LEVEL must match the emulator matrix}"
+          stable_probes=0
+          readiness_deadline=$(( $(date +%s) + 240 ))
+          while (( stable_probes < 5 )); do
+            adb_state="$(adb -s emulator-5554 get-state 2>/dev/null || true)"
+            actual_sdk="$(adb -s emulator-5554 shell getprop ro.build.version.sdk 2>/dev/null | tr -d '\r' || true)"
+            fingerprint="$(adb -s emulator-5554 shell getprop ro.build.fingerprint 2>/dev/null | tr -d '\r' || true)"
+            if [[ "$adb_state" == "device" &&
+                  "$actual_sdk" == "$expected_sdk" &&
+                  -n "$fingerprint" ]] &&
+               service_is_ready activity &&
+               service_is_ready package; then
+              stable_probes=$((stable_probes + 1))
+            else
+              stable_probes=0
+              echo "Waiting for stable emulator: adb=$adb_state sdk=$actual_sdk expected=$expected_sdk"
+            fi
+            if (( $(date +%s) >= readiness_deadline )); then
+              echo "::error::Android emulator did not remain stable at API $expected_sdk"
+              adb devices -l || true
+              adb -s emulator-5554 shell getprop || true
+              exit 1
+            fi
+            sleep 3
+          done
+
+          echo "Emulator is stable and reports API $expected_sdk."
+          adb -s emulator-5554 shell getprop ro.build.version.sdk
+          adb -s emulator-5554 shell service check activity
+          adb -s emulator-5554 shell service check package
+
+          test_result=0
+          ./gradlew :editor:connectedDebugAndroidTest :app:connectedDebugAndroidTest --continue --max-workers=1 --stacktrace || test_result=$?
+
+          adb -s emulator-5554 logcat -d -v threadtime > "$LOG_DIR/logcat.txt" 2>&1 || true
+          adb -s emulator-5554 shell dumpsys activity activities > "$LOG_DIR/activities.txt" 2>&1 || true
+          adb devices -l > "$LOG_DIR/adb-devices.txt" 2>&1 || true
+          exit "$test_result"
+          RUNNER
+          chmod +x build/run-android-instrumentation.sh
+          bash -n build/run-android-instrumentation.sh
       - name: Run Android instrumentation tests
         uses: reactivecircus/android-emulator-runner@v2
+        env:
+          EXPECTED_API_LEVEL: ${{ matrix.api-level }}
         with:
           api-level: ${{ matrix.api-level }}
-          target: google_apis
+          target: default
           arch: x86_64
-          disable-animations: true
-          script: bash -euo pipefail -c 'mkdir -p build/emulator-test-logs; adb start-server; timeout 180 adb -s emulator-5554 wait-for-device; adb -s emulator-5554 shell getprop sys.boot_completed; adb -s emulator-5554 shell settings put global animator_duration_scale 0; adb -s emulator-5554 shell settings put global transition_animation_scale 0; adb -s emulator-5554 shell settings put global window_animation_scale 0; set +e; ./gradlew :editor:connectedDebugAndroidTest :app:connectedDebugAndroidTest --continue --max-workers=1 --stacktrace; test_result=$?; adb -s emulator-5554 logcat -d -v threadtime > build/emulator-test-logs/logcat.txt 2>&1; adb -s emulator-5554 shell dumpsys activity activities > build/emulator-test-logs/activities.txt 2>&1; exit $test_result'
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -no-snapshot -no-snapshot-load -no-snapshot-save -memory 2048 -cores 2
+          # Animation settings are not a test prerequisite; avoid Settings-provider startup races.
+          disable-animations: false
+          # The action executes script input as separate /usr/bin/sh commands.
+          # Keep this a single command; the actual loops live in the Bash file.
+          script: bash -euo pipefail build/run-android-instrumentation.sh
       - name: Upload Android device test reports and logs
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
