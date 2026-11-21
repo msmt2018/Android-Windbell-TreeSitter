@@ -56,12 +56,19 @@ class TreeSitterPlugin : Plugin<Project> {
           // Build tree-sitter library first
           dependsOn(rootProject.tasks.getByName("buildTreeSitter"))
 
-          // Generate the tree sitter parser from grammar.js (supports single & composite sub-parsers)
-          tasks.findByName("generateTreeSitterGrammar")?.also { dependsOn(it) }
-
           this.cppDir.set(cppDir)
           this.outputFile.set(BuildForHostTask.getOutputFile(project).second)
         }
+
+      // The grammar plugin may register generation tasks after this plugin is
+      // applied. Keep a live task collection so ABI-15 parser generation is
+      // ordered before the host build even when task registration is deferred.
+      val grammarGenerationTasks = tasks.matching {
+        it.name == "generateTreeSitterGrammar"
+      }
+      buildForHost.configure {
+        dependsOn(grammarGenerationTasks)
+      }
 
       val cleanHostBuild =
         tasks.register("cleanHostBuild", Delete::class.java) {
