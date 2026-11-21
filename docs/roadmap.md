@@ -4,6 +4,8 @@
 >
 > 最高层规范：[TSH Public API 设计总规范与宿主接入契约](api/public-api-design-principles-and-integration-contract.md)。
 
+> **当前权威总路线图：** [TSH 引擎整体完成度、性能整改与开发待办地图](../android-tree-sitter/TSH_ENGINE_COMPLETION_AND_PERFORMANCE_ROADMAP.md)。本文保留既有 API/宿主接入细项；性能目标、内存策略和总体优先级以该新路线图为准。
+
 ## 状态口径
 
 - SPEC_ONLY：只有规范。
