@@ -40,7 +40,8 @@ class PartitionManagerTest {
         val cache = BoundedLruCache<String, ByteArray>(10) { it.size.toLong() }
         cache.put("a", ByteArray(4))
         cache.put("b", ByteArray(6))
-        // A successful get promotes "a" to MRU, so "b" is the first eviction.
+        // Promote "a" to MRU so "b" is the first eviction.
+        assertThat(cache.get("a")).isNotNull()
         cache.put("c", ByteArray(5))
         assertThat(cache.get("a")).isNotNull()
         assertThat(cache.get("b")).isNull()
