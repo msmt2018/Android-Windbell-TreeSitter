@@ -17,6 +17,8 @@ import com.zerostudio.idea.treesitter.tsh.api.TshTextChangeListener
 import com.zerostudio.idea.treesitter.tsh.api.TshTextDocumentDisposedListener
 import com.zerostudio.idea.treesitter.tsh.api.TshTextSubscription
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.locks.ReentrantLock
+import kotlin.concurrent.withLock
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
@@ -32,19 +34,20 @@ import java.util.concurrent.atomic.AtomicBoolean
 class TshPieceTreeDocument(
     val documentId: String,
     val languageId: String?,
-    private val snapshotThread: Thread? = null,
+    internal val snapshotThread: Thread? = null,
     private val snapshotFactory: () -> PieceTreeSnapshot
 ) {
+    private val snapshotFactoryLock = ReentrantLock()
     private val changeListeners = CopyOnWriteArrayList<TshTextChangeListener>()
     private val disposedListeners = CopyOnWriteArrayList<TshTextDocumentDisposedListener>()
     private val disposed = AtomicBoolean(false)
 
-    fun createSnapshot(): PieceTreeSnapshot {
+    fun createSnapshot(): PieceTreeSnapshot = snapshotFactoryLock.withLock {
         check(!disposed.get()) { "PieceTree document $documentId is disposed" }
         check(snapshotThread == null || Thread.currentThread() === snapshotThread) {
             "PieceTree snapshot creation for $documentId must run on its editor thread"
         }
-        return snapshotFactory()
+        snapshotFactory()
     }
 
     fun publishChange(change: TshTextChange) {
@@ -103,7 +106,8 @@ class TshPieceTreeTextAccessProvider(
             TshCapability("text.disposal-notification", 1)
         )
 
-    override fun supports(instance: Any): Boolean = instance is TshPieceTreeDocument
+    override fun supports(instance: Any): Boolean =
+        instance is TshPieceTreeDocument && instance.snapshotThread == null
 
     override fun supports(instance: Any, descriptor: TshObjectDescriptor): Boolean =
         supports(instance)
@@ -117,6 +121,10 @@ class TshPieceTreeTextAccessProvider(
             if (host.documentId.isBlank()) return failure(
                 "TSH-PIECETREE-006",
                 "PieceTree documentId must not be blank"
+            )
+            if (host.snapshotThread != null) return failure(
+                "TSH-PIECETREE-011",
+                "The concurrent PieceTree provider requires a thread-neutral snapshot factory"
             )
             val pieceTreeSnapshot = host.createSnapshot()
             val version = pieceTreeSnapshot.versionId.toLong()

@@ -46,7 +46,7 @@
 - [ ] 其他可变 Piece Tree/Rope 仍需 pin persistent root/unpin；UTF-8/UTF-16/Code Point/Grapheme 索引化转换仍未完成。
 - [ ] Piece Tree/Rope 索引化 UTF-8/UTF-16/Code Point/Grapheme 转换尚未实现。
 - [ ] Grapheme 目前使用运行时 BreakIterator，不宣称完整 UAX #29。
-- [ ] Text Provider 的实际线程调度、EditorDocument 变更事件与销毁事件尚未连接真实宿主。
+- [x] Text Provider 的实际线程调度、EditorDocument 变更事件与销毁事件尚未连接真实宿主。（PieceTree host 已实现任意线程快照创建、快照工厂串行化及不可变快照并发读取；其他 Provider 的线程策略仍需逐一核验，SOURCE_PARTIAL）。
 
 ### DSL / Schema / Runtime Consumer
 

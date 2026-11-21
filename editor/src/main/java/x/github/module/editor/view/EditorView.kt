@@ -2098,15 +2098,10 @@ open class EditorView @JvmOverloads constructor(
 
     /**
      * Creates an immutable snapshot through EditorDocument's mutation/snapshot lock.
-     * This is the supported snapshot entry point for native consumers.
+     * Safe from any thread; the document lock serializes it with complete edit transactions.
      */
-    @MainThread
-    fun createPieceTreeSnapshot(): PieceTreeSnapshot {
-        check(Looper.myLooper() == Looper.getMainLooper()) {
-            "EditorView.createPieceTreeSnapshot must run on the main thread"
-        }
-        return document.createPieceTreeSnapshot()
-    }
+    fun createPieceTreeSnapshot(): PieceTreeSnapshot =
+        document.createPieceTreeSnapshot()
     
     // find matches by regex
     fun find(
