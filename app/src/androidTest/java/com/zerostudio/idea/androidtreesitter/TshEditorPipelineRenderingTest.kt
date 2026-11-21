@@ -507,13 +507,25 @@ class TshEditorPipelineRenderingTest {
                 editor = EditorView(context)
                 editor.setBackgroundColor(Color.WHITE)
                 editor.setTextColor(Color.DKGRAY)
-                editor.setTextSize(48f)
                 editor.setGutterEnabled(false)
+                editor.setTextSize(48f)
                 editor.measure(
                     View.MeasureSpec.makeMeasureSpec(bitmap.width, View.MeasureSpec.EXACTLY),
                     View.MeasureSpec.makeMeasureSpec(bitmap.height, View.MeasureSpec.EXACTLY)
                 )
                 editor.layout(0, 0, bitmap.width, bitmap.height)
+            }
+
+            // setTextSize schedules a background relayout when called from the main
+            // thread. A measure/layout pass does not wait for that worker, and
+            // EditorView correctly refuses edits until it finishes.
+            val layoutDeadline = SystemClock.uptimeMillis() + 10_000L
+            while (editor.isLayoutBusy() && SystemClock.uptimeMillis() < layoutDeadline) {
+                SystemClock.sleep(10L)
+            }
+            assertFalse("EditorView initial text-size relayout did not finish", editor.isLayoutBusy())
+
+            InstrumentationRegistry.getInstrumentation().runOnMainSync {
                 assertTrue("EditorView must accept text after its initial layout settles", editor.setText(source))
                 editor.setSyntaxHighlighter(highlighter)
                 editor.measure(
