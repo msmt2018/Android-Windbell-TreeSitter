@@ -662,11 +662,16 @@ static TshPredicateResult tshEvaluateNativePredicates(const NativeQueryProgram& 
     if (predicates.empty()) return TshPredicateResult::ACCEPT;
     uint32_t predicate_index = 0;
     for (const auto& predicate : predicates) {
+        // Tree-sitter predicate metadata terminates each expression with a
+        // Done step. Treat it as a delimiter, not as an operand; otherwise
+        // every custom predicate is rejected before its evaluator runs.
+        const size_t predicate_size = predicate_size -
+            (!predicate.empty() && predicate.back().type == TSQueryPredicateStepTypeDone ? 1u : 0u);
         if (predicate.empty() || predicate[0].type != TSQueryPredicateStepTypeString) return TshPredicateResult::REJECT;
 
         uint32_t op_length = 0;
         const char* op_text = ts_query_string_value_for_id(query, predicate[0].value_id, &op_length);
-        if (!op_text || predicate.size() < 3 ||
+        if (!op_text || predicate_size < 3 ||
             predicate[1].type != TSQueryPredicateStepTypeCapture) return TshPredicateResult::REJECT;
         std::string op;
         try {
@@ -689,7 +694,7 @@ static TshPredicateResult tshEvaluateNativePredicates(const NativeQueryProgram& 
             op == "any-kind-eq?" || op == "any-not-kind-eq?";
         const bool structural_operator = ancestry_operator || parent_operator || kind_operator;
         try {
-            for (size_t i = 2; i < predicate.size(); ++i) {
+            for (size_t i = 2; i < predicate_size; ++i) {
                 if (predicate[i].type == TSQueryPredicateStepTypeCapture &&
                     (op == "eq?" || op == "not-eq?" ||
                      op == "any-eq?" || op == "any-not-eq?")) continue;
@@ -714,7 +719,7 @@ static TshPredicateResult tshEvaluateNativePredicates(const NativeQueryProgram& 
         bool accepted = false;
         const bool equality_predicate = op == "eq?" || op == "not-eq?" ||
             op == "any-eq?" || op == "any-not-eq?";
-        if (equality_predicate && predicate.size() == 3 &&
+        if (equality_predicate && predicate_size == 3 &&
             predicate[2].type == TSQueryPredicateStepTypeCapture) {
             const bool any = op == "any-eq?" || op == "any-not-eq?";
             const bool positive = op == "eq?" || op == "any-eq?";
