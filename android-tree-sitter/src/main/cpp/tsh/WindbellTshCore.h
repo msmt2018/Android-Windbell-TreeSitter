@@ -14,6 +14,7 @@
 #include <functional>
 #include <vector>
 #include <memory>
+#include <map>
 #include <unordered_map>
 #include <mutex>
 #include <utility>
@@ -158,22 +159,13 @@ struct NativeQueryProgram {
     std::vector<std::vector<std::vector<TSQueryPredicateStep>>> predicates_by_pattern;
 };
 
-struct AstTypeIndexHash {
-    using is_transparent = void;
-    std::size_t operator()(std::string_view value) const noexcept {
-        return std::hash<std::string_view>{}(value);
-    }
-};
-
-struct AstTypeIndexEqual {
-    using is_transparent = void;
-    bool operator()(std::string_view left, std::string_view right) const noexcept {
-        return left == right;
-    }
-};
-
-using AstTypeRuleIndex = std::unordered_map<
-    std::string, std::vector<uint32_t>, AstTypeIndexHash, AstTypeIndexEqual>;
+// std::map's transparent comparator provides heterogeneous string_view lookup
+// on the Android NDK libc++ versions used by supported Android builds. The
+// selector type catalog is small and immutable after compilation, so O(log N)
+// lookup avoids per-node string allocations without relying on the newer
+// unordered_map heterogeneous-find implementation.
+using AstTypeRuleIndex = std::map<
+    std::string, std::vector<uint32_t>, std::less<>>;
 
 struct AstSelectorRule {
     TSSymbol target_symbol = 0;
