@@ -17,19 +17,18 @@ import com.zerostudio.idea.treesitter.tsh.api.TshTextChangeListener
 import com.zerostudio.idea.treesitter.tsh.api.TshTextDocumentDisposedListener
 import com.zerostudio.idea.treesitter.tsh.api.TshTextSubscription
 import java.util.concurrent.CopyOnWriteArrayList
-import java.util.concurrent.locks.ReentrantLock
-import kotlin.concurrent.withLock
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Host document facade for the repository's PieceTreeTextBuffer.
  *
- * [snapshotFactory] MUST create the PieceTreeSnapshot while the host excludes concurrent edits
- * to the live PieceTreeTextBuffer. After it returns, PieceTreeSnapshot is immutable and can be
- * read concurrently while the live buffer changes.
+ * [snapshotFactory] MUST coordinate snapshot creation with concurrent edits and concurrent
+ * snapshot requests against the live PieceTreeTextBuffer. After it returns, PieceTreeSnapshot is
+ * immutable and can be read concurrently while the live buffer changes.
  *
  * The factory is intentionally supplied by the host rather than locking on the buffer here:
  * synchronizing on an object does not coordinate with editor mutations that use another lock.
+ * EditorDocument supplies the shared reentrant transaction lock used by this repository's binding.
  */
 class TshPieceTreeDocument(
     val documentId: String,
@@ -37,17 +36,16 @@ class TshPieceTreeDocument(
     internal val snapshotThread: Thread? = null,
     private val snapshotFactory: () -> PieceTreeSnapshot
 ) {
-    private val snapshotFactoryLock = ReentrantLock()
     private val changeListeners = CopyOnWriteArrayList<TshTextChangeListener>()
     private val disposedListeners = CopyOnWriteArrayList<TshTextDocumentDisposedListener>()
     private val disposed = AtomicBoolean(false)
 
-    fun createSnapshot(): PieceTreeSnapshot = snapshotFactoryLock.withLock {
+    fun createSnapshot(): PieceTreeSnapshot {
         check(!disposed.get()) { "PieceTree document $documentId is disposed" }
         check(snapshotThread == null || Thread.currentThread() === snapshotThread) {
             "PieceTree snapshot creation for $documentId must run on its editor thread"
         }
-        snapshotFactory()
+        return snapshotFactory()
     }
 
     fun publishChange(change: TshTextChange) {
