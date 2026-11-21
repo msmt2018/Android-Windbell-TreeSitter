@@ -65,6 +65,25 @@ private:
     const jchar* chars_ = nullptr;
 };
 
+/** Pins JNI modified-UTF8 storage and releases it on every C++ exit path. */
+class ScopedUtfChars final {
+public:
+    ScopedUtfChars(JNIEnv* env, jstring value) noexcept
+        : env_(env), value_(value),
+          chars_(env && value ? env->GetStringUTFChars(value, nullptr) : nullptr) {}
+    ~ScopedUtfChars() {
+        if (chars_) env_->ReleaseStringUTFChars(value_, chars_);
+    }
+    ScopedUtfChars(const ScopedUtfChars&) = delete;
+    ScopedUtfChars& operator=(const ScopedUtfChars&) = delete;
+    const char* get() const noexcept { return chars_; }
+    explicit operator bool() const noexcept { return chars_ != nullptr; }
+private:
+    JNIEnv* env_ = nullptr;
+    jstring value_ = nullptr;
+    const char* chars_ = nullptr;
+};
+
 static std::shared_ptr<SharedNativeMemoryBudget> nativeHighlightBudget() {
     static const auto budget = []() noexcept {
         try {
@@ -673,43 +692,79 @@ JNIEXPORT jobjectArray JNICALL
 Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeGetLanguageMetadata(
     JNIEnv* env, jobject, jstring extension_jstr
 ) {
-    if (!extension_jstr) return nullptr;
-    const char* ext = env->GetStringUTFChars(extension_jstr, nullptr);
+    if (!extension_jstr) {
+        throw_npe(env, "extension cannot be null");
+        return nullptr;
+    }
+    ScopedUtfChars ext(env, extension_jstr);
     if (!ext) return nullptr;
-    const std::string extension(ext);
-    env->ReleaseStringUTFChars(extension_jstr, ext);
-    auto grammar = WindbellEngine::getInstance().getGrammarByExtension(extension);
-    std::vector<std::pair<std::string, std::string>> values;
-    if (grammar) {
-        auto join = [](const std::vector<std::string>& items) {
-            std::string out;
-            for (size_t i = 0; i < items.size(); ++i) {
-                if (i) out.push_back('\x1F');
-                out += items[i];
+
+    try {
+        const std::string extension(ext.get());
+        auto grammar = WindbellEngine::getInstance().getGrammarByExtension(extension);
+        std::vector<std::pair<std::string, std::string>> values;
+        if (grammar) {
+            auto join = [](const std::vector<std::string>& items) {
+                std::string out;
+                for (size_t i = 0; i < items.size(); ++i) {
+                    if (i) out.push_back('\\x1F');
+                    out += items[i];
+                }
+                return out;
+            };
+            values.emplace_back("id", grammar->id);
+            values.emplace_back("name", grammar->name);
+            values.emplace_back("extensions", join(grammar->file_extensions));
+            values.emplace_back("aliases", join(grammar->aliases));
+            values.emplace_back("mimeTypes", join(grammar->mime_types));
+            values.emplace_back("firstLine", grammar->first_line_pattern);
+        }
+        if (values.size() > static_cast<size_t>(std::numeric_limits<jsize>::max() / 2)) {
+            throw_illegal_state(env, "Native language metadata exceeds the JNI array length limit");
+            return nullptr;
+        }
+
+        jclass string_class = env->FindClass("java/lang/String");
+        if (!string_class) return nullptr;
+        const jsize length = static_cast<jsize>(values.size() * 2);
+        jobjectArray result = env->NewObjectArray(length, string_class, nullptr);
+        if (!result) {
+            env->DeleteLocalRef(string_class);
+            return nullptr;
+        }
+        for (size_t i = 0; i < values.size(); ++i) {
+            jstring key = env->NewStringUTF(values[i].first.c_str());
+            if (!key) {
+                env->DeleteLocalRef(string_class);
+                return nullptr;
             }
-            return out;
-        };
-        values.emplace_back("id", grammar->id);
-        values.emplace_back("name", grammar->name);
-        values.emplace_back("extensions", join(grammar->file_extensions));
-        values.emplace_back("aliases", join(grammar->aliases));
-        values.emplace_back("mimeTypes", join(grammar->mime_types));
-        values.emplace_back("firstLine", grammar->first_line_pattern);
+            jstring value = env->NewStringUTF(values[i].second.c_str());
+            if (!value) {
+                env->DeleteLocalRef(key);
+                env->DeleteLocalRef(string_class);
+                return nullptr;
+            }
+            env->SetObjectArrayElement(result, static_cast<jsize>(i * 2), key);
+            if (!env->ExceptionCheck()) {
+                env->SetObjectArrayElement(result, static_cast<jsize>(i * 2 + 1), value);
+            }
+            env->DeleteLocalRef(key);
+            env->DeleteLocalRef(value);
+            if (env->ExceptionCheck()) {
+                env->DeleteLocalRef(string_class);
+                return nullptr;
+            }
+        }
+        env->DeleteLocalRef(string_class);
+        return result;
+    } catch (const std::bad_alloc&) {
+        throwNativeAllocationFailure(env, "Unable to allocate native language metadata");
+    } catch (const std::exception& error) {
+        throwNativeHighlightFailure(env, error.what());
+    } catch (...) {
+        throwNativeHighlightFailure(env, "Unknown native language metadata failure");
     }
-    jclass string_class = env->FindClass("java/lang/String");
-    if (!string_class) return nullptr;
-    jobjectArray result = env->NewObjectArray(static_cast<jsize>(values.size() * 2), string_class, nullptr);
-    if (!result) { env->DeleteLocalRef(string_class); return nullptr; }
-    for (size_t i = 0; i < values.size(); ++i) {
-        jstring key = env->NewStringUTF(values[i].first.c_str());
-        jstring value = env->NewStringUTF(values[i].second.c_str());
-        env->SetObjectArrayElement(result, static_cast<jsize>(i * 2), key);
-        env->SetObjectArrayElement(result, static_cast<jsize>(i * 2 + 1), value);
-        env->DeleteLocalRef(key);
-        env->DeleteLocalRef(value);
-    }
-    env->DeleteLocalRef(string_class);
-    return result;
+    return nullptr;
 }
 
 /**
@@ -719,28 +774,44 @@ JNIEXPORT jboolean JNICALL
 Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeMatchesFirstLine(
     JNIEnv* env, jobject, jstring extension_jstr, jstring line_jstr
 ) {
-    if (!extension_jstr || !line_jstr) return JNI_FALSE;
-    const char* ext = env->GetStringUTFChars(extension_jstr, nullptr);
-    if (!ext) return JNI_FALSE;
-    const std::string extension(ext);
-    env->ReleaseStringUTFChars(extension_jstr, ext);
-    auto grammar = WindbellEngine::getInstance().getGrammarByExtension(extension);
-    if (!grammar || !grammar->first_line_regex) return JNI_FALSE;
-
-    const jchar* chars = env->GetStringChars(line_jstr, nullptr);
-    if (!chars) return JNI_FALSE;
-    const jsize length = env->GetStringLength(line_jstr);
-    const UChar* start = reinterpret_cast<const UChar*>(chars);
-    const UChar* end = start + static_cast<size_t>(length) * sizeof(jchar);
-    OnigRegion* region = onig_region_new();
-    if (!region) {
-        env->ReleaseStringChars(line_jstr, chars);
+    if (!extension_jstr || !line_jstr) {
+        throw_npe(env, "extension or first line cannot be null");
         return JNI_FALSE;
     }
-    const int matched = onig_match(grammar->first_line_regex, start, end, start, region, ONIG_OPTION_NONE);
-    onig_region_free(region, 1);
-    env->ReleaseStringChars(line_jstr, chars);
-    return matched >= 0 ? JNI_TRUE : JNI_FALSE;
+    ScopedUtfChars ext(env, extension_jstr);
+    if (!ext) return JNI_FALSE;
+    ScopedStringChars line(env, line_jstr);
+    if (!line) return JNI_FALSE;
+
+    struct OnigRegionGuard final {
+        OnigRegion* value = nullptr;
+        ~OnigRegionGuard() { if (value) onig_region_free(value, 1); }
+    };
+
+    try {
+        const std::string extension(ext.get());
+        auto grammar = WindbellEngine::getInstance().getGrammarByExtension(extension);
+        if (!grammar || !grammar->first_line_regex) return JNI_FALSE;
+
+        const jsize length = env->GetStringLength(line_jstr);
+        const UChar* start = reinterpret_cast<const UChar*>(line.get());
+        const UChar* end = start + static_cast<size_t>(length) * sizeof(jchar);
+        OnigRegionGuard region{onig_region_new()};
+        if (!region.value) {
+            throwNativeAllocationFailure(env, "Unable to allocate first-line regex region");
+            return JNI_FALSE;
+        }
+        const int matched = onig_match(
+            grammar->first_line_regex, start, end, start, region.value, ONIG_OPTION_NONE);
+        return matched >= 0 ? JNI_TRUE : JNI_FALSE;
+    } catch (const std::bad_alloc&) {
+        throwNativeAllocationFailure(env, "Unable to allocate first-line detector state");
+    } catch (const std::exception& error) {
+        throwNativeHighlightFailure(env, error.what());
+    } catch (...) {
+        throwNativeHighlightFailure(env, "Unknown native first-line detector failure");
+    }
+    return JNI_FALSE;
 }
 
 /**
