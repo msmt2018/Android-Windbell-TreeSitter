@@ -101,11 +101,15 @@ class TreeSitterPlugin : Plugin<Project> {
       baseExtention.defaultConfig.externalNativeBuild.cmake.arguments(
         "-DAUTOGEN_HEADERS=${nativeHeadersDir.get().asFile.absolutePath}")
 
-      val pluginType = if (plugins.hasPlugin(
-          "com.android.application")
-      ) AppPlugin::class.java else LibraryPlugin::class.java
-      val dslServices = plugins.getPlugin(pluginType)
-        .let { BasePluginAccessor.getDslServices(it) }
+      // Resolve each AGP plugin through its concrete type. Selecting a common
+      // KClass first makes Kotlin infer an existential BasePlugin type here;
+      // with the AGP 9.0 internal generic bounds that can crash the Kotlin
+      // frontend during build-logic compilation.
+      val dslServices = if (plugins.hasPlugin("com.android.application")) {
+        BasePluginAccessor.getDslServices(plugins.getPlugin(AppPlugin::class.java))
+      } else {
+        BasePluginAccessor.getDslServices(plugins.getPlugin(LibraryPlugin::class.java))
+      }
 
       @Suppress("DEPRECATION")
       val ndkPlatform = dslServices.sdkComponents.map {
