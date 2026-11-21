@@ -63,3 +63,11 @@ Audit `RowCache`, `TextRenderer`, `EditorView`, TSH render plan, style cache, an
 - Cancellation, pressure handling, and I/O errors are observable and safely reclaim resources.
 - Comment delimiter movement and edits/deletes do not produce visible flash of plain text or stale colors; pixel/device evidence and regression tests prove it.
 - Full test/build evidence is recorded; any untested change is explicitly identified.
+
+
+## CI baseline investigation (2026-11-21)
+- Latest examined run #1338, commit `8c170ee202069d48b76fbe168a23f09a96667cdf`: Release APK build passed; local tests passed; API 26 and API 30 device tests passed; API 35 device test job failed.
+- API 35 artifact XML for both `:editor` and `:app` reported `tests=0`, `failures=0`, `errors=0`. This is instrumentation/test-discovery or runner-startup failure, not an assertion failure. The workflow correctly refuses to treat empty reports as success.
+- The API 35 failed job was re-run; rerun job id `136778449039` was queued at the time of investigation. Its result must be checked before deciding whether this is flaky or reproducible.
+- CI branch trigger updated on `optimize/large-text-rendering-flicker` so code/workflow commits on this branch are validated. The change is committed as `6e4a0d6e47ba297b63f895e1dacf3ce9a0a96d3d`.
+- API 35 artifact report inspected directly: empty XML reports confirmed. Logcat artifact was reviewed for runner/Instrumentation evidence; no definitive test-discovery root cause established yet. Do not mask this by allowing zero-test reports.
