@@ -1025,35 +1025,53 @@ JNIEXPORT jintArray JNICALL
 Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeGetPalette(
     JNIEnv* env, jobject, jstring extension_jstr, jstring scheme_jstr
 ) {
-    if (!extension_jstr || !scheme_jstr) return nullptr;
-    const char* ext = env->GetStringUTFChars(extension_jstr, nullptr);
-    const char* scheme_name = env->GetStringUTFChars(scheme_jstr, nullptr);
-    if (!ext || !scheme_name) {
-        if (ext) env->ReleaseStringUTFChars(extension_jstr, ext);
-        if (scheme_name) env->ReleaseStringUTFChars(scheme_jstr, scheme_name);
+    if (!extension_jstr || !scheme_jstr) {
+        throw_npe(env, "extension or scheme cannot be null");
         return nullptr;
     }
-    const std::string extension(ext);
-    const std::string selected_scheme(scheme_name);
-    env->ReleaseStringUTFChars(extension_jstr, ext);
-    env->ReleaseStringUTFChars(scheme_jstr, scheme_name);
 
-    auto grammar = WindbellEngine::getInstance().getGrammarByExtension(extension);
-    if (!grammar) return env->NewIntArray(0);
-    auto scheme_it = grammar->schemes.find(selected_scheme);
-    if (scheme_it == grammar->schemes.end()) return env->NewIntArray(0);
+    const char* ext = env->GetStringUTFChars(extension_jstr, nullptr);
+    if (!ext) return nullptr;
+    struct UtfCharsGuard {
+        JNIEnv* env;
+        jstring value;
+        const char* chars;
+        ~UtfCharsGuard() {
+            if (chars) env->ReleaseStringUTFChars(value, chars);
+        }
+    } extension_guard{env, extension_jstr, ext};
 
-    const jsize count = static_cast<jsize>(grammar->styles.size());
-    constexpr jsize kPaletteFields = 11;
-    jintArray result = env->NewIntArray(count * kPaletteFields);
-    if (!result) return nullptr;
-    std::vector<jint> values(static_cast<size_t>(count) * kPaletteFields, 0);
-    for (jsize i = 0; i < count; ++i) {
-        const auto& style = grammar->styles[static_cast<size_t>(i)];
-        const size_t base = static_cast<size_t>(i) * kPaletteFields;
-        values[base] = static_cast<jint>(style.style_id);
-        auto color_it = scheme_it->second.colors.find(style.style_id);
-        if (color_it != scheme_it->second.colors.end()) {
+    const char* scheme_name = env->GetStringUTFChars(scheme_jstr, nullptr);
+    if (!scheme_name) return nullptr;
+    UtfCharsGuard scheme_guard{env, scheme_jstr, scheme_name};
+
+    try {
+        const std::string extension(ext);
+        const std::string selected_scheme(scheme_name);
+        auto grammar = WindbellEngine::getInstance().getGrammarByExtension(extension);
+        if (!grammar) return env->NewIntArray(0);
+        const auto scheme_it = grammar->schemes.find(selected_scheme);
+        if (scheme_it == grammar->schemes.end()) return env->NewIntArray(0);
+
+        constexpr jsize kPaletteFields = 11;
+        const size_t style_count = grammar->styles.size();
+        if (style_count > static_cast<size_t>(std::numeric_limits<jsize>::max() / kPaletteFields)) {
+            throw_illegal_state(env, "Native TSH palette exceeds the JNI array length limit");
+            return nullptr;
+        }
+        const jsize count = static_cast<jsize>(style_count);
+        const jsize value_count = count * kPaletteFields;
+        jintArray result = env->NewIntArray(value_count);
+        if (!result) return nullptr;
+
+        std::vector<jint> values(static_cast<size_t>(value_count), 0);
+        for (jsize i = 0; i < count; ++i) {
+            const auto& style = grammar->styles[static_cast<size_t>(i)];
+            const size_t base = static_cast<size_t>(i) * kPaletteFields;
+            values[base] = static_cast<jint>(style.style_id);
+            const auto color_it = scheme_it->second.colors.find(style.style_id);
+            if (color_it == scheme_it->second.colors.end()) continue;
+
             const SchemeColor& color = color_it->second;
             const TshStylePaint light = color.lightPaint();
             const TshStylePaint dark = color.darkPaint();
@@ -1068,11 +1086,22 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeGetPalette(
             values[base + 9] = light.background.present ? 1 : 0;
             values[base + 10] = dark.background.present ? 1 : 0;
         }
+        if (value_count > 0) {
+            env->SetIntArrayRegion(result, 0, value_count, values.data());
+            if (env->ExceptionCheck()) return nullptr;
+        }
+        return result;
+    } catch (const std::bad_alloc&) {
+        throwNativeAllocationFailure(env, "Unable to allocate native TSH palette");
+        return nullptr;
+    } catch (const std::exception& error) {
+        throwNativeHighlightFailure(env, error.what());
+        return nullptr;
+    } catch (...) {
+        throwNativeHighlightFailure(env, "Unknown native TSH palette failure");
+        return nullptr;
     }
-    env->SetIntArrayRegion(result, 0, count * kPaletteFields, values.data());
-    return result;
 }
-
 /**
  * 3. 双通道混合高亮计算 (微观正则 + 宏观 AST 语法树剪枝)
  * 签名: (JLjava/lang/String;Ljava/lang/String;)[I
