@@ -59,23 +59,11 @@ jobs:
         with:
           java-version: ${{ env.BUILD_JAVA_VERSION }}
           distribution: ${{ env.BUILD_JAVA_DIST }}
-      - name: Setup NDK
-        uses: nttld/setup-ndk@v1
-        id: setup-ndk
-        with:
-          ndk-version: r29
-          link-to-sdk: true
-      - name: Verify NDK and install pinned Android CMake and Build Tools
+      - name: Install and verify pinned Android NDK, CMake and Build Tools
+        timeout-minutes: 90
         shell: bash
         run: |
           set -Eeuo pipefail
-          ndk_path="${{ steps.setup-ndk.outputs.ndk-path }}"
-          ndk_revision="$(sed -n 's/^Pkg.Revision = //p' "$ndk_path/source.properties" | head -n 1)"
-          if [[ "$ndk_revision" != "$ANDROID_NDK_REVISION" ]]; then
-            echo "::error::Expected NDK $ANDROID_NDK_REVISION, received $ndk_revision"
-            exit 1
-          fi
-
           sdk_root="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
           if [[ -z "$sdk_root" ]]; then
             echo "::error::ANDROID_SDK_ROOT/ANDROID_HOME is not configured"
@@ -92,8 +80,18 @@ jobs:
 
           yes | "$sdkmanager" --licenses >/dev/null || true
           "$sdkmanager" --install \
+            "ndk;$ANDROID_NDK_REVISION" \
             "cmake;$ANDROID_CMAKE_VERSION" \
             "build-tools;$ANDROID_BUILD_TOOLS_VERSION"
+
+          ndk_path="$sdk_root/ndk/$ANDROID_NDK_REVISION"
+          ndk_revision="$(sed -n 's/^Pkg.Revision = //p' "$ndk_path/source.properties" | head -n 1)"
+          if [[ "$ndk_revision" != "$ANDROID_NDK_REVISION" ]]; then
+            echo "::error::Expected NDK $ANDROID_NDK_REVISION, received $ndk_revision"
+            exit 1
+          fi
+          echo "ANDROID_NDK_HOME=$ndk_path" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_ROOT=$ndk_path" >> "$GITHUB_ENV"
 
           export PATH="$sdk_root/cmake/$ANDROID_CMAKE_VERSION/bin:$PATH"
           echo "$sdk_root/cmake/$ANDROID_CMAKE_VERSION/bin" >> "$GITHUB_PATH"
