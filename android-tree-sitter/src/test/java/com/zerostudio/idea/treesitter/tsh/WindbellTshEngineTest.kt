@@ -1068,6 +1068,15 @@ class WindbellTshLinkageTest {
                         priority: 20
                     },
                     {
+                        node: "+"
+                        named: false
+                        previousSibling: "decimal_integer_literal"
+                        nextSibling: "decimal_integer_literal"
+                        overlap: allow
+                        style: "operatorWithOperands"
+                        priority: 21
+                    },
+                    {
                         node: "class"
                         named: false
                         firstChild: true
