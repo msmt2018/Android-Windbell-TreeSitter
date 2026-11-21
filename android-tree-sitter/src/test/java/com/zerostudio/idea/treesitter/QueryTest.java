@@ -199,9 +199,11 @@ public class QueryTest extends TreeSitterTest {
 
         final var query = TSQuery.create(parser.getLanguage(),
           readString(Paths.get("./src/test/resources/blocks-xml.scm")));
-        assertThat(query.canAccess()).withMessage(
+        if (!query.canAccess()) {
+          throw new AssertionError(String.format(
             "XML blocks query compilation failed: error=%s offset=%s",
-            query.getErrorType(), query.getErrorOffset()).isTrue();
+            query.getErrorType(), query.getErrorOffset()));
+        }
         final var cursor = TSQueryCursor.create();
         cursor.exec(query, root);
 
