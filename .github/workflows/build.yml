@@ -35,6 +35,7 @@ jobs:
   build_release_apk:
     name: Build Release APK
     runs-on: ubuntu-latest
+    timeout-minutes: 120
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -130,6 +131,7 @@ jobs:
       - name: Set up Bun for grammar packages
         uses: oven-sh/setup-bun@v2
       - name: Install Node packages for all grammar submodules
+        timeout-minutes: 90
         shell: bash
         run: |
           set -Eeuo pipefail

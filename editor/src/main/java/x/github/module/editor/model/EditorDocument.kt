@@ -18,6 +18,7 @@ package x.github.module.editor.model
 
 import kotlin.text.Regex
 
+import com.zerostudio.idea.piecetable.PieceTreeSnapshot
 import com.zerostudio.idea.piecetable.PieceTreeTextBufferBuilder
 import com.zerostudio.idea.piecetable.SliceChange
 import com.zerostudio.idea.piecetable.SliceEdit
@@ -29,6 +30,8 @@ import com.zerostudio.idea.piecetable.common.SingleEditOperation
 import com.zerostudio.idea.piecetable.common.Strings
 
 import x.github.module.editor.util.TextBoundaries
+import java.util.concurrent.locks.ReentrantLock
+import kotlin.concurrent.withLock
 
 /**
  * The text being edited: the buffer, every query on it, and the one way to change it.
@@ -61,6 +64,12 @@ class EditorDocument(
     private val callback: Callback,
     buffer: EditorBuffer = PieceTreeBuffer(PieceTreeTextBufferBuilder().build())
 ) : EditorTextSource {
+
+    /**
+     * Serializes PieceTree snapshot creation with all document buffer mutations and replacements.
+     * Reentrant because edit callbacks pin the before/after snapshots inside the edit transaction.
+     */
+    private val bufferSnapshotLock = ReentrantLock()
 
     /** The three stages of an edit, in the order they happen. */
     interface Callback {
@@ -166,11 +175,24 @@ class EditorDocument(
      * edit: the callback is not called and the history is left alone, the caller decides
      * what to do with both.
      */
-    fun replaceBuffer(newBuffer: EditorBuffer) {
+    /**
+     * Creates an immutable PieceTree snapshot while excluding concurrent document mutations.
+     * The snapshot keeps its own storage references after this lock is released.
+     */
+    fun createPieceTreeSnapshot(): PieceTreeSnapshot = bufferSnapshotLock.withLock {
+        val current = buffer
+        check(current is PieceTreeBuffer) {
+            "EditorDocument does not currently use PieceTreeBuffer"
+        }
+        current.pieceTree.createSnapshot()
+    }
+
+    fun replaceBuffer(newBuffer: EditorBuffer) = bufferSnapshotLock.withLock {
         val previous = buffer
-        if (previous === newBuffer) return
-        buffer = newBuffer
-        callback.onBufferReplaced(previous, newBuffer)
+        if (previous !== newBuffer) {
+            buffer = newBuffer
+            callback.onBufferReplaced(previous, newBuffer)
+        }
     }
 
     // #region queries
@@ -309,7 +331,8 @@ class EditorDocument(
     }
 
     // The pipeline. Returns the edit as history changes, forwards, in document order.
-    private fun apply(edits: List<SliceEdit>, record: Record): List<HistoryChange> {
+    private fun apply(edits: List<SliceEdit>, record: Record): List<HistoryChange> =
+        bufferSnapshotLock.withLock {
         // hold back the pending undo step, this edit may be merged into it
         history.cancelPendingCommit()
 
@@ -355,7 +378,7 @@ class EditorDocument(
 
         // after text changed
         callback.afterTextChanged(applied, caretLineNumber, caretColumn)
-        return changes
+        changes
     }
 
     // [edits] in the order to apply them one by one: the one furthest down first (the

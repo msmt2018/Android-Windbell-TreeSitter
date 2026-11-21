@@ -70,6 +70,7 @@ import kotlin.text.Regex
 
 import x.github.module.editor.R
 
+import com.zerostudio.idea.piecetable.PieceTreeSnapshot
 import com.zerostudio.idea.piecetable.PieceTreeTextBuffer
 import com.zerostudio.idea.piecetable.SliceEdit
 import com.zerostudio.idea.piecetable.common.Position
@@ -2093,6 +2094,18 @@ open class EditorView @JvmOverloads constructor(
             "The text is not stored in a piece tree but in a ${buffer.javaClass.name}; use getBuffer()."
         }
         return buffer.pieceTree
+    }
+
+    /**
+     * Creates an immutable snapshot through EditorDocument's mutation/snapshot lock.
+     * This is the supported snapshot entry point for native consumers.
+     */
+    @MainThread
+    fun createPieceTreeSnapshot(): PieceTreeSnapshot {
+        check(Looper.myLooper() == Looper.getMainLooper()) {
+            "EditorView.createPieceTreeSnapshot must run on the main thread"
+        }
+        return document.createPieceTreeSnapshot()
     }
     
     // find matches by regex

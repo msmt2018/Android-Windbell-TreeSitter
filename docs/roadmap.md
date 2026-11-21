@@ -42,7 +42,8 @@
 - [x] Chunk read 不允许切开 UTF-16 surrogate pair，读取关闭的 Snapshot Lease 会失败。
 - [x] 坐标转换拒绝不成对 UTF-16 surrogate；UTF-8 byte 累积使用 Long；非 String CharSequence 明确拒绝隐式 flatten/toString 复制。
 - [x] 项目 editor 模块新增真实 PieceTreeTextBuffer → PieceTreeSnapshot → TSH Snapshot Provider；不可变 PieceTreeSnapshot 保留原始 chunk 引用并复制活动 change buffer 有效文本，Lease 可独立持有旧版本（SOURCE_PARTIAL）。
-- [ ] 真实 EditorDocument snapshotFactory 与编辑写锁/串行化机制尚未接线；其他可变 Piece Tree/Rope 仍需 pin persistent root/unpin。
+- [x] 真实 EditorDocument snapshotFactory 已接线：EditorDocument 以可重入事务锁串行化 buffer 编辑/替换与 PieceTreeSnapshot 创建，EditorView 暴露受控快照入口；TSH before/after snapshot 不会观察到多 Edit 事务的中间状态（SOURCE_PARTIAL，未运行验证）。
+- [ ] 其他可变 Piece Tree/Rope 仍需 pin persistent root/unpin；UTF-8/UTF-16/Code Point/Grapheme 索引化转换仍未完成。
 - [ ] Piece Tree/Rope 索引化 UTF-8/UTF-16/Code Point/Grapheme 转换尚未实现。
 - [ ] Grapheme 目前使用运行时 BreakIterator，不宣称完整 UAX #29。
 - [ ] Text Provider 的实际线程调度、EditorDocument 变更事件与销毁事件尚未连接真实宿主。
