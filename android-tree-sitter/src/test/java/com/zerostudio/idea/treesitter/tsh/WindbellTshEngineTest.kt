@@ -1004,6 +1004,25 @@ class WindbellTshLinkageTest {
     fun testAstSelectorNodeFlagsAreExecuted() {
         val engine = WindbellTshEngine.instance
         val language = TSLanguageJava.getInstance()
+        assertTrue(
+            language.languageVersion >= 15,
+            "Java grammar must expose Tree-sitter ABI 15 metadata; actual ABI=${language.languageVersion}"
+        )
+        val expressionSupertype = language.supertypes.firstOrNull {
+            language.getSymbolName(it) == "expression"
+        }
+        assertTrue(
+            expressionSupertype != null,
+            "Java grammar must publish the expression supertype; supertypes=" +
+                language.supertypes.joinToString { language.getSymbolName(it) }
+        )
+        val expressionSubtypeNames = language.getSubtypes(expressionSupertype!!).map {
+            language.getSymbolName(it)
+        }
+        assertTrue(
+            "binary_expression" in expressionSubtypeNames,
+            "Java expression supertype must include binary_expression; actual subtypes=$expressionSubtypeNames"
+        )
         val source = """
             tsh 2 {
                 language { id: "java-ast-node-flags" name: "Java AST Node Flags" extensions: [".janf"] }

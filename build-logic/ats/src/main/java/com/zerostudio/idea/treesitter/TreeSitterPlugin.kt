@@ -67,6 +67,19 @@ class TreeSitterPlugin : Plugin<Project> {
           this.outputFile.set(BuildForHostTask.getOutputFile(project).second)
         }
 
+      // Grammar source generation is registered by the companion grammar plugin.
+      // Keep it as a live task-collection dependency here as well: host builds
+      // can be requested transitively by the main library's unit-test task before
+      // every dynamically-created grammar project has completed plugin wiring.
+      // This guarantees ABI-15 parser generation runs before compiling each
+      // grammar's parser.c, rather than silently building stale ABI-14 sources.
+      val grammarGenerationTasks = tasks.matching {
+        it.name == "generateTreeSitterGrammar"
+      }
+      buildForHost.configure {
+        dependsOn(grammarGenerationTasks)
+      }
+
       val cleanHostBuild =
         tasks.register("cleanHostBuild", Delete::class.java) {
           delete(cppDir.resolve("host-build"))
