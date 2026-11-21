@@ -780,6 +780,17 @@ static TshPredicateResult tshEvaluateNativePredicates(const NativeQueryProgram& 
             // even for any-* forms: eq? / any-eq? reject, while
             // not-eq? / any-not-eq? accept.
             accepted = !has_capture ? !positive : (any ? any_satisfied : all_satisfied);
+            if (op == "any-not-eq?" || op == "any-eq?") {
+                static std::atomic<uint32_t> missing_capture_debug_count{0};
+                if (!has_capture && missing_capture_debug_count.fetch_add(1, std::memory_order_relaxed) < 16u) {
+                    LOGD("WindbellTSH", "Native equality predicate: op=%s pattern=%u predicate=%u capture_id=%u match_captures=%u accepted=%d",
+                        op.c_str(), match.pattern_index, predicate_index, predicate[1].value_id,
+                        match.capture_count, accepted ? 1 : 0);
+                    for (uint32_t capture = 0; capture < match.capture_count; ++capture) {
+                        LOGD("WindbellTSH", "  capture[%u].index=%u", capture, match.captures[capture].index);
+                    }
+                }
+            }
         } else if (op == "any-of?" || op == "not-any-of?") {
             if (expected.empty()) return TshPredicateResult::REJECT;
             bool all_in_set = true;

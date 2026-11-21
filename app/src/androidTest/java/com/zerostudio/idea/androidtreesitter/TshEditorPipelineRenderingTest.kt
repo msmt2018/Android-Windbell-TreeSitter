@@ -509,7 +509,12 @@ class TshEditorPipelineRenderingTest {
                 editor.setTextColor(Color.DKGRAY)
                 editor.setTextSize(48f)
                 editor.setGutterEnabled(false)
-                assertTrue(editor.setText(source))
+                editor.measure(
+                    View.MeasureSpec.makeMeasureSpec(bitmap.width, View.MeasureSpec.EXACTLY),
+                    View.MeasureSpec.makeMeasureSpec(bitmap.height, View.MeasureSpec.EXACTLY)
+                )
+                editor.layout(0, 0, bitmap.width, bitmap.height)
+                assertTrue("EditorView must accept text after its initial layout settles", editor.setText(source))
                 editor.setSyntaxHighlighter(highlighter)
                 editor.measure(
                     View.MeasureSpec.makeMeasureSpec(bitmap.width, View.MeasureSpec.EXACTLY),
