@@ -13,6 +13,11 @@ permissions:
   contents: read
   packages: write
 
+env:
+  ANDROID_NDK_REVISION: '29.0.14206865'
+  ANDROID_CMAKE_VERSION: '3.31.6'
+  ANDROID_BUILD_TOOLS_VERSION: '35.0.0'
+
 jobs:
   publish:
     name: Publish Maven packages
@@ -32,18 +37,52 @@ jobs:
           java-version: "17"
           cache: gradle
 
-      - name: Set up NDK r24
-        uses: nttld/setup-ndk@v1
-        id: setup-ndk
-        with:
-          ndk-version: r24
+      - name: Install pinned Android NDK, CMake and Build Tools
+        timeout-minutes: 90
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          sdk_root="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
+          if [[ -z "$sdk_root" ]]; then
+            echo "::error::ANDROID_SDK_ROOT/ANDROID_HOME is not configured"
+            exit 1
+          fi
+          sdkmanager="$sdk_root/cmdline-tools/latest/bin/sdkmanager"
+          if [[ ! -x "$sdkmanager" ]]; then
+            sdkmanager="$(command -v sdkmanager || true)"
+          fi
+          if [[ -z "$sdkmanager" || ! -x "$sdkmanager" ]]; then
+            echo "::error::Android sdkmanager was not found"
+            exit 1
+          fi
+
+          yes | "$sdkmanager" --licenses >/dev/null || true
+          "$sdkmanager" --install \
+            "ndk;$ANDROID_NDK_REVISION" \
+            "cmake;$ANDROID_CMAKE_VERSION" \
+            "build-tools;$ANDROID_BUILD_TOOLS_VERSION"
+
+          ndk_path="$sdk_root/ndk/$ANDROID_NDK_REVISION"
+          ndk_revision="$(sed -n 's/^Pkg.Revision = //p' "$ndk_path/source.properties" | head -n 1)"
+          if [[ "$ndk_revision" != "$ANDROID_NDK_REVISION" ]]; then
+            echo "::error::Expected NDK $ANDROID_NDK_REVISION, received $ndk_revision"
+            exit 1
+          fi
+          echo "ANDROID_NDK_HOME=$ndk_path" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_ROOT=$ndk_path" >> "$GITHUB_ENV"
+
+          export PATH="$sdk_root/cmake/$ANDROID_CMAKE_VERSION/bin:$PATH"
+          echo "$sdk_root/cmake/$ANDROID_CMAKE_VERSION/bin" >> "$GITHUB_PATH"
+          cmake --version
+          "$sdk_root/build-tools/$ANDROID_BUILD_TOOLS_VERSION/aapt" version
 
       - name: Install native build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential cargo nodejs npm cmake ninja-build
+          sudo apt-get install -y build-essential cargo nodejs npm ninja-build
 
       - name: Install C++ grammar dependencies
+        timeout-minutes: 30
         working-directory: grammars/cpp
         run: npm install
 
@@ -56,7 +95,6 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY_OWNER: ${{ github.repository_owner }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
         run: |
           ./gradlew \
             :annotations:publishReleasePublicationToGitHubPackagesRepository \
