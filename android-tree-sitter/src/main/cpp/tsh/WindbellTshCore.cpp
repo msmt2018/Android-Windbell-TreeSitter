@@ -2049,7 +2049,7 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                 reverse_index[subtype].push_back(rule_index);
                 const char* subtype_name =
                     ts_language_symbol_name(grammar->ts_language, subtype);
-                if (subtype_name && subtype_name[0] != '\\0') {
+                if (subtype_name && subtype_name[0] != '\0') {
                     auto& type_index = rule.field_id != 0
                         ? ast_supertype_field_rules_by_type
                         : ast_supertype_node_rules_by_type;
