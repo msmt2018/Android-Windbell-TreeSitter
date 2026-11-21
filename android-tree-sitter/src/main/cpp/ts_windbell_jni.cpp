@@ -1193,7 +1193,22 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeCreateDocument(
         if (ext_chars) env->ReleaseStringUTFChars(extension_jstr, ext_chars);
         return 0;
     }
-    const std::string directory(dir_chars), extension(ext_chars);
+    std::string directory;
+    std::string extension;
+    try {
+        directory.assign(dir_chars);
+        extension.assign(ext_chars);
+    } catch (const std::bad_alloc&) {
+        env->ReleaseStringUTFChars(temporary_directory, dir_chars);
+        env->ReleaseStringUTFChars(extension_jstr, ext_chars);
+        throwNativeAllocationFailure(env, "Unable to allocate native document metadata");
+        return 0;
+    } catch (...) {
+        env->ReleaseStringUTFChars(temporary_directory, dir_chars);
+        env->ReleaseStringUTFChars(extension_jstr, ext_chars);
+        throwNativeHighlightFailure(env, "Failed to copy native document metadata");
+        return 0;
+    }
     env->ReleaseStringUTFChars(temporary_directory, dir_chars);
     env->ReleaseStringUTFChars(extension_jstr, ext_chars);
     if (directory.empty()) {
