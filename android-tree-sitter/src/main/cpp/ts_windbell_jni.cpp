@@ -396,6 +396,36 @@ static bool writeAllAt(int fd, const uint8_t *data, size_t length, uint64_t offs
 // Prefer an anonymous tmpfs-backed file for the immutable initial snapshot.
 // Older Android kernels may not implement memfd_create; those devices fall
 // back to the app-private cache directory supplied by the Kotlin host.
+// Owns a POSIX descriptor across every C++ exception/early-return path.
+class ScopedNativeFd final {
+public:
+    explicit ScopedNativeFd(int &fd) noexcept : fd_(fd) {}
+    ~ScopedNativeFd() { close(); }
+    ScopedNativeFd(const ScopedNativeFd &) = delete;
+    ScopedNativeFd &operator=(const ScopedNativeFd &) = delete;
+    void close() noexcept {
+        if (fd_ >= 0) {
+            const int value = fd_;
+            fd_ = -1;
+            while (::close(value) < 0 && errno == EINTR) {}
+        }
+    }
+private:
+    int &fd_;
+};
+
+// The path buffer must outlive this guard. It is declared before the guard at
+// each mkstemp site, so a failed string copy cannot orphan the temporary file.
+class ScopedNativePath final {
+public:
+    explicit ScopedNativePath(const char *path) noexcept : path_(path) {}
+    ~ScopedNativePath() { if (path_ && *path_) ::unlink(path_); }
+    ScopedNativePath(const ScopedNativePath &) = delete;
+    ScopedNativePath &operator=(const ScopedNativePath &) = delete;
+private:
+    const char *path_;
+};
+
 static int createAnonymousBackingFile(uint64_t size_bytes) noexcept {
     // Keep tmpfs residency below the normal editor memory budget. Larger
     // documents use demand-paged app-private file backing instead of pinning
@@ -1221,8 +1251,10 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeCreateDocument(
     env->DeleteLocalRef(reader_class);
     if (!read_method || env->ExceptionCheck()) return 0;
 
+    try {
     std::string backing_path;
     int fd = createAnonymousBackingFile(static_cast<uint64_t>(byte_length));
+    ScopedNativeFd fd_guard(fd);
     const bool anonymous_backing = fd >= 0;
     if (!anonymous_backing) {
         std::string pattern = directory;
@@ -1235,6 +1267,7 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeCreateDocument(
             throw_illegal_state(env, "Cannot create native document backing file");
             return 0;
         }
+        ScopedNativePath temporary_path_guard(path.data());
         backing_path.assign(path.data());
     }
     bool ok = ::ftruncate(fd, static_cast<off_t>(byte_length)) == 0;
@@ -1245,7 +1278,7 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeCreateDocument(
                 windbell::largefile::kTreeSitterInputChunkBytes,
                 static_cast<uint64_t>(byte_length))));
         } catch (...) {
-            ::close(fd);
+            fd_guard.close();
             if (!backing_path.empty()) ::unlink(backing_path.c_str());
             throw_illegal_state(env, "Unable to allocate bounded JNI document transfer window");
             return 0;
@@ -1281,7 +1314,7 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeCreateDocument(
     }
     if (direct_window) env->DeleteLocalRef(direct_window);
     if (!ok || offset != static_cast<uint64_t>(byte_length)) {
-        ::close(fd);
+        fd_guard.close();
         if (!backing_path.empty()) ::unlink(backing_path.c_str());
         if (!env->ExceptionCheck()) {
             throw_illegal_state(env, "Native source callback returned an invalid or incomplete UTF-16LE window");
@@ -1297,7 +1330,7 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeCreateDocument(
     std::shared_ptr<const windbell::largefile::TextSource> original_source;
     auto mapped_source = std::make_shared<windbell::largefile::MappedFileSource>();
     if (anonymous_backing && mapped_source->openFd(fd)) {
-        ::close(fd);
+        fd_guard.close();
         fd = -1;
         original_source = mapped_source;
     } else {
@@ -1308,9 +1341,11 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeCreateDocument(
             std::vector<char> path(pattern.begin(), pattern.end());
             path.push_back('\0');
             const int fallback_fd = ::mkstemp(path.data());
+            ScopedNativeFd fallback_fd_guard(const_cast<int &>(fallback_fd));
+            ScopedNativePath fallback_path_guard(fallback_fd >= 0 ? path.data() : nullptr);
             bool copied = fallback_fd >= 0 &&
                 ::ftruncate(fallback_fd, static_cast<off_t>(byte_length)) == 0;
-            backing_path.assign(path.data());
+            if (fallback_fd >= 0) backing_path.assign(path.data());
             uint64_t copied_bytes = 0;
             while (copied && copied_bytes < static_cast<uint64_t>(byte_length)) {
                 const size_t request = static_cast<size_t>(std::min<uint64_t>(
@@ -1327,8 +1362,8 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeCreateDocument(
                 }
                 copied_bytes += static_cast<uint64_t>(count);
             }
-            if (fallback_fd >= 0) ::close(fallback_fd);
-            ::close(fd);
+            fallback_fd_guard.close();
+            fd_guard.close();
             fd = -1;
             if (!copied || copied_bytes != static_cast<uint64_t>(byte_length)) {
                 if (!backing_path.empty()) ::unlink(backing_path.c_str());
@@ -1336,7 +1371,7 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeCreateDocument(
                 return 0;
             }
         } else {
-            ::close(fd);
+            fd_guard.close();
             fd = -1;
         }
 
@@ -1393,6 +1428,16 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeCreateDocument(
         return 0;
     }
     return handle;
+    } catch (const std::bad_alloc &) {
+        throwNativeAllocationFailure(env, "Native document creation exhausted memory");
+        return 0;
+    } catch (const std::exception &error) {
+        throwNativeHighlightFailure(env, error.what());
+        return 0;
+    } catch (...) {
+        throwNativeHighlightFailure(env, "Unknown native document creation failure");
+        return 0;
+    }
 }
 
 /**
