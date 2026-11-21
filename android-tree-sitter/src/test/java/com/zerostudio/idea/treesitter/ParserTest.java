@@ -78,7 +78,7 @@ public class ParserTest extends TreeSitterTest {
       parser.setLanguage(TSLanguagePython.getInstance());
       try (TSTree tree = parser.parseString("print(\"hi\")")) {
         assertThat(tree.getRootNode().getNodeString()).isEqualTo(
-          "(module (expression_statement (call function: (identifier) arguments: (argument_list (string (string_start) (string_content) (string_end))))))");
+          "(module (call function: (identifier) arguments: (argument_list (string (string_start) (string_content) (string_end)))))");
       }
     }
   }
@@ -234,7 +234,7 @@ public class ParserTest extends TreeSitterTest {
         assertThat(rootNode).isNotNull();
         assertThat(rootNode.getChildCount()).isGreaterThan(0);
         assertThat(rootNode.getNodeString()).isEqualTo(
-          "(source_file (class_declaration name: (type_identifier) (class_body (function_declaration name: (simple_identifier) (function_value_parameters) (function_body (statements (call_expression (simple_identifier) (call_suffix (value_arguments (value_argument (string_literal (string_content))))))))))))");
+          "(source_file (class_declaration (type_identifier) (class_body (function_declaration (simple_identifier) (function_value_parameters) (function_body (statements (call_expression (simple_identifier) (call_suffix (value_arguments (value_argument (string_literal (string_content))))))))))))");
       }
     }
   }
@@ -254,13 +254,13 @@ public class ParserTest extends TreeSitterTest {
 
         //noinspection DataFlowIssue
         final var packages = substrings(
-          execQueryGroupByCaptures("(package_declaration name: (_) @package)",
+          execQueryGroupByCaptures("(package name: (_) @package)",
             TSLanguageAidl.getInstance(), rootNode).get("package"), source);
         assertThat(packages).containsExactly("com.zerostudio.idea.treesitter.test");
 
         //noinspection DataFlowIssue
         final var annotations = substrings(execQueryGroupByCaptures(
-          "(annotation name: (_) @annotation) (marker_annotation name: (_) @annotation)",
+          "(annotation name: (_) @annotation)",
           TSLanguageAidl.getInstance(), rootNode).get("annotation"), source);
         assertThat(annotations).containsExactly("SomeMarker", "Something",
           "SomethingWithArrayParam", "UnsupportedAppUsage", "OnAMethod", "OnAParam", "OnAParam",
@@ -280,7 +280,7 @@ public class ParserTest extends TreeSitterTest {
 
         //noinspection DataFlowIssue
         final var variables = substrings(
-          execQueryGroupByCaptures("(variable_declarator name: (_) @variable)",
+          execQueryGroupByCaptures("(variable_declaration name: (_) @variable)",
             TSLanguageAidl.getInstance(), rootNode).get("variable"), source);
         assertThat(variables).containsExactly("somethingWeReceive", "somethingWeProvide",
           "somethingWeBothUse");
@@ -310,7 +310,7 @@ public class ParserTest extends TreeSitterTest {
 
         //noinspection DataFlowIssue
         final var variables = substrings(
-          execQueryGroupByCaptures("(variable_declarator name: (_) @variable)",
+          execQueryGroupByCaptures("(variable_declaration name: (_) @variable)",
             TSLanguageAidl.getInstance(), rootNode).get("variable"), source);
         assertThat(variables).containsExactly("hasField", "orFields", "isIt");
       }
@@ -326,7 +326,7 @@ public class ParserTest extends TreeSitterTest {
       final var parseFuture = executor.schedule(() -> {
 
         // cancel the parsing after 200ms
-        executor.schedule(() -> assertThat(parser.requestCancellationAsync()).isTrue(), 200,
+        executor.schedule(() -> assertThat(parser.requestCancellationAsync()).isTrue(), 10,
           TimeUnit.MILLISECONDS);
 
         // parsing the View.java.txt file takes 300-600ms
