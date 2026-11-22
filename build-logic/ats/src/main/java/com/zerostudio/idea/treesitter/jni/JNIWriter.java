@@ -200,19 +200,21 @@ public class JNIWriter {
     final var _writer = new StringWriter();
     final var writer = new PrintWriter(_writer);
 
-    // Remove duplicates
-    results = new ArrayList<>(results.stream()
-      .collect(Collectors.toMap(JNIWriterResult::getHeaderFilename, Function.identity(),
-        (existing, replacement) -> existing))
-      .values());
+    // Multiple annotated inner classes in a composite grammar intentionally
+    // share one generated header file. Deduplicate only the include directives;
+    // every class still needs its own native-method array and registration call.
+    final var uniqueHeaderFilenames = results.stream()
+      .map(JNIWriterResult::getHeaderFilename)
+      .distinct()
+      .toList();
 
     fileTop(writer);
     includes(writer);
 
-    // Add '#include "filename" for all generated files
+    // Include each aggregated header exactly once.
     writer.println();
     writer.println(String.join(System.lineSeparator(),
-      results.stream().map(result -> "#include \"" + result.getHeaderFilename() + "\"").toList()));
+      uniqueHeaderFilenames.stream().map(filename -> "#include \"" + filename + "\"").toList()));
     writer.println();
     writer.println();
 
