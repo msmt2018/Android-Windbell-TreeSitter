@@ -11,7 +11,8 @@ data class TshMemoryBudgetOptions(
     val targetBytes: Long = DEFAULT_TARGET_BYTES,
     val hardLimitBytes: Long = DEFAULT_HARD_LIMIT_BYTES,
     val availableMemoryBytes: Long? = null,
-    val availableMemoryFraction: Int = DEFAULT_AVAILABLE_MEMORY_DIVISOR
+    val availableMemoryFraction: Int = DEFAULT_AVAILABLE_MEMORY_DIVISOR,
+    val maxActiveReservations: Int = DEFAULT_MAX_ACTIVE_RESERVATIONS
 ) {
     init {
         require(targetBytes > 0L)
@@ -19,6 +20,7 @@ data class TshMemoryBudgetOptions(
         require(targetBytes <= hardLimitBytes)
         require(availableMemoryBytes == null || availableMemoryBytes > 0L)
         require(availableMemoryFraction > 0)
+        require(maxActiveReservations in 1..ABSOLUTE_MAX_ACTIVE_RESERVATIONS)
     }
 
     val effectiveLimitBytes: Long
@@ -34,6 +36,8 @@ data class TshMemoryBudgetOptions(
         const val DEFAULT_HARD_LIMIT_BYTES: Long = 512L * MIB
         const val ABSOLUTE_HARD_LIMIT_BYTES: Long = 512L * MIB
         const val DEFAULT_AVAILABLE_MEMORY_DIVISOR: Int = 4
+        const val DEFAULT_MAX_ACTIVE_RESERVATIONS: Int = 65_536
+        const val ABSOLUTE_MAX_ACTIVE_RESERVATIONS: Int = 262_144
     }
 }
 
@@ -70,6 +74,9 @@ class TshMemoryBudget(
         if (ownerId != null && ownerId.isBlank()) return failure("TSH-MEMORY-002", "ownerId must be null or non-blank")
         synchronized(lock) {
             if (closed) return failure("TSH-MEMORY-003", "Memory budget is closed")
+            if (active.size >= options.maxActiveReservations) {
+                return failure("TSH-MEMORY-010", "Active memory reservation count limit has been reached")
+            }
             if (reserved > limitBytes || bytes > limitBytes - reserved) {
                 return failure("TSH-MEMORY-004", "Reservation exceeds the remaining memory budget")
             }
@@ -79,7 +86,7 @@ class TshMemoryBudget(
             reserved += bytes
             byCategory[category] = (byCategory[category] ?: 0L) + bytes
             highWatermark = maxOf(highWatermark, reserved)
-            return TshResult.Success(TshMemoryReservation(id, category, bytes, ownerId) { release(id) })
+            return TshResult.Success(TshMemoryReservation(id, category, bytes, ownerId, { release(id) }) { newBytes -> resize(id, newBytes) })
         }
     }
 
@@ -91,6 +98,30 @@ class TshMemoryBudget(
         synchronized(lock) { closed = true }
     }
 
+    private fun resize(id: Long, newBytes: Long): TshResult<Unit> {
+        if (newBytes <= 0L) return failure("TSH-MEMORY-012", "Resized reservation must remain positive")
+        synchronized(lock) {
+            val entry = active[id] ?: return failure("TSH-MEMORY-013", "Memory reservation is no longer active")
+            val oldBytes = entry.bytes
+            if (newBytes > oldBytes) {
+                val increase = newBytes - oldBytes
+                if (closed) return failure("TSH-MEMORY-003", "Memory budget is closed")
+                if (reserved > limitBytes || increase > limitBytes - reserved) {
+                    return failure("TSH-MEMORY-004", "Resized reservation exceeds the remaining memory budget")
+                }
+                reserved += increase
+                byCategory[entry.category] = (byCategory[entry.category] ?: 0L) + increase
+                highWatermark = maxOf(highWatermark, reserved)
+            } else if (newBytes < oldBytes) {
+                val decrease = oldBytes - newBytes
+                reserved -= decrease
+                byCategory[entry.category] = (byCategory[entry.category] ?: 0L) - decrease
+            }
+            entry.bytes = newBytes
+            return TshResult.Success(Unit)
+        }
+    }
+
     private fun release(id: Long) {
         synchronized(lock) {
             val entry = active.remove(id) ?: return
@@ -99,7 +130,7 @@ class TshMemoryBudget(
         }
     }
 
-    private data class Entry(val category: TshMemoryCategory, val bytes: Long, val ownerId: String?)
+    private data class Entry(val category: TshMemoryCategory, var bytes: Long, val ownerId: String?)
 
     private fun failure(code: String, message: String) = TshResult.Failure(listOf(
         TshDiagnostic(code, TshDiagnosticSeverity.ERROR, TshDiagnosticStage.MEMORY, message)
@@ -109,13 +140,40 @@ class TshMemoryBudget(
 class TshMemoryReservation internal constructor(
     val id: Long,
     val category: TshMemoryCategory,
-    val bytes: Long,
+    initialBytes: Long,
     val ownerId: String?,
-    private val releaseAction: () -> Unit
+    private val releaseAction: () -> Unit,
+    private val resizeAction: (Long) -> TshResult<Unit>
 ) : AutoCloseable {
     private val released = AtomicBoolean(false)
+    private val currentBytes = java.util.concurrent.atomic.AtomicLong(initialBytes)
+    val bytes: Long get() = currentBytes.get()
     val isClosed: Boolean get() = released.get()
+
+    /**
+     * Atomically adjusts this reservation without releasing its identity or category.
+     * Growth is rejected when it would exceed the active budget; shrinking remains available
+     * after budget shutdown so owners can still reconcile retained allocations.
+     */
+    fun resize(newBytes: Long): TshResult<Unit> {
+        if (released.get()) return TshResult.Failure(listOf(TshDiagnostic(
+            "TSH-MEMORY-013", TshDiagnosticSeverity.ERROR, TshDiagnosticStage.MEMORY,
+            "Memory reservation is already closed"
+        )))
+        synchronized(this) {
+            if (released.get()) return TshResult.Failure(listOf(TshDiagnostic(
+                "TSH-MEMORY-013", TshDiagnosticSeverity.ERROR, TshDiagnosticStage.MEMORY,
+                "Memory reservation is already closed"
+            )))
+            val result = resizeAction(newBytes)
+            if (result is TshResult.Success) currentBytes.set(newBytes)
+            return result
+        }
+    }
+
     override fun close() {
-        if (released.compareAndSet(false, true)) releaseAction()
+        synchronized(this) {
+            if (released.compareAndSet(false, true)) releaseAction()
+        }
     }
 }
