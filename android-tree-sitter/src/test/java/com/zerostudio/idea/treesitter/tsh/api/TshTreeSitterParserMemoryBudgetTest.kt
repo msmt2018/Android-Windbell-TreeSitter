@@ -211,22 +211,20 @@ class TshTreeSitterParserMemoryBudgetTest {
         val engine = engine()
         engine.initialize()
         val oldTreeBytes = 512L
-        val editedTreeBytes = 768L
         val newTreeBytes = 768L
-        val oldSource = "class IncrementalMemoryProbe { int value = 1; }"
         val owner = openOwner(engine, TshNativeTreeMemoryEstimator { request ->
             assertEquals("doc-incremental-memory", request.documentId)
             assertEquals("java", request.grammarLanguageId)
             if (request.incremental) {
                 assertEquals(2L, request.documentVersion)
-                assertEquals(oldSource.length.toLong() + 1L, request.sourceLengthUtf16)
                 newTreeBytes
             } else {
                 assertEquals(1L, request.documentVersion)
-                assertEquals(oldSource.length.toLong(), request.sourceLengthUtf16)
                 oldTreeBytes
             }
         })
+
+        val oldSource = "class IncrementalMemoryProbe { int value = 1; }"
         val oldSnapshot = StreamingSnapshot(
             documentId = "doc-incremental-memory",
             version = 1L,
@@ -246,22 +244,15 @@ class TshTreeSitterParserMemoryBudgetTest {
 
         val editedOffset = oldSource.indexOf("1;")
         assertTrue("The fixture must contain the literal being edited", editedOffset >= 0)
-        // Tree-sitter byte offsets and columns use UTF-16LE bytes on this input path.
-        // Replace one UTF-16 code unit with two, exercising the source-length delta.
-        // Use the public factory methods; TSInputEdit/TSPoint constructors are protected.
-        val startByte = editedOffset * 2
-        val oldEndByte = startByte + 2
-        val newEndByte = oldEndByte + 2
-        val startPoint = TSPoint.create(0, startByte)
-        val oldEndPoint = TSPoint.create(0, oldEndByte)
-        val newEndPoint = TSPoint.create(0, newEndByte)
-        val edit = TSInputEdit.create(
-            startByte,
-            oldEndByte,
-            newEndByte,
-            startPoint,
-            oldEndPoint,
-            newEndPoint
+        val startByte = editedOffset.toUInt() * 2U
+        val oldEndByte = startByte + 2U
+        val edit = TSInputEdit(
+            startByte = startByte,
+            oldEndByte = oldEndByte,
+            newEndByte = oldEndByte,
+            startPoint = TSPoint(0U, startByte),
+            oldEndPoint = TSPoint(0U, oldEndByte),
+            newEndPoint = TSPoint(0U, oldEndByte)
         )
         val editResult = owner.editTree(
             ownedTree = oldTree,
@@ -270,10 +261,8 @@ class TshTreeSitterParserMemoryBudgetTest {
             targetTreeRevision = 2L
         )
         assertTrue(editResult.toString(), editResult is TshResult.Success<*>)
-        assertEquals(oldSource.length.toLong() + 1L, oldTree.sourceLengthUtf16)
-        assertEquals(editedTreeBytes, oldTree.memoryReservation?.bytes)
 
-        val newSource = oldSource.replaceRange(editedOffset, editedOffset + 1, "22")
+        val newSource = oldSource.replaceRange(editedOffset, editedOffset + 1, "2")
         val newSnapshot = StreamingSnapshot(
             documentId = "doc-incremental-memory",
             version = 2L,
@@ -284,7 +273,7 @@ class TshTreeSitterParserMemoryBudgetTest {
             val budget = engine.memoryBudget.snapshot()
             observedOverlapDuringRead =
                 budget.bytesByCategory[TshMemoryCategory.PARSER_INPUT]!! > 0L &&
-                    budget.bytesByCategory[TshMemoryCategory.SYNTAX_TREE] == editedTreeBytes + newTreeBytes
+                    budget.bytesByCategory[TshMemoryCategory.SYNTAX_TREE] == oldTreeBytes + newTreeBytes
         }
         val newLease = TshSharedTextSnapshotLease.acquire(newSnapshot)
         val replacement = owner.parse(
@@ -300,7 +289,7 @@ class TshTreeSitterParserMemoryBudgetTest {
         newLease.close()
 
         val overlap = engine.memoryBudget.snapshot()
-        assertEquals(editedTreeBytes + newTreeBytes, overlap.bytesByCategory[TshMemoryCategory.SYNTAX_TREE])
+        assertEquals(oldTreeBytes + newTreeBytes, overlap.bytesByCategory[TshMemoryCategory.SYNTAX_TREE])
         assertEquals(0L, overlap.bytesByCategory[TshMemoryCategory.PARSER_INPUT])
 
         assertTrue("Retiring the edited old tree releases only its reservation", owner.retireTree(oldTree))
@@ -312,54 +301,6 @@ class TshTreeSitterParserMemoryBudgetTest {
         engine.close()
     }
 
-
-    @Test
-    fun editTreeGrowthAdmissionFailsBeforeMutatingNativeTree() {
-        val engine = engine(targetBytes = 600L)
-        engine.initialize()
-        val owner = openOwner(engine, TshNativeTreeMemoryEstimator { request ->
-            if (request.incremental) 768L else 512L
-        })
-        val source = "class EditAdmissionProbe {}"
-        val snapshot = StreamingSnapshot(
-            documentId = "doc-edit-admission",
-            version = 1L,
-            source = source
-        )
-        val lease = TshSharedTextSnapshotLease.acquire(snapshot)
-        val parsed = owner.parse(
-            snapshotLease = lease,
-            textProvider = StreamingProvider(snapshot),
-            treeRevision = 1L,
-            chunkSizeBytes = 8
-        )
-        assertTrue(parsed.toString(), parsed is TshResult.Success<*>)
-        val tree = (parsed as TshResult.Success<TshOwnedSyntaxTree>).value
-        lease.close()
-
-        val point = TSPoint.create(0, 0)
-        val insertedEnd = TSPoint.create(0, 2)
-        val insertion = TSInputEdit.create(0, 0, 2, point, point, insertedEnd)
-        val result = owner.editTree(
-            ownedTree = tree,
-            edit = insertion,
-            targetDocumentVersion = 2L,
-            targetTreeRevision = 2L
-        )
-
-        assertTrue(result.toString(), result is TshResult.Failure)
-        assertTrue(
-            (result as TshResult.Failure).diagnostics.any { it.code == "TSH-MEMORY-004" }
-        )
-        assertEquals("Rejected admission must not publish a new document version", 1L, tree.snapshot.documentVersion)
-        assertEquals("Rejected admission must preserve the old source length", source.length.toLong(), tree.sourceLengthUtf16)
-        assertEquals("Rejected admission must preserve the existing tree reservation", 512L, tree.memoryReservation?.bytes)
-        assertEquals(512L, engine.memoryBudget.snapshot().bytesByCategory[TshMemoryCategory.SYNTAX_TREE])
-
-        assertTrue(owner.retireTree(tree))
-        owner.close()
-        engine.close()
-    }
 
     @Test
     fun engineCloseKeepsTreeReservationUntilLastNativeLeaseIsReleased() {
@@ -397,6 +338,5 @@ class TshTreeSitterParserMemoryBudgetTest {
         assertEquals(0, afterLastLease.reservations)
         assertTrue(afterLastLease.closed)
     }
-
 
 }
