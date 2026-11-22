@@ -1,6 +1,6 @@
 package com.zerostudio.idea.treesitter;
 
-import com.android.build.gradle.BasePlugin;
+import com.android.build.gradle.internal.plugins.BasePlugin;
 import com.android.build.gradle.internal.plugins.AppPlugin;
 import com.android.build.gradle.internal.plugins.BasePluginAccessor;
 import com.android.build.gradle.internal.plugins.LibraryPlugin;
