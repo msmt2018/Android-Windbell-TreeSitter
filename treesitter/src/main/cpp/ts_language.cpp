@@ -310,7 +310,11 @@ jshortArray JNICALL language_subtypes(JNIEnv *env, jobject thiz, jshort supertyp
 jboolean JNICALL language_is_named(JNIEnv *env, jobject thiz, jshort symbol) {
     TSLanguage *self = GET_POINTER(TSLanguage, thiz);
     TSSymbolType symbol_type = ts_language_symbol_type(self, symbol);
-    return (symbol_type == TSSymbolTypeRegular);
+    // Supertypes are named hidden grammar symbols. They are not visible
+    // syntax nodes, but they must still satisfy the language-level isNamed
+    // query just as Tree-sitter's symbol metadata defines them.
+    return (symbol_type == TSSymbolTypeRegular ||
+            symbol_type == TSSymbolTypeSupertype);
 }
 
 jboolean JNICALL language_is_visible(JNIEnv *env, jobject thiz, jshort symbol) {
