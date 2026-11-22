@@ -212,6 +212,19 @@ jobs:
             ${{ runner.os }}-gradle-
       - name: Change Gradle wrapper permissions
         run: chmod +x ./gradlew
+      - name: Verify exported NDK environment
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          : "${ANDROID_NDK_HOME:?ANDROID_NDK_HOME was not exported by the pinned NDK setup step}"
+          test -f "$ANDROID_NDK_HOME/source.properties"
+          actual_revision="$(sed -n 's/^Pkg.Revision = //p' "$ANDROID_NDK_HOME/source.properties" | head -n 1)"
+          if [[ "$actual_revision" != "$ANDROID_NDK_REVISION" ]]; then
+            echo "::error::Expected NDK $ANDROID_NDK_REVISION, received $actual_revision"
+            exit 1
+          fi
+          echo "Verified ANDROID_NDK_HOME=$ANDROID_NDK_HOME ($actual_revision)"
+
       - name: Assemble Release
         run: |
           /usr/bin/time -v -o build-release-memory.txt \
