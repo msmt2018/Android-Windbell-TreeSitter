@@ -11,11 +11,11 @@ import org.gradle.api.plugins.PluginManager;
  * signature enhancement. Kotlin 2.4.x can crash while enhancing the
  * AppPlugin/LibraryPlugin inheritance bounds in this AGP internal API.
  */
-final class AgpPluginServicesBridge {
+public final class AgpPluginServicesBridge {
   private AgpPluginServicesBridge() {}
 
   @SuppressWarnings({"rawtypes", "unchecked"})
-  static Object getDslServices(PluginManager plugins) {
+  public static Object getDslServices(PluginManager plugins) {
     final BasePlugin plugin;
     if (plugins.hasPlugin("com.android.application")) {
       plugin = (BasePlugin) plugins.getPlugin(AppPlugin.class);
