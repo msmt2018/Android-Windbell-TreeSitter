@@ -1077,8 +1077,8 @@ class WindbellTshLinkageTest {
                     {
                         node: "+"
                         named: false
-                        previousSibling: "expression"
-                        nextSibling: "expression"
+                        previousSibling: "decimal_integer_literal"
+                        nextSibling: "decimal_integer_literal"
                         style: "operatorWithOperands"
                         priority: 20
                     },
@@ -1086,14 +1086,14 @@ class WindbellTshLinkageTest {
                         node: "+"
                         named: false
                         previousSibling: "identifier"
-                        nextSibling: "expression"
+                        nextSibling: "decimal_integer_literal"
                         style: "operatorWithWrongLeft"
                         priority: 19
                     },
                     {
                         node: "+"
                         named: false
-                        previousSibling: "expression"
+                        previousSibling: "decimal_integer_literal"
                         nextSibling: "identifier"
                         style: "operatorWithWrongRight"
                         priority: 18
@@ -1156,10 +1156,22 @@ class WindbellTshLinkageTest {
         val operatorId = engine.getStyleCatalog("java-ast-node-flags")
             .first { it.name == "operator" }.styleId
         val operatorSpans = spans.filter { it.styleId == operatorId }
+        val operatorStart = code.indexOf("+") * 2
+        val operatorEnd = (code.indexOf("+") + 1) * 2
         assertTrue(operatorSpans.any {
-            it.startByte == code.indexOf("+") * 2 && it.endByte == (code.indexOf("+") + 1) * 2
+            it.startByte == operatorStart && it.endByte == operatorEnd
         }, "ATS must resolve and match anonymous Tree-sitter symbols; actual spans: " +
             operatorSpans.joinToString { "[${it.startByte}, ${it.endByte})" })
+        val wrongLeftId = engine.getStyleCatalog("java-ast-node-flags")
+            .first { it.name == "operatorWithWrongLeft" }.styleId
+        assertFalse(spans.any {
+            it.styleId == wrongLeftId && it.startByte == operatorStart && it.endByte == operatorEnd
+        }, "ATS must reject an incorrect direct previous sibling type.")
+        val wrongRightId = engine.getStyleCatalog("java-ast-node-flags")
+            .first { it.name == "operatorWithWrongRight" }.styleId
+        assertFalse(spans.any {
+            it.styleId == wrongRightId && it.startByte == operatorStart && it.endByte == operatorEnd
+        }, "ATS must reject an incorrect direct next sibling type.")
         val methodNameId = engine.getStyleCatalog("java-ast-node-flags")
             .first { it.name == "methodName" }.styleId
         assertTrue(spans.any {
