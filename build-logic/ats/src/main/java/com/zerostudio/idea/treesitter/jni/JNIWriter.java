@@ -23,6 +23,7 @@ import java.lang.reflect.Type;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -199,9 +200,15 @@ public class JNIWriter {
     final var writer = new PrintWriter(_writer);
 
     // Multiple annotated inner classes in a composite grammar intentionally
-    // share one generated header file. Deduplicate only the include directives;
-    // every class still needs its own native-method array and registration call.
-    final var uniqueHeaderFilenames = results.stream()
+    // share one generated header file. A source scan may encounter the same
+    // nested type more than once, so deduplicate by JNI class identity rather
+    // than by header filename (which would drop sibling registrations).
+    final var uniqueTypeResults = new ArrayList<JNIWriterResult>();
+    final var seenTypeNames = new HashSet<String>();
+    for (final var result : uniqueTypeResults) {
+      if (seenTypeNames.add(result.getTypeName())) uniqueTypeResults.add(result);
+    }
+    final var uniqueHeaderFilenames = uniqueTypeResults.stream()
       .map(JNIWriterResult::getHeaderFilename)
       .distinct()
       .toList();
@@ -220,7 +227,7 @@ public class JNIWriter {
 
     writer.println("#define TS_JNI_ONLOAD__AUTO_REGISTER(env) \\");
 
-    for (final var result : results) {
+    for (final var result : uniqueTypeResults) {
       final var typeName = result.getTypeName();
       indent(writer, 4);
       writer.print(typeName_AutoRegisterNatives(typeName));
@@ -231,7 +238,7 @@ public class JNIWriter {
 
     writer.println("#define TS_JNI_ONLOAD__DEFINE_METHODS_ARR \\");
 
-    for (final var result : results) {
+    for (final var result : uniqueTypeResults) {
       final var typeName = result.getTypeName();
       indent(writer, 4);
       writer.print(typeName_DefMethodsArray(typeName));
