@@ -443,19 +443,10 @@ jobs:
           # Let the action finish emulator boot without issuing fragile settings
           # writes while API 30 TCG emulation is still recovering from boot.
           disable-animations: false
-          script: |
-            # The emulator-runner action has already waited for Android boot.
-            # Keep this script minimal and POSIX-safe; shell boot polling here
-            # caused repeated runner parse failures and duplicated readiness logic.
-            mkdir -p build/emulator-test-logs
-            if ./gradlew :editor:connectedDebugAndroidTest :app:connectedDebugAndroidTest --continue --max-workers=1 --stacktrace; then
-              test_result=0
-            else
-              test_result=$?
-            fi
-            adb -s emulator-5554 logcat -d -v threadtime > build/emulator-test-logs/logcat.txt 2>&1 || true
-            adb -s emulator-5554 shell dumpsys activity activities > build/emulator-test-logs/activities.txt 2>&1 || true
-            exit "$test_result"
+          # Keep the runner payload on one shell command: android-emulator-runner
+          # invokes script lines separately through /bin/sh, so multiline if/then
+          # blocks are truncated and fail with "expecting fi".
+          script: mkdir -p build/emulator-test-logs && ./gradlew :editor:connectedDebugAndroidTest :app:connectedDebugAndroidTest --continue --max-workers=1 --stacktrace; test_result=$?; adb -s emulator-5554 logcat -d -v threadtime > build/emulator-test-logs/logcat.txt 2>&1 || true; adb -s emulator-5554 shell dumpsys activity activities > build/emulator-test-logs/activities.txt 2>&1 || true; exit "$test_result"
       - name: Upload Android device test reports and logs
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
