@@ -77,9 +77,12 @@ class WindbellTshEditorViewRenderingTest {
         lateinit var highlighter: TshSyntaxHighlighter
         instrumentation.runOnMainSync {
             editor = EditorView(context)
+            assertTrue(
+                "EditorView refused the initial TSH rendering fixture",
+                editor.setText("public class Demo {\n    String value = \"hello\";\n}")
+            )
             editor.setTextSize(48f)
             editor.setTextColor(plainColor)
-            editor.setText("public class Demo {\n    String value = \"hello\";\n}")
             highlighter = TshSyntaxHighlighter(
                 language = TSLanguageJava.getInstance(),
                 extension = extension,

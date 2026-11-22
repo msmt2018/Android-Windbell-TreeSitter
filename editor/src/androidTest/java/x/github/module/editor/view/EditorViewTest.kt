@@ -1110,8 +1110,13 @@ class EditorViewTest {
     // On the test thread, before the test goes to the main thread: see offMainThread.
     private fun prepareForTouch(text: String) {
         offMainThread { editor.setTextSize(48f) }
+        val layoutDeadline = SystemClock.uptimeMillis() + 5_000L
+        while (editor.isLayoutBusy() && SystemClock.uptimeMillis() < layoutDeadline) {
+            SystemClock.sleep(10L)
+        }
+        assertFalse("Editor layout did not become idle after changing text size", editor.isLayoutBusy())
         onMainThread {
-            editor.setText(text)
+            assertTrue("EditorView refused the touch-test text fixture", editor.setText(text))
             layOut(editor, width = 1200, height = 600)
         }
     }
