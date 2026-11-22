@@ -21,6 +21,57 @@
 
 namespace windbell::tsh {
 
+// ATS node names may resolve to Tree-sitter supertypes (for example,
+// Java's "expression"). Parsed nodes carry their concrete subtype symbol,
+// so exact symbol equality is insufficient for those selectors.
+static bool tshAstSymbolMatchesNode(
+    const TSLanguage* language,
+    TSNode node,
+    TSSymbol selector_symbol,
+    uint32_t depth = 0
+) noexcept {
+    if (selector_symbol == 0 || ts_node_is_null(node)) return false;
+    const TSSymbol visible_symbol = ts_node_symbol(node);
+    const TSSymbol grammar_symbol = ts_node_grammar_symbol(node);
+    if (selector_symbol == visible_symbol || selector_symbol == grammar_symbol) {
+        return true;
+    }
+    // Supertype relations can be nested (for example expression ->
+    // primary_expression -> _literal -> decimal_integer_literal). Resolve the
+    // transitive closure rather than assuming a single subtype level.
+    constexpr uint32_t kMaxSupertypeDepth = 64;
+    if (!language || depth >= kMaxSupertypeDepth) return false;
+    uint32_t subtype_count = 0;
+    const TSSymbol* subtypes =
+        ts_language_subtypes(language, selector_symbol, &subtype_count);
+    for (uint32_t i = 0; subtypes && i < subtype_count; ++i) {
+        if (tshAstSymbolMatchesNode(language, node, subtypes[i], depth + 1)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool tshAstNodeMatchesSelector(
+    const TSLanguage* language,
+    TSNode node,
+    TSSymbol selector_symbol,
+    const std::string& selector_type
+) noexcept {
+    if (ts_node_is_null(node)) return false;
+    if (tshAstSymbolMatchesNode(language, node, selector_symbol)) return true;
+
+    if (!selector_type.empty()) {
+        const char* visible_type = ts_node_type(node);
+        const char* grammar_type = ts_node_grammar_type(node);
+        if ((visible_type && selector_type == visible_type) ||
+            (grammar_type && selector_type == grammar_type)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 static void tshIncrementDiagnostic(uint32_t* value, uint64_t amount = 1u) noexcept {
     if (!value) return;
     const uint64_t remaining = static_cast<uint64_t>(UINT32_MAX - *value);
@@ -2353,7 +2404,9 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                 const bool needs_child_position =
                     ast_rule.child_index != UINT32_MAX ||
                     ast_rule.named_child_index != UINT32_MAX ||
-                    ast_rule.first_child >= 0 || ast_rule.last_child >= 0;
+                    ast_rule.first_child >= 0 || ast_rule.last_child >= 0 ||
+                    ast_rule.previous_sibling_symbol != 0 ||
+                    ast_rule.next_sibling_symbol != 0;
                 if (needs_child_position) {
                     if (ts_node_is_null(parent)) continue;
                     const uint32_t sibling_count = ts_node_child_count(parent);
@@ -2380,28 +2433,25 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                         (current_index + 1 == sibling_count) != (ast_rule.last_child != 0)) continue;
                 }
 
-                // Resolve immediate siblings from the active Tree-sitter cursor.
-                // Reconstructing the current child index via ts_node_eq is only
-                // required by positional selectors; sibling selectors must not
-                // depend on that identity scan (notably for anonymous/aliased nodes).
+                // Sibling constraints share the exact child index used by
+                // firstChild/lastChild/childIndex. Resolve both constraints against
+                // the same parent child list; compare visible and grammar identities
+                // so aliases and Tree-sitter supertypes remain matchable.
                 if (ast_rule.previous_sibling_symbol != 0) {
-                    TSTreeCursor sibling_cursor = ts_tree_cursor_copy(&cursor);
-                    const bool has_previous =
-                        ts_tree_cursor_goto_previous_sibling(&sibling_cursor);
-                    const bool matches_previous = has_previous &&
-                        ts_node_symbol(ts_tree_cursor_current_node(&sibling_cursor)) ==
-                            ast_rule.previous_sibling_symbol;
-                    ts_tree_cursor_delete(&sibling_cursor);
-                    if (!matches_previous) continue;
+                    if (current_index == 0) continue;
+                    const TSNode previous = ts_node_child(parent, current_index - 1);
+                    if (!tshAstNodeMatchesSelector(
+                            grammar->ts_language, previous,
+                            ast_rule.previous_sibling_symbol,
+                            ast_rule.previous_sibling_type)) continue;
                 }
                 if (ast_rule.next_sibling_symbol != 0) {
-                    TSTreeCursor sibling_cursor = ts_tree_cursor_copy(&cursor);
-                    const bool has_next = ts_tree_cursor_goto_next_sibling(&sibling_cursor);
-                    const bool matches_next = has_next &&
-                        ts_node_symbol(ts_tree_cursor_current_node(&sibling_cursor)) ==
-                            ast_rule.next_sibling_symbol;
-                    ts_tree_cursor_delete(&sibling_cursor);
-                    if (!matches_next) continue;
+                    if (current_index + 1 >= sibling_count) continue;
+                    const TSNode next = ts_node_child(parent, current_index + 1);
+                    if (!tshAstNodeMatchesSelector(
+                            grammar->ts_language, next,
+                            ast_rule.next_sibling_symbol,
+                            ast_rule.next_sibling_type)) continue;
                 }
 
                 if (diagnostic_match_counts) tshIncrementDiagnostic(&diagnostic_match_counts[2]);
