@@ -205,7 +205,7 @@ public class JNIWriter {
     // than by header filename (which would drop sibling registrations).
     final var uniqueTypeResults = new ArrayList<JNIWriterResult>();
     final var seenTypeNames = new HashSet<String>();
-    for (final var result : uniqueTypeResults) {
+    for (final var result : results) {
       if (seenTypeNames.add(result.getTypeName())) uniqueTypeResults.add(result);
     }
     final var uniqueHeaderFilenames = uniqueTypeResults.stream()
