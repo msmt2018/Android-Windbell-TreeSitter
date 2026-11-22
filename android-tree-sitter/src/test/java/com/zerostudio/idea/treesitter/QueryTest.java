@@ -187,6 +187,11 @@ public class QueryTest extends TreeSitterTest {
   }
 
   @Test
+  public void testXmlDtdLanguageBinding() {
+    assertThat(TSLanguageXml.getDtdInstance()).isNotNull();
+  }
+
+  @Test
   public void testXmlBlocksQuery() throws Exception {
     try (final var parser = TSParser.create()) {
       parser.setLanguage(TSLanguageXml.getXmlInstance());
