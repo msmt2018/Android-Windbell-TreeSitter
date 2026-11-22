@@ -1118,6 +1118,24 @@ class WindbellTshLinkageTest {
                 ]
             }
         """.trimIndent()
+        // Guard the grammar metadata contract independently from ATS dispatch:
+        // the Java grammar must expose ABI-15 supertype/subtype tables to TSH.
+        val expressionSupertype = language.getSupertypes().firstOrNull {
+            language.getSymbolName(it) == "expression"
+        }
+        assertNotNull(
+            expressionSupertype,
+            "Java grammar ABI ${language.getLanguageVersion()} must expose the expression supertype"
+        )
+        val expressionSubtypeNames = language.getSubtypes(expressionSupertype!!).map {
+            language.getSymbolName(it)
+        }.toSet()
+        assertTrue(
+            "binary_expression" in expressionSubtypeNames,
+            "Java expression supertype must include binary_expression; ABI=${language.getLanguageVersion()}, " +
+                "directSubtypes=$expressionSubtypeNames"
+        )
+
         assertTrue(engine.loadTshSource("java-ast-node-flags", source, language))
         val parser = TSParser.create().apply { setLanguage(language) }
         val code = "// 😀 prefix\nclass Demo { int value = 1 + 2; void run() {} }"
