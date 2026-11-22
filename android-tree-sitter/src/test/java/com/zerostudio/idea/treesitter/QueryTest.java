@@ -187,10 +187,12 @@ public class QueryTest extends TreeSitterTest {
   }
 
   @Test
+  public void testXmlDtdLanguageBinding() {
+    assertThat(TSLanguageXml.getDtdInstance()).isNotNull();
+  }
+
+  @Test
   public void testXmlBlocksQuery() throws Exception {
-    // Grammar JNI libraries are separate from the core android-tree-sitter library.
-    // The app's language loader performs this explicitly; the JVM test must do the same.
-    System.loadLibrary("tree-sitter-xml");
     try (final var parser = TSParser.create()) {
       parser.setLanguage(TSLanguageXml.getXmlInstance());
       final var source = UTF16StringFactory.newString(
