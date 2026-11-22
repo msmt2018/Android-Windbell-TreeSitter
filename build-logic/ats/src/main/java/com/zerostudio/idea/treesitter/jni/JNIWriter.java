@@ -206,7 +206,7 @@ public class JNIWriter {
     final var uniqueTypeResults = new ArrayList<JNIWriterResult>();
     final var seenTypeNames = new HashSet<String>();
     for (final var result : results) {
-      if (seenTypeNames.add(result.getTypeName())) uniqueTypeResults.add(result);
+      if (seenTypeNames.add(result.getTypeName().toString())) uniqueTypeResults.add(result);
     }
     final var uniqueHeaderFilenames = uniqueTypeResults.stream()
       .map(JNIWriterResult::getHeaderFilename)
