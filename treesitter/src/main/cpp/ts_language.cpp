@@ -369,13 +369,19 @@ jobject JNICALL language_symbol_type(JNIEnv* env, jobject thiz, jshort symbol) {
             symbol_object = GET_STATIC_FIELD(Object, TSSymbolType, TSSymbolType_REGULAR);
             break;
         case TSSymbolTypeAnonymous:
-            symbol_object = GET_STATIC_FIELD(Object, TSSymbolType, TSSymbolType_ANONYMOUS);            
+            symbol_object = GET_STATIC_FIELD(Object, TSSymbolType, TSSymbolType_ANONYMOUS);
+            break;
+        case TSSymbolTypeSupertype:
+            // Tree-sitter 0.28 exposes ABI-15 supertypes as a distinct
+            // symbol type. Returning UNREACHABLE here aborts callers that
+            // inspect symbolType() for a valid supertype symbol.
+            symbol_object = GET_STATIC_FIELD(Object, TSSymbolType, TSSymbolType_SUPERTYPE);
             break;
         case TSSymbolTypeAuxiliary:
             symbol_object = GET_STATIC_FIELD(Object, TSSymbolType, TSSymbolType_AUXILIARY);
             break;
         default:
-            UNREACHABLE();
+            return nullptr;
     }
     return symbol_object;
 }
