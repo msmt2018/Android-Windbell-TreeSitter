@@ -252,7 +252,6 @@ jobs:
           path: ${{ env.DEBUG_INFO_PATH }}
 
   unit_test_debug:
-    if: false # Temporarily disabled: prioritize implementation and defect fixes over test execution.
     name: Run local tests
     runs-on: ubuntu-latest
     steps:
