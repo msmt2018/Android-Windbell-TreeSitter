@@ -4,7 +4,7 @@ import com.android.build.gradle.BasePlugin;
 import com.android.build.gradle.internal.plugins.AppPlugin;
 import com.android.build.gradle.internal.plugins.BasePluginAccessor;
 import com.android.build.gradle.internal.plugins.LibraryPlugin;
-import org.gradle.api.plugins.PluginManager;
+import org.gradle.api.plugins.PluginContainer;
 
 /**
  * Keeps AGP's deeply parameterized BasePlugin type out of Kotlin's Java
@@ -15,7 +15,7 @@ public final class AgpPluginServicesBridge {
   private AgpPluginServicesBridge() {}
 
   @SuppressWarnings({"rawtypes", "unchecked"})
-  public static Object getDslServices(PluginManager plugins) {
+  public static Object getDslServices(PluginContainer plugins) {
     final BasePlugin plugin;
     if (plugins.hasPlugin("com.android.application")) {
       plugin = (BasePlugin) plugins.getPlugin(AppPlugin.class);
