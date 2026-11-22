@@ -38,6 +38,63 @@ namespace windbell::tsh {
 
 namespace {
 
+// Resolve a DSL node name to the grammar symbol identity, not merely the
+// public symbol returned by ts_language_symbol_for_name(). The latter maps
+// aliases through public_symbol_map, which loses the original grammar symbol
+// needed by ATS when matching ts_node_grammar_symbol().
+static TSSymbol resolveAstGrammarSymbol(
+    const TSLanguage* language,
+    const std::string& name,
+    bool is_named
+) {
+    if (!language || name.empty()) return 0;
+
+    // A supertype may also be publicly visible, in which case
+    // ts_language_symbol_type() reports it as Regular (visible + named).
+    // Resolve against the authoritative ABI-15 supertype table first;
+    // otherwise an earlier same-name public symbol can shadow the supertype
+    // and prevent subtype expansion for ATS selectors such as "expression".
+    if (is_named) {
+        uint32_t supertype_count = 0;
+        const TSSymbol* supertypes =
+            ts_language_supertypes(language, &supertype_count);
+        for (uint32_t index = 0; supertypes && index < supertype_count; ++index) {
+            const TSSymbol symbol = supertypes[index];
+            const char* symbol_name = ts_language_symbol_name(language, symbol);
+            if (symbol_name && name == symbol_name) return symbol;
+        }
+    }
+
+    const uint32_t symbol_count = ts_language_symbol_count(language);
+    TSSymbol auxiliary_candidate = 0;
+    for (uint32_t index = 0; index < symbol_count; ++index) {
+        const TSSymbol symbol = static_cast<TSSymbol>(index);
+        const char* symbol_name = ts_language_symbol_name(language, symbol);
+        if (!symbol_name || name != symbol_name) continue;
+
+        switch (ts_language_symbol_type(language, symbol)) {
+            case TSSymbolTypeRegular:
+            case TSSymbolTypeSupertype:
+                if (is_named) return symbol;
+                break;
+            case TSSymbolTypeAnonymous:
+                if (!is_named) return symbol;
+                break;
+            case TSSymbolTypeAuxiliary:
+                // The public API intentionally hides auxiliary symbols. Their
+                // metadata does not expose namedness through TSSymbolType, but
+                // exact-name matching is still required for grammar identities.
+                if (auxiliary_candidate == 0) auxiliary_candidate = symbol;
+                break;
+        }
+    }
+    if (auxiliary_candidate != 0) return auxiliary_candidate;
+
+    // Preserve Tree-sitter's special built-in symbols (for example ERROR).
+    return ts_language_symbol_for_name(
+        language, name.c_str(), static_cast<uint32_t>(name.size()), is_named);
+}
+
 // Proves a deliberately small, unambiguous subset of Oniguruma patterns has
 // a finite maximum width. Unsupported constructs are valid patterns, but are
 // conservatively marked as requiring document context. This is metadata only;
@@ -3196,15 +3253,15 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                                 if (ast_rule.child_symbol == 0) return nullptr;
                             }
                             if (!previous_sibling_name.empty()) {
-                                ast_rule.previous_sibling_symbol = ts_language_symbol_for_name(
-                                    ts_lang, previous_sibling_name.c_str(),
-                                    static_cast<uint32_t>(previous_sibling_name.length()), true);
+                                ast_rule.previous_sibling_type = previous_sibling_name;
+                                ast_rule.previous_sibling_symbol = resolveAstGrammarSymbol(
+                                    ts_lang, previous_sibling_name, true);
                                 if (ast_rule.previous_sibling_symbol == 0) return nullptr;
                             }
                             if (!next_sibling_name.empty()) {
-                                ast_rule.next_sibling_symbol = ts_language_symbol_for_name(
-                                    ts_lang, next_sibling_name.c_str(),
-                                    static_cast<uint32_t>(next_sibling_name.length()), true);
+                                ast_rule.next_sibling_type = next_sibling_name;
+                                ast_rule.next_sibling_symbol = resolveAstGrammarSymbol(
+                                    ts_lang, next_sibling_name, true);
                                 if (ast_rule.next_sibling_symbol == 0) return nullptr;
                             }
                         }
