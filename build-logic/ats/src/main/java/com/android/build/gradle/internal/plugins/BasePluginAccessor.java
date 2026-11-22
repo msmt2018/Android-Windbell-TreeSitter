@@ -30,7 +30,7 @@ public final class BasePluginAccessor {
     throw new UnsupportedOperationException();
   }
 
-  public static DslServices getDslServices(BasePlugin<?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?> basePlugin) {
+  public static DslServices getDslServices(BasePlugin<?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?> basePlugin) {
     return basePlugin.getDslServices();
   }
 }
