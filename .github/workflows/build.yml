@@ -378,10 +378,262 @@ jobs:
           ./gradlew :android-tree-sitter:generateNativeHeadersDebug --stacktrace
           cmake -S android-tree-sitter/src/main/cpp -B build/host \
             -DCMAKE_BUILD_TYPE=Debug \
-            -DBUILD_TESTING=OFF \
+            -DBUILD_TESTING=ON \
             -DAUTOGEN_HEADERS="$GITHUB_WORKSPACE/android-tree-sitter/build/generated/native_headers"
           cmake --build build/host --target android-tree-sitter --parallel 2
           test -f build/host/libandroid-tree-sitter.so
+
+          # Compile and execute the native TSH dependency/cache regression suite.
+          # This is separate from the JNI shared-library target and was previously
+          # not exercised because BUILD_TESTING was explicitly disabled.
+          cmake --build build/host --target windbell_tsh_cache_tests --parallel 2
+          ctest --test-dir build/host --output-on-failure -R '^windbell_tsh_cache_tests
+      - name: Run debug tests
+        run: ./gradlew testDebug :editor:compileDebugAndroidTestKotlin :app:compileDebugAndroidTestKotlin --continue --parallel --stacktrace
+        env:
+          ANDROIDIDE_TEST: true
+      - name: Upload Test Reports
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-unit-tests
+          path: '**/build/reports/tests/'
+
+
+  android_emulator_tests:
+    if: false # Temporarily disabled: instrumentation suites are out of scope for this development phase.
+    name: Android device tests (API ${{ matrix.api-level }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    # GitHub-hosted Linux runners do not expose KVM to the emulator. The
+    # emulator-runner action therefore launches with -accel off; current
+    # emulator releases require this explicit opt-in for TCG software CPU
+    # emulation, otherwise the emulator exits before creating emulator-5554.
+    env:
+      ANDROID_I_WANT_MY_TCG: "yes"
+    strategy:
+      fail-fast: false
+      matrix:
+        api-level: [26, 30, 35]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          submodules: true
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.BUILD_JAVA_VERSION }}
+          distribution: ${{ env.BUILD_JAVA_DIST }}
+      - name: Setup NDK
+        uses: nttld/setup-ndk@v1
+        id: setup-ndk
+        with:
+          ndk-version: r29
+          link-to-sdk: true
+      - name: Install dependencies
+        run: $ATS_SUDO $ATS_APT_UPDATE && $ATS_SUDO $ATS_APT_INSTALL $ATS_APT_DEPS
+      - name: Set up Python for native grammar builds
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Set up Node.js for native grammar bindings
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22.22.2'
+      - name: Set up Bun for grammar packages
+        uses: oven-sh/setup-bun@v2
+      - name: Install Node packages for all grammar submodules
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          failed=()
+          # Install each npm workspace root exactly once. A workspace root installs
+          # its child grammar packages and creates local symlinks; installing those
+          # children independently races with npm and fails with EEXIST/MODULE_NOT_FOUND.
+          mapfile -d '' manifests < <(
+            while IFS= read -r -d '' manifest; do
+              dir_path="$(dirname "$manifest")"
+              ancestor="$(dirname "$dir_path")"
+              workspace_managed=false
+              while [[ "$ancestor" == grammars/* ]]; do
+                parent_manifest="$GITHUB_WORKSPACE/$ancestor/package.json"
+                if [[ -f "$parent_manifest" ]] && node -e 'const p=require(process.argv[1]); process.exit(p.workspaces ? 0 : 1)' "$parent_manifest"; then
+                  workspace_managed=true
+                  break
+                fi
+                next_ancestor="$(dirname "$ancestor")"
+                [[ "$next_ancestor" == "$ancestor" ]] && break
+                ancestor="$next_ancestor"
+              done
+              if [[ "$workspace_managed" == false ]]; then
+                printf '%s\0' "$manifest"
+              else
+                echo "::notice::Skipping workspace child package $dir_path; installed by $ancestor" >&2
+              fi
+            done < <(find grammars -mindepth 2 -maxdepth 3 -type f -name package.json ! -path 'grammars/asm/*' ! -path 'grammars/*/test-npm-package/*' -print0 | sort -z)
+          )
+          if (( ${#manifests[@]} == 0 )); then
+            echo "::error::No grammar package.json files were found under grammars/"
+            exit 1
+          fi
+          # Run independent grammar npm installs with bounded concurrency.
+          failed_file="$(mktemp)"
+          export failed_file
+          install_grammar() {
+            local config_path="$1"
+            local dir_path
+            dir_path="$(dirname "$config_path")"
+            echo "::group::📦 Installing grammar dependencies: $dir_path"
+            if (cd "$dir_path" && npm install --legacy-peer-deps --no-audit --no-fund); then
+              echo "::endgroup::"
+              return 0
+            fi
+            echo "::endgroup::"
+            printf '%s\n' "$dir_path" >> "$failed_file"
+            return 1
+          }
+          export -f install_grammar
+          if ! printf '%s\0' "${manifests[@]}" | xargs -0 -r -n 1 -P 4 bash -c 'install_grammar "$1"' _; then
+            echo "One or more grammar dependency installations failed."
+          fi
+          if [[ -s "$failed_file" ]]; then
+            mapfile -t failed < "$failed_file"
+            printf '\n::error::Dependency installation failed for %d grammar(s):\n' "${#failed[@]}"
+            printf ' - %s\n' "${failed[@]}"
+            rm -f "$failed_file"
+            exit 1
+          fi
+          rm -f "$failed_file"
+          echo "✅ Installed dependencies for all ${#manifests[@]} grammar packages."
+      - name: Change Gradle wrapper permissions
+        run: chmod +x ./gradlew
+      # The current Android Emulator requires a hardware accelerator on
+      # recent builds. Enable KVM for the runner when available; explicitly
+      # opt into TCG only when the runner cannot expose /dev/kvm.
+      - name: Enable KVM or configure TCG fallback
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          if [[ -e /dev/kvm ]]; then
+            echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+            sudo udevadm control --reload-rules
+            sudo udevadm trigger --name-match=kvm
+          fi
+          if [[ -r /dev/kvm && -w /dev/kvm ]]; then
+            echo "KVM is accessible; emulator will use hardware acceleration."
+          else
+            echo "ANDROID_I_WANT_MY_TCG=yes" >> "$GITHUB_ENV"
+            echo "::warning::KVM is unavailable; explicitly allowing the emulator's TCG fallback."
+          fi
+      - name: Prepare Android instrumentation runner
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p build
+          cat > build/run-android-instrumentation.sh <<'RUNNER'
+          #!/usr/bin/env bash
+          set -Eeuo pipefail
+
+          LOG_DIR="build/emulator-test-logs"
+          mkdir -p "$LOG_DIR"
+
+          adb start-server
+          timeout 180 adb -s emulator-5554 wait-for-device
+
+          boot_deadline=$(( $(date +%s) + 300 ))
+          while :; do
+            boot_completed="$(adb -s emulator-5554 shell getprop sys.boot_completed 2>/dev/null | tr -d '\r' || true)"
+            if [[ "$boot_completed" == "1" ]]; then
+              break
+            fi
+            if (( $(date +%s) >= boot_deadline )); then
+              echo "::error::Android emulator did not report sys.boot_completed=1"
+              adb devices -l || true
+              exit 1
+            fi
+            sleep 2
+          done
+
+          service_is_ready() {
+            local service="$1"
+            adb -s emulator-5554 shell service check "$service" 2>/dev/null | grep -q "found"
+          }
+
+          # Do not trust sys.boot_completed alone. On software-rendered hosted
+          # emulators adb can see a device while framework services and SDK
+          # properties are still intermittently unavailable to Gradle.
+          expected_sdk="${EXPECTED_API_LEVEL:?EXPECTED_API_LEVEL must match the emulator matrix}"
+          stable_probes=0
+          readiness_deadline=$(( $(date +%s) + 240 ))
+          while (( stable_probes < 5 )); do
+            adb_state="$(adb -s emulator-5554 get-state 2>/dev/null || true)"
+            actual_sdk="$(adb -s emulator-5554 shell getprop ro.build.version.sdk 2>/dev/null | tr -d '\r' || true)"
+            fingerprint="$(adb -s emulator-5554 shell getprop ro.build.fingerprint 2>/dev/null | tr -d '\r' || true)"
+            if [[ "$adb_state" == "device" &&
+                  "$actual_sdk" == "$expected_sdk" &&
+                  -n "$fingerprint" ]] &&
+               service_is_ready activity &&
+               service_is_ready package; then
+              stable_probes=$((stable_probes + 1))
+            else
+              stable_probes=0
+              echo "Waiting for stable emulator: adb=$adb_state sdk=$actual_sdk expected=$expected_sdk"
+            fi
+            if (( $(date +%s) >= readiness_deadline )); then
+              echo "::error::Android emulator did not remain stable at API $expected_sdk"
+              adb devices -l || true
+              adb -s emulator-5554 shell getprop || true
+              exit 1
+            fi
+            sleep 3
+          done
+
+          echo "Emulator is stable and reports API $expected_sdk."
+          adb -s emulator-5554 shell getprop ro.build.version.sdk
+          adb -s emulator-5554 shell service check activity
+          adb -s emulator-5554 shell service check package
+
+          test_result=0
+          ./gradlew :editor:connectedDebugAndroidTest :app:connectedDebugAndroidTest --continue --max-workers=1 --stacktrace || test_result=$?
+
+          adb -s emulator-5554 logcat -d -v threadtime > "$LOG_DIR/logcat.txt" 2>&1 || true
+          adb -s emulator-5554 shell dumpsys activity activities > "$LOG_DIR/activities.txt" 2>&1 || true
+          adb devices -l > "$LOG_DIR/adb-devices.txt" 2>&1 || true
+          exit "$test_result"
+          RUNNER
+          chmod +x build/run-android-instrumentation.sh
+          bash -n build/run-android-instrumentation.sh
+      - name: Run Android instrumentation tests
+        uses: reactivecircus/android-emulator-runner@v2
+        env:
+          EXPECTED_API_LEVEL: ${{ matrix.api-level }}
+        with:
+          api-level: ${{ matrix.api-level }}
+          emulator-boot-timeout: 900
+          target: default
+          disable-linux-hw-accel: auto
+          arch: x86_64
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -no-snapshot -no-snapshot-load -no-snapshot-save -memory 2048 -cores 2
+          # Animation settings are not a test prerequisite; avoid Settings-provider startup races.
+          disable-animations: false
+          # The action executes script input as separate /usr/bin/sh commands.
+          # Keep this a single command; the actual loops live in the Bash file.
+          script: bash -euo pipefail build/run-android-instrumentation.sh
+      - name: Upload Android device test reports and logs
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-device-tests-api-${{ matrix.api-level }}
+          path: |
+            **/build/reports/androidTests/
+            **/build/outputs/androidTest-results/
+            build/emulator-test-logs/
+          if-no-files-found: warn
+
+  # Maven and GitHub release publication jobs are intentionally disabled.
+
 
       - name: Run debug tests
         run: ./gradlew testDebug :editor:compileDebugAndroidTestKotlin :app:compileDebugAndroidTestKotlin --continue --parallel --stacktrace
