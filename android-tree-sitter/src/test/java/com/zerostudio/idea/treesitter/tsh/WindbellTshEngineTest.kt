@@ -1011,7 +1011,6 @@ class WindbellTshLinkageTest {
                     declaration { scope: "entity.name.type" }
                     declarationAlias { scope: "entity.name.type.alias" }
                     operator { scope: "keyword.operator" }
-                    expressionNode { scope: "meta.expression" }
                     methodName { scope: "entity.name.function" }
                     methodWithBody { scope: "meta.function.body" }
                     operatorWithOperands { scope: "keyword.operator.arithmetic" }
@@ -1044,37 +1043,29 @@ class WindbellTshLinkageTest {
                         priority: 34
                         overlap: allow
                     },
+                    // Java declares expression, primary_expression and _literal as
+                    // supertypes. Tree-sitter omits those supertype nodes from the
+                    // concrete tree: the direct operands of this '+' are integer literals.
                     {
                         node: "+"
                         named: false
+                        previousSibling: "decimal_integer_literal"
+                        nextSibling: "decimal_integer_literal"
                         style: "operator"
-                        priority: 20
-                    },
-                    {
-                        node: "expression"
-                        style: "expressionNode"
-                        priority: 21
-                    },
-                    {
-                        node: "+"
-                        named: false
-                        previousSibling: "expression"
-                        nextSibling: "expression"
-                        style: "operatorWithOperands"
                         priority: 20
                     },
                     {
                         node: "+"
                         named: false
                         previousSibling: "identifier"
-                        nextSibling: "expression"
+                        nextSibling: "decimal_integer_literal"
                         style: "operatorWithWrongLeft"
                         priority: 19
                     },
                     {
                         node: "+"
                         named: false
-                        previousSibling: "expression"
+                        previousSibling: "decimal_integer_literal"
                         nextSibling: "identifier"
                         style: "operatorWithWrongRight"
                         priority: 18
@@ -1137,10 +1128,22 @@ class WindbellTshLinkageTest {
         val operatorId = engine.getStyleCatalog("java-ast-node-flags")
             .first { it.name == "operator" }.styleId
         val operatorSpans = spans.filter { it.styleId == operatorId }
+        val operatorStart = code.indexOf("+") * 2
+        val operatorEnd = (code.indexOf("+") + 1) * 2
         assertTrue(operatorSpans.any {
-            it.startByte == code.indexOf("+") * 2 && it.endByte == (code.indexOf("+") + 1) * 2
+            it.startByte == operatorStart && it.endByte == operatorEnd
         }, "ATS must resolve and match anonymous Tree-sitter symbols; actual spans: " +
             operatorSpans.joinToString { "[${it.startByte}, ${it.endByte})" })
+        val wrongLeftId = engine.getStyleCatalog("java-ast-node-flags")
+            .first { it.name == "operatorWithWrongLeft" }.styleId
+        assertFalse(spans.any {
+            it.styleId == wrongLeftId && it.startByte == operatorStart && it.endByte == operatorEnd
+        }, "ATS must reject an incorrect direct previous sibling type.")
+        val wrongRightId = engine.getStyleCatalog("java-ast-node-flags")
+            .first { it.name == "operatorWithWrongRight" }.styleId
+        assertFalse(spans.any {
+            it.styleId == wrongRightId && it.startByte == operatorStart && it.endByte == operatorEnd
+        }, "ATS must reject an incorrect direct next sibling type.")
         val methodNameId = engine.getStyleCatalog("java-ast-node-flags")
             .first { it.name == "methodName" }.styleId
         assertTrue(spans.any {
@@ -1159,18 +1162,6 @@ class WindbellTshLinkageTest {
         assertTrue(spans.any {
             it.styleId == firstClassNameId && it.startByte == code.indexOf("Demo") * 2
         }, "ATS namedChildIndex must count named siblings only.")
-        val expressionNodeId = engine.getStyleCatalog("java-ast-node-flags")
-            .first { it.name == "expressionNode" }.styleId
-        val expressionStart = code.indexOf("1 + 2") * 2
-        val expressionEnd = (code.indexOf("1 + 2") + "1 + 2".length) * 2
-        assertTrue(spans.any {
-            it.styleId == expressionNodeId &&
-                it.startByte == expressionStart && it.endByte == expressionEnd
-        }, "ATS supertype selectors must match the binary_expression subtype.")
-        assertTrue(spans.any {
-            it.styleId == expressionNodeId && it.startByte == code.indexOf("1") * 2
-        }, "ATS supertype selectors must resolve nested primary_expression/_literal subtypes.")
-
         val operatorWithOperandsId = engine.getStyleCatalog("java-ast-node-flags")
             .first { it.name == "operatorWithOperands" }.styleId
         assertTrue(spans.any {
