@@ -101,7 +101,7 @@ class TreeSitterPlugin : Plugin<Project> {
       // The Java bridge isolates AGP's deeply parameterized BasePlugin
       // signature from Kotlin's Java type-enhancement compiler path.
       val dslServices =
-        AgpPluginServicesBridge.getDslServices(pluginManager) as
+        AgpPluginServicesBridge.getDslServices(plugins) as
           com.android.build.gradle.internal.services.DslServices
 
       @Suppress("DEPRECATION")
