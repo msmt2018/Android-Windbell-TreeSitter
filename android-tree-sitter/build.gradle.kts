@@ -30,14 +30,13 @@ description = "Android Java bindings for Tree Sitter."
 android {
   namespace = "com.zerostudio.idea.treesitter"
   
-  tasks.withType<KotlinCompile>().configureEach {
-    kotlinOptions {
-        jvmTarget = "11"
-        freeCompilerArgs += listOf(
-            "-opt-in=kotlin.ExperimentalUnsignedTypes"
-        )
-    }
 }
+
+tasks.withType<KotlinCompile>().configureEach {
+  compilerOptions {
+    jvmTarget.set(JvmTarget.JVM_11)
+    freeCompilerArgs.add("-opt-in=kotlin.ExperimentalUnsignedTypes")
+  }
 }
 
 dependencies {
