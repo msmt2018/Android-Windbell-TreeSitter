@@ -216,8 +216,6 @@ jobs:
         run: |
           /usr/bin/time -v -o build-release-memory.txt \
             ./gradlew assembleRelease generateDebugSymbolsRelease --parallel --stacktrace
-        env:
-          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
