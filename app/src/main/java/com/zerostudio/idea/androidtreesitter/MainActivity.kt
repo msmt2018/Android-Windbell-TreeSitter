@@ -658,7 +658,12 @@ class MainActivity : AppCompatActivity() {
 
                 val buffer = PieceTreeBuffer(builder.build())
                 withContext(Dispatchers.Main) {
-                    editorView?.setBuffer(buffer)
+                    val activeEditor = checkNotNull(editorView) {
+                        "The editor view is not available to receive the selected document."
+                    }
+                    check(activeEditor.setBuffer(buffer)) {
+                        "The editor is rebuilding its layout (zoom in progress); the selected file was not opened. Retry after the editor settles."
+                    }
                     ensureEditorHighlighterInstalled()
                     binding.toolbar.subtitle = displayName
                     binding.tabLayout.getTabAt(1)?.select()
