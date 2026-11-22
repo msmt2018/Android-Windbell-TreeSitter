@@ -2431,27 +2431,26 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                         (current_index == 0) != (ast_rule.first_child != 0)) continue;
                     if (ast_rule.last_child >= 0 &&
                         (current_index + 1 == sibling_count) != (ast_rule.last_child != 0)) continue;
-                }
 
-                // Sibling constraints share the exact child index used by
-                // firstChild/lastChild/childIndex. Resolve both constraints against
-                // the same parent child list; compare visible and grammar identities
-                // so aliases and Tree-sitter supertypes remain matchable.
-                if (ast_rule.previous_sibling_symbol != 0) {
-                    if (current_index == 0) continue;
-                    const TSNode previous = ts_node_child(parent, current_index - 1);
-                    if (!tshAstNodeMatchesSelector(
-                            grammar->ts_language, previous,
-                            ast_rule.previous_sibling_symbol,
-                            ast_rule.previous_sibling_type)) continue;
-                }
-                if (ast_rule.next_sibling_symbol != 0) {
-                    if (current_index + 1 >= sibling_count) continue;
-                    const TSNode next = ts_node_child(parent, current_index + 1);
-                    if (!tshAstNodeMatchesSelector(
-                            grammar->ts_language, next,
-                            ast_rule.next_sibling_symbol,
-                            ast_rule.next_sibling_type)) continue;
+                    // Resolve both immediate siblings from the same parent child
+                    // list and the same current index. Compare visible and grammar
+                    // identities so aliases and supertypes are handled consistently.
+                    if (ast_rule.previous_sibling_symbol != 0) {
+                        if (current_index == 0) continue;
+                        const TSNode previous = ts_node_child(parent, current_index - 1);
+                        if (!tshAstNodeMatchesSelector(
+                                grammar->ts_language, previous,
+                                ast_rule.previous_sibling_symbol,
+                                ast_rule.previous_sibling_type)) continue;
+                    }
+                    if (ast_rule.next_sibling_symbol != 0) {
+                        if (current_index + 1 >= sibling_count) continue;
+                        const TSNode next = ts_node_child(parent, current_index + 1);
+                        if (!tshAstNodeMatchesSelector(
+                                grammar->ts_language, next,
+                                ast_rule.next_sibling_symbol,
+                                ast_rule.next_sibling_type)) continue;
+                    }
                 }
 
                 if (diagnostic_match_counts) tshIncrementDiagnostic(&diagnostic_match_counts[2]);
