@@ -75,7 +75,7 @@ fun Project.githubPackagesRepository(): String =
 
 val pinnedNdkVersion = libs.versions.ndk.get()
 val pinnedCmakeVersion = libs.versions.cmake.get()
-val pinnedBuildToolsVersion = libs.versions.buildTools.get()
+val pinnedBuildToolsVersion = libs.versions.build.tools.get()
 
 fun Project.configureBaseExtension() {
   extensions.configure<BaseExtension> {
