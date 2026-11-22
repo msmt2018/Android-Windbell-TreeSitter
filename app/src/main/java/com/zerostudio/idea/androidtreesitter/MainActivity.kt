@@ -642,19 +642,16 @@ class MainActivity : AppCompatActivity() {
                 input.use { stream ->
                     InputStreamReader(stream, Charsets.UTF_8).buffered().use { reader ->
                         val chunk = CharArray(64 * 1024)
-                        var firstChunk = true
                         while (true) {
                             currentCoroutineContext().ensureActive()
                             val count = reader.read(chunk)
                             if (count < 0) break
                             if (count == 0) continue
 
-                            // Strip a UTF-8 BOM only at the beginning of the document.
-                            val offset = if (firstChunk && chunk[0] == '\uFEFF') 1 else 0
-                            firstChunk = false
-                            if (count > offset) {
-                                builder.acceptChunk(String(chunk, offset, count - offset))
-                            }
+                            // PieceTreeTextBufferBuilder owns BOM detection and metadata.
+                            // Pass the decoded stream unchanged so it can also preserve a
+                            // BOM-only file and normalize split CRLF/surrogate boundaries.
+                            builder.acceptChunk(String(chunk, 0, count))
                         }
                     }
                 }
