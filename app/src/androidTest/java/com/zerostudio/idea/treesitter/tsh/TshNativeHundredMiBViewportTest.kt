@@ -1,6 +1,8 @@
 package com.zerostudio.idea.treesitter.tsh
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import android.os.SystemClock
+import android.util.Log
 import androidx.test.platform.app.InstrumentationRegistry
 import com.zerostudio.idea.treesitter.TreeSitter
 import com.zerostudio.idea.treesitter.java.TSLanguageJava
@@ -17,7 +19,7 @@ import org.junit.runner.RunWith
 
 /**
  * Exercises native document creation, a full Tree-sitter parse and a tail TSH
- * viewport query with a dense 100 MiB UTF-16LE source.
+ * viewport query with a sparse 100 MiB UTF-16LE source whose large prefix is one block comment.
  *
  * The fixture is file-backed and transferred through the bounded direct-buffer
  * callback. No Kotlin String or ByteArray contains the whole document.
@@ -25,7 +27,7 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class TshNativeHundredMiBViewportTest {
     @Test
-    fun nativeTshHighlightsTailViewportOfDenseHundredMiBDocument() {
+    fun nativeTshHighlightsTailViewportOfSparseCommentHundredMiBDocument() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         TreeSitter.loadLibrary()
         System.loadLibrary("tree-sitter-java")
@@ -47,14 +49,15 @@ class TshNativeHundredMiBViewportTest {
         val commentPrefix = "/*\n".toByteArray(StandardCharsets.UTF_16LE)
         val commentSuffix = "\n*/\n".toByteArray(StandardCharsets.UTF_16LE)
         val documentBytes = 100L * 1024L * 1024L
-        // Keep the large prefix as one Java block-comment token while providing
-        // realistic line density for the native sparse line/partition index.
+        // Keep the large prefix as one Java block-comment token. This stresses
+        // file-backed input, sparse line indexing and tail viewport lookup, not AST node density.
         val fillerBytes = documentBytes - commentPrefix.size - commentSuffix.size - tailBytes.size
         assertTrue(fillerBytes > 0L && (fillerBytes and 1L) == 0L)
 
         val file = File.createTempFile("tsh-dense-100mb-", ".utf16", context.cacheDir)
         var documentHandle = 0L
         try {
+            val fixtureWriteStarted = SystemClock.elapsedRealtimeNanos()
             FileChannel.open(
                 file.toPath(),
                 StandardOpenOption.WRITE,
@@ -99,6 +102,9 @@ class TshNativeHundredMiBViewportTest {
                 }
                 assertEquals(documentBytes, offset)
             }
+            val fixtureWriteMs =
+                (SystemClock.elapsedRealtimeNanos() - fixtureWriteStarted) / 1_000_000L
+            Log.i("TSHPerf", "sparse100MiB fixtureWriteMs=$fixtureWriteMs bytes=$documentBytes")
 
             FileChannel.open(file.toPath(), StandardOpenOption.READ).use { input ->
                 val reader = NativeTextWindowReader { byteOffset, maxBytes, destination ->
@@ -115,6 +121,7 @@ class TshNativeHundredMiBViewportTest {
                     total and -2
                 }
 
+                val nativeCreateStarted = SystemClock.elapsedRealtimeNanos()
                 documentHandle = engine.createNativeDocument(
                     language = language,
                     extension = extension,
@@ -122,15 +129,22 @@ class TshNativeHundredMiBViewportTest {
                     temporaryDirectory = context.cacheDir,
                     reader = reader
                 )
+                val nativeCreateMs =
+                    (SystemClock.elapsedRealtimeNanos() - nativeCreateStarted) / 1_000_000L
+                Log.i("TSHPerf", "sparse100MiB nativeCreateAndParseMs=$nativeCreateMs bytes=$documentBytes")
                 assertTrue("Native document creation returned an invalid handle", documentHandle != 0L)
 
                 val tailStartByte = commentPrefix.size.toLong() + fillerBytes + commentSuffix.size
 
+                val viewportQueryStarted = SystemClock.elapsedRealtimeNanos()
                 val captures = requireNotNull(engine.highlightNativeDocument(
                     documentHandle = documentHandle,
                     startByte = tailStartByte,
                     endByte = documentBytes
                 )) { "Native TSH viewport query returned null" }
+                val viewportQueryMs =
+                    (SystemClock.elapsedRealtimeNanos() - viewportQueryStarted) / 1_000_000L
+                Log.i("TSHPerf", "sparse100MiB tailViewportQueryMs=$viewportQueryMs captures=${captures.size / 6}")
                 assertEquals("Native capture rows must use six integers", 0, captures.size % 6)
 
                 val nameStart = tailStartByte + tail.indexOf("LargeTailViewportProbe").toLong() * 2L

@@ -383,7 +383,7 @@ jobs:
 
   android_emulator_tests:
     name: Android device tests (API ${{ matrix.api-level }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 90
     # GitHub-hosted Linux runners do not expose KVM to the emulator. The
     # emulator-runner action therefore launches with -accel off; current
