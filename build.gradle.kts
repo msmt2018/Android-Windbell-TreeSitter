@@ -222,6 +222,7 @@ tasks.register<Exec>("generateJavaGrammarAbi15") {
   workingDir(rootProject.projectDir)
   commandLine("bash", "scripts/generate-java-grammar-abi15.sh")
   inputs.file(rootProject.file("grammars/java/src/grammar.json"))
+  inputs.file(rootProject.file("scripts/generate-java-grammar-abi15.sh"))
   outputs.file(rootProject.file("grammars/java/src/parser.c"))
   outputs.upToDateWhen {
     val parser = rootProject.file("grammars/java/src/parser.c")
