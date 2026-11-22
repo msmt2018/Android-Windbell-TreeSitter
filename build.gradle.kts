@@ -216,7 +216,7 @@ tasks.register<BuildTreeSitterTask>("buildTreeSitter")
 
 tasks.register<CleanTreeSitterBuildTask>("cleanTreeSitterBuild")
 
-val generateJavaGrammarAbi15 = tasks.register<Exec>("generateJavaGrammarAbi15") {
+tasks.register<Exec>("generateJavaGrammarAbi15") {
   group = "build setup"
   description = "Regenerates the Java Tree-sitter parser with ABI 15 supertype metadata."
   workingDir(rootProject.projectDir)
@@ -224,7 +224,8 @@ val generateJavaGrammarAbi15 = tasks.register<Exec>("generateJavaGrammarAbi15") 
   inputs.file(rootProject.file("grammars/java/src/grammar.json"))
   outputs.file(rootProject.file("grammars/java/src/parser.c"))
   outputs.upToDateWhen {
-    rootProject.file("grammars/java/src/parser.c").useLines { lines ->
+    val parser = rootProject.file("grammars/java/src/parser.c")
+    parser.isFile && parser.useLines { lines ->
       lines.any { it.trim() == "#define LANGUAGE_VERSION 15" }
     }
   }
