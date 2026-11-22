@@ -13,6 +13,8 @@ import com.zerostudio.idea.androidtreesitter.TshSyntaxHighlighter
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import x.github.module.editor.view.EditorView
 
 /**

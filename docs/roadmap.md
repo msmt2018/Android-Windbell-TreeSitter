@@ -30,6 +30,13 @@
 - [x] OwnerScope 自动 detach；detach 只注销 TSH 自己的身份登记，不关闭宿主对象；重入 close 不会造成 cleanup 死锁。
 - [x] Native resource/query raw object getter 收敛为 internal，阻止宿主绕过 Lease 直接 close。
 - [x] Engine lifecycle lock 线性化 initialize/attach/provider resolution/adapter creation/parser open 与 close；公开 Object/Provider/CompiledQuery registries 在 Engine close 后永久拒绝新注册。
+- [x] `TshEngineOptions.memoryBudgetOptions` 配置 Engine 级共享 `TshMemoryBudget`，并通过 `engine.memoryBudget.snapshot()` 暴露分类预留统计。
+- [x] Tree-sitter String parse 与 Snapshot/Piece Tree 流式 parse 在 Native parse 前预留输入缓冲预算；所有失败/早退路径在 `finally` 释放。
+- [x] 可选 `TshNativeTreeMemoryEstimator` 在 parse 前准入语法树估算预算；成功后将 reservation 作为 Native Tree 依赖托管，实际 Tree close（包括活动 Lease 结束后）才释放。
+- [x] 增量解析新 Tree 申请预算时保留旧 Tree reservation，按新旧 Tree 并存峰值准入。
+- [x] Memory reservation ledger 强制最大活动 reservation 数（默认 65,536，绝对上限 262,144）。
+- [ ] `QUERY_RESULT` / `MATCH_SET` / `RENDER_PLAN` / `TEXT_SNAPSHOT` 尚未接入 Engine 共享 Reservation ledger；Query/Match 当前只有局部估算上限，RenderCoordinator 只有 pending 数量上限，不能当作全局字节准入。
+- [ ] 尚未统计 Provider 临时 UTF-16 String、Tree-sitter 内部 allocator、JNI/JVM 其他隐藏分配；当前预算是受限输入缓冲 + 宿主估算 Tree 的准入账本，不是进程 Native heap 硬上限。
 - [x] strictProviderValidation 统一覆盖 attach/refresh/resolveProviders；严格 attach 缺失必需能力时 detach 回滚，lenient 模式保留 INCOMPLETE report。
 - [x] 同一宿主对象支持多个 OwnerScope/Attachment 并以引用计数管理注册；宿主外部拥有的 ObjectRegistry 注册不会被 TSH detach 注销。
 - [x] Attachment detach notifications 驱动 Android Binding 关闭 RenderCoordinator、清理本 Renderer 拥有的 Span；Engine close/OwnerScope close 后拒绝新 RenderPlan 和迟到回执；后台清理由宿主 postToRenderThread 派发。
