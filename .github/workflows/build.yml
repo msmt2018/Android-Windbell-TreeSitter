@@ -444,55 +444,10 @@ jobs:
           # writes while API 30 TCG emulation is still recovering from boot.
           disable-animations: false
           script: |
-            # android-emulator-runner executes this script with /bin/sh.
-            # Keep the boot guard POSIX-compatible (no Bash arrays, [[ ]],
-            # SECONDS, or pipefail) so API 26/30/35 all execute the same path.
-            set -eu
+            # The emulator-runner action has already waited for Android boot.
+            # Keep this script minimal and POSIX-safe; shell boot polling here
+            # caused repeated runner parse failures and duplicated readiness logic.
             mkdir -p build/emulator-test-logs
-            adb start-server
-
-            # Wait for an online transport and completed Android boot. TCG
-            # emulation can temporarily report "offline" after process start.
-            start_time=$(date +%s)
-            deadline=$((start_time + 600))
-            while ! adb -s emulator-5554 get-state 2>/dev/null | grep -qx device; do
-              now=$(date +%s)
-              if [ "$now" -ge "$deadline" ]; then
-                echo "::error::Emulator did not become online within 600 seconds"
-                adb devices -l || true
-                exit 1
-              fi
-              sleep 5
-            done
-            while [ "$(adb -s emulator-5554 shell getprop sys.boot_completed 2>/dev/null | tr -d '\r' || true)" != "1" ]; do
-              now=$(date +%s)
-              if [ "$now" -ge "$deadline" ]; then
-                echo "::error::Android boot did not complete within 600 seconds"
-                adb devices -l || true
-                exit 1
-              fi
-              sleep 5
-            done
-
-            # Animation settings are optional test acceleration. Retry transient
-            # binder/transport failures and continue if the emulator remains usable.
-            for setting in animator_duration_scale transition_animation_scale window_animation_scale; do
-              applied=false
-              attempt=1
-              while [ "$attempt" -le 5 ]; do
-                if adb -s emulator-5554 shell settings put global "$setting" 0; then
-                  applied=true
-                  break
-                fi
-                adb reconnect offline >/dev/null 2>&1 || true
-                sleep 3
-                attempt=$((attempt + 1))
-              done
-              if [ "$applied" != true ]; then
-                echo "::warning::Could not disable $setting; continuing with default animation settings"
-              fi
-            done
-
             if ./gradlew :editor:connectedDebugAndroidTest :app:connectedDebugAndroidTest --continue --max-workers=1 --stacktrace; then
               test_result=0
             else
