@@ -101,14 +101,12 @@ class TreeSitterPlugin : Plugin<Project> {
       // The Java bridge isolates AGP's deeply parameterized BasePlugin
       // signature from Kotlin's Java type-enhancement compiler path.
       val dslServices =
-        AgpPluginServicesBridge.getDslServices(plugins) as
+        AgpPluginServicesBridge.getDslServices(pluginManager) as
           com.android.build.gradle.internal.services.DslServices
 
       @Suppress("DEPRECATION")
       val ndkPlatform = dslServices.sdkComponents.map {
         it.versionedNdkHandler(
-          baseExtention.compileSdkVersion ?: throw kotlin.IllegalStateException(
-            "compileSdkVersion not set in the android configuration"),
           baseExtention.ndkVersion,
           baseExtention.ndkPath).ndkPlatform.getOrThrow()
       }
