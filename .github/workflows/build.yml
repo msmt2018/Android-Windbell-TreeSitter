@@ -416,6 +416,8 @@ jobs:
             -DAUTOGEN_HEADERS="$GITHUB_WORKSPACE/android-tree-sitter/build/generated/native_headers"
           cmake --build build/host-tests --target windbell_tsh_cache_tests --parallel 2
           ctest --test-dir build/host-tests --output-on-failure -R windbell_tsh_cache_tests
+
+      - name: Run debug tests (retry Maven Central rate limits)
         shell: bash
         run: |
           set -Eeuo pipefail
