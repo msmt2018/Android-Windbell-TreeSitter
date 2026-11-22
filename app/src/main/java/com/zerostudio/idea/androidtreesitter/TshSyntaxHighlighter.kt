@@ -48,14 +48,23 @@ class TshSyntaxHighlighter(
 
     companion object {
         private const val TAG = "WindbellTSH"
-        // Capture storage is byte-budgeted; execution ranges come from the live renderer.
-        private const val CAPTURE_CACHE_BYTES = 32L * 1024L * 1024L
+        // Semantic captures and temporary display captures share a strict 32 MiB budget.
+        private const val CAPTURE_CACHE_BYTES = 24L * 1024L * 1024L
+        private const val DISPLAY_CACHE_BYTES = 8L * 1024L * 1024L
         // Failed viewport attempts are retained only for retry backoff. Keep their
         // bookkeeping bounded when a broken grammar/native call is hit while scrolling
         // through many distinct regions of a very large document.
         private const val MAX_RANGE_WORK_ENTRIES = 256
         private val nextSessionId = AtomicLong(1L)
         private val captureRangeIndex = CaptureRangeLookupIndex()
+        private val displayRangeIndex = CaptureRangeLookupIndex()
+        private val displayCacheLock = Any()
+        private val displayCache = ByteBudgetLruCache<CaptureRangeKey, CaptureIntervalIndex>(
+            DISPLAY_CACHE_BYTES,
+            { index -> 96L + index.size.toLong() * 96L },
+            onEntryAdded = { key, _ -> displayRangeIndex.add(key) },
+            onEntryRemoved = { key, _ -> displayRangeIndex.remove(key) }
+        )
         private val captureCache = ByteBudgetLruCache<CaptureRangeKey, CaptureIntervalIndex>(
             CAPTURE_CACHE_BYTES,
             { index -> 96L + index.size.toLong() * 96L },
