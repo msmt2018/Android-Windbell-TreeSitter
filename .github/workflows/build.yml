@@ -19,6 +19,9 @@ env:
   # Build configuration
   BUILD_JAVA_VERSION: '17'
   BUILD_JAVA_DIST: 'temurin'
+  ANDROID_NDK_REVISION: '29.0.14206865'
+  ANDROID_CMAKE_VERSION: '3.31.6'
+  ANDROID_BUILD_TOOLS_VERSION: '35.0.0'
 
   DEBUG_INFO_PATH: '**/build/debug-symbols/**/*.debug_info'
 
@@ -26,12 +29,13 @@ env:
   ATS_SUDO: sudo
   ATS_APT_UPDATE: apt-get update
   ATS_APT_INSTALL: apt-get install -y --no-install-recommends
-  ATS_APT_DEPS: build-essential cargo nodejs cmake ninja-build
+  ATS_APT_DEPS: build-essential cargo nodejs ninja-build
 
 jobs:
   build_release_apk:
     name: Build Release APK
     runs-on: ubuntu-latest
+    timeout-minutes: 120
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -92,6 +96,7 @@ jobs:
       - name: Set up Bun for grammar packages
         uses: oven-sh/setup-bun@v2
       - name: Install Node packages for all grammar submodules
+        timeout-minutes: 90
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -233,13 +238,64 @@ jobs:
         with:
           java-version: ${{ env.BUILD_JAVA_VERSION }}
           distribution: ${{ env.BUILD_JAVA_DIST }}
-      - name: Setup NDK
-        uses: nttld/setup-ndk@v1
-        id: setup-ndk
-        with:
-          ndk-version: r25
-      - name: Install dependencies
-        run: $ATS_SUDO $ATS_APT_UPDATE && $ATS_SUDO $ATS_APT_INSTALL $ATS_APT_DEPS
+      - name: Install and verify pinned Android NDK, CMake and Build Tools
+        timeout-minutes: 90
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          sdk_root="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
+          if [[ -z "$sdk_root" ]]; then
+            echo "::error::ANDROID_SDK_ROOT/ANDROID_HOME is not configured"
+            exit 1
+          fi
+          sdkmanager="$sdk_root/cmdline-tools/latest/bin/sdkmanager"
+          if [[ ! -x "$sdkmanager" ]]; then
+            sdkmanager="$(command -v sdkmanager || true)"
+          fi
+          if [[ -z "$sdkmanager" || ! -x "$sdkmanager" ]]; then
+            echo "::error::Android sdkmanager was not found"
+            exit 1
+          fi
+
+          yes | "$sdkmanager" --licenses >/dev/null || true
+          "$sdkmanager" --install \
+            "ndk;$ANDROID_NDK_REVISION" \
+            "cmake;$ANDROID_CMAKE_VERSION" \
+            "build-tools;$ANDROID_BUILD_TOOLS_VERSION"
+
+          ndk_path="$sdk_root/ndk/$ANDROID_NDK_REVISION"
+          ndk_revision="$(sed -n 's/^Pkg.Revision = //p' "$ndk_path/source.properties" | head -n 1)"
+          if [[ "$ndk_revision" != "$ANDROID_NDK_REVISION" ]]; then
+            echo "::error::Expected NDK $ANDROID_NDK_REVISION, received $ndk_revision"
+            exit 1
+          fi
+          echo "ANDROID_NDK_HOME=$ndk_path" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_ROOT=$ndk_path" >> "$GITHUB_ENV"
+
+          export PATH="$sdk_root/cmake/$ANDROID_CMAKE_VERSION/bin:$PATH"
+          echo "$sdk_root/cmake/$ANDROID_CMAKE_VERSION/bin" >> "$GITHUB_PATH"
+          cmake --version
+          "$sdk_root/build-tools/$ANDROID_BUILD_TOOLS_VERSION/aapt" version
+      - name: Install dependencies (retry transient Ubuntu mirror failures)
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          retry() {
+            local max_attempts=5 attempt=1 delay=10
+            while (( attempt <= max_attempts )); do
+              if "$@"; then return 0; fi
+              if (( attempt == max_attempts )); then
+                echo "::error::Command failed after $max_attempts attempts: $*"
+                return 1
+              fi
+              echo "::warning::Attempt $attempt/$max_attempts failed; retrying in $delay seconds"
+              sleep "$delay"
+              delay=$((delay * 2))
+              attempt=$((attempt + 1))
+            done
+          }
+          retry $ATS_SUDO $ATS_APT_UPDATE
+          retry $ATS_SUDO $ATS_APT_INSTALL $ATS_APT_DEPS
       - name: Set up Python for native grammar builds
         uses: actions/setup-python@v5
         with:
@@ -410,7 +466,8 @@ jobs:
         uses: nttld/setup-ndk@v1
         id: setup-ndk
         with:
-          ndk-version: r25
+          ndk-version: r29
+          link-to-sdk: true
       - name: Install dependencies
         run: $ATS_SUDO $ATS_APT_UPDATE && $ATS_SUDO $ATS_APT_INSTALL $ATS_APT_DEPS
       - name: Set up Python for native grammar builds

@@ -1942,9 +1942,10 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeApplyDocumentEdi
     ++document->version;
     document->dirty_byte_intervals.swap(next_pending_dirty_bytes);
     document->dirty_line_intervals.swap(next_dirty_intervals);
-    // Until NativeHighlightCache supports interval-level eviction, clear its
-    // entries conservatively. Dirty intervals are retained for the next
-    // incremental ATS capture implementation instead of being discarded.
+    // Rebase cached highlight snapshots against the committed edit and the
+    // post-edit Tree-sitter changed ranges. Unproven/document-context
+    // dependencies are evicted; unaffected rooted-query/finite-Regex ranges
+    // retain their shifted coordinates and the new document versions.
     document->highlight_cache.rebaseAfterEdit(
         document->version, document->source->version(), document->partition_index.version(),
         static_cast<uint32_t>(start_byte), static_cast<uint32_t>(old_end_byte),
@@ -2198,6 +2199,7 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
         // TextSource window executors; no legacy whole-document heap bridge.
     }
     std::vector<HighlightSpan> candidates;
+    std::vector<HighlightDependencyRange> highlight_dependencies;
     uint32_t counts[4] = {};
     std::vector<HighlightSpan> spans;
     try {
@@ -2209,7 +2211,7 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
             evaluation_start,
             evaluation_end, highlight_source,
             &document->regex_state_checkpoints, document->source->version(),
-            document->partition_index.version());
+            document->partition_index.version(), &highlight_dependencies);
         if (diagnostics == JNI_TRUE) spans = std::move(candidates);
         if (requested_start == requested_end) {
             spans.clear();
@@ -2248,6 +2250,92 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
 
     NativeHighlightCache::Value cache_value;
     cache_value.spans = std::move(spans);
+
+    // Query dependencies were collected from every possible rooted AST
+    // candidate intersecting the evaluated viewport, not merely emitted captures.
+    cache_value.dependencies = std::move(highlight_dependencies);
+    // If Query execution was unavailable or did not produce dependency
+    // metadata, never cache a partial result under an assumed local scope.
+    if (!grammar->native_queries.empty() && cache_value.dependencies.empty()) {
+        cache_value.dependencies.push_back({
+            0u, static_cast<uint32_t>(total_bytes), UINT32_MAX,
+            static_cast<uint8_t>(HighlightSource::NATIVE_QUERY), 0xFFu,
+            HIGHLIGHT_DEPENDENCY_DOCUMENT_WIDE
+        });
+    }
+    // AST selectors can inspect parent, ancestor, sibling, field and descendant
+    // relationships. Until their candidate-node envelopes are collected, keep
+    // their cache dependency document-wide.
+    if (!grammar->ast_selector_rules.empty()) {
+        cache_value.dependencies.push_back({
+            0u, static_cast<uint32_t>(total_bytes), UINT32_MAX,
+            static_cast<uint8_t>(HighlightSource::AST_SELECTOR), 0xFFu,
+            HIGHLIGHT_DEPENDENCY_DOCUMENT_WIDE
+        });
+    }
+    // Stateful and document-context Regex can propagate lexical state beyond
+    // the viewport. Keep one global dependency when the core did not
+    // already publish a verified document-wide envelope.
+    const bool has_regex_state_dependency = std::any_of(
+        cache_value.dependencies.begin(), cache_value.dependencies.end(),
+        [](const HighlightDependencyRange& dependency) {
+            return dependency.source ==
+                static_cast<uint8_t>(HighlightSource::REGEX_STATE);
+        });
+    const bool has_document_wide_regex_dependency = std::any_of(
+        cache_value.dependencies.begin(), cache_value.dependencies.end(),
+        [](const HighlightDependencyRange& dependency) {
+            return dependency.source ==
+                    static_cast<uint8_t>(HighlightSource::REGEX_STATE) &&
+                (dependency.flags & HIGHLIGHT_DEPENDENCY_DOCUMENT_WIDE) != 0;
+        });
+    const bool added_global_regex_dependency =
+        source_requires_contiguous_regex &&
+        !has_document_wide_regex_dependency;
+    if (added_global_regex_dependency) {
+        cache_value.dependencies.push_back({
+            0u, static_cast<uint32_t>(total_bytes), UINT32_MAX,
+            static_cast<uint8_t>(HighlightSource::REGEX_STATE), 0xFFu,
+            HIGHLIGHT_DEPENDENCY_DOCUMENT_WIDE
+        });
+    }
+    if (!grammar->regex_states.empty() &&
+        !has_regex_state_dependency && !added_global_regex_dependency) {
+        // If the stateful pipeline did not publish a verified checkpoint
+        // envelope, never admit its result under a guessed local dependency.
+        cache_value.dependencies.push_back({
+            0u, static_cast<uint32_t>(total_bytes), UINT32_MAX,
+            static_cast<uint8_t>(HighlightSource::REGEX_STATE), 0xFFu,
+            HIGHLIGHT_DEPENDENCY_DOCUMENT_WIDE
+        });
+    }
+    // Finite-width MATCH Regex rules are independent dependencies even when
+    // the same grammar also contains Query/AST/state pipelines.
+    uint64_t regex_overlap = 0;
+    bool has_bounded_regex = false;
+    const auto include_width = [&](const auto &self, const CompiledRegexRule &rule) -> void {
+        if (rule.enabled && rule.type == RegexRuleType::MATCH && rule.onig_start &&
+            rule.execution_capability == RegexExecutionCapability::BOUNDED_WINDOW &&
+            rule.maximum_match_bytes != 0) {
+            has_bounded_regex = true;
+            regex_overlap = std::max(regex_overlap,
+                rule.maximum_match_bytes >= 2u ? rule.maximum_match_bytes - 2u : 0u);
+        }
+        for (const auto &nested : rule.nested_rules) self(self, nested);
+    };
+    for (const auto &rule : grammar->regex_rules) include_width(include_width, rule);
+    if (has_bounded_regex) {
+        const uint32_t dependency_start = static_cast<uint32_t>(
+            evaluation_start > regex_overlap ? evaluation_start - regex_overlap : 0u);
+        const uint32_t dependency_end = static_cast<uint32_t>(
+            std::min<uint64_t>(total_bytes,
+                static_cast<uint64_t>(evaluation_end) + regex_overlap));
+        cache_value.dependencies.push_back({
+            dependency_start, dependency_end, UINT32_MAX,
+            static_cast<uint8_t>(HighlightSource::ONIG_REGEX), 0xFFu,
+            HIGHLIGHT_DEPENDENCY_BOUNDARY_SENSITIVE
+        });
+    }
     std::copy(std::begin(counts), std::end(counts), std::begin(cache_value.match_counts));
     try {
         document->highlight_cache.put(cache_key, std::move(cache_value));

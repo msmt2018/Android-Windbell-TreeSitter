@@ -58,4 +58,43 @@ class CaptureIntervalIndexTest {
         assertEquals(listOf(77), index.query(0x4000_0000, 0x4000_0008).map { it.styleId })
     }
 
+
+    @Test fun rebaseInsertionDropsIntersectingCaptureAndMovesFollowingCapture() {
+        val index = CaptureIntervalIndex(listOf(
+            span(0, 8, 1),
+            span(10, 16, 2),
+            span(20, 28, 3)
+        ))
+        val result = CaptureDisplayRebaser.rebase(
+            CaptureRangeKey(7, 0, 20), index, editStartUtf16 = 6,
+            deletedChars = 0, insertedChars = 2
+        )!!
+        assertEquals(CaptureRangeKey(7, 0, 22), result.key)
+        assertEquals(listOf(1, 3), result.index.query(0, 14).map { it.styleId })
+        assertEquals(24, result.index.query(11, 14).first().startByte)
+    }
+
+    @Test fun rebaseDeletionKeepsPrefixAndShiftsSuffixWithoutSemanticReuse() {
+        val index = CaptureIntervalIndex(listOf(
+            span(0, 8, 1),
+            span(10, 18, 2),
+            span(24, 32, 3)
+        ))
+        val result = CaptureDisplayRebaser.rebase(
+            CaptureRangeKey(8, 0, 20), index, editStartUtf16 = 5,
+            deletedChars = 5, insertedChars = 0
+        )!!
+        assertEquals(CaptureRangeKey(8, 0, 15), result.key)
+        assertEquals(listOf(1, 3), result.index.query(0, 15).map { it.styleId })
+        assertEquals(14, result.index.query(7, 10).first().startByte)
+    }
+
+    @Test fun rebaseDropsRangeWhenEntireViewportWasDeleted() {
+        val index = CaptureIntervalIndex(listOf(span(10, 20, 1)))
+        assertEquals(null, CaptureDisplayRebaser.rebase(
+            CaptureRangeKey(9, 5, 10), index, editStartUtf16 = 4,
+            deletedChars = 8, insertedChars = 0
+        ))
+    }
+
 }

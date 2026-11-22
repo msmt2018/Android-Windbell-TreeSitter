@@ -377,6 +377,10 @@ static jlong TSParser_parse(JNIEnv *env,
 
   ts_parser_internal->markParseStart();
   auto tree = ts_parser_parse_with_options(ts_parser, old_tree, input, options);
+  // Tree-sitter 0.28 returns early when the progress callback cancels and may
+  // bypass its normal parser reset path. A null result must not leave stacks,
+  // lexer state, or reusable subtrees attached to the next parse round.
+  if (tree == nullptr) ts_parser_reset(ts_parser);
   return (jlong) tree;
 }
 
@@ -469,8 +473,9 @@ static jlong TSParser_parseBuffers(
 
   TSTree *old_tree = tree_pointer == 0 ? nullptr : reinterpret_cast<TSTree *>(tree_pointer);
   parser_internal->markParseStart();
-  return reinterpret_cast<jlong>(
-      ts_parser_parse_with_options(ts_parser, old_tree, input, options));
+  TSTree *tree = ts_parser_parse_with_options(ts_parser, old_tree, input, options);
+  if (tree == nullptr) ts_parser_reset(ts_parser);
+  return reinterpret_cast<jlong>(tree);
 }
 
 static jlong TSParser_parseWindowed(
@@ -523,14 +528,26 @@ static jlong TSParser_parseWindowed(
   TSTree *old_tree = tree_pointer == 0 ? nullptr : reinterpret_cast<TSTree *>(tree_pointer);
   parser_internal->markParseStart();
   TSTree *tree = ts_parser_parse_with_options(ts_parser, old_tree, input, options);
-  if (env->ExceptionCheck() || source.failed()) {
+  // Cancellation is allowed to interrupt a window read. In that case the
+  // callback may have returned an empty/partial window because its owner is
+  // shutting down the parse; do not misreport that expected cancellation as
+  // malformed UTF-16LE input.
+  const bool cancelled = parser_internal->shouldStop();
+  if (env->ExceptionCheck() || (source.failed() && !cancelled)) {
     if (tree != nullptr) ts_tree_delete(tree);
+    ts_parser_reset(ts_parser);
     if (!env->ExceptionCheck()) {
       throw_illegal_state(env,
           "Window callback returned an invalid or incomplete UTF-16LE chunk");
     }
     return 0;
   }
+  if (cancelled) {
+    if (tree != nullptr) ts_tree_delete(tree);
+    ts_parser_reset(ts_parser);
+    return 0;
+  }
+  if (tree == nullptr) ts_parser_reset(ts_parser);
   return reinterpret_cast<jlong>(tree);
 }
 

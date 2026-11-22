@@ -1,4 +1,5 @@
 import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 /*
  *  This file is part of android-tree-sitter.
@@ -73,9 +74,9 @@ android {
     }
 }
 
-tasks.withType(KotlinCompile::class.java) {
-    kotlinOptions {
-        jvmTarget = "11"
+tasks.withType<KotlinCompile>().configureEach {
+    compilerOptions {
+        jvmTarget.set(JvmTarget.JVM_11)
     }
 }
 

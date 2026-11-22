@@ -14,7 +14,7 @@ import java.time.format.DateTimeFormatter
 
 buildscript {
   dependencies {
-    classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:1.9.22")
+    classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:2.4.21")
   }
 }
 
@@ -73,9 +73,14 @@ fun Project.githubPackagesRepository(): String =
     .orElse("android-tree-sitter")
     .get()
 
+val pinnedNdkVersion = libs.versions.ndk.get()
+val pinnedCmakeVersion = libs.versions.cmake.get()
+val pinnedBuildToolsVersion = libs.versions.build.tools.get()
+
 fun Project.configureBaseExtension() {
   extensions.configure<BaseExtension> {
     compileSdkVersion(34)
+    buildToolsVersion(pinnedBuildToolsVersion)
 
     defaultConfig {
       minSdk = 21
@@ -233,7 +238,7 @@ fun Project.configureTsModule() {
       logger.lifecycle("Set namespace '$namespace' to $project")
     }
 
-    ndkVersion = "24.0.8215888"
+    ndkVersion = pinnedNdkVersion
 
     defaultConfig {
       val rootProjDir = project.rootProject.projectDir.absolutePath
@@ -249,7 +254,7 @@ fun Project.configureTsModule() {
     externalNativeBuild {
       cmake {
         path = project.file("src/main/cpp/CMakeLists.txt")
-        version = "3.22.1"
+        version = pinnedCmakeVersion
       }
     }
   }

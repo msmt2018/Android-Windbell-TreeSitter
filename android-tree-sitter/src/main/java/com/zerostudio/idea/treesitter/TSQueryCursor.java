@@ -38,7 +38,9 @@ public class TSQueryCursor extends TSNativeObject implements Iterable<TSQueryMat
 
   protected boolean isExecuted = false;
   private boolean allowChangedNodes = false;
-  private boolean predicateEvaluationEnabled = true;
+  // Native Tree-sitter cursors return raw matches; Java-side predicate filtering is opt-in.
+  // Enable it after registering handlers for every predicate used by the query.
+  private boolean predicateEvaluationEnabled = false;
   protected TSNode targetNode = null;
   protected TSQuery execQuery = null;
   protected final Set<TSPredicateHandler> predicateHandlers = new LinkedHashSet<>();
@@ -95,6 +97,9 @@ public class TSQueryCursor extends TSNativeObject implements Iterable<TSQueryMat
     }
 
     predicateHandlers.add(handler);
+    // Preserve the historical handler-driven behavior while keeping raw native
+    // query iteration unfiltered until a caller opts in by registering a handler.
+    predicateEvaluationEnabled = true;
   }
 
   /**

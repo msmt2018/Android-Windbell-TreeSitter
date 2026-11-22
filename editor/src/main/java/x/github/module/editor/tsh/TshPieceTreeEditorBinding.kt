@@ -193,8 +193,9 @@ class TshPieceTreeEditorBinding private constructor(
 
     companion object {
         /**
-         * Attaches to the existing EditorView. Snapshot creation happens inside its edit callbacks,
-         * while the editor is on the thread that applies edits; later snapshot reads are immutable.
+         * Attaches to the existing EditorView. Snapshot creation is safe from any thread because
+         * EditorDocument serializes snapshots with its complete edit/replacement transactions.
+         * Edit callbacks themselves remain on the EditorView edit thread.
          */
         @JvmStatic
         fun attach(
@@ -219,8 +220,7 @@ class TshPieceTreeEditorBinding private constructor(
             val document = TshPieceTreeDocument(
                 documentId = documentId,
                 languageId = languageId,
-                snapshotFactory = { view.getTextBuffer().createSnapshot() },
-                snapshotThread = Thread.currentThread()
+                snapshotFactory = { view.createPieceTreeSnapshot() }
             )
             return TshPieceTreeEditorBinding(
                 view, document, provider, onTransaction, onInvalidated, onBufferReplaced

@@ -125,16 +125,19 @@ class WindbellTshLinkageTest {
                         {
                             id: "large-comment-not-equal"
                             priority: 25
+                            patterns: [{ index: 0 overlap: allow }]
                             source: `(block_comment) @comment (#not-eq? @comment "x")`
                         },
                         {
                             id: "large-comment-bounded-regex"
                             priority: 26
+                            patterns: [{ index: 0 overlap: allow }]
                             source: `(block_comment) @regexComment (#match? @regexComment "az")`
                         },
                         {
                             id: "large-comment-context-regex"
                             priority: 27
+                            patterns: [{ index: 0 overlap: allow }]
                             source: `(block_comment) @contextRegex (#match? @contextRegex "\\A/")`
                         }
                     ]
@@ -804,21 +807,25 @@ class WindbellTshLinkageTest {
                         {
                             id: "equal-captures"
                             priority: 20
+                            patterns: [{ index: 0 overlap: allow }]
                             source: `(method_declaration name: (identifier) @equal parameters: (formal_parameters (formal_parameter name: (identifier) @right)) (#eq? @equal @right))`
                         },
                         {
                             id: "different-captures"
                             priority: 21
+                            patterns: [{ index: 0 overlap: allow }]
                             source: `(method_declaration name: (identifier) @different parameters: (formal_parameters (formal_parameter name: (identifier) @right)) (#not-eq? @different @right))`
                         },
                         {
                             id: "any-equal-captures"
                             priority: 22
+                            patterns: [{ index: 0 overlap: allow }]
                             source: `(method_declaration name: (identifier) @anyEqual parameters: (formal_parameters (formal_parameter name: (identifier) @right)) (#any-eq? @anyEqual @right))`
                         },
                         {
                             id: "any-different-captures"
                             priority: 23
+                            patterns: [{ index: 0 overlap: allow }]
                             source: `(method_declaration name: (identifier) @anyDifferent parameters: (formal_parameters (formal_parameter name: (identifier) @right)) (#any-not-eq? @anyDifferent @right))`
                         }
                     ]
@@ -871,46 +878,55 @@ class WindbellTshLinkageTest {
                         {
                             id: "contains-name"
                             priority: 50
+                            patterns: [{ index: 0 overlap: allow }]
                             source: `(method_declaration name: (identifier) @containsName (#contains? @containsName "un"))`
                         },
                         {
                             id: "direct-parent"
                             priority: 51
+                            patterns: [{ index: 0 overlap: allow }]
                             source: `(method_declaration name: (identifier) @directParent (#has-parent? @directParent "method_declaration"))`
                         },
                         {
                             id: "ancestor-method"
                             priority: 52
+                            patterns: [{ index: 0 overlap: allow }]
                             source: `(method_declaration name: (identifier) @ancestorMethod (#has-ancestor? @ancestorMethod "class_declaration"))`
                         },
                         {
                             id: "identifier-kind"
                             priority: 53
+                            patterns: [{ index: 0 overlap: allow }]
                             source: `(method_declaration name: (identifier) @identifierKind (#kind-eq? @identifierKind "identifier"))`
                         },
                         {
                             id: "negative-contains"
                             priority: 54
+                            patterns: [{ index: 0 overlap: allow }]
                             source: `(method_declaration name: (identifier) @excludesText (#not-contains? @excludesText "skip"))`
                         },
                         {
                             id: "any-contains"
                             priority: 55
+                            patterns: [{ index: 0 overlap: allow }]
                             source: `(method_declaration name: (identifier) @anyContains (#any-contains? @anyContains "un"))`
                         },
                         {
                             id: "empty-contains"
                             priority: 56
+                            patterns: [{ index: 0 overlap: allow }]
                             source: `(method_declaration name: (identifier) @emptyContains (#contains? @emptyContains ""))`
                         },
                         {
                             id: "any-not-contains"
                             priority: 57
+                            patterns: [{ index: 0 overlap: allow }]
                             source: `(method_declaration name: (identifier) @anyNotContains (#any-not-contains? @anyNotContains "skip"))`
                         },
                         {
                             id: "not-direct-class-parent"
                             priority: 58
+                            patterns: [{ index: 0 overlap: allow }]
                             source: `(method_declaration name: (identifier) @notDirectClassParent (#not-has-parent? @notDirectClassParent "class_declaration"))`
                         }
                     ]
@@ -1140,6 +1156,7 @@ class WindbellTshLinkageTest {
                         text: "run"
                         textPrefix: "r"
                         textSuffix: "n"
+                        overlap: allow
                         style: "methodRunText"
                         priority: 60
                     },
@@ -1614,36 +1631,43 @@ class WindbellTshLinkageTest {
                         {
                             id: "matching-method"
                             priority: 50
+                            patterns: [{ index: 0 overlap: allow }]
                             source: `(method_declaration name: (identifier) @method (#match? @method "^(run|start)$"))`
                         },
                         {
                             id: "nonmatching-method"
                             priority: 60
+                            patterns: [{ index: 0 overlap: allow }]
                             source: `(method_declaration name: (identifier) @method (#not-match? @method "^skip$"))`
                         },
                         {
                             id: "combined-method-regex"
                             priority: 70
+                            patterns: [{ index: 0 overlap: allow }]
                             source: `(method_declaration name: (identifier) @method (#match? @method "^r") (#match? @method "n$"))`
                         },
                         {
                             id: "all-captures-not-equal"
                             priority: 80
+                            patterns: [{ index: 0 overlap: allow }]
                             source: `(method_declaration name: (identifier) @method parameters: (formal_parameters (formal_parameter name: (identifier) @method)) (#not-eq? @method "skip"))`
                         },
                         {
                             id: "all-captures-not-match"
                             priority: 90
+                            patterns: [{ index: 0 overlap: allow }]
                             source: `(method_declaration name: (identifier) @method parameters: (formal_parameters (formal_parameter name: (identifier) @method)) (#not-match? @method "^skip$"))`
                         },
                         {
                             id: "all-captures-any-of"
                             priority: 100
+                            patterns: [{ index: 0 overlap: allow }]
                             source: `(method_declaration name: (identifier) @method parameters: (formal_parameters (formal_parameter name: (identifier) @method)) (#any-of? @method "multiOk" "value"))`
                         },
                         {
                             id: "all-captures-not-any-of"
                             priority: 110
+                            patterns: [{ index: 0 overlap: allow }]
                             source: `(method_declaration name: (identifier) @method parameters: (formal_parameters (formal_parameter name: (identifier) @method)) (#not-any-of? @method "skip"))`
                         }
                     ]

@@ -80,5 +80,12 @@ internal class CaptureIntervalIndex(
         }
     }
 
+    /** Creates a new immutable index after dropping or relocating individual captures. */
+    fun mapSpans(transform: (WindbellTshEngine.HighlightSpan) -> WindbellTshEngine.HighlightSpan?): CaptureIntervalIndex {
+        val mapped = ArrayList<WindbellTshEngine.HighlightSpan>(spans.size)
+        for (span in spans) transform(span)?.let(mapped::add)
+        return CaptureIntervalIndex(mapped)
+    }
+
     val size: Int get() = spans.size
 }
