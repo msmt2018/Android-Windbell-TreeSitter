@@ -440,8 +440,60 @@ jobs:
           api-level: ${{ matrix.api-level }}
           target: google_apis
           arch: x86_64
-          disable-animations: true
-          script: bash -euo pipefail -c 'mkdir -p build/emulator-test-logs; adb start-server; timeout 180 adb -s emulator-5554 wait-for-device; adb -s emulator-5554 shell getprop sys.boot_completed; adb -s emulator-5554 shell settings put global animator_duration_scale 0; adb -s emulator-5554 shell settings put global transition_animation_scale 0; adb -s emulator-5554 shell settings put global window_animation_scale 0; set +e; ./gradlew :editor:connectedDebugAndroidTest :app:connectedDebugAndroidTest --continue --max-workers=1 --stacktrace; test_result=$?; adb -s emulator-5554 logcat -d -v threadtime > build/emulator-test-logs/logcat.txt 2>&1; adb -s emulator-5554 shell dumpsys activity activities > build/emulator-test-logs/activities.txt 2>&1; exit $test_result'
+          # Let the action finish emulator boot without issuing fragile settings
+          # writes while API 30 TCG emulation is still recovering from boot.
+          disable-animations: false
+          script: |
+            set -Eeuo pipefail
+            mkdir -p build/emulator-test-logs
+            adb start-server
+
+            # Wait for an online transport and completed Android boot. TCG
+            # emulation can temporarily report "offline" after the emulator
+            # process has started; do not treat that transient state as a test
+            # failure or send shell commands to an offline device.
+            deadline=$((SECONDS + 600))
+            until adb -s emulator-5554 get-state 2>/dev/null | grep -qx device; do
+              if (( SECONDS >= deadline )); then
+                echo "::error::Emulator did not become online within 600 seconds"
+                adb devices -l || true
+                exit 1
+              fi
+              sleep 5
+            done
+            until [[ "$(adb -s emulator-5554 shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" == "1" ]]; do
+              if (( SECONDS >= deadline )); then
+                echo "::error::Android boot did not complete within 600 seconds"
+                adb devices -l || true
+                exit 1
+              fi
+              sleep 5
+            done
+
+            # Animation settings are optional test acceleration. Retry transient
+            # binder/transport failures and continue if the emulator remains usable.
+            for setting in animator_duration_scale transition_animation_scale window_animation_scale; do
+              applied=false
+              for attempt in 1 2 3 4 5; do
+                if adb -s emulator-5554 shell settings put global "$setting" 0; then
+                  applied=true
+                  break
+                fi
+                adb reconnect offline >/dev/null 2>&1 || true
+                sleep 3
+              done
+              if [[ "$applied" != true ]]; then
+                echo "::warning::Could not disable $setting; continuing with default animation settings"
+              fi
+            done
+
+            set +e
+            ./gradlew :editor:connectedDebugAndroidTest :app:connectedDebugAndroidTest --continue --max-workers=1 --stacktrace
+            test_result=$?
+            set -e
+            adb -s emulator-5554 logcat -d -v threadtime > build/emulator-test-logs/logcat.txt 2>&1 || true
+            adb -s emulator-5554 shell dumpsys activity activities > build/emulator-test-logs/activities.txt 2>&1 || true
+            exit "$test_result"
       - name: Upload Android device test reports and logs
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
