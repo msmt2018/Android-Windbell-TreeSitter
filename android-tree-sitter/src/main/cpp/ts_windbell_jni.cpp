@@ -174,11 +174,10 @@ static NativeDocumentRegistry &nativeDocumentRegistry() {
 
 struct NativeDocumentInput {
     const windbell::largefile::TextSource *source = nullptr;
-    // A surrogate pair may straddle PieceTree segment boundaries. The parser
-    // input callback must return complete UTF-16 scalar boundaries, so only
-    // that exceptional chunk is stitched into this reusable per-parse buffer.
+    // Every callback result is copied into stable per-parse storage. TextSource
+    // views may be invalidated by boundary look-ahead across PieceTree pieces.
     std::array<char, windbell::largefile::kTreeSitterInputChunkBytes + 2u>
-        surrogate_boundary_buffer{};
+        input_buffer{};
     // TSInput uses a null/zero-length result to signal EOF. Preserve the
     // distinction between a real EOF and an I/O/source failure so a failed
     // read can never be accepted as a successfully parsed truncated document.
@@ -358,45 +357,16 @@ static const char *nativeDocumentRead(
         return nullptr;
     }
 
-    windbell::largefile::TextChunkView chunk{};
-    if (!input->source->read(
-            byte_index, windbell::largefile::kTreeSitterInputChunkBytes, &chunk) ||
-        !chunk.data || chunk.size == 0 ||
-        (chunk.size & 1u) != 0 ||
-        chunk.size > document_size - byte_index ||
-        chunk.size > windbell::largefile::kTreeSitterInputChunkBytes) {
+    uint32_t stable_bytes = 0;
+    if (!windbell::largefile::copyTreeSitterInputChunk(
+            *input->source, byte_index, input->input_buffer.data(),
+            static_cast<uint32_t>(input->input_buffer.size()), &stable_bytes)) {
         input->read_failed = true;
         return nullptr;
     }
-
-    // PieceTree reads can end at an arbitrary piece boundary. UTF-16 code
-    // units are never split, but a high/low surrogate pair can still be split
-    // between two even-sized chunks. Extend only that boundary by one code
-    // unit; copyTextRange stitches the two pieces without materializing the
-    // document or changing the parser's absolute byte offsets.
-    bool splits_surrogate_pair = false;
-    const uint64_t chunk_end = static_cast<uint64_t>(byte_index) + chunk.size;
-    if (!windbell::largefile::checkUtf16SurrogateBoundary(
-            *input->source, chunk_end, &splits_surrogate_pair)) {
-        input->read_failed = true;
-        return nullptr;
-    }
-    if (splits_surrogate_pair) {
-        const uint64_t extended_size = static_cast<uint64_t>(chunk.size) + 2u;
-        if (extended_size > input->surrogate_boundary_buffer.size() ||
-            extended_size > document_size - byte_index ||
-            !windbell::largefile::copyTextRange(
-                *input->source, byte_index, extended_size,
-                input->surrogate_boundary_buffer.data())) {
-            input->read_failed = true;
-            return nullptr;
-        }
-        *bytes_read = static_cast<uint32_t>(extended_size);
-        return input->surrogate_boundary_buffer.data();
-    }
-
-    *bytes_read = chunk.size;
-    return chunk.data;
+    if (stable_bytes == 0) return nullptr;
+    *bytes_read = stable_bytes;
+    return input->input_buffer.data();
 }
 
 static bool writeAllAt(int fd, const uint8_t *data, size_t length, uint64_t offset) {
