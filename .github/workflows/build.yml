@@ -434,6 +434,24 @@ jobs:
           echo "✅ Installed dependencies for all ${#manifests[@]} grammar packages."
       - name: Change Gradle wrapper permissions
         run: chmod +x ./gradlew
+      # The current Android Emulator requires a hardware accelerator on
+      # recent builds. Enable KVM for the runner when available; explicitly
+      # opt into TCG only when the runner cannot expose /dev/kvm.
+      - name: Enable KVM or configure TCG fallback
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          if [[ -e /dev/kvm ]]; then
+            echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+            sudo udevadm control --reload-rules
+            sudo udevadm trigger --name-match=kvm
+          fi
+          if [[ -r /dev/kvm && -w /dev/kvm ]]; then
+            echo "KVM is accessible; emulator will use hardware acceleration."
+          else
+            echo "ANDROID_I_WANT_MY_TCG=yes" >> "$GITHUB_ENV"
+            echo "::warning::KVM is unavailable; explicitly allowing the emulator's TCG fallback."
+          fi
       - name: Prepare Android instrumentation runner
         shell: bash
         run: |
@@ -518,7 +536,9 @@ jobs:
           EXPECTED_API_LEVEL: ${{ matrix.api-level }}
         with:
           api-level: ${{ matrix.api-level }}
+          emulator-boot-timeout: 900
           target: default
+          disable-linux-hw-accel: auto
           arch: x86_64
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -no-snapshot -no-snapshot-load -no-snapshot-save -memory 2048 -cores 2
           # Animation settings are not a test prerequisite; avoid Settings-provider startup races.

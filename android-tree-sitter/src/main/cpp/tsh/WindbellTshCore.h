@@ -14,8 +14,8 @@
 #include <functional>
 #include <vector>
 #include <memory>
-#include <unordered_map>
 #include <map>
+#include <unordered_map>
 #include <mutex>
 #include <utility>
 
@@ -159,11 +159,13 @@ struct NativeQueryProgram {
     std::vector<std::vector<std::vector<TSQueryPredicateStep>>> predicates_by_pattern;
 };
 
-// std::map with a transparent comparator supports allocation-free
-// std::string_view lookup on the older NDK libc++ shipped with this project.
-// The AST type vocabulary is small, so logarithmic lookup is preferable to
-// allocating a temporary std::string for every visited syntax node.
-using AstTypeRuleIndex = std::map<std::string, std::vector<uint32_t>, std::less<>>;
+// std::map's transparent comparator provides heterogeneous string_view lookup
+// on the Android NDK libc++ versions used by supported Android builds. The
+// selector type catalog is small and immutable after compilation, so O(log N)
+// lookup avoids per-node string allocations without relying on the newer
+// unordered_map heterogeneous-find implementation.
+using AstTypeRuleIndex = std::map<
+    std::string, std::vector<uint32_t>, std::less<>>;
 
 struct AstSelectorRule {
     TSSymbol target_symbol = 0;

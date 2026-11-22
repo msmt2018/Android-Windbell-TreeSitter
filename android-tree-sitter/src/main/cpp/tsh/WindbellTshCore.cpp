@@ -2033,8 +2033,8 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
         // Symbol IDs are grammar-local and can differ across visible/grammar
         // aliases. Keep a type-name dispatch fallback for every expanded
         // subtype so ATS supertype rules remain addressable by either identity.
-        std::unordered_map<std::string, std::vector<uint32_t>> ast_supertype_node_rules_by_type;
-        std::unordered_map<std::string, std::vector<uint32_t>> ast_supertype_field_rules_by_type;
+        AstTypeRuleIndex ast_supertype_node_rules_by_type;
+        AstTypeRuleIndex ast_supertype_field_rules_by_type;
         for (uint32_t rule_index = 0;
              rule_index < grammar->ast_selector_rules.size(); ++rule_index) {
             const AstSelectorRule& rule = grammar->ast_selector_rules[rule_index];
@@ -2085,7 +2085,9 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
             };
             auto append_indexed_type_rules = [&](const auto& index, const char* type) {
                 if (!type) return;
-                const auto found = index.find(std::string(type));
+                // Both type indexes use transparent std::less<> lookup. Avoid
+                // allocating a temporary std::string for every visited node.
+                const auto found = index.find(std::string_view(type));
                 if (found != index.end()) append_indexed_rules(found->second);
             };
             append_indexed_rules(grammar->ast_wildcard_rules);
