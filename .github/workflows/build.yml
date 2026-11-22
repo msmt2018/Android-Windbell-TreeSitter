@@ -318,10 +318,7 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
-          cmake -S android-tree-sitter/src/main/cpp -B build/host-tests \\
-            -DCMAKE_BUILD_TYPE=Debug \\
-            -DBUILD_TESTING=ON \\
-            -DAUTOGEN_HEADERS="$GITHUB_WORKSPACE/android-tree-sitter/build/generated/native_headers"
+          cmake -S android-tree-sitter/src/main/cpp -B build/host-tests -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON -DAUTOGEN_HEADERS="$GITHUB_WORKSPACE/android-tree-sitter/build/generated/native_headers"
           cmake --build build/host-tests --target windbell_tsh_cache_tests --parallel 2
           ctest --test-dir build/host-tests --output-on-failure -R windbell_tsh_cache_tests
 
