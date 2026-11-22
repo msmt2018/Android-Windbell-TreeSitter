@@ -1032,6 +1032,8 @@ class WindbellTshLinkageTest {
                     methodName { scope: "entity.name.function" }
                     methodWithBody { scope: "meta.function.body" }
                     operatorWithOperands { scope: "keyword.operator.arithmetic" }
+                    wrongLeftSibling { scope: "invalid.wrong.left.sibling" }
+                    wrongRightSibling { scope: "invalid.wrong.right.sibling" }
                     classKeyword { scope: "keyword.declaration.class" }
                     firstClassName { scope: "entity.name.type.first" }
                     methodRunText { scope: "entity.name.function.run" }
@@ -1075,6 +1077,22 @@ class WindbellTshLinkageTest {
                         overlap: allow
                         style: "operatorWithOperands"
                         priority: 21
+                    },
+                    {
+                        node: "+"
+                        named: false
+                        previousSibling: "identifier"
+                        nextSibling: "decimal_integer_literal"
+                        style: "wrongLeftSibling"
+                        priority: 22
+                    },
+                    {
+                        node: "+"
+                        named: false
+                        previousSibling: "decimal_integer_literal"
+                        nextSibling: "identifier"
+                        style: "wrongRightSibling"
+                        priority: 23
                     },
                     {
                         node: "class"
@@ -1160,6 +1178,16 @@ class WindbellTshLinkageTest {
         assertTrue(spans.any {
             it.styleId == operatorWithOperandsId && it.startByte == code.indexOf("+") * 2
         }, "ATS previousSibling and nextSibling constraints must both match.")
+        val wrongLeftSiblingId = engine.getStyleCatalog("java-ast-node-flags")
+            .first { it.name == "wrongLeftSibling" }.styleId
+        val wrongRightSiblingId = engine.getStyleCatalog("java-ast-node-flags")
+            .first { it.name == "wrongRightSibling" }.styleId
+        assertFalse(spans.any {
+            it.styleId == wrongLeftSiblingId && it.startByte == code.indexOf("+") * 2
+        }, "ATS must reject a matching next sibling when the previous sibling is wrong.")
+        assertFalse(spans.any {
+            it.styleId == wrongRightSiblingId && it.startByte == code.indexOf("+") * 2
+        }, "ATS must reject a matching previous sibling when the next sibling is wrong.")
         val methodRunTextId = engine.getStyleCatalog("java-ast-node-flags")
             .first { it.name == "methodRunText" }.styleId
         assertTrue(spans.any {
