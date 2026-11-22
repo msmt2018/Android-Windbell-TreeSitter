@@ -22,9 +22,6 @@ import com.android.build.api.variant.AndroidComponentsExtension
 import com.android.build.api.variant.Variant
 import com.android.build.gradle.BaseExtension
 import com.android.build.gradle.internal.ndk.NdkPlatform
-import com.android.build.gradle.internal.plugins.AppPlugin
-import com.android.build.gradle.internal.plugins.BasePluginAccessor
-import com.android.build.gradle.internal.plugins.LibraryPlugin
 import com.android.build.gradle.internal.tasks.MergeNativeLibsTask
 import com.android.build.gradle.internal.tasks.factory.dependsOn
 import com.android.build.gradle.tasks.ExternalNativeBuildTask
@@ -101,15 +98,11 @@ class TreeSitterPlugin : Plugin<Project> {
       baseExtention.defaultConfig.externalNativeBuild.cmake.arguments(
         "-DAUTOGEN_HEADERS=${nativeHeadersDir.get().asFile.absolutePath}")
 
-      // Resolve each AGP plugin through its concrete type. Selecting a common
-      // KClass first makes Kotlin infer an existential BasePlugin type here;
-      // with the AGP 9.0 internal generic bounds that can crash the Kotlin
-      // frontend during build-logic compilation.
-      val dslServices = if (plugins.hasPlugin("com.android.application")) {
-        BasePluginAccessor.getDslServices(plugins.getPlugin(AppPlugin::class.java))
-      } else {
-        BasePluginAccessor.getDslServices(plugins.getPlugin(LibraryPlugin::class.java))
-      }
+      // The Java bridge isolates AGP's deeply parameterized BasePlugin
+      // signature from Kotlin's Java type-enhancement compiler path.
+      val dslServices =
+        AgpPluginServicesBridge.getDslServices(plugins) as
+          com.android.build.gradle.internal.services.DslServices
 
       @Suppress("DEPRECATION")
       val ndkPlatform = dslServices.sdkComponents.map {
