@@ -1894,6 +1894,9 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                     (64u * 1024u);
             }
         }
+        // Dependencies begin at the nearest reusable state checkpoint; the
+        // cached state is valid only from that byte offset through this scan.
+        uint32_t state_dependency_start = position;
         auto save_regex_state_checkpoint = [&]() {
             if (!regex_state_checkpoints || position < next_checkpoint) return;
 
