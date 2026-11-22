@@ -204,9 +204,9 @@ public class JNIWriter {
     // nested type more than once, so deduplicate by JNI class identity rather
     // than by header filename (which would drop sibling registrations).
     final var uniqueTypeResults = new ArrayList<JNIWriterResult>();
-    final var seenTypeNames = new HashSet<String>();
+    final var seenTypeRefs = new HashSet<String>();
     for (final var result : results) {
-      if (seenTypeNames.add(result.getTypeName().toString())) uniqueTypeResults.add(result);
+      if (seenTypeRefs.add(result.getTypeRef().toString())) uniqueTypeResults.add(result);
     }
     final var uniqueHeaderFilenames = uniqueTypeResults.stream()
       .map(JNIWriterResult::getHeaderFilename)
