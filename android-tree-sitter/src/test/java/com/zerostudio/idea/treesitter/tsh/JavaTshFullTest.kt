@@ -251,7 +251,9 @@ class JavaTshFullTest {
             }
 
             for (name in annotationNames) {
-                val tokenStart = source.indexOf(name)
+                // Anchor the viewport to the annotation occurrence, not an earlier import
+                // that happens to contain the same identifier (e.g. ColorInt/ViewDebug).
+                val tokenStart = source.indexOf("@$name") + 1
                 val start = (tokenStart - 2).coerceAtLeast(0)
                 val end = (tokenStart + name.length + 2).coerceAtMost(source.length)
                 val startByte = start.toLong() * 2L
