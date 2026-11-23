@@ -2199,26 +2199,44 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                 micro_spans.push_back(span);
             }
 
-            const std::vector<std::string> old_stack = state_stack;
-            auto strip_at = [](std::string value) {
-                if (!value.empty() && value.front() == '@') value.erase(value.begin());
-                return value;
-            };
+            // Track transition changes directly instead of copying the complete
+            // state stack for every token. Most tokenizer matches do not change
+            // state, so this avoids repeated vector/string allocations on the hot path.
+            bool state_changed = false;
             if (matched_rule->pop || matched_rule->next_state == "@pop") {
-                if (state_stack.size() > 1) state_stack.pop_back();
+                if (state_stack.size() > 1) {
+                    state_stack.pop_back();
+                    state_changed = true;
+                }
             } else if (matched_rule->next_state == "@popall") {
-                state_stack.assign(1, grammar->regex_start_state);
+                state_changed = state_stack.size() != 1 ||
+                    state_stack.front() != grammar->regex_start_state;
+                if (state_changed) state_stack.assign(1, grammar->regex_start_state);
             } else if (matched_rule->next_state == "@push") {
                 state_stack.push_back(state_stack.back());
+                state_changed = true;
             } else if (!matched_rule->next_state.empty()) {
-                state_stack.back() = strip_at(matched_rule->next_state);
+                std::string_view target(matched_rule->next_state);
+                if (!target.empty() && target.front() == '@') target.remove_prefix(1);
+                if (state_stack.back() != target) {
+                    state_stack.back().assign(target.data(), target.size());
+                    state_changed = true;
+                }
             } else if (!matched_rule->push_state.empty()) {
-                state_stack.push_back(strip_at(matched_rule->push_state));
+                std::string_view target(matched_rule->push_state);
+                if (!target.empty() && target.front() == '@') target.remove_prefix(1);
+                state_stack.emplace_back(target);
+                state_changed = true;
             } else if (!matched_rule->switch_state.empty()) {
-                state_stack.back() = strip_at(matched_rule->switch_state);
+                std::string_view target(matched_rule->switch_state);
+                if (!target.empty() && target.front() == '@') target.remove_prefix(1);
+                if (state_stack.back() != target) {
+                    state_stack.back().assign(target.data(), target.size());
+                    state_changed = true;
+                }
             }
 
-            if (matched_rule->rematch && state_stack != old_stack) {
+            if (matched_rule->rematch && state_changed) {
                 if (++zero_width_steps > 64) {
                     const UChar* next = advanceOneUtf16CodePoint(
                         state_text_start + (position - state_window_start), state_text_end);
