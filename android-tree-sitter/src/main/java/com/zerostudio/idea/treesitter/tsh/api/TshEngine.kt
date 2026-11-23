@@ -200,6 +200,20 @@ class TshEngine private constructor(val options: TshEngineOptions) : AutoCloseab
         TshResult.Success(resolution, visibleDiagnostics)
     }
 
+    /**
+     * Refreshes the Engine-owned memory admission limit from a host-provided available-memory
+     * sample. Call from platform memory-pressure callbacks or before expensive work; the Engine
+     * does not poll platform memory itself. Existing reservations remain valid and releasable.
+     */
+    fun updateAvailableMemory(availableMemoryBytes: Long?): TshResult<Unit> =
+        synchronized(lifecycleLock) {
+            if (state != TshEngineState.INITIALIZED) return@synchronized engineFailure(
+                "TSH-ENGINE-002",
+                "TSH engine must be initialized before updating memory pressure"
+            )
+            memoryBudget.updateAvailableMemory(availableMemoryBytes)
+        }
+
     fun requireInitialized(): TshResult<TshEngine> = synchronized(lifecycleLock) {
         if (state == TshEngineState.INITIALIZED) TshResult.Success(this)
         else engineFailure("TSH-ENGINE-002", "TSH engine must be initialized before this operation")
