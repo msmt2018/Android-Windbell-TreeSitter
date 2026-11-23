@@ -275,6 +275,15 @@ bool TshRegexNativeRegistry::execute(
                 const int beg_position = region.value->beg[group];
                 const int group_end_position = region.value->end[group];
                 if (beg_position < 0 || group_end_position < 0) {
+                    // Oniguruma represents an unmatched optional capture with
+                    // both offsets set to -1. A half-populated pair is corrupt
+                    // region data and must not be silently normalized to
+                    // "unmatched", otherwise malformed JNI/native results can
+                    // disappear from the canonical MatchSet.
+                    if (beg_position != -1 || group_end_position != -1) {
+                        error = "Oniguruma returned a partially missing UTF-16 capture range";
+                        return false;
+                    }
                     match.capture_ranges_utf16.emplace_back(-1, -1);
                 } else {
                     if ((beg_position & 1) != 0 || (group_end_position & 1) != 0 ||
