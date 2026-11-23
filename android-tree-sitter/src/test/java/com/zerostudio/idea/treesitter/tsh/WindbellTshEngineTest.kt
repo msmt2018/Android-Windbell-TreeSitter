@@ -125,16 +125,19 @@ class WindbellTshLinkageTest {
                         {
                             id: "large-comment-not-equal"
                             priority: 25
+                            patterns: [{ index: 0 overlap: allow }]
                             source: `(block_comment) @comment (#not-eq? @comment "x")`
                         },
                         {
                             id: "large-comment-bounded-regex"
                             priority: 26
+                            patterns: [{ index: 0 overlap: allow }]
                             source: `(block_comment) @regexComment (#match? @regexComment "az")`
                         },
                         {
                             id: "large-comment-context-regex"
                             priority: 27
+                            patterns: [{ index: 0 overlap: allow }]
                             source: `(block_comment) @contextRegex (#match? @contextRegex "\\A/")`
                         }
                     ]
@@ -804,21 +807,25 @@ class WindbellTshLinkageTest {
                         {
                             id: "equal-captures"
                             priority: 20
+                            patterns: [{ index: 0 overlap: allow }]
                             source: `(method_declaration name: (identifier) @equal parameters: (formal_parameters (formal_parameter name: (identifier) @right)) (#eq? @equal @right))`
                         },
                         {
                             id: "different-captures"
                             priority: 21
+                            patterns: [{ index: 0 overlap: allow }]
                             source: `(method_declaration name: (identifier) @different parameters: (formal_parameters (formal_parameter name: (identifier) @right)) (#not-eq? @different @right))`
                         },
                         {
                             id: "any-equal-captures"
                             priority: 22
+                            patterns: [{ index: 0 overlap: allow }]
                             source: `(method_declaration name: (identifier) @anyEqual parameters: (formal_parameters (formal_parameter name: (identifier) @right)) (#any-eq? @anyEqual @right))`
                         },
                         {
                             id: "any-different-captures"
                             priority: 23
+                            patterns: [{ index: 0 overlap: allow }]
                             source: `(method_declaration name: (identifier) @anyDifferent parameters: (formal_parameters (formal_parameter name: (identifier) @right)) (#any-not-eq? @anyDifferent @right))`
                         }
                     ]
@@ -871,46 +878,55 @@ class WindbellTshLinkageTest {
                         {
                             id: "contains-name"
                             priority: 50
+                            patterns: [{ index: 0 overlap: allow }]
                             source: `(method_declaration name: (identifier) @containsName (#contains? @containsName "un"))`
                         },
                         {
                             id: "direct-parent"
                             priority: 51
+                            patterns: [{ index: 0 overlap: allow }]
                             source: `(method_declaration name: (identifier) @directParent (#has-parent? @directParent "method_declaration"))`
                         },
                         {
                             id: "ancestor-method"
                             priority: 52
+                            patterns: [{ index: 0 overlap: allow }]
                             source: `(method_declaration name: (identifier) @ancestorMethod (#has-ancestor? @ancestorMethod "class_declaration"))`
                         },
                         {
                             id: "identifier-kind"
                             priority: 53
+                            patterns: [{ index: 0 overlap: allow }]
                             source: `(method_declaration name: (identifier) @identifierKind (#kind-eq? @identifierKind "identifier"))`
                         },
                         {
                             id: "negative-contains"
                             priority: 54
+                            patterns: [{ index: 0 overlap: allow }]
                             source: `(method_declaration name: (identifier) @excludesText (#not-contains? @excludesText "skip"))`
                         },
                         {
                             id: "any-contains"
                             priority: 55
+                            patterns: [{ index: 0 overlap: allow }]
                             source: `(method_declaration name: (identifier) @anyContains (#any-contains? @anyContains "un"))`
                         },
                         {
                             id: "empty-contains"
                             priority: 56
+                            patterns: [{ index: 0 overlap: allow }]
                             source: `(method_declaration name: (identifier) @emptyContains (#contains? @emptyContains ""))`
                         },
                         {
                             id: "any-not-contains"
                             priority: 57
+                            patterns: [{ index: 0 overlap: allow }]
                             source: `(method_declaration name: (identifier) @anyNotContains (#any-not-contains? @anyNotContains "skip"))`
                         },
                         {
                             id: "not-direct-class-parent"
                             priority: 58
+                            patterns: [{ index: 0 overlap: allow }]
                             source: `(method_declaration name: (identifier) @notDirectClassParent (#not-has-parent? @notDirectClassParent "class_declaration"))`
                         }
                     ]
@@ -1004,6 +1020,25 @@ class WindbellTshLinkageTest {
     fun testAstSelectorNodeFlagsAreExecuted() {
         val engine = WindbellTshEngine.instance
         val language = TSLanguageJava.getInstance()
+        assertTrue(
+            language.languageVersion >= 15,
+            "Java grammar must expose Tree-sitter ABI 15 metadata; actual ABI=${language.languageVersion}"
+        )
+        val expressionSupertype = language.supertypes.firstOrNull {
+            language.getSymbolName(it) == "expression"
+        }
+        assertTrue(
+            expressionSupertype != null,
+            "Java grammar must publish the expression supertype; supertypes=" +
+                language.supertypes.joinToString { language.getSymbolName(it) }
+        )
+        val expressionSubtypeNames = language.getSubtypes(expressionSupertype!!).map {
+            language.getSymbolName(it)
+        }
+        assertTrue(
+            "binary_expression" in expressionSubtypeNames,
+            "Java expression supertype must include binary_expression; actual subtypes=$expressionSubtypeNames"
+        )
         val source = """
             tsh 2 {
                 language { id: "java-ast-node-flags" name: "Java AST Node Flags" extensions: [".janf"] }
@@ -1011,10 +1046,11 @@ class WindbellTshLinkageTest {
                     declaration { scope: "entity.name.type" }
                     declarationAlias { scope: "entity.name.type.alias" }
                     operator { scope: "keyword.operator" }
-                    expressionNode { scope: "meta.expression" }
                     methodName { scope: "entity.name.function" }
                     methodWithBody { scope: "meta.function.body" }
                     operatorWithOperands { scope: "keyword.operator.arithmetic" }
+                    operatorPreviousOnly { scope: "keyword.operator.arithmetic.previous-only" }
+                    operatorNextOnly { scope: "keyword.operator.arithmetic.next-only" }
                     operatorWithWrongLeft { scope: "keyword.operator.arithmetic.wrong-left" }
                     operatorWithWrongRight { scope: "keyword.operator.arithmetic.wrong-right" }
                     classKeyword { scope: "keyword.declaration.class" }
@@ -1044,37 +1080,51 @@ class WindbellTshLinkageTest {
                         priority: 34
                         overlap: allow
                     },
+                    // Java declares expression, primary_expression and _literal as
+                    // supertypes. Tree-sitter omits those supertype nodes from the
+                    // concrete tree: the direct operands of this '+' are integer literals.
                     {
                         node: "+"
                         named: false
+                        previousSibling: "decimal_integer_literal"
+                        nextSibling: "decimal_integer_literal"
                         style: "operator"
                         priority: 20
                     },
                     {
-                        node: "expression"
-                        style: "expressionNode"
+                        node: "+"
+                        named: false
+                        previousSibling: "decimal_integer_literal"
+                        nextSibling: "decimal_integer_literal"
+                        style: "operatorWithOperands"
                         priority: 21
                     },
                     {
                         node: "+"
                         named: false
-                        previousSibling: "expression"
-                        nextSibling: "expression"
-                        style: "operatorWithOperands"
-                        priority: 20
+                        previousSibling: "decimal_integer_literal"
+                        style: "operatorPreviousOnly"
+                        priority: 17
+                    },
+                    {
+                        node: "+"
+                        named: false
+                        nextSibling: "decimal_integer_literal"
+                        style: "operatorNextOnly"
+                        priority: 16
                     },
                     {
                         node: "+"
                         named: false
                         previousSibling: "identifier"
-                        nextSibling: "expression"
+                        nextSibling: "decimal_integer_literal"
                         style: "operatorWithWrongLeft"
                         priority: 19
                     },
                     {
                         node: "+"
                         named: false
-                        previousSibling: "expression"
+                        previousSibling: "decimal_integer_literal"
                         nextSibling: "identifier"
                         style: "operatorWithWrongRight"
                         priority: 18
@@ -1106,6 +1156,7 @@ class WindbellTshLinkageTest {
                         text: "run"
                         textPrefix: "r"
                         textSuffix: "n"
+                        overlap: allow
                         style: "methodRunText"
                         priority: 60
                     },
@@ -1118,24 +1169,6 @@ class WindbellTshLinkageTest {
                 ]
             }
         """.trimIndent()
-        // Guard the grammar metadata contract independently from ATS dispatch:
-        // the Java grammar must expose ABI-15 supertype/subtype tables to TSH.
-        val expressionSupertype = language.getSupertypes().firstOrNull {
-            language.getSymbolName(it) == "expression"
-        }
-        assertNotNull(
-            expressionSupertype,
-            "Java grammar ABI ${language.getLanguageVersion()} must expose the expression supertype"
-        )
-        val expressionSubtypeNames = language.getSubtypes(expressionSupertype!!).map {
-            language.getSymbolName(it)
-        }.toSet()
-        assertTrue(
-            "binary_expression" in expressionSubtypeNames,
-            "Java expression supertype must include binary_expression; ABI=${language.getLanguageVersion()}, " +
-                "directSubtypes=$expressionSubtypeNames"
-        )
-
         assertTrue(engine.loadTshSource("java-ast-node-flags", source, language))
         val parser = TSParser.create().apply { setLanguage(language) }
         val code = "// 😀 prefix\nclass Demo { int value = 1 + 2; void run() {} }"
@@ -1155,10 +1188,22 @@ class WindbellTshLinkageTest {
         val operatorId = engine.getStyleCatalog("java-ast-node-flags")
             .first { it.name == "operator" }.styleId
         val operatorSpans = spans.filter { it.styleId == operatorId }
+        val operatorStart = code.indexOf("+") * 2
+        val operatorEnd = (code.indexOf("+") + 1) * 2
         assertTrue(operatorSpans.any {
-            it.startByte == code.indexOf("+") * 2 && it.endByte == (code.indexOf("+") + 1) * 2
+            it.startByte == operatorStart && it.endByte == operatorEnd
         }, "ATS must resolve and match anonymous Tree-sitter symbols; actual spans: " +
             operatorSpans.joinToString { "[${it.startByte}, ${it.endByte})" })
+        val wrongLeftId = engine.getStyleCatalog("java-ast-node-flags")
+            .first { it.name == "operatorWithWrongLeft" }.styleId
+        assertFalse(spans.any {
+            it.styleId == wrongLeftId && it.startByte == operatorStart && it.endByte == operatorEnd
+        }, "ATS must reject an incorrect direct previous sibling type.")
+        val wrongRightId = engine.getStyleCatalog("java-ast-node-flags")
+            .first { it.name == "operatorWithWrongRight" }.styleId
+        assertFalse(spans.any {
+            it.styleId == wrongRightId && it.startByte == operatorStart && it.endByte == operatorEnd
+        }, "ATS must reject an incorrect direct next sibling type.")
         val methodNameId = engine.getStyleCatalog("java-ast-node-flags")
             .first { it.name == "methodName" }.styleId
         assertTrue(spans.any {
@@ -1177,30 +1222,24 @@ class WindbellTshLinkageTest {
         assertTrue(spans.any {
             it.styleId == firstClassNameId && it.startByte == code.indexOf("Demo") * 2
         }, "ATS namedChildIndex must count named siblings only.")
-        val expressionNodeId = engine.getStyleCatalog("java-ast-node-flags")
-            .first { it.name == "expressionNode" }.styleId
-        val expressionStart = code.indexOf("1 + 2") * 2
-        val expressionEnd = (code.indexOf("1 + 2") + "1 + 2".length) * 2
-        assertTrue(spans.any {
-            it.styleId == expressionNodeId &&
-                it.startByte == expressionStart && it.endByte == expressionEnd
-        }, "ATS supertype selectors must match the binary_expression subtype.")
-        assertTrue(spans.any {
-            it.styleId == expressionNodeId && it.startByte == code.indexOf("1") * 2
-        }, "ATS supertype selectors must resolve nested primary_expression/_literal subtypes.")
-
         val operatorWithOperandsId = engine.getStyleCatalog("java-ast-node-flags")
             .first { it.name == "operatorWithOperands" }.styleId
         assertTrue(spans.any {
-            it.styleId == operatorWithOperandsId && it.startByte == code.indexOf("+") * 2
+            it.styleId == operatorWithOperandsId && it.startByte == operatorStart
         }, "ATS previousSibling and nextSibling constraints must both match.")
-        val wrongLeftId = engine.getStyleCatalog("java-ast-node-flags")
-            .first { it.name == "operatorWithWrongLeft" }.styleId
+        val previousOnlyId = engine.getStyleCatalog("java-ast-node-flags")
+            .first { it.name == "operatorPreviousOnly" }.styleId
+        assertTrue(spans.any {
+            it.styleId == previousOnlyId && it.startByte == operatorStart
+        }, "ATS previousSibling constraint must execute.")
+        val nextOnlyId = engine.getStyleCatalog("java-ast-node-flags")
+            .first { it.name == "operatorNextOnly" }.styleId
+        assertTrue(spans.any {
+            it.styleId == nextOnlyId && it.startByte == operatorStart
+        }, "ATS nextSibling constraint must execute.")
         assertFalse(spans.any {
             it.styleId == wrongLeftId && it.startByte == code.indexOf("+") * 2
         }, "ATS must reject a matching next sibling when the previous sibling is wrong.")
-        val wrongRightId = engine.getStyleCatalog("java-ast-node-flags")
-            .first { it.name == "operatorWithWrongRight" }.styleId
         assertFalse(spans.any {
             it.styleId == wrongRightId && it.startByte == code.indexOf("+") * 2
         }, "ATS must reject a matching previous sibling when the next sibling is wrong.")
@@ -1592,36 +1631,43 @@ class WindbellTshLinkageTest {
                         {
                             id: "matching-method"
                             priority: 50
+                            patterns: [{ index: 0 overlap: allow }]
                             source: `(method_declaration name: (identifier) @method (#match? @method "^(run|start)$"))`
                         },
                         {
                             id: "nonmatching-method"
                             priority: 60
+                            patterns: [{ index: 0 overlap: allow }]
                             source: `(method_declaration name: (identifier) @method (#not-match? @method "^skip$"))`
                         },
                         {
                             id: "combined-method-regex"
                             priority: 70
+                            patterns: [{ index: 0 overlap: allow }]
                             source: `(method_declaration name: (identifier) @method (#match? @method "^r") (#match? @method "n$"))`
                         },
                         {
                             id: "all-captures-not-equal"
                             priority: 80
+                            patterns: [{ index: 0 overlap: allow }]
                             source: `(method_declaration name: (identifier) @method parameters: (formal_parameters (formal_parameter name: (identifier) @method)) (#not-eq? @method "skip"))`
                         },
                         {
                             id: "all-captures-not-match"
                             priority: 90
+                            patterns: [{ index: 0 overlap: allow }]
                             source: `(method_declaration name: (identifier) @method parameters: (formal_parameters (formal_parameter name: (identifier) @method)) (#not-match? @method "^skip$"))`
                         },
                         {
                             id: "all-captures-any-of"
                             priority: 100
+                            patterns: [{ index: 0 overlap: allow }]
                             source: `(method_declaration name: (identifier) @method parameters: (formal_parameters (formal_parameter name: (identifier) @method)) (#any-of? @method "multiOk" "value"))`
                         },
                         {
                             id: "all-captures-not-any-of"
                             priority: 110
+                            patterns: [{ index: 0 overlap: allow }]
                             source: `(method_declaration name: (identifier) @method parameters: (formal_parameters (formal_parameter name: (identifier) @method)) (#not-any-of? @method "skip"))`
                         }
                     ]
@@ -1984,6 +2030,181 @@ class WindbellTshLinkageTest {
         }, "The lower-priority span must not retain the conflicting interval.")
     }
 
+
+    @Test
+    fun docTagRegexCaptureRemainsStableAfterIncrementalEditsAcrossCheckpoint() {
+        val engine = WindbellTshEngine.instance
+        val extension = "javadoc-edit-regression"
+        val dsl = """
+            name: ["Javadoc Edit Regression", ".javadoc-edit-regression"]
+            styles: [
+                "docComment", #008000, #008000,
+                "docTag", #FFFF00, #FFFF00,
+                "inlineTag", #FFFF00, #FFFF00,
+            ]
+            defines: [
+                "docTags": /(?:@param|@return)\b/
+            ]
+            contains: [
+                {
+                    style: "docComment",
+                    priority: 140,
+                    start: { match: /\/\*\*/ },
+                    end: { match: /\*\// },
+                    contains: [
+                        { match: include("docTags"), 0: "docTag", priority: 145 },
+                        { match: /\{@\w{1,32}[^}]{0,4096}\}/, 0: "inlineTag", priority: 145 }
+                    ]
+                }
+            ]
+        """.trimIndent()
+        assertTrue(
+engine.loadTshSource(extension, dsl, TSLanguageJava.getInstance()),
+"Javadoc regression grammar must compile: ${engine.lastCompileDiagnostics}"
+)
+        val docTagStyle = engine.getStyleCatalog(extension).first { it.name == "docTag" }.styleId
+        val inlineTagStyle = engine.getStyleCatalog(extension).first { it.name == "inlineTag" }.styleId
+        val prefix = " ".repeat(70_000) + "\n"
+        val comment = "/**\n * @param value description {@link Demo}\n */\nclass Demo {}"
+        val source = prefix + comment
+        val sourceBytes = ByteArray(source.length * 2)
+        for (index in source.indices) {
+            val unit = source[index].code
+            sourceBytes[index * 2] = (unit and 0xFF).toByte()
+            sourceBytes[index * 2 + 1] = (unit ushr 8).toByte()
+        }
+        val reader = NativeTextWindowReader { offset, requested, destination ->
+            destination.clear()
+            destination.limit(requested)
+            val start = offset.toInt()
+            val count = minOf(requested, sourceBytes.size - start)
+            if (count > 0) destination.put(sourceBytes, start, count)
+            destination.position()
+        }
+        val handle = engine.createNativeDocument(
+            TSLanguageJava.getInstance(),
+            extension,
+            sourceBytes.size.toLong(),
+            File(System.getProperty("java.io.tmpdir")),
+            reader
+        )
+        fun containsStyledCapture(
+            values: IntArray,
+            startChar: Int,
+            length: Int,
+            styleId: Int
+        ): Boolean {
+            val expectedStart = startChar.toLong() * 2L
+            val expectedEnd = (startChar + length).toLong() * 2L
+            return (0 until values.size / 6).any { index ->
+                val base = index * 6
+                Integer.toUnsignedLong(values[base]) == expectedStart &&
+                    Integer.toUnsignedLong(values[base + 1]) == expectedEnd &&
+                    (values[base + 2] and 0xFFFF) == styleId
+            }
+        }
+        try {
+            val initialTagStart = prefix.length + comment.indexOf("@param")
+            val initialInlineStart = prefix.length + comment.indexOf("{@link Demo}")
+            val inlineLength = "{@link Demo}".length
+            val initial = engine.highlightNativeDocument(
+                handle, 0L, sourceBytes.size.toLong(), false
+            ) ?: error("Initial Javadoc capture query returned null")
+            assertTrue(
+containsStyledCapture(initial, initialTagStart, 6, docTagStyle),
+"Initial @param capture must use docTag style"
+)
+            assertTrue(
+containsStyledCapture(initial, initialInlineStart, inlineLength, inlineTagStyle),
+"Initial {@link} capture must use inlineTag style"
+)
+
+            // Request only a middle slice of each nested tag. Oniguruma must retain
+            // the full source as match context while limiting candidate start positions
+            // to the requested viewport, then clip emitted captures to the visible slice.
+            val clippedTagStart = initialTagStart + 2
+            val clippedTagEnd = initialTagStart + 5
+            val clippedTag = engine.highlightNativeDocument(
+                handle, clippedTagStart.toLong() * 2L, clippedTagEnd.toLong() * 2L, false
+            ) ?: error("Clipped @param viewport query returned null")
+            assertTrue(
+containsStyledCapture(
+                    clippedTag, clippedTagStart, clippedTagEnd - clippedTagStart, docTagStyle
+                ),
+                "A @param capture crossing the viewport edge must remain visible; returned spans=" + clippedTag.contentToString()
+)
+            val clippedInlineStart = initialInlineStart + 2
+            val clippedInlineEnd = initialInlineStart + 7
+            val clippedInline = engine.highlightNativeDocument(
+                handle, clippedInlineStart.toLong() * 2L, clippedInlineEnd.toLong() * 2L, false
+            ) ?: error("Clipped {@link} viewport query returned null")
+            assertTrue(
+containsStyledCapture(
+                    clippedInline, clippedInlineStart, clippedInlineEnd - clippedInlineStart,
+                    inlineTagStyle
+                ),
+"An inline {@link} capture crossing the viewport edge must remain visible"
+)
+
+            // Change text before the first 64 KiB checkpoint without changing the
+            // Regex state. The scanner must re-establish state convergence before
+            // promoting old suffix checkpoints to the new Piece Tree revision.
+            val prefixEditOffset = 20_000L
+            val replacement = byteArrayOf('x'.code.toByte(), 0)
+            assertTrue(
+engine.applyNativeDocumentEdit(
+                    handle, prefixEditOffset * 2L, (prefixEditOffset + 1L) * 2L, replacement
+                ),
+"Prefix edit before Regex checkpoint must commit"
+)
+            engine.consumeNativeDirtyLineRanges(handle)
+            val afterPrefixEdit = engine.highlightNativeDocument(
+                handle,
+                (initialTagStart - 16).toLong() * 2L,
+                (initialInlineStart + inlineLength).toLong() * 2L,
+                false
+            ) ?: error("Javadoc capture query after prefix edit returned null")
+            assertTrue(
+containsStyledCapture(afterPrefixEdit, initialTagStart, 6, docTagStyle),
+"docTag capture must survive checkpoint convergence after a preceding edit"
+)
+            assertTrue(
+containsStyledCapture(afterPrefixEdit, initialInlineStart, inlineLength, inlineTagStyle),
+"Inline {@link} capture must survive Regex checkpoint convergence; returned spans=" +
+    afterPrefixEdit.contentToString()
+)
+
+            // Edit inside the same documentation block, then verify that the
+            // outer comment style does not replace the inner tag capture.
+            val valueStart = prefix.length + comment.indexOf("value")
+            val replacementValue = "field".toByteArray(Charsets.UTF_16LE)
+            assertTrue(
+engine.applyNativeDocumentEdit(
+                    handle, valueStart.toLong() * 2L,
+                    (valueStart + "value".length).toLong() * 2L,
+                    replacementValue
+                ),
+"In-comment edit must commit"
+)
+            engine.consumeNativeDirtyLineRanges(handle)
+            val afterCommentEdit = engine.highlightNativeDocument(
+                handle,
+                (initialTagStart - 16).toLong() * 2L,
+                (initialInlineStart + inlineLength).toLong() * 2L,
+                false
+            ) ?: error("Javadoc capture query after in-comment edit returned null")
+            assertTrue(
+containsStyledCapture(afterCommentEdit, initialTagStart, 6, docTagStyle),
+"The @param tag must remain a docTag capture after edits inside its comment"
+)
+            assertTrue(
+containsStyledCapture(afterCommentEdit, initialInlineStart, inlineLength, inlineTagStyle),
+"Inline {@link} capture must remain styled after an edit inside its comment"
+)
+        } finally {
+            engine.closeNativeDocument(handle)
+        }
+    }
 
     @Test
     fun largeNativeTreeSitterQueryCapturesSurviveIncrementalEditsNearEof() {

@@ -16,6 +16,7 @@
 #include <new>
 #include <exception>
 #include <cstdlib>
+#include <chrono>
 
 #include "tsh/WindbellTshCore.h"
 #include "tsh/WindbellTshCompiler.h"
@@ -174,11 +175,10 @@ static NativeDocumentRegistry &nativeDocumentRegistry() {
 
 struct NativeDocumentInput {
     const windbell::largefile::TextSource *source = nullptr;
-    // A surrogate pair may straddle PieceTree segment boundaries. The parser
-    // input callback must return complete UTF-16 scalar boundaries, so only
-    // that exceptional chunk is stitched into this reusable per-parse buffer.
+    // Every callback result is copied into stable per-parse storage. TextSource
+    // views may be invalidated by boundary look-ahead across PieceTree pieces.
     std::array<char, windbell::largefile::kTreeSitterInputChunkBytes + 2u>
-        surrogate_boundary_buffer{};
+        input_buffer{};
     // TSInput uses a null/zero-length result to signal EOF. Preserve the
     // distinction between a real EOF and an I/O/source failure so a failed
     // read can never be accepted as a successfully parsed truncated document.
@@ -358,45 +358,16 @@ static const char *nativeDocumentRead(
         return nullptr;
     }
 
-    windbell::largefile::TextChunkView chunk{};
-    if (!input->source->read(
-            byte_index, windbell::largefile::kTreeSitterInputChunkBytes, &chunk) ||
-        !chunk.data || chunk.size == 0 ||
-        (chunk.size & 1u) != 0 ||
-        chunk.size > document_size - byte_index ||
-        chunk.size > windbell::largefile::kTreeSitterInputChunkBytes) {
+    uint32_t stable_bytes = 0;
+    if (!windbell::largefile::copyTreeSitterInputChunk(
+            *input->source, byte_index, input->input_buffer.data(),
+            static_cast<uint32_t>(input->input_buffer.size()), &stable_bytes)) {
         input->read_failed = true;
         return nullptr;
     }
-
-    // PieceTree reads can end at an arbitrary piece boundary. UTF-16 code
-    // units are never split, but a high/low surrogate pair can still be split
-    // between two even-sized chunks. Extend only that boundary by one code
-    // unit; copyTextRange stitches the two pieces without materializing the
-    // document or changing the parser's absolute byte offsets.
-    bool splits_surrogate_pair = false;
-    const uint64_t chunk_end = static_cast<uint64_t>(byte_index) + chunk.size;
-    if (!windbell::largefile::checkUtf16SurrogateBoundary(
-            *input->source, chunk_end, &splits_surrogate_pair)) {
-        input->read_failed = true;
-        return nullptr;
-    }
-    if (splits_surrogate_pair) {
-        const uint64_t extended_size = static_cast<uint64_t>(chunk.size) + 2u;
-        if (extended_size > input->surrogate_boundary_buffer.size() ||
-            extended_size > document_size - byte_index ||
-            !windbell::largefile::copyTextRange(
-                *input->source, byte_index, extended_size,
-                input->surrogate_boundary_buffer.data())) {
-            input->read_failed = true;
-            return nullptr;
-        }
-        *bytes_read = static_cast<uint32_t>(extended_size);
-        return input->surrogate_boundary_buffer.data();
-    }
-
-    *bytes_read = chunk.size;
-    return chunk.data;
+    if (stable_bytes == 0) return nullptr;
+    *bytes_read = stable_bytes;
+    return input->input_buffer.data();
 }
 
 static bool writeAllAt(int fd, const uint8_t *data, size_t length, uint64_t offset) {
@@ -821,26 +792,62 @@ JNIEXPORT jobjectArray JNICALL
 Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeGetCompileDiagnostics(
     JNIEnv* env, jobject
 ) {
-    const auto& diagnostics = g_last_jni_compile_diagnostics;
-    jclass string_class = env->FindClass("java/lang/String");
-    if (!string_class) return nullptr;
-    jobjectArray result = env->NewObjectArray(
-        static_cast<jsize>(diagnostics.size() * 5), string_class, nullptr);
-    if (!result) { env->DeleteLocalRef(string_class); return nullptr; }
-    for (size_t i = 0; i < diagnostics.size(); ++i) {
-        const auto& d = diagnostics[i];
-        const std::array<std::string, 5> values = {
-            d.code, d.message, std::to_string(d.offset),
-            std::to_string(d.line), std::to_string(d.column)
-        };
-        for (size_t k = 0; k < values.size(); ++k) {
-            jstring value = env->NewStringUTF(values[k].c_str());
-            env->SetObjectArrayElement(result, static_cast<jsize>(i * 5 + k), value);
-            env->DeleteLocalRef(value);
+    try {
+        const auto& diagnostics = g_last_jni_compile_diagnostics;
+        constexpr size_t kFieldsPerDiagnostic = 5;
+        const size_t max_values =
+            static_cast<size_t>(std::numeric_limits<jsize>::max());
+        if (diagnostics.size() > max_values / kFieldsPerDiagnostic) {
+            throw_illegal_state(env, "Native compile diagnostics exceed JNI array capacity");
+            return nullptr;
         }
+
+        jclass string_class = env->FindClass("java/lang/String");
+        if (!string_class) return nullptr;
+        const jsize value_count = static_cast<jsize>(
+            diagnostics.size() * kFieldsPerDiagnostic);
+        jobjectArray result = env->NewObjectArray(value_count, string_class, nullptr);
+        if (!result) {
+            env->DeleteLocalRef(string_class);
+            return nullptr;
+        }
+
+        for (size_t i = 0; i < diagnostics.size(); ++i) {
+            const auto& diagnostic = diagnostics[i];
+            const std::array<std::string, kFieldsPerDiagnostic> values = {
+                diagnostic.code, diagnostic.message, std::to_string(diagnostic.offset),
+                std::to_string(diagnostic.line), std::to_string(diagnostic.column)
+            };
+            for (size_t field = 0; field < values.size(); ++field) {
+                jstring value = env->NewStringUTF(values[field].c_str());
+                if (!value) {
+                    env->DeleteLocalRef(result);
+                    env->DeleteLocalRef(string_class);
+                    return nullptr;
+                }
+                env->SetObjectArrayElement(
+                    result,
+                    static_cast<jsize>(i * kFieldsPerDiagnostic + field),
+                    value);
+                env->DeleteLocalRef(value);
+                if (env->ExceptionCheck()) {
+                    env->DeleteLocalRef(result);
+                    env->DeleteLocalRef(string_class);
+                    return nullptr;
+                }
+            }
+        }
+
+        env->DeleteLocalRef(string_class);
+        return result;
+    } catch (const std::bad_alloc&) {
+        throwNativeAllocationFailure(env, "Unable to encode native compile diagnostics");
+    } catch (const std::exception& error) {
+        throwNativeHighlightFailure(env, error.what());
+    } catch (...) {
+        throwNativeHighlightFailure(env, "Unknown native compile diagnostics failure");
     }
-    env->DeleteLocalRef(string_class);
-    return result;
+    return nullptr;
 }
 
 /**
@@ -1454,6 +1461,10 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeCreateDocument(
     env->DeleteLocalRef(reader_class);
     if (!read_method || env->ExceptionCheck()) return 0;
 
+#ifndef NDEBUG
+    const auto native_create_started = std::chrono::steady_clock::now();
+#endif
+
     try {
     std::string backing_path;
     ScopedNativeBackingPath backing_path_guard(backing_path);
@@ -1496,7 +1507,9 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeCreateDocument(
         if (!direct_window) ok = false;
     }
     uint64_t offset = 0;
+    uint64_t reader_calls = 0;
     while (ok && offset < static_cast<uint64_t>(byte_length)) {
+        ++reader_calls;
         const jint requested = static_cast<jint>(std::min<uint64_t>(
             windbell::largefile::kTreeSitterInputChunkBytes,
             static_cast<uint64_t>(byte_length) - offset));
@@ -1526,6 +1539,7 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeCreateDocument(
         }
         return 0;
     }
+    const auto source_transfer_finished = std::chrono::steady_clock::now();
 
     auto document = std::make_shared<NativeTshDocument>();
     // mmap a memfd whenever the Android kernel supports it. This avoids
@@ -1617,9 +1631,11 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeCreateDocument(
         throw_illegal_state(env, "Unable to initialize Tree-sitter for native document");
         return 0;
     }
+    const auto parser_started = std::chrono::steady_clock::now();
     NativeDocumentInput payload{document->source.get(), false};
     TSInput input{&payload, nativeDocumentRead, TSInputEncodingUTF16LE, nullptr};
     document->tree = ts_parser_parse(document->parser, nullptr, input);
+    const auto parse_finished = std::chrono::steady_clock::now();
     if (!document->tree || payload.read_failed ||
         !nativeTreeIsValidForDocument(document->tree, document->source->sizeBytes())) {
         if (document->tree) {
@@ -1630,6 +1646,20 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeCreateDocument(
             "Tree-sitter input failed or did not cover the complete native document");
         return 0;
     }
+#ifndef NDEBUG
+    const auto elapsed_ms = [](auto start, auto end) noexcept {
+        return std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+    };
+    LOGI("TSHPerf",
+         "nativeCreateDocument bytes=%lld anonymousBacking=%d readerCalls=%llu "
+         "readerTransferAndWriteMs=%lld backingMapPieceTreeMs=%lld parseMs=%lld totalMs=%lld",
+         static_cast<long long>(byte_length), anonymous_backing ? 1 : 0,
+         static_cast<unsigned long long>(reader_calls),
+         static_cast<long long>(elapsed_ms(native_create_started, source_transfer_finished)),
+         static_cast<long long>(elapsed_ms(source_transfer_finished, parser_started)),
+         static_cast<long long>(elapsed_ms(parser_started, parse_finished)),
+         static_cast<long long>(elapsed_ms(native_create_started, parse_finished)));
+#endif
     const jlong handle = nativeDocumentRegistry().insert(std::move(document));
     if (handle == 0) {
         throw_illegal_state(env, "Unable to register native document handle");
@@ -1916,9 +1946,10 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeApplyDocumentEdi
     ++document->version;
     document->dirty_byte_intervals.swap(next_pending_dirty_bytes);
     document->dirty_line_intervals.swap(next_dirty_intervals);
-    // Until NativeHighlightCache supports interval-level eviction, clear its
-    // entries conservatively. Dirty intervals are retained for the next
-    // incremental ATS capture implementation instead of being discarded.
+    // Rebase cached highlight snapshots against the committed edit and the
+    // post-edit Tree-sitter changed ranges. Unproven/document-context
+    // dependencies are evicted; unaffected rooted-query/finite-Regex ranges
+    // retain their shifted coordinates and the new document versions.
     document->highlight_cache.rebaseAfterEdit(
         document->version, document->source->version(), document->partition_index.version(),
         static_cast<uint32_t>(start_byte), static_cast<uint32_t>(old_end_byte),
@@ -2172,6 +2203,7 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
         // TextSource window executors; no legacy whole-document heap bridge.
     }
     std::vector<HighlightSpan> candidates;
+    std::vector<HighlightDependencyRange> highlight_dependencies;
     uint32_t counts[4] = {};
     std::vector<HighlightSpan> spans;
     try {
@@ -2183,7 +2215,7 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
             evaluation_start,
             evaluation_end, highlight_source,
             &document->regex_state_checkpoints, document->source->version(),
-            document->partition_index.version());
+            document->partition_index.version(), &highlight_dependencies);
         if (diagnostics == JNI_TRUE) spans = std::move(candidates);
         if (requested_start == requested_end) {
             spans.clear();
@@ -2222,6 +2254,92 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
 
     NativeHighlightCache::Value cache_value;
     cache_value.spans = std::move(spans);
+
+    // Query dependencies were collected from every possible rooted AST
+    // candidate intersecting the evaluated viewport, not merely emitted captures.
+    cache_value.dependencies = std::move(highlight_dependencies);
+    // If Query execution was unavailable or did not produce dependency
+    // metadata, never cache a partial result under an assumed local scope.
+    if (!grammar->native_queries.empty() && cache_value.dependencies.empty()) {
+        cache_value.dependencies.push_back({
+            0u, static_cast<uint32_t>(total_bytes), UINT32_MAX,
+            static_cast<uint8_t>(HighlightSource::NATIVE_QUERY), 0xFFu,
+            HIGHLIGHT_DEPENDENCY_DOCUMENT_WIDE
+        });
+    }
+    // AST selectors can inspect parent, ancestor, sibling, field and descendant
+    // relationships. Until their candidate-node envelopes are collected, keep
+    // their cache dependency document-wide.
+    if (!grammar->ast_selector_rules.empty()) {
+        cache_value.dependencies.push_back({
+            0u, static_cast<uint32_t>(total_bytes), UINT32_MAX,
+            static_cast<uint8_t>(HighlightSource::AST_SELECTOR), 0xFFu,
+            HIGHLIGHT_DEPENDENCY_DOCUMENT_WIDE
+        });
+    }
+    // Stateful and document-context Regex can propagate lexical state beyond
+    // the viewport. Keep one global dependency when the core did not
+    // already publish a verified document-wide envelope.
+    const bool has_regex_state_dependency = std::any_of(
+        cache_value.dependencies.begin(), cache_value.dependencies.end(),
+        [](const HighlightDependencyRange& dependency) {
+            return dependency.source ==
+                static_cast<uint8_t>(HighlightSource::REGEX_STATE);
+        });
+    const bool has_document_wide_regex_dependency = std::any_of(
+        cache_value.dependencies.begin(), cache_value.dependencies.end(),
+        [](const HighlightDependencyRange& dependency) {
+            return dependency.source ==
+                    static_cast<uint8_t>(HighlightSource::REGEX_STATE) &&
+                (dependency.flags & HIGHLIGHT_DEPENDENCY_DOCUMENT_WIDE) != 0;
+        });
+    const bool added_global_regex_dependency =
+        source_requires_contiguous_regex &&
+        !has_document_wide_regex_dependency;
+    if (added_global_regex_dependency) {
+        cache_value.dependencies.push_back({
+            0u, static_cast<uint32_t>(total_bytes), UINT32_MAX,
+            static_cast<uint8_t>(HighlightSource::REGEX_STATE), 0xFFu,
+            HIGHLIGHT_DEPENDENCY_DOCUMENT_WIDE
+        });
+    }
+    if (!grammar->regex_states.empty() &&
+        !has_regex_state_dependency && !added_global_regex_dependency) {
+        // If the stateful pipeline did not publish a verified checkpoint
+        // envelope, never admit its result under a guessed local dependency.
+        cache_value.dependencies.push_back({
+            0u, static_cast<uint32_t>(total_bytes), UINT32_MAX,
+            static_cast<uint8_t>(HighlightSource::REGEX_STATE), 0xFFu,
+            HIGHLIGHT_DEPENDENCY_DOCUMENT_WIDE
+        });
+    }
+    // Finite-width MATCH Regex rules are independent dependencies even when
+    // the same grammar also contains Query/AST/state pipelines.
+    uint64_t regex_overlap = 0;
+    bool has_bounded_regex = false;
+    const auto include_width = [&](const auto &self, const CompiledRegexRule &rule) -> void {
+        if (rule.enabled && rule.type == RegexRuleType::MATCH && rule.onig_start &&
+            rule.execution_capability == RegexExecutionCapability::BOUNDED_WINDOW &&
+            rule.maximum_match_bytes != 0) {
+            has_bounded_regex = true;
+            regex_overlap = std::max(regex_overlap,
+                rule.maximum_match_bytes >= 2u ? rule.maximum_match_bytes - 2u : 0u);
+        }
+        for (const auto &nested : rule.nested_rules) self(self, nested);
+    };
+    for (const auto &rule : grammar->regex_rules) include_width(include_width, rule);
+    if (has_bounded_regex) {
+        const uint32_t dependency_start = static_cast<uint32_t>(
+            evaluation_start > regex_overlap ? evaluation_start - regex_overlap : 0u);
+        const uint32_t dependency_end = static_cast<uint32_t>(
+            std::min<uint64_t>(total_bytes,
+                static_cast<uint64_t>(evaluation_end) + regex_overlap));
+        cache_value.dependencies.push_back({
+            dependency_start, dependency_end, UINT32_MAX,
+            static_cast<uint8_t>(HighlightSource::ONIG_REGEX), 0xFFu,
+            HIGHLIGHT_DEPENDENCY_BOUNDARY_SENSITIVE
+        });
+    }
     std::copy(std::begin(counts), std::end(counts), std::begin(cache_value.match_counts));
     try {
         document->highlight_cache.put(cache_key, std::move(cache_value));
@@ -2299,14 +2417,16 @@ Java_com_zerostudio_idea_treesitter_tsh_api_TshOnigurumaNative_nativeFindAll(
     jint core_end_utf16,
     jboolean document_start,
     jboolean document_end,
-    jint max_matches
+    jint max_matches,
+    jint max_capture_groups
 ) {
     if (handle <= 0 || !window_text) {
         throw_illegal_args(env, "Regex handle and window text are required");
         return nullptr;
     }
-    if (max_matches <= 0) {
-        throw_illegal_args(env, "Regex result budget must be positive");
+    if (max_matches <= 0 || max_matches > 8192 ||
+        max_capture_groups <= 0 || max_capture_groups > 256) {
+        throw_illegal_args(env, "Regex execution limits exceed the supported native bounds");
         return nullptr;
     }
 
@@ -2326,6 +2446,7 @@ Java_com_zerostudio_idea_treesitter_tsh_api_TshOnigurumaNative_nativeFindAll(
             document_start == JNI_TRUE,
             document_end == JNI_TRUE,
             static_cast<uint32_t>(max_matches),
+            static_cast<uint32_t>(max_capture_groups),
             batch,
             error
         );
@@ -2335,25 +2456,8 @@ Java_com_zerostudio_idea_treesitter_tsh_api_TshOnigurumaNative_nativeFindAll(
             return nullptr;
         }
 
-        // Compute the exact wire size before allocating. Capture-heavy Regex
-        // results can contain far more than the historical eight values per
-        // match; repeated vector growth needlessly duplicated memory while
-        // encoding a bounded Native batch for JNI.
-        size_t value_count = 2u;
-        for (const auto& match : batch.matches) {
-            const size_t capture_count = match.capture_ranges_utf16.size();
-            if (capture_count > (std::numeric_limits<size_t>::max() - value_count - 3u) / 2u) {
-                throw_illegal_args(env, "Regex result size overflow");
-                return nullptr;
-            }
-            value_count += 3u + capture_count * 2u;
-        }
-        if (value_count > static_cast<size_t>(std::numeric_limits<jsize>::max())) {
-            throw_illegal_args(env, "Regex result exceeds Java array capacity");
-            return nullptr;
-        }
         std::vector<jlong> flat;
-        flat.reserve(value_count);
+        flat.reserve(2 + batch.matches.size() * 8);
         flat.push_back(batch.truncated ? 1 : 0);
         flat.push_back(static_cast<jlong>(batch.matches.size()));
         for (const auto& match : batch.matches) {
@@ -2365,7 +2469,10 @@ Java_com_zerostudio_idea_treesitter_tsh_api_TshOnigurumaNative_nativeFindAll(
                 flat.push_back(capture.second);
             }
         }
-        // The exact size was validated before allocation above.
+        if (flat.size() > static_cast<size_t>(std::numeric_limits<jsize>::max())) {
+            throw_illegal_args(env, "Regex result exceeds Java array capacity");
+            return nullptr;
+        }
         jlongArray result = env->NewLongArray(static_cast<jsize>(flat.size()));
         if (!result) return nullptr;
         if (!flat.empty()) {

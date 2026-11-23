@@ -31,6 +31,7 @@
 #include <cstdint>
 #include <new>
 #include "ts__log.h"
+#include "QueryDependencyAnalyzer.h"
 
 namespace windbell::tsh {
 
@@ -1185,10 +1186,8 @@ static regex_t* compileOnigurumaUtf16(const std::string& pattern_str, OnigOption
 
 std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& source, const TSLanguage* ts_lang) {
     auto grammar = std::make_shared<TshGrammar>();
-    // ATS symbol matching runs after compilation and needs the same grammar
-    // metadata used to resolve selectors and build the subtype dispatch index.
-    // Keep the language identity on the immutable compiled grammar snapshot;
-    // omitting it disables every runtime supertype/subtype comparison.
+    // ATS supertype matching needs the language's ABI-15 subtype metadata at runtime.
+    // The caller supplies the same long-lived language used to parse the source tree.
     grammar->ts_language = ts_lang;
     std::unordered_map<std::string, std::string> defines_map;
     std::unordered_map<std::string, bool> tree_sitter_query_ids;
@@ -2697,6 +2696,10 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                                                 if (consumed != pattern_value.text.size()) return nullptr;
                                                 metadata.has_priority = true;
                                             } catch (...) { return nullptr; }
+                                        } else if (pattern_field.text == "overlap") {
+                                            if (pattern_value.text == "allow") metadata.allow_overlap = true;
+                                            else if (pattern_value.text == "deny") metadata.allow_overlap = false;
+                                            else return nullptr;
                                         } else if (pattern_field.text == "order") {
                                             if (pattern_value.type != TshLexer::TokenType::TOK_NUMBER) return nullptr;
                                             try {
@@ -2876,7 +2879,7 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                                                 &maximum_width_units) &&
                                             maximum_width_units > 0 &&
                                             maximum_width_units <=
-                                                std::numeric_limits<uint64_t>::max() / sizeof(uint16_t)) {
+                                                (8u * 1024u * 1024u) / sizeof(uint16_t)) {
                                             entry.execution_capability =
                                                 RegexExecutionCapability::BOUNDED_WINDOW;
                                             entry.maximum_match_bytes =
@@ -2905,6 +2908,73 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                                     ts_query_delete(program.query);
                                     program.query = nullptr;
                                     return nullptr;
+                                }
+                            }
+
+                            // Materialize Tree-sitter's structural locality proof for
+                            // every compiled pattern. Missing user metadata must not
+                            // mean missing dependency metadata: each pattern gets an
+                            // immutable record before the grammar is published.
+                            for (uint32_t pattern = 0; pattern < pattern_count; ++pattern) {
+                                auto inserted = program.pattern_metadata.emplace(
+                                    pattern, NativeQueryProgram::PatternMetadata{});
+                                auto& metadata = inserted.first->second;
+                                metadata.pattern_index = pattern;
+                                metadata.is_rooted =
+                                    ts_query_is_pattern_rooted(program.query, pattern);
+                                metadata.is_non_local =
+                                    ts_query_is_pattern_non_local(program.query, pattern);
+                                if (metadata.is_non_local) {
+                                    metadata.dependency_scope =
+                                        NativeQueryProgram::QueryDependencyScope::NON_LOCAL;
+                                } else if (metadata.is_rooted) {
+                                    metadata.dependency_scope =
+                                        NativeQueryProgram::QueryDependencyScope::ROOTED_LOCAL;
+                                } else {
+                                    metadata.dependency_scope =
+                                        NativeQueryProgram::QueryDependencyScope::UNROOTED;
+                                }
+
+                                // These TSH structural predicates inspect the
+                                // capture's parent/ancestor chain, which can lie
+                                // outside the query root node. A root-node-only
+                                // envelope would be unsound for them.
+                                if (pattern < program.predicates_by_pattern.size()) {
+                                    for (const auto& predicate :
+                                         program.predicates_by_pattern[pattern]) {
+                                        if (predicate.empty() ||
+                                            predicate[0].type != TSQueryPredicateStepTypeString)
+                                            continue;
+                                        uint32_t op_length = 0;
+                                        const char* op_text = ts_query_string_value_for_id(
+                                            program.query, predicate[0].value_id, &op_length);
+                                        if (!op_text) continue;
+                                        if (queryPredicateRequiresAncestorContext(
+                                                std::string_view(op_text, op_length))) {
+                                            metadata.dependency_scope =
+                                                NativeQueryProgram::QueryDependencyScope::UNKNOWN;
+                                            break;
+                                        }
+                                    }
+                                }
+
+                                const uint32_t pattern_start =
+                                    ts_query_start_byte_for_pattern(program.query, pattern);
+                                const uint32_t pattern_end =
+                                    ts_query_end_byte_for_pattern(program.query, pattern);
+                                if (metadata.dependency_scope ==
+                                        NativeQueryProgram::QueryDependencyScope::ROOTED_LOCAL &&
+                                    pattern_start < pattern_end &&
+                                    pattern_end <= query_source.size()) {
+                                    const QueryRootDescriptor root = analyzeSimpleQueryRoot(
+                                        std::string_view(query_source).substr(
+                                            pattern_start, pattern_end - pattern_start));
+                                    if (root.valid) {
+                                        metadata.root_node_symbol = ts_language_symbol_for_name(
+                                            ts_lang, root.node_type.data(),
+                                            static_cast<uint32_t>(root.node_type.size()),
+                                            root.is_named);
+                                    }
                                 }
                             }
 

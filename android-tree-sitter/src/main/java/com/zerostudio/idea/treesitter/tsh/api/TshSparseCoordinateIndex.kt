@@ -216,7 +216,7 @@ class TshSparseCoordinateIndex private constructor(
             lease: TshTextSnapshotLease,
             chunkSizeUtf16: Int = DEFAULT_CHUNK_UTF16,
             checkpointStrideUtf16: Int = DEFAULT_CHECKPOINT_STRIDE,
-            memoryBudget: TshMemoryBudget? = null
+            memoryBudget: TshMemoryBudget = TshMemoryBudget()
         ): TshResult<TshSparseCoordinateIndex> {
             if (lease.isClosed) return failure(
                 "TSH-COORD-INDEX-011", "Cannot build an index from a closed Snapshot Lease"
@@ -241,22 +241,20 @@ class TshSparseCoordinateIndex private constructor(
                     return failure("TSH-COORD-INDEX-006", "Snapshot identity, version or length is invalid")
                 }
 
-                if (memoryBudget != null) {
-                    // Upper-bound the sparse checkpoint list before allocating it (64 bytes/entry
-                    // is an estimate, not a JVM object-layout measurement).
-                    val checkpointCapacity = snapshot.lengthUtf16 / checkpointStrideUtf16.toLong() + 2L
-                    if (checkpointCapacity > Int.MAX_VALUE.toLong() ||
-                        checkpointCapacity > (Long.MAX_VALUE - 64L) / 64L) {
-                        return failure("TSH-COORD-INDEX-013", "Sparse coordinate index checkpoint estimate exceeds supported capacity")
-                    }
-                    when (val reserved = memoryBudget.reserve(
-                        TshMemoryCategory.COORDINATE_INDEX,
-                        checkpointCapacity * 64L + 64L,
-                        "coordinate-index:" + snapshot.documentId + ":" + snapshot.version
-                    )) {
-                        is TshResult.Success -> reservation = reserved.value
-                        is TshResult.Failure -> return TshResult.Failure(reserved.diagnostics)
-                    }
+                // Reserve the complete sparse-index upper bound before allocating checkpoints.
+                // 64 bytes/entry is a conservative estimate, not a JVM object-layout measurement.
+                val checkpointCapacity = snapshot.lengthUtf16 / checkpointStrideUtf16.toLong() + 2L
+                if (checkpointCapacity > Int.MAX_VALUE.toLong() ||
+                    checkpointCapacity > (Long.MAX_VALUE - 64L) / 64L) {
+                    return failure("TSH-COORD-INDEX-013", "Sparse coordinate index checkpoint estimate exceeds supported capacity")
+                }
+                when (val reserved = memoryBudget.reserve(
+                    TshMemoryCategory.COORDINATE_INDEX,
+                    checkpointCapacity * 64L + 64L,
+                    "coordinate-index:" + snapshot.documentId + ":" + snapshot.version
+                )) {
+                    is TshResult.Success -> reservation = reserved.value
+                    is TshResult.Failure -> return TshResult.Failure(reserved.diagnostics)
                 }
 
                 val points = ArrayList<Checkpoint>()

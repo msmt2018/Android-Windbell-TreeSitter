@@ -26,6 +26,14 @@ class TshNativeTreeMemoryEstimatorTest {
         assertEquals(0L, budget.snapshot().reservedBytes)
     }
 
+    @Test fun estimatorCannotRunWithoutAnEngineMemoryBudget() {
+        val result = TshNativeTreeMemoryReservations.reserve(
+            null, TshNativeTreeMemoryEstimator { 128L }, request()
+        )
+        assertTrue(result is TshResult.Failure)
+        assertEquals("TSH-MEMORY-011", (result as TshResult.Failure).diagnostics.single().code)
+    }
+
     @Test fun reservesCallerEstimateForSyntaxTreeLifetime() {
         val budget = TshMemoryBudget(TshMemoryBudgetOptions(1024, 2048))
         val estimator = TshNativeTreeMemoryEstimator { input ->

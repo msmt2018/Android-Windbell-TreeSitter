@@ -21,6 +21,7 @@ import com.zerostudio.idea.piecetable.common.Range
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -508,9 +509,26 @@ class TshEditorPipelineRenderingTest {
                 editor = EditorView(context)
                 editor.setBackgroundColor(Color.WHITE)
                 editor.setTextColor(Color.DKGRAY)
-                editor.setTextSize(48f)
                 editor.setGutterEnabled(false)
-                assertTrue(editor.setText(source))
+                editor.setTextSize(48f)
+                editor.measure(
+                    View.MeasureSpec.makeMeasureSpec(bitmap.width, View.MeasureSpec.EXACTLY),
+                    View.MeasureSpec.makeMeasureSpec(bitmap.height, View.MeasureSpec.EXACTLY)
+                )
+                editor.layout(0, 0, bitmap.width, bitmap.height)
+            }
+
+            // setTextSize schedules a background relayout when called from the main
+            // thread. A measure/layout pass does not wait for that worker, and
+            // EditorView correctly refuses edits until it finishes.
+            val layoutDeadline = SystemClock.uptimeMillis() + 10_000L
+            while (editor.isLayoutBusy() && SystemClock.uptimeMillis() < layoutDeadline) {
+                SystemClock.sleep(10L)
+            }
+            assertFalse("EditorView initial text-size relayout did not finish", editor.isLayoutBusy())
+
+            InstrumentationRegistry.getInstrumentation().runOnMainSync {
+                assertTrue("EditorView must accept text after its initial layout settles", editor.setText(source))
                 editor.setSyntaxHighlighter(highlighter)
                 editor.measure(
                     View.MeasureSpec.makeMeasureSpec(bitmap.width, View.MeasureSpec.EXACTLY),
@@ -609,12 +627,19 @@ class TshEditorPipelineRenderingTest {
 
         // Build a real chunk-backed document larger than the 1 Mi UTF-16
         // small/large threshold. The target declaration is in a distant partition.
-        val fillerLine = "// partition filler 0123456789 abcdefghijklmnopqrstuvwxyz\n"
+        // Preserve a multi-megabyte, multi-chunk Piece Tree and a target beyond the
+        // first large-file partition, but avoid 24k tiny lines: that made layout time
+        // depend mostly on line count rather than the large-file viewport being tested.
+        val fillerLine = buildString {
+            append("// ")
+            repeat(9) { append("partition filler 0123456789 abcdefghijklmnopqrstuvwxyz ") }
+            append('\n')
+        }
         val fillerChunk = buildString {
             repeat(1024) { append(fillerLine) }
         }
         val builder = PieceTreeTextBufferBuilder()
-        val chunkCount = 24
+        val chunkCount = 3
         repeat(chunkCount) { builder.acceptChunk(fillerChunk) }
         val targetStart = fillerChunk.length * chunkCount
         val targetLine = "class DistantRenderProbe { int value; }"
@@ -643,7 +668,11 @@ class TshEditorPipelineRenderingTest {
                 )
                 editor.layout(0, 0, bitmap.width, bitmap.height)
             }
-            assertTrue("Large document layout did not finish", laidOut.await(60, TimeUnit.SECONDS))
+            assertTrue(
+                "Large document layout did not finish within 60s " +
+                    "(utf16Chars=${targetStart + targetLine.length}, lines=${targetLineNumber}, chunks=${chunkCount})",
+                laidOut.await(60, TimeUnit.SECONDS)
+            )
 
             val deadline = SystemClock.uptimeMillis() + 30_000L
             while (!highlighter.isStyleReady(

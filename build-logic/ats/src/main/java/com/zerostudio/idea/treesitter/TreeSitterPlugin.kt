@@ -22,9 +22,6 @@ import com.android.build.api.variant.AndroidComponentsExtension
 import com.android.build.api.variant.Variant
 import com.android.build.gradle.BaseExtension
 import com.android.build.gradle.internal.ndk.NdkPlatform
-import com.android.build.gradle.internal.plugins.AppPlugin
-import com.android.build.gradle.internal.plugins.BasePluginAccessor
-import com.android.build.gradle.internal.plugins.LibraryPlugin
 import com.android.build.gradle.internal.tasks.MergeNativeLibsTask
 import com.android.build.gradle.internal.tasks.factory.dependsOn
 import com.android.build.gradle.tasks.ExternalNativeBuildTask
@@ -67,6 +64,19 @@ class TreeSitterPlugin : Plugin<Project> {
           this.outputFile.set(BuildForHostTask.getOutputFile(project).second)
         }
 
+      // Grammar source generation is registered by the companion grammar plugin.
+      // Keep it as a live task-collection dependency here as well: host builds
+      // can be requested transitively by the main library's unit-test task before
+      // every dynamically-created grammar project has completed plugin wiring.
+      // This guarantees ABI-15 parser generation runs before compiling each
+      // grammar's parser.c, rather than silently building stale ABI-14 sources.
+      val grammarGenerationTasks = tasks.matching {
+        it.name == "generateTreeSitterGrammar"
+      }
+      buildForHost.configure {
+        dependsOn(grammarGenerationTasks)
+      }
+
       val cleanHostBuild =
         tasks.register("cleanHostBuild", Delete::class.java) {
           delete(cppDir.resolve("host-build"))
@@ -98,17 +108,15 @@ class TreeSitterPlugin : Plugin<Project> {
       baseExtention.defaultConfig.externalNativeBuild.cmake.arguments(
         "-DAUTOGEN_HEADERS=${nativeHeadersDir.get().asFile.absolutePath}")
 
-      val pluginType = if (plugins.hasPlugin(
-          "com.android.application")
-      ) AppPlugin::class.java else LibraryPlugin::class.java
-      val dslServices = plugins.getPlugin(pluginType)
-        .let { BasePluginAccessor.getDslServices(it) }
+      // The Java bridge isolates AGP's deeply parameterized BasePlugin
+      // signature from Kotlin's Java type-enhancement compiler path.
+      val dslServices =
+        AgpPluginServicesBridge.getDslServices(plugins) as
+          com.android.build.gradle.internal.services.DslServices
 
       @Suppress("DEPRECATION")
       val ndkPlatform = dslServices.sdkComponents.map {
         it.versionedNdkHandler(
-          baseExtention.compileSdkVersion ?: throw kotlin.IllegalStateException(
-            "compileSdkVersion not set in the android configuration"),
           baseExtention.ndkVersion,
           baseExtention.ndkPath).ndkPlatform.getOrThrow()
       }

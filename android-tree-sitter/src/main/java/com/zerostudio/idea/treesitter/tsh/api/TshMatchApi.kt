@@ -116,8 +116,10 @@ data class TshMatchSet(
     val configRevision: String?,
     val matches: List<TshMatch>,
     val completeness: TshMatchCompleteness,
-    val diagnostics: List<TshDiagnostic>
-) {
+    val diagnostics: List<TshDiagnostic>,
+    /** Retained Engine-ledger lease for this MatchSet; close when its matches are no longer needed. */
+    internal val memoryReservation: TshMemoryReservation? = null
+) : AutoCloseable {
     init {
         require(documentVersion >= 0L)
         require(treeSitterRevision == null || treeSitterRevision.isNotBlank())
@@ -151,6 +153,10 @@ data class TshMatchSet(
         }
     }
 
+    override fun close() {
+        memoryReservation?.close()
+    }
+
     fun isCurrentFor(
         documentId: TshDocumentId,
         documentVersion: Long,
@@ -167,8 +173,12 @@ data class TshMatchSet(
 
 /** Limits the merger's retained working set; estimates are not JVM heap measurements. */
 data class TshMatchMergeBudget(
+    /** Optional caller policy; the default is bounded by the shared memory governor instead. */
     val maxMatches: Int = Int.MAX_VALUE,
-    val maxEstimatedBytes: Long = 100L * 1024L * 1024L
+    /** Optional caller policy; this is an estimate, not a JVM heap measurement. */
+    val maxEstimatedBytes: Long = Long.MAX_VALUE,
+    /** Share the Engine ledger when available; standalone merges receive a bounded local ledger. */
+    val memoryBudget: TshMemoryBudget = TshMemoryBudget()
 ) {
     init {
         require(maxMatches > 0)
@@ -239,6 +249,8 @@ object TshMatchMerger {
         var staleMatches = 0
         var truncated = false
         var estimatedBytes = 0L
+        var resultReservation: TshMemoryReservation? = null
+        var reservationTransferred = false
         val acceptedById = LinkedHashMap<TshMatchId, TshMatch>()
         val deduplicated = LinkedHashMap<DedupKey, TshMatch>()
 
@@ -250,6 +262,7 @@ object TshMatchMerger {
             }
         }
 
+        try {
         for (match in input) {
             if (match.source == TshMatchSource.TREE_SITTER_ATS && treeSitterRevision == null) {
                 return failure("TSH-MATCH-003", "Tree-sitter revision is required when Tree-sitter matches are supplied")
@@ -286,7 +299,24 @@ object TshMatchMerger {
 
             val matchBytes = estimateMatchBytes(match)
             if (acceptedById.size >= budget.maxMatches ||
-                matchBytes > budget.maxEstimatedBytes - estimatedBytes) {
+                matchBytes > budget.maxEstimatedBytes - estimatedBytes ||
+                matchBytes > Long.MAX_VALUE - estimatedBytes) {
+                truncated = true
+                break
+            }
+            val nextEstimatedBytes = estimatedBytes + matchBytes
+            val admission = if (resultReservation == null) {
+                budget.memoryBudget.reserve(
+                    TshMemoryCategory.MATCH_SET,
+                    nextEstimatedBytes.coerceAtLeast(1L),
+                    "match-set:$documentId:$documentVersion"
+                ).also { reserved ->
+                    if (reserved is TshResult.Success) resultReservation = reserved.value
+                }
+            } else {
+                resultReservation!!.resize(nextEstimatedBytes)
+            }
+            if (admission is TshResult.Failure) {
                 truncated = true
                 break
             }
@@ -298,7 +328,7 @@ object TshMatchMerger {
                 match.captures, match.pipelineRevision
             )
             deduplicated.putIfAbsent(key, match)
-            estimatedBytes += matchBytes
+            estimatedBytes = nextEstimatedBytes
         }
 
         if (truncated) addDiagnostic(TshDiagnostic(
@@ -332,9 +362,13 @@ object TshMatchMerger {
         }
         val result = TshMatchSet(
             documentId, documentVersion, treeSitterRevision, regexRevision, configRevision,
-            sorted, finalCompleteness, outputDiagnostics.toList()
+            sorted, finalCompleteness, outputDiagnostics.toList(), resultReservation
         )
+        reservationTransferred = resultReservation != null
         return TshResult.Success(result, outputDiagnostics.toList())
+        } finally {
+            if (!reservationTransferred) resultReservation?.close()
+        }
     }
 
     /** Includes nested capture/scope payload and transient merge-map/list overhead estimates. */

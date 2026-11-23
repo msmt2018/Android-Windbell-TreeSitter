@@ -59,11 +59,9 @@ android {
 }
 
 tasks.withType<KotlinCompile>().configureEach {
-    kotlinOptions {
-        jvmTarget = "17"
-        freeCompilerArgs += listOf(
-            "-opt-in=kotlin.ExperimentalUnsignedTypes"
-        )
+    compilerOptions {
+        jvmTarget.set(JvmTarget.JVM_17)
+        freeCompilerArgs.add("-opt-in=kotlin.ExperimentalUnsignedTypes")
     }
 }
 

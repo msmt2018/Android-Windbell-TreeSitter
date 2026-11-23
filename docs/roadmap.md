@@ -4,6 +4,8 @@
 >
 > 最高层规范：[TSH Public API 设计总规范与宿主接入契约](api/public-api-design-principles-and-integration-contract.md)。
 
+> **当前权威总路线图：** [TSH 引擎整体完成度、性能整改与开发待办地图](../android-tree-sitter/TSH_ENGINE_COMPLETION_AND_PERFORMANCE_ROADMAP.md)。本文保留既有 API/宿主接入细项；性能目标、内存策略和总体优先级以该新路线图为准。
+
 ## 状态口径
 
 - SPEC_ONLY：只有规范。
@@ -28,6 +30,13 @@
 - [x] OwnerScope 自动 detach；detach 只注销 TSH 自己的身份登记，不关闭宿主对象；重入 close 不会造成 cleanup 死锁。
 - [x] Native resource/query raw object getter 收敛为 internal，阻止宿主绕过 Lease 直接 close。
 - [x] Engine lifecycle lock 线性化 initialize/attach/provider resolution/adapter creation/parser open 与 close；公开 Object/Provider/CompiledQuery registries 在 Engine close 后永久拒绝新注册。
+- [x] `TshEngineOptions.memoryBudgetOptions` 配置 Engine 级共享 `TshMemoryBudget`，并通过 `engine.memoryBudget.snapshot()` 暴露分类预留统计。
+- [x] Tree-sitter String parse 与 Snapshot/Piece Tree 流式 parse 在 Native parse 前预留输入缓冲预算；所有失败/早退路径在 `finally` 释放。
+- [x] 可选 `TshNativeTreeMemoryEstimator` 在 parse 前准入语法树估算预算；成功后将 reservation 作为 Native Tree 依赖托管，实际 Tree close（包括活动 Lease 结束后）才释放。
+- [x] 增量解析新 Tree 申请预算时保留旧 Tree reservation，按新旧 Tree 并存峰值准入。
+- [x] Memory reservation ledger 强制最大活动 reservation 数（默认 65,536，绝对上限 262,144）。
+- [ ] `QUERY_RESULT` / `MATCH_SET` / `RENDER_PLAN` / `TEXT_SNAPSHOT` 尚未接入 Engine 共享 Reservation ledger；Query/Match 当前只有局部估算上限，RenderCoordinator 只有 pending 数量上限，不能当作全局字节准入。
+- [ ] 尚未统计 Provider 临时 UTF-16 String、Tree-sitter 内部 allocator、JNI/JVM 其他隐藏分配；当前预算是受限输入缓冲 + 宿主估算 Tree 的准入账本，不是进程 Native heap 硬上限。
 - [x] strictProviderValidation 统一覆盖 attach/refresh/resolveProviders；严格 attach 缺失必需能力时 detach 回滚，lenient 模式保留 INCOMPLETE report。
 - [x] 同一宿主对象支持多个 OwnerScope/Attachment 并以引用计数管理注册；宿主外部拥有的 ObjectRegistry 注册不会被 TSH detach 注销。
 - [x] Attachment detach notifications 驱动 Android Binding 关闭 RenderCoordinator、清理本 Renderer 拥有的 Span；Engine close/OwnerScope close 后拒绝新 RenderPlan 和迟到回执；后台清理由宿主 postToRenderThread 派发。
@@ -42,10 +51,11 @@
 - [x] Chunk read 不允许切开 UTF-16 surrogate pair，读取关闭的 Snapshot Lease 会失败。
 - [x] 坐标转换拒绝不成对 UTF-16 surrogate；UTF-8 byte 累积使用 Long；非 String CharSequence 明确拒绝隐式 flatten/toString 复制。
 - [x] 项目 editor 模块新增真实 PieceTreeTextBuffer → PieceTreeSnapshot → TSH Snapshot Provider；不可变 PieceTreeSnapshot 保留原始 chunk 引用并复制活动 change buffer 有效文本，Lease 可独立持有旧版本（SOURCE_PARTIAL）。
-- [ ] 真实 EditorDocument snapshotFactory 与编辑写锁/串行化机制尚未接线；其他可变 Piece Tree/Rope 仍需 pin persistent root/unpin。
+- [x] 真实 EditorDocument snapshotFactory 已接线：EditorDocument 以可重入事务锁串行化 buffer 编辑/替换与 PieceTreeSnapshot 创建，EditorView 暴露受控快照入口；TSH before/after snapshot 不会观察到多 Edit 事务的中间状态（SOURCE_PARTIAL，未运行验证）。
+- [ ] 其他可变 Piece Tree/Rope 仍需 pin persistent root/unpin；UTF-8/UTF-16/Code Point/Grapheme 索引化转换仍未完成。
 - [ ] Piece Tree/Rope 索引化 UTF-8/UTF-16/Code Point/Grapheme 转换尚未实现。
 - [ ] Grapheme 目前使用运行时 BreakIterator，不宣称完整 UAX #29。
-- [ ] Text Provider 的实际线程调度、EditorDocument 变更事件与销毁事件尚未连接真实宿主。
+- [x] Text Provider 的实际线程调度、EditorDocument 变更事件与销毁事件尚未连接真实宿主。（PieceTree host 已实现任意线程快照创建、快照工厂串行化及不可变快照并发读取；其他 Provider 的线程策略仍需逐一核验，SOURCE_PARTIAL）。
 
 ### DSL / Schema / Runtime Consumer
 
@@ -124,6 +134,8 @@
 - [x] JNI 大文本 Highlight/Fold/Outline Native 异常转换为 Java 异常，不让 C++ exception 越过 JNI。
 - [ ] GetStringChars 仍由 JVM 决定 pin/copy，不能称为 zero-copy。
 - [x] Tree-sitter 流式 Input callback / JNI callback / Snapshot chunk parser 源码已存在；输入回调会校验 Provider 返回的文档版本、范围、长度、UTF-16 合法性与 surrogate 边界（SOURCE_PARTIAL）。
+- [x] 新增独立高语法密度 Android stress fixture：以文件分块生成超过 1 MiB 的 Java 源码，包含 32,768 个真实局部变量声明，断言完整 Tree-sitter Query 捕获数量并验证文档尾部 viewport 类型高亮；当前仅有测试源码，待 CI/设备执行。
+- [x] 将 100 MiB 注释前缀 fixture 明确标注为 sparse AST 压力场景，不再把它描述成高语法节点密度测试。
 - [ ] 全量 Native operation/handle/generation manifest、ASAN、泄漏和设备压力测试尚未完成。
 
 ## 仍需完成的缺陷与绑定项

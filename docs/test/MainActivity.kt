@@ -92,7 +92,7 @@ class MainActivity : AppCompatActivity() {
             runCatching { languageMap["Kotlin"] = TSLanguageKotlin.getInstance() }
             runCatching { languageMap["Logcat"] = TSLanguageLogcat.getInstance() }
             runCatching { languageMap["Python"] = TSLanguagePython.getInstance() }
-            runCatching { languageMap["XML"] = TSLanguageXml.getInstance() }
+            runCatching { languageMap["XML"] = TSLanguageXml.getXmlInstance() }
         }
     }
 

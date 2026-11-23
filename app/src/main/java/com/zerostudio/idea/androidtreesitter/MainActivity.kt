@@ -9,8 +9,10 @@
 package com.zerostudio.idea.androidtreesitter
 
 import android.app.ProgressDialog
-import android.os.Bundle
+import android.content.Intent
 import android.net.Uri
+import android.provider.OpenableColumns
+import android.os.Bundle
 import android.text.Editable
 import android.text.TextWatcher
 import android.util.Log
@@ -19,7 +21,6 @@ import android.view.Menu
 import android.view.MenuItem
 import android.view.View
 import android.widget.ArrayAdapter
-import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatDelegate
@@ -40,6 +41,7 @@ import com.zerostudio.idea.treesitter.python.TSLanguagePython
 import com.zerostudio.idea.treesitter.tsh.WindbellTshEngine
 import com.zerostudio.idea.treesitter.xml.TSLanguageXml
 import kotlinx.coroutines.*
+import java.io.InputStreamReader
 import x.github.module.editor.model.PieceTreeBuffer
 import x.github.module.editor.view.EditorView
 import x.github.module.editor.input.AutoPair
@@ -58,6 +60,13 @@ class MainActivity : AppCompatActivity() {
     private val activityScope =
         CoroutineScope(Dispatchers.Default + CoroutineName("MainActivity-Kernel"))
 
+    private val openDocumentLauncher =
+        registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+            uri?.let(::loadExternalDocument)
+        }
+
+    private var externalDocumentLoadJob: Job? = null
+
     // 解析与高亮作业句柄
     private var parser: TSParser? = null
     private var parseJob: Job? = null
@@ -72,10 +81,6 @@ class MainActivity : AppCompatActivity() {
 
     // 核心编辑器控件与文本缓存
     private var editorView: EditorView? = null
-    private var openedFileName: String? = null
-    private val openLocalFileLauncher = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri != null) openLocalFile(uri)
-    }
     private var editorTree: TSTree? = null
     @Volatile private var javaTshReady: Boolean = false
     private var activeTshHighlighter: TshSyntaxHighlighter? = null
@@ -102,7 +107,7 @@ class MainActivity : AppCompatActivity() {
             runCatching { languageMap["Kotlin"] = TSLanguageKotlin.getInstance() }
             runCatching { languageMap["Logcat"] = TSLanguageLogcat.getInstance() }
             runCatching { languageMap["Python"] = TSLanguagePython.getInstance() }
-            runCatching { languageMap["XML"] = TSLanguageXml.getInstance() }
+            runCatching { languageMap["XML"] = TSLanguageXml.getXmlInstance() }
         }
     }
 
@@ -597,40 +602,82 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /** Opens a user-selected local document without flattening it into a whole-file String. */
-    private fun openLocalFile(uri: Uri) {
-        activityScope.launch(Dispatchers.IO) {
-            val loaded = runCatching {
-                contentResolver.openInputStream(uri)?.use { input ->
-                    input.bufferedReader(Charsets.UTF_8).use { reader ->
-                        val builder = PieceTreeTextBufferBuilder()
+
+    /**
+     * Opens a document selected through Android's Storage Access Framework.
+     *
+     * The provider stream is decoded incrementally into PieceTree chunks. This avoids
+     * creating a second full-file String in Activity memory, which matters for large
+     * source files. The editor buffer is replaced only after the complete read succeeds.
+     */
+    private fun loadExternalDocument(uri: Uri) {
+        runCatching {
+            contentResolver.takePersistableUriPermission(
+                uri,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION
+            )
+        }
+
+        externalDocumentLoadJob?.cancel()
+        externalDocumentLoadJob = activityScope.launch(Dispatchers.IO) {
+            try {
+                val displayName = runCatching {
+                    contentResolver.query(
+                        uri,
+                        arrayOf(OpenableColumns.DISPLAY_NAME),
+                        null,
+                        null,
+                        null
+                    )?.use { cursor ->
+                        if (cursor.moveToFirst()) cursor.getString(0) else null
+                    }
+                }.getOrNull()?.takeIf { it.isNotBlank() }
+                    ?: uri.lastPathSegment?.takeIf { it.isNotBlank() }
+                    ?: "Untitled"
+
+                val builder = PieceTreeTextBufferBuilder()
+                val input = contentResolver.openInputStream(uri)
+                    ?: error("The selected document provider returned no readable stream.")
+
+                input.use { stream ->
+                    InputStreamReader(stream, Charsets.UTF_8).buffered().use { reader ->
                         val chunk = CharArray(64 * 1024)
                         while (true) {
+                            currentCoroutineContext().ensureActive()
                             val count = reader.read(chunk)
                             if (count < 0) break
-                            if (count > 0) builder.acceptChunk(String(chunk, 0, count))
+                            if (count == 0) continue
+
+                            // PieceTreeTextBufferBuilder owns BOM detection and metadata.
+                            // Pass the decoded stream unchanged so it can also preserve a
+                            // BOM-only file and normalize split CRLF/surrogate boundaries.
+                            builder.acceptChunk(String(chunk, 0, count))
                         }
-                        PieceTreeBuffer(builder.build())
                     }
-                } ?: error("无法读取所选文件")
-            }
-            val name = runCatching {
-                contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)
-                    ?.use { cursor -> if (cursor.moveToFirst()) cursor.getString(0) else null }
-            }.getOrNull() ?: uri.lastPathSegment ?: "本地文件"
-            withContext(Dispatchers.Main) {
-                loaded.onSuccess { buffer ->
-                    editorView?.setBuffer(buffer)
-                    openedFileName = name
+                }
+
+                val buffer = PieceTreeBuffer(builder.build())
+                withContext(Dispatchers.Main) {
+                    val activeEditor = checkNotNull(editorView) {
+                        "The editor view is not available to receive the selected document."
+                    }
+                    check(activeEditor.setBuffer(buffer)) {
+                        "The editor is rebuilding its layout (zoom in progress); the selected file was not opened. Retry after the editor settles."
+                    }
                     ensureEditorHighlighterInstalled()
-                    Toast.makeText(this@MainActivity, "已打开：$name（${buffer.length} 字符）", Toast.LENGTH_LONG).show()
-                }.onFailure { error ->
-                    showResultDialog("打开本地文件失败", error.stackTraceToString())
+                    binding.toolbar.subtitle = displayName
+                    binding.tabLayout.getTabAt(1)?.select()
+                    Log.i(TAG, "Opened external document: $displayName (${buffer.length} UTF-16 units)")
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Throwable) {
+                withContext(Dispatchers.Main) {
+                    showResultDialog("打开外部文件失败", error.stackTraceToString())
                 }
             }
         }
     }
-
 
     override fun onCreateOptionsMenu(menu: Menu): Boolean {
         menuInflater.inflate(R.menu.main, menu)
@@ -639,13 +686,13 @@ class MainActivity : AppCompatActivity() {
 
     override fun onOptionsItemSelected(item: MenuItem): Boolean {
         when (item.itemId) {
-            R.id.action_open_file -> {
-                openLocalFileLauncher.launch(arrayOf("text/*", "application/json", "application/xml", "application/octet-stream"))
-                return true
-            }
             R.id.reload_external -> {
                 destroyParserResources()
                 loadExternalLanguages()
+                return true
+            }
+            R.id.action_open_file -> {
+                openDocumentLauncher.launch(arrayOf("*/*"))
                 return true
             }
             R.id.test_tsh_suite -> {

@@ -3,12 +3,17 @@ package com.zerostudio.idea.treesitter.tsh.api
 /**
  * Immutable view of one document version. Offsets are UTF-16 code units and ranges are
  * half-open. Implementations must keep the snapshot readable until its lease is closed.
+ *
+ * [readUtf16] may return a borrowed CharSequence backed by reusable host storage. Such a view is
+ * valid only until the next read on this Snapshot/provider; callers that need to retain its
+ * contents across another read must copy it first.
  */
 interface TshTextSnapshot {
     val documentId: String
     val version: Long
     val lengthUtf16: Long
 
+    /** Returns a borrowed view that may be invalidated by the next read on this Snapshot. */
     fun readUtf16(start: Long, end: Long): CharSequence
 
     /** True when [lineColumnAtUtf16] is backed by a version-stable native host index. */
@@ -267,6 +272,11 @@ data class TshTextChange(
     }
 }
 
+/**
+ * One bounded range read. [text] may be a borrowed view with the same lifetime as
+ * [TshTextSnapshot.readUtf16]: consumers must copy it before issuing another snapshot/provider
+ * read. Metadata and length describe the returned view at construction time.
+ */
 data class TshTextChunk(
     val documentId: String,
     val documentVersion: Long,
@@ -447,6 +457,22 @@ interface TshTextAccessProvider : TshProvider {
 
 /** Shared strict UTF-16 validation for text edits and chunk boundaries. */
 internal object TshUnicode {
+    fun isWellFormedUtf16(value: CharArray): Boolean {
+        var index = 0
+        while (index < value.size) {
+            val current = value[index]
+            when {
+                Character.isHighSurrogate(current) -> {
+                    if (index + 1 >= value.size || !Character.isLowSurrogate(value[index + 1])) return false
+                    index += 2
+                }
+                Character.isLowSurrogate(current) -> return false
+                else -> index++
+            }
+        }
+        return true
+    }
+
     fun isWellFormedUtf16(value: CharSequence): Boolean {
         var index = 0
         while (index < value.length) {

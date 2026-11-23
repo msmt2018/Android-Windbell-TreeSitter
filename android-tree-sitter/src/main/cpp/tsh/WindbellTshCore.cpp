@@ -74,6 +74,30 @@ static bool tshAstNodeMatchesSelector(
     return false;
 }
 
+// Build a reverse index for ATS selectors that name a Tree-sitter supertype.
+// The parse cursor visits concrete nodes only, so looking up only the concrete
+// symbol misses rules such as node: "expression". Expand nested subtype
+// relationships once per highlight pass instead of scanning every rule per node.
+static void tshCollectAstSubtypeSymbols(
+    const TSLanguage* language,
+    TSSymbol symbol,
+    uint32_t depth,
+    std::unordered_set<TSSymbol>& visited,
+    std::vector<TSSymbol>& output
+) {
+    constexpr uint32_t kMaxSupertypeDepth = 64;
+    if (!language || symbol == 0 || depth >= kMaxSupertypeDepth ||
+        !visited.insert(symbol).second) return;
+
+    uint32_t subtype_count = 0;
+    const TSSymbol* subtypes = ts_language_subtypes(language, symbol, &subtype_count);
+    for (uint32_t i = 0; subtypes && i < subtype_count; ++i) {
+        const TSSymbol subtype = subtypes[i];
+        if (subtype == 0) continue;
+        output.push_back(subtype);
+        tshCollectAstSubtypeSymbols(language, subtype, depth + 1, visited, output);
+    }
+}
 
 } // namespace
 
@@ -660,7 +684,7 @@ static int tshPredicateRegexMatchesTextSourceBounded(
 ) {
     if (!regex || start_byte > end_byte || (start_byte & 1u) ||
         (end_byte & 1u) || end_byte > source.sizeBytes() ||
-        maximum_match_bytes == 0)
+        maximum_match_bytes == 0 || maximum_match_bytes > 8u * 1024u * 1024u)
         return -1;
     if (start_byte == end_byte) {
         static const UChar empty_input = 0;
@@ -718,11 +742,16 @@ static TshPredicateResult tshEvaluateNativePredicates(const NativeQueryProgram& 
     if (predicates.empty()) return TshPredicateResult::ACCEPT;
     uint32_t predicate_index = 0;
     for (const auto& predicate : predicates) {
+        // Tree-sitter predicate metadata terminates each expression with a
+        // Done step. Treat it as a delimiter, not as an operand; otherwise
+        // every custom predicate is rejected before its evaluator runs.
+        const size_t predicate_size = predicate.size() -
+            (!predicate.empty() && predicate.back().type == TSQueryPredicateStepTypeDone ? 1u : 0u);
         if (predicate.empty() || predicate[0].type != TSQueryPredicateStepTypeString) return TshPredicateResult::REJECT;
 
         uint32_t op_length = 0;
         const char* op_text = ts_query_string_value_for_id(query, predicate[0].value_id, &op_length);
-        if (!op_text || predicate.size() < 3 ||
+        if (!op_text || predicate_size < 3 ||
             predicate[1].type != TSQueryPredicateStepTypeCapture) return TshPredicateResult::REJECT;
         std::string op;
         try {
@@ -745,7 +774,7 @@ static TshPredicateResult tshEvaluateNativePredicates(const NativeQueryProgram& 
             op == "any-kind-eq?" || op == "any-not-kind-eq?";
         const bool structural_operator = ancestry_operator || parent_operator || kind_operator;
         try {
-            for (size_t i = 2; i < predicate.size(); ++i) {
+            for (size_t i = 2; i < predicate_size; ++i) {
                 if (predicate[i].type == TSQueryPredicateStepTypeCapture &&
                     (op == "eq?" || op == "not-eq?" ||
                      op == "any-eq?" || op == "any-not-eq?")) continue;
@@ -770,7 +799,7 @@ static TshPredicateResult tshEvaluateNativePredicates(const NativeQueryProgram& 
         bool accepted = false;
         const bool equality_predicate = op == "eq?" || op == "not-eq?" ||
             op == "any-eq?" || op == "any-not-eq?";
-        if (equality_predicate && predicate.size() == 3 &&
+        if (equality_predicate && predicate_size == 3 &&
             predicate[2].type == TSQueryPredicateStepTypeCapture) {
             const bool any = op == "any-eq?" || op == "any-not-eq?";
             const bool positive = op == "eq?" || op == "any-eq?";
@@ -831,6 +860,17 @@ static TshPredicateResult tshEvaluateNativePredicates(const NativeQueryProgram& 
             // even for any-* forms: eq? / any-eq? reject, while
             // not-eq? / any-not-eq? accept.
             accepted = !has_capture ? !positive : (any ? any_satisfied : all_satisfied);
+            if (op == "any-not-eq?" || op == "any-eq?") {
+                static std::atomic<uint32_t> missing_capture_debug_count{0};
+                if (!has_capture && missing_capture_debug_count.fetch_add(1, std::memory_order_relaxed) < 16u) {
+                    LOGD("WindbellTSH", "Native equality predicate: op=%s pattern=%u predicate=%u capture_id=%u match_captures=%u accepted=%d",
+                        op.c_str(), match.pattern_index, predicate_index, predicate[1].value_id,
+                        match.capture_count, accepted ? 1 : 0);
+                    for (uint32_t capture = 0; capture < match.capture_count; ++capture) {
+                        LOGD("WindbellTSH", "  capture[%u].index=%u", capture, match.captures[capture].index);
+                    }
+                }
+            }
         } else if (op == "any-of?" || op == "not-any-of?") {
             if (expected.empty()) return TshPredicateResult::REJECT;
             bool all_in_set = true;
@@ -1258,7 +1298,22 @@ void WindbellEngine::matchBlockRecursive(
                                 nested_scan_start = viewport_start -
                                     static_cast<ptrdiff_t>(std::min<uint64_t>(overlap, available));
                             }
-                            nested_scan_end = std::min(inner_end, viewport_end);
+                            // Oniguruma's forward-search range is also passed to
+                            // match_at() as its upper match bound. Keep bounded matches
+                            // that begin before the viewport but finish just after its
+                            // right edge by extending the search range with the same
+                            // proven finite-width context. Captures are clipped to the
+                            // viewport in append_nested_capture() below.
+                            if (viewport_end < inner_end) {
+                                const uint64_t available_after_viewport =
+                                    static_cast<uint64_t>(inner_end - viewport_end);
+                                const uint64_t right_context =
+                                    std::min<uint64_t>(overlap, available_after_viewport);
+                                nested_scan_end = viewport_end +
+                                    static_cast<ptrdiff_t>(right_context);
+                            } else {
+                                nested_scan_end = inner_end;
+                            }
                         }
                         const UChar* inner_curr = nested_scan_start;
                         while (inner_curr < nested_scan_end) {
@@ -1335,6 +1390,170 @@ void WindbellEngine::matchBlockRecursive(
     onig_region_free(end_region, 1);
 }
 
+static bool collectQueryRootRanges(
+    TSTree* tree,
+    const std::unordered_set<TSSymbol>& root_symbols,
+    uint32_t range_start,
+    uint32_t range_end,
+    uint32_t total_bytes,
+    std::vector<std::pair<uint32_t, uint32_t>>* ranges,
+    std::unordered_set<TSSymbol>* found_symbols
+) {
+    if (!tree || root_symbols.empty() || !ranges || !found_symbols ||
+        range_start >= range_end) return false;
+
+    TSTreeCursor cursor = ts_tree_cursor_new(ts_tree_root_node(tree));
+    bool done = false;
+    try {
+        while (!done) {
+            const TSNode node = ts_tree_cursor_current_node(&cursor);
+            const uint32_t start = ts_node_start_byte(node);
+            const uint32_t end = ts_node_end_byte(node);
+            const bool zero_width = start == end;
+
+            // Nodes are visited in source order. Once a non-empty node starts
+            // at/after the viewport end, no later sibling can contribute.
+            if (!zero_width && start >= range_end) break;
+
+            const bool intersects = zero_width
+                ? (start >= range_start && start <= range_end)
+                : (start < range_end && end > range_start);
+            if (intersects) {
+                const TSSymbol symbol = ts_node_symbol(node);
+                if (root_symbols.find(symbol) != root_symbols.end() &&
+                    start <= end && end <= total_bytes &&
+                    (start & 1u) == 0 && (end & 1u) == 0) {
+                    uint32_t dependency_start = start;
+                    uint32_t dependency_end = end;
+                    // Missing/zero-width nodes still depend on their insertion
+                    // boundary. Expand by one UTF-16 code unit on each side.
+                    if (dependency_start == dependency_end) {
+                        dependency_start = dependency_start >= 2u
+                            ? dependency_start - 2u : 0u;
+                        dependency_end = static_cast<uint32_t>(std::min<uint64_t>(
+                            total_bytes, static_cast<uint64_t>(dependency_end) + 2u));
+                    }
+                    ranges->emplace_back(dependency_start, dependency_end);
+                    found_symbols->insert(symbol);
+                }
+
+                // Jump directly to the first child that contains or follows
+                // range_start. The previous implementation descended from the
+                // first child of every intersecting ancestor, then scanned all
+                // preceding siblings. On a file-root node this could walk most
+                // of a huge AST for every small viewport request.
+                if (ts_tree_cursor_goto_first_child_for_byte(&cursor, range_start) >= 0)
+                    continue;
+            }
+
+            while (!ts_tree_cursor_goto_next_sibling(&cursor)) {
+                if (!ts_tree_cursor_goto_parent(&cursor)) {
+                    done = true;
+                    break;
+                }
+            }
+        }
+    } catch (...) {
+        ts_tree_cursor_delete(&cursor);
+        throw;
+    }
+    ts_tree_cursor_delete(&cursor);
+    return found_symbols->size() == root_symbols.size();
+}
+
+static void appendQueryPatternDependencies(
+    const TshGrammar& grammar,
+    const TSLanguage* language,
+    TSTree* tree,
+    uint32_t range_start,
+    uint32_t range_end,
+    uint32_t total_bytes,
+    std::vector<HighlightDependencyRange>* output
+) {
+    if (!output) return;
+
+    std::unordered_set<TSSymbol> root_symbols;
+    bool has_active_pattern = false;
+    bool requires_document_scope = false;
+    for (const auto& query : grammar.native_queries) {
+        if (!query.enabled || !query.query) continue;
+        for (const auto& item : query.pattern_metadata) {
+            const auto& metadata = item.second;
+            if (!metadata.enabled) continue;
+            has_active_pattern = true;
+            if (metadata.dependency_scope !=
+                    NativeQueryProgram::QueryDependencyScope::ROOTED_LOCAL ||
+                metadata.root_node_symbol == 0 || language == nullptr) {
+                requires_document_scope = true;
+                break;
+            }
+            root_symbols.insert(metadata.root_node_symbol);
+        }
+        if (requires_document_scope) break;
+    }
+    if (!has_active_pattern) return;
+    if (requires_document_scope || root_symbols.empty()) {
+        output->push_back({
+            0u, total_bytes, UINT32_MAX,
+            static_cast<uint8_t>(HighlightSource::NATIVE_QUERY), 0xFFu,
+            HIGHLIGHT_DEPENDENCY_DOCUMENT_WIDE
+        });
+        return;
+    }
+
+    // All fixed-root patterns share one source-ordered AST traversal. The
+    // union of root intervals is sufficient for cache invalidation and avoids
+    // repeating the same viewport walk once per distinct node symbol.
+    std::vector<std::pair<uint32_t, uint32_t>> root_ranges;
+    std::unordered_set<TSSymbol> found_symbols;
+    found_symbols.reserve(root_symbols.size());
+    if (!collectQueryRootRanges(
+            tree, root_symbols, range_start, range_end, total_bytes,
+            &root_ranges, &found_symbols)) {
+        // A missing candidate root is not proof that an edit elsewhere
+        // cannot create a root covering this viewport.
+        output->push_back({
+            0u, total_bytes, UINT32_MAX,
+            static_cast<uint8_t>(HighlightSource::NATIVE_QUERY), 0xFFu,
+            HIGHLIGHT_DEPENDENCY_DOCUMENT_WIDE
+        });
+        return;
+    }
+
+    std::sort(root_ranges.begin(), root_ranges.end());
+    size_t merged_count = 0;
+    for (const auto& range : root_ranges) {
+        if (merged_count != 0 && range.first <= root_ranges[merged_count - 1u].second) {
+            root_ranges[merged_count - 1u].second =
+                std::max(root_ranges[merged_count - 1u].second, range.second);
+        } else {
+            root_ranges[merged_count++] = range;
+        }
+    }
+    root_ranges.resize(merged_count);
+    const uint8_t viewport_flags = static_cast<uint8_t>(
+        range_start == 0u && range_end == total_bytes
+            ? HIGHLIGHT_DEPENDENCY_DOCUMENT_WIDE : 0u);
+    output->push_back({
+        range_start, range_end, UINT32_MAX,
+        static_cast<uint8_t>(HighlightSource::NATIVE_QUERY),
+        static_cast<uint8_t>(NativeQueryProgram::QueryDependencyScope::ROOTED_LOCAL),
+        viewport_flags
+    });
+    for (const auto& range : root_ranges) {
+        uint8_t flags = HIGHLIGHT_DEPENDENCY_BOUNDARY_SENSITIVE;
+        if (range.first == 0u && range.second == total_bytes) {
+            flags = static_cast<uint8_t>(flags | HIGHLIGHT_DEPENDENCY_DOCUMENT_WIDE);
+        }
+        output->push_back({
+            range.first, range.second, UINT32_MAX,
+            static_cast<uint8_t>(HighlightSource::NATIVE_QUERY),
+            static_cast<uint8_t>(NativeQueryProgram::QueryDependencyScope::ROOTED_LOCAL),
+            flags
+        });
+    }
+}
+
 std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
     const TSLanguage* language,
     TSTree* tree,
@@ -1348,9 +1567,11 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
     const windbell::largefile::TextSource* text_source,
     std::vector<RegexStateCheckpoint>* regex_state_checkpoints,
     uint64_t source_version,
-    uint64_t partition_version
+    uint64_t partition_version,
+    std::vector<HighlightDependencyRange>* dependency_ranges
 ) {
     std::vector<HighlightSpan> final_spans;
+    if (dependency_ranges) dependency_ranges->clear();
     if (diagnostic_match_counts) std::fill(diagnostic_match_counts, diagnostic_match_counts + 4, 0u);
     if (length_chars != 0 && input_chars == nullptr && !text_source) return final_spans;
     if (length_chars > (std::numeric_limits<uint32_t>::max() / sizeof(uint16_t))) return final_spans;
@@ -1646,11 +1867,21 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
         // Checkpoints are reusable only for the exact immutable source and
         // partition snapshots from which their tokenizer state was produced.
         if (regex_state_checkpoints) {
+            // A checkpoint is valid only for the exact immutable source and
+            // partition snapshots that produced it. Byte offsets alone cannot
+            // establish that an edited suffix is unchanged, so invalidate the
+            // complete checkpoint set whenever either version changes.
+            const bool has_stale_checkpoint = std::any_of(
+                regex_state_checkpoints->begin(), regex_state_checkpoints->end(),
+                [&](const RegexStateCheckpoint& checkpoint) {
+                    return checkpoint.source_version != source_version ||
+                        checkpoint.partition_version != partition_version;
+                });
+            if (has_stale_checkpoint) regex_state_checkpoints->clear();
+
             const RegexStateCheckpoint* nearest = nullptr;
             for (const auto& checkpoint : *regex_state_checkpoints) {
-                if (checkpoint.source_version != source_version ||
-                    checkpoint.partition_version != partition_version ||
-                    checkpoint.byte_offset > range_start_byte ||
+                if (checkpoint.byte_offset > range_start_byte ||
                     checkpoint.state_stack.empty()) continue;
                 if (!nearest || checkpoint.byte_offset > nearest->byte_offset)
                     nearest = &checkpoint;
@@ -1658,80 +1889,39 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
             if (nearest) {
                 position = static_cast<uint32_t>(nearest->byte_offset);
                 state_stack = nearest->state_stack;
-                next_checkpoint = ((static_cast<uint64_t>(position) / (64u * 1024u)) + 1u) * (64u * 1024u);
-            } else {
-                // Keep stale checkpoints as convergence candidates while
-                // rescanning from the document start. save_regex_state_checkpoint()
-                // will promote the unchanged suffix only after it reaches an
-                // identical byte offset with an identical state stack. Clearing
-                // this set here would make that convergence path unreachable
-                // whenever the edit precedes the first reusable checkpoint.
-            }
-            // Probe the next stale checkpoint exactly, even when no current-
-            // version checkpoint was available. Otherwise an unaligned old
-            // checkpoint could be stepped over by the regular 64 KiB stride.
-            for (const auto& checkpoint : *regex_state_checkpoints) {
-                if (checkpoint.source_version != source_version &&
-                    checkpoint.byte_offset > position) {
-                    next_checkpoint = std::min(next_checkpoint, checkpoint.byte_offset);
-                }
+                next_checkpoint =
+                    ((static_cast<uint64_t>(position) / (64u * 1024u)) + 1u) *
+                    (64u * 1024u);
             }
         }
+        // Dependencies begin at the nearest reusable state checkpoint; the
+        // cached state is valid only from that byte offset through this scan.
+        uint32_t state_dependency_start = position;
         auto save_regex_state_checkpoint = [&]() {
             if (!regex_state_checkpoints || position < next_checkpoint) return;
-            RegexStateCheckpoint checkpoint;
-            checkpoint.byte_offset = position;
-            checkpoint.source_version = source_version;
-            checkpoint.partition_version = partition_version;
-            checkpoint.state_stack = state_stack;
-            bool converged = false;
-            auto stale = std::find_if(
+
+            const bool already_current = std::any_of(
                 regex_state_checkpoints->begin(), regex_state_checkpoints->end(),
                 [&](const RegexStateCheckpoint& candidate) {
-                    return candidate.source_version != source_version &&
+                    return candidate.source_version == source_version &&
+                        candidate.partition_version == partition_version &&
                         candidate.byte_offset == position;
                 });
-            if (stale != regex_state_checkpoints->end()) {
-                if (stale->state_stack == state_stack) {
-                    const uint64_t stale_version = stale->source_version;
-                    for (auto& candidate : *regex_state_checkpoints) {
-                        if (candidate.source_version == stale_version &&
-                            candidate.byte_offset >= position) {
-                            candidate.source_version = source_version;
-                            candidate.partition_version = partition_version;
-                        }
-                    }
-                    converged = true;
-                } else {
-                    // The edit changed lexical state at this checkpoint. Keep
-                    // later candidates: a subsequent checkpoint may still be
-                    // the first point where the tokenizer state converges.
-                    regex_state_checkpoints->erase(stale);
-                }
-            }
-            if (!converged) {
-                const bool already_current = std::any_of(
+            if (!already_current) {
+                RegexStateCheckpoint checkpoint;
+                checkpoint.byte_offset = position;
+                checkpoint.source_version = source_version;
+                checkpoint.partition_version = partition_version;
+                checkpoint.state_stack = state_stack;
+                auto insertion = std::lower_bound(
                     regex_state_checkpoints->begin(), regex_state_checkpoints->end(),
-                    [&](const RegexStateCheckpoint& candidate) {
-                        return candidate.source_version == source_version &&
-                            candidate.partition_version == partition_version &&
-                            candidate.byte_offset == position;
+                    position,
+                    [](const RegexStateCheckpoint& candidate, uint64_t offset) {
+                        return candidate.byte_offset < offset;
                     });
-                if (!already_current) {
-                    // The vector can contain stale suffix candidates whose
-                    // offsets are greater than the current rescan position.
-                    // Appending based on back() would then suppress every
-                    // newly generated checkpoint before that stale suffix.
-                    auto insertion = std::lower_bound(
-                        regex_state_checkpoints->begin(), regex_state_checkpoints->end(),
-                        position,
-                        [](const RegexStateCheckpoint& candidate, uint64_t offset) {
-                            return candidate.byte_offset < offset;
-                        });
-                    regex_state_checkpoints->insert(
-                        insertion, std::move(checkpoint));
-                }
+                regex_state_checkpoints->insert(insertion, std::move(checkpoint));
             }
+
             // Bound persistent tokenizer metadata independently from the
             // source size. 8192 checkpoints cover 512 MiB at 64 KiB spacing.
             constexpr size_t kMaxRegexStateCheckpoints = 8192;
@@ -1744,19 +1934,6 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
             next_checkpoint =
                 ((static_cast<uint64_t>(position) / (64u * 1024u)) + 1u) *
                 (64u * 1024u);
-            // A mismatching stale checkpoint is discarded above, but later
-            // stale candidates may still converge. Re-arm the exact next
-            // candidate after every checkpoint, not only at scan startup;
-            // otherwise the regular stride can jump over an unaligned one.
-            if (regex_state_checkpoints) {
-                for (const auto& candidate : *regex_state_checkpoints) {
-                    if (candidate.source_version != source_version &&
-                        candidate.byte_offset > position) {
-                        next_checkpoint = std::min(
-                            next_checkpoint, candidate.byte_offset);
-                    }
-                }
-            }
         };
         OnigRegion* state_region = onig_region_new();
         OnigRegion* state_case_region = onig_region_new();
@@ -1989,6 +2166,36 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
         }
         onig_region_free(state_case_region, 1);
         onig_region_free(state_region, 1);
+        if (dependency_ranges) {
+            if (!grammar->regex_state_graph_bounded || state_full_source_fallback) {
+                dependency_ranges->push_back({
+                    0u, total_bytes, UINT32_MAX,
+                    static_cast<uint8_t>(HighlightSource::REGEX_STATE), 0xFFu,
+                    HIGHLIGHT_DEPENDENCY_DOCUMENT_WIDE
+                });
+            } else {
+                const uint64_t range_lookahead =
+                    state_window_match_width >
+                        std::numeric_limits<uint64_t>::max() - range_end_byte
+                    ? UINT64_MAX
+                    : static_cast<uint64_t>(range_end_byte) + state_window_match_width;
+                const uint64_t lookahead_end = std::max<uint64_t>(
+                    position, range_lookahead);
+                const uint32_t dependency_end = static_cast<uint32_t>(
+                    std::min<uint64_t>(total_bytes, lookahead_end));
+                uint8_t flags = static_cast<uint8_t>(
+                    HIGHLIGHT_DEPENDENCY_CHECKPOINT_BASED |
+                    HIGHLIGHT_DEPENDENCY_BOUNDARY_SENSITIVE);
+                if (state_dependency_start == 0u && dependency_end == total_bytes) {
+                    flags = static_cast<uint8_t>(
+                        flags | HIGHLIGHT_DEPENDENCY_DOCUMENT_WIDE);
+                }
+                dependency_ranges->push_back({
+                    state_dependency_start, dependency_end, UINT32_MAX,
+                    static_cast<uint8_t>(HighlightSource::REGEX_STATE), 0xFFu, flags
+                });
+            }
+        }
     }
     for (size_t i = regex_state_span_begin; i < micro_spans.size(); ++i) {
         micro_spans[i].source = static_cast<uint8_t>(HighlightSource::REGEX_STATE);
@@ -2003,6 +2210,36 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
         TSTreeCursor cursor = ts_tree_cursor_new(ts_tree_root_node(tree));
         std::vector<const AstSelectorRule*> candidate_rules;
         candidate_rules.reserve(grammar->ast_wildcard_rules.size() + 16);
+
+        std::unordered_map<TSSymbol, std::vector<uint32_t>> ast_supertype_node_rules;
+        std::unordered_map<TSSymbol, std::vector<uint32_t>> ast_supertype_field_rules;
+        // Symbol IDs are grammar-local and can differ across visible/grammar
+        // aliases. Keep a type-name dispatch fallback for every expanded
+        // subtype so ATS supertype rules remain addressable by either identity.
+        AstTypeRuleIndex ast_supertype_node_rules_by_type;
+        AstTypeRuleIndex ast_supertype_field_rules_by_type;
+        for (uint32_t rule_index = 0;
+             rule_index < grammar->ast_selector_rules.size(); ++rule_index) {
+            const AstSelectorRule& rule = grammar->ast_selector_rules[rule_index];
+            if (rule.target_symbol == 0) continue;
+            std::unordered_set<TSSymbol> visited;
+            std::vector<TSSymbol> subtypes;
+            tshCollectAstSubtypeSymbols(grammar->ts_language, rule.target_symbol,
+                0, visited, subtypes);
+            auto& reverse_index = rule.field_id != 0
+                ? ast_supertype_field_rules : ast_supertype_node_rules;
+            for (TSSymbol subtype : subtypes) {
+                reverse_index[subtype].push_back(rule_index);
+                const char* subtype_name =
+                    ts_language_symbol_name(grammar->ts_language, subtype);
+                if (subtype_name && subtype_name[0] != '\0') {
+                    auto& type_index = rule.field_id != 0
+                        ? ast_supertype_field_rules_by_type
+                        : ast_supertype_node_rules_by_type;
+                    type_index[subtype_name].push_back(rule_index);
+                }
+            }
+        }
 
         while (true) {
             TSNode node = ts_tree_cursor_current_node(&cursor);
@@ -2029,17 +2266,21 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                     }
                 }
             };
-            auto append_indexed_type_rules = [&](const AstTypeRuleIndex& index, const char* type) {
+            auto append_indexed_type_rules = [&](const auto& index, const char* type) {
                 if (!type) return;
-                const auto found = index.find(std::string(type));
+                // Both type indexes use transparent std::less<> lookup. Avoid
+                // allocating a temporary std::string for every visited node.
+                const auto found = index.find(std::string_view(type));
                 if (found != index.end()) append_indexed_rules(found->second);
             };
             append_indexed_rules(grammar->ast_wildcard_rules);
             const char* node_type = ts_node_type(node);
             const char* node_grammar_type = ts_node_grammar_type(node);
             append_indexed_type_rules(grammar->ast_rules_by_node_type, node_type);
+            append_indexed_type_rules(ast_supertype_node_rules_by_type, node_type);
             if (!node_grammar_type || !node_type || std::strcmp(node_grammar_type, node_type) != 0) {
                 append_indexed_type_rules(grammar->ast_rules_by_node_type, node_grammar_type);
+                append_indexed_type_rules(ast_supertype_node_rules_by_type, node_grammar_type);
             }
             auto node_rules = grammar->ast_rules_by_node_symbol.find(sym);
             if (node_rules != grammar->ast_rules_by_node_symbol.end()) {
@@ -2053,6 +2294,17 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                     append_indexed_rules(grammar_node_rules->second);
                 }
             }
+            auto supertype_node_rules = ast_supertype_node_rules.find(sym);
+            if (supertype_node_rules != ast_supertype_node_rules.end()) {
+                append_indexed_rules(supertype_node_rules->second);
+            }
+            if (node_grammar_sym != sym) {
+                auto grammar_supertype_node_rules =
+                    ast_supertype_node_rules.find(node_grammar_sym);
+                if (grammar_supertype_node_rules != ast_supertype_node_rules.end()) {
+                    append_indexed_rules(grammar_supertype_node_rules->second);
+                }
+            }
             if (!ts_node_is_null(parent)) {
                 auto field_rules = grammar->ast_field_rules_by_parent_symbol.find(parent_sym);
                 if (field_rules != grammar->ast_field_rules_by_parent_symbol.end()) {
@@ -2061,8 +2313,10 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                 const char* parent_type = ts_node_type(parent);
                 const char* parent_grammar_type = ts_node_grammar_type(parent);
                 append_indexed_type_rules(grammar->ast_field_rules_by_parent_type, parent_type);
+                append_indexed_type_rules(ast_supertype_field_rules_by_type, parent_type);
                 if (!parent_grammar_type || !parent_type || std::strcmp(parent_grammar_type, parent_type) != 0) {
                     append_indexed_type_rules(grammar->ast_field_rules_by_parent_type, parent_grammar_type);
+                    append_indexed_type_rules(ast_supertype_field_rules_by_type, parent_grammar_type);
                 }
                 // Field selectors are indexed by the compiled owner symbol.
                 // Also dispatch through the original grammar identity when an
@@ -2072,6 +2326,17 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                         grammar->ast_field_rules_by_parent_symbol.find(parent_grammar_sym);
                     if (grammar_field_rules != grammar->ast_field_rules_by_parent_symbol.end()) {
                         append_indexed_rules(grammar_field_rules->second);
+                    }
+                }
+                auto supertype_field_rules = ast_supertype_field_rules.find(parent_sym);
+                if (supertype_field_rules != ast_supertype_field_rules.end()) {
+                    append_indexed_rules(supertype_field_rules->second);
+                }
+                if (parent_grammar_sym != parent_sym) {
+                    auto grammar_supertype_field_rules =
+                        ast_supertype_field_rules.find(parent_grammar_sym);
+                    if (grammar_supertype_field_rules != ast_supertype_field_rules.end()) {
+                        append_indexed_rules(grammar_supertype_field_rules->second);
                     }
                 }
             }
@@ -2208,30 +2473,19 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                                 ast_rule.text_regex,
                                 ast_rule.text_regex_maximum_bytes)) continue;
                     } else {
-                    // Context-dependent Regex needs the complete node slice, but a
-                    // mapped TextSource already exposes it without a second large heap
-                    // copy. Materialize only if the source has no contiguous backing;
-                    // convert to UTF-8 only when literal predicates require it.
+                    // Context-dependent AST regexes retain the contiguous adapter,
+                    // but cap the temporary node to prevent a single giant string or
+                    // comment node from allocating a document-sized second copy.
+                    constexpr uint64_t kMaxContiguousAstRegexBytes = 4ULL * 1024ULL * 1024ULL;
+                    if (text_source && ast_rule.text_regex &&
+                        text_end - text_start > kMaxContiguousAstRegexBytes) continue;
                     std::string node_text_storage;
-                    std::vector<UChar> node_text_window;
+                    std::vector<UChar> node_text_window((text_end - text_start) / sizeof(UChar));
                     const UChar* node_source = nullptr;
                     if (text_end > text_start) {
                         if (text_source) {
-                            const char* mapped_data = nullptr;
-                            uint64_t mapped_size = 0;
-                            if (text_source->contiguousData(&mapped_data, &mapped_size) &&
-                                mapped_data && text_end <= mapped_size) {
-                                node_source = reinterpret_cast<const UChar*>(mapped_data) + text_start;
-                            } else {
-                                const uint64_t node_bytes = text_end - text_start;
-                                if ((node_bytes & 1u) != 0 ||
-                                    node_bytes > static_cast<uint64_t>(node_text_window.max_size())) continue;
-                                try { node_text_window.resize(static_cast<size_t>(node_bytes)); }
-                                catch (const std::bad_alloc&) { continue; }
-                                if (!windbell::largefile::copyTextRange(
-                                        *text_source, text_start, node_bytes, node_text_window.data())) continue;
-                                node_source = node_text_window.data();
-                            }
+                            if (!windbell::largefile::copyTextRange(*text_source, text_start, text_end - text_start, node_text_window.data())) continue;
+                            node_source = node_text_window.data();
                         } else if (has_contiguous_text) {
                             const UChar *document_source = input_chars
                                 ? reinterpret_cast<const UChar*>(input_chars)
@@ -2240,13 +2494,8 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                         }
                         else continue;
                     } else node_source = &kEmptyInput;
-                    const bool needs_utf8_literals = ast_rule.has_text_equals ||
-                        ast_rule.has_text_prefix || ast_rule.has_text_suffix;
-                    std::string_view node_text;
-                    if (needs_utf8_literals) {
-                        if (!tshUtf16SliceToUtf8(node_source, text_end - text_start, node_text_storage)) continue;
-                        node_text = node_text_storage;
-                    }
+                    if (!tshUtf16SliceToUtf8(node_source, text_end - text_start, node_text_storage)) continue;
+                    const std::string_view node_text(node_text_storage);
                     if (ast_rule.has_text_equals && node_text != ast_rule.text_equals) continue;
                     if (ast_rule.has_text_prefix &&
                         (node_text.size() < ast_rule.text_prefix.size() ||
@@ -2281,7 +2530,9 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                 if (ast_rule.child_index != UINT32_MAX ||
                     ast_rule.named_child_index != UINT32_MAX ||
                     ast_rule.first_child >= 0 || ast_rule.last_child >= 0 ||
-                    ast_rule.previous_sibling_symbol != 0 || ast_rule.next_sibling_symbol != 0) {
+                    ast_rule.previous_sibling_symbol != 0 || ast_rule.next_sibling_symbol != 0 ||
+                    !ast_rule.previous_sibling_type.empty() ||
+                    !ast_rule.next_sibling_type.empty()) {
                     if (ts_node_is_null(parent)) continue;
                     const uint32_t sibling_count = ts_node_child_count(parent);
                     uint32_t current_index = UINT32_MAX;
@@ -2403,6 +2654,9 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
     }
     const size_t native_query_span_begin = macro_spans.size();
     if (tree && tree_source_valid && !grammar->native_queries.empty()) {
+        appendQueryPatternDependencies(
+            *grammar, language, tree, range_start_byte, range_end_byte,
+            total_bytes, dependency_ranges);
         // Each .tsh query block has its own native TSQuery and capture namespace.
         // This preserves per-block priority/order and avoids concatenating query
         // sources into a synthetic aggregate program.
@@ -2411,7 +2665,7 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
 #if defined(TSH_TREE_SITTER_HAS_QUERY_CURSOR_OPTIONS)
             std::unique_ptr<TSQueryCursor, decltype(&ts_query_cursor_delete)> q_cursor(
                 ts_query_cursor_new(), &ts_query_cursor_delete);
-            if (!q_cursor) continue;
+            if (!q_cursor) throw std::bad_alloc();
             TSQueryCursor* cursor = q_cursor.get();
 
             // Restrict query traversal to the requested range while retaining the
@@ -2419,7 +2673,8 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
             // limit or artificial progress timeout would remove valid captures
             // from dense files, so use the maximum representable pending capacity.
             if (!ts_query_cursor_set_byte_range(cursor, range_start_byte, range_end_byte)) {
-                continue;
+                throw std::runtime_error(
+                    "TSH could not apply the requested byte range to a Tree-sitter query cursor");
             }
             ts_query_cursor_set_match_limit(cursor, UINT32_MAX);
             ts_query_cursor_exec(cursor, native_query.query, ts_tree_root_node(tree));
@@ -2475,6 +2730,8 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                     span.style_id = style_binding->second;
                     span.flags = 0;
                     span.priority = pattern_priority;
+                    span.allow_overlap = pattern_metadata != native_query.pattern_metadata.end() &&
+                        pattern_metadata->second.allow_overlap ? 1u : 0u;
                     const uint64_t order = static_cast<uint64_t>(native_query.declaration_order) +
                         pattern_order + current_order + capture_index;
                     span.declaration_order = static_cast<uint32_t>(

@@ -476,6 +476,25 @@ class ByteBudgetLruCache<K : Any, V : Any>(
 
     fun get(key: K): V? = lock.write { entries[key]?.value }
 
+    /** Returns at most [maxEntries] newest matching entries in current LRU order. */
+    fun snapshotMostRecentEntries(
+        predicate: (K, V) -> Boolean,
+        maxEntries: Int
+    ): List<Pair<K, V>> {
+        require(maxEntries >= 0)
+        if (maxEntries == 0) return emptyList()
+        return lock.read {
+            val recent = ArrayList<Pair<K, V>>(maxEntries)
+            for ((key, entry) in entries) {
+                val value = entry.value
+                if (!predicate(key, value)) continue
+                if (recent.size == maxEntries) recent.removeAt(0)
+                recent += key to value
+            }
+            recent
+        }
+    }
+
     /** Finds and promotes the most-recently-used matching entry. */
     fun getMatching(predicate: (K, V) -> Boolean): V? = lock.write {
         val key = entries.entries.firstOrNull { (candidate, entry) ->

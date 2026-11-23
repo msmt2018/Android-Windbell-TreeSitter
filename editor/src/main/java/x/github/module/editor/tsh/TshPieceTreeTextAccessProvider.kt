@@ -22,17 +22,18 @@ import java.util.concurrent.atomic.AtomicBoolean
 /**
  * Host document facade for the repository's PieceTreeTextBuffer.
  *
- * [snapshotFactory] MUST create the PieceTreeSnapshot while the host excludes concurrent edits
- * to the live PieceTreeTextBuffer. After it returns, PieceTreeSnapshot is immutable and can be
- * read concurrently while the live buffer changes.
+ * [snapshotFactory] MUST coordinate snapshot creation with concurrent edits and concurrent
+ * snapshot requests against the live PieceTreeTextBuffer. After it returns, PieceTreeSnapshot is
+ * immutable and can be read concurrently while the live buffer changes.
  *
  * The factory is intentionally supplied by the host rather than locking on the buffer here:
  * synchronizing on an object does not coordinate with editor mutations that use another lock.
+ * EditorDocument supplies the shared reentrant transaction lock used by this repository's binding.
  */
 class TshPieceTreeDocument(
     val documentId: String,
     val languageId: String?,
-    private val snapshotThread: Thread? = null,
+    internal val snapshotThread: Thread? = null,
     private val snapshotFactory: () -> PieceTreeSnapshot
 ) {
     private val changeListeners = CopyOnWriteArrayList<TshTextChangeListener>()
@@ -103,7 +104,8 @@ class TshPieceTreeTextAccessProvider(
             TshCapability("text.disposal-notification", 1)
         )
 
-    override fun supports(instance: Any): Boolean = instance is TshPieceTreeDocument
+    override fun supports(instance: Any): Boolean =
+        instance is TshPieceTreeDocument && instance.snapshotThread == null
 
     override fun supports(instance: Any, descriptor: TshObjectDescriptor): Boolean =
         supports(instance)
@@ -117,6 +119,10 @@ class TshPieceTreeTextAccessProvider(
             if (host.documentId.isBlank()) return failure(
                 "TSH-PIECETREE-006",
                 "PieceTree documentId must not be blank"
+            )
+            if (host.snapshotThread != null) return failure(
+                "TSH-PIECETREE-011",
+                "The concurrent PieceTree provider requires a thread-neutral snapshot factory"
             )
             val pieceTreeSnapshot = host.createSnapshot()
             val version = pieceTreeSnapshot.versionId.toLong()

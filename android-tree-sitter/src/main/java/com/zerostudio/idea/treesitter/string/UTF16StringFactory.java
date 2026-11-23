@@ -61,8 +61,21 @@ public class UTF16StringFactory {
   }
 
   private static long newString0(byte[] bytes, int offset, int len) {
-    Assertions.checkIndex(offset, bytes.length);
-    Assertions.checkUpperBound(offset + len, bytes.length);
+    if (bytes == null) {
+      throw new NullPointerException("bytes");
+    }
+    // UTF16String stores UTF-16LE code units. A byte slice must start and end
+    // on a two-byte code-unit boundary, and its bounds must be checked without
+    // offset + len overflow before entering JNI.
+    if (offset < 0 || len < 0 || offset > bytes.length - len) {
+      throw new IllegalArgumentException(
+          "Invalid UTF-16 byte slice: offset=" + offset + ", length=" + len
+              + ", byteLength=" + bytes.length);
+    }
+    if (((offset | len) & 1) != 0) {
+      throw new IllegalArgumentException(
+          "UTF-16LE byte slices must be aligned to two-byte code units");
+    }
     return Native.newStringBytes(bytes, offset, len);
   }
 

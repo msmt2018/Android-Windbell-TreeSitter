@@ -51,12 +51,12 @@ object NativeHeaderGenerator {
     trees.forEach { cu ->
       val visitor = object : TreePathScanner<Unit, Unit>() {
         override fun visitClass(node: ClassTree, p: Unit) {
-          node.members.filterIsInstance<ClassTree>().forEach {
-            visitClass(it, p)
-          }
-
           val element = Trees.instance(task).getElement(currentPath)
           if (element is TypeElement) {
+            // handleElement recursively visits nested TypeElements. Do not
+            // manually visit node.members here: calling visitClass directly
+            // does not advance TreePathScanner.currentPath and would process
+            // the outer type repeatedly for every nested class.
             handleElement(
               JNIWriter(task.types, task.elements),
               element,

@@ -165,6 +165,45 @@ class TshEngineNativeResourceLifecycleTest {
     }
 
     @Test
+    fun engineOwnsTheConfiguredSharedMemoryBudget() {
+        val engine = TshEngine.create(
+            TshEngineOptions(
+                memoryBudgetOptions = TshMemoryBudgetOptions(
+                    targetBytes = 80,
+                    hardLimitBytes = 160,
+                    availableMemoryBytes = 120
+                )
+            )
+        )
+        assertEquals(30L, engine.memoryBudget.limitBytes)
+        engine.close()
+        assertTrue(engine.memoryBudget.snapshot().closed)
+    }
+
+    @Test
+    fun treeResourceReservationLivesUntilNativeTreeActuallyCloses() {
+        val engine = TshEngine.create()
+        val tree = FakeTree()
+        val reservation = (engine.memoryBudget.reserve(
+            TshMemoryCategory.SYNTAX_TREE, 48, "syntax-tree:doc:1:1"
+        ) as TshResult.Success).value
+        val registration = engine.nativeResources.register(
+            tree, "syntax-tree", dependencies = listOf(reservation)
+        )
+        val activeLease = engine.nativeResources.acquire(registration.handle)!!
+
+        engine.close()
+
+        assertEquals(48L, engine.memoryBudget.snapshot().reservedBytes)
+        assertEquals(0, tree.closeCalls)
+        activeLease.close()
+
+        assertEquals(1, tree.closeCalls)
+        assertEquals(0L, engine.memoryBudget.snapshot().reservedBytes)
+        assertTrue(engine.memoryBudget.snapshot().closed)
+    }
+
+    @Test
     fun engineCannotOpenParserAfterClose() {
         val engine = TshEngine.create()
         val language = FakeLanguage()

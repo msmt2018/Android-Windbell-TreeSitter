@@ -14,7 +14,7 @@ import java.time.format.DateTimeFormatter
 
 buildscript {
   dependencies {
-    classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:1.9.22")
+    classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:2.4.21")
   }
 }
 
@@ -73,9 +73,14 @@ fun Project.githubPackagesRepository(): String =
     .orElse("android-tree-sitter")
     .get()
 
+val pinnedNdkVersion = libs.versions.ndk.get()
+val pinnedCmakeVersion = libs.versions.cmake.get()
+val pinnedBuildToolsVersion = libs.versions.build.tools.get()
+
 fun Project.configureBaseExtension() {
   extensions.configure<BaseExtension> {
     compileSdkVersion(34)
+    buildToolsVersion(pinnedBuildToolsVersion)
 
     defaultConfig {
       minSdk = 21
@@ -216,6 +221,34 @@ tasks.register<BuildTreeSitterTask>("buildTreeSitter")
 
 tasks.register<CleanTreeSitterBuildTask>("cleanTreeSitterBuild")
 
+tasks.register<Exec>("generateJavaGrammarAbi15") {
+  group = "build setup"
+  description = "Regenerates the Java Tree-sitter parser with ABI 15 supertype metadata."
+  workingDir(rootProject.projectDir)
+  commandLine("bash", "scripts/generate-java-grammar-abi15.sh")
+  inputs.file(rootProject.file("grammars/java/src/grammar.json"))
+  inputs.file(rootProject.file("scripts/generate-java-grammar-abi15.sh"))
+  outputs.file(rootProject.file("grammars/java/src/parser.c"))
+  outputs.upToDateWhen {
+    val parser = rootProject.file("grammars/java/src/parser.c")
+    parser.isFile && parser.useLines { lines ->
+      lines.any { it.trim() == "#define LANGUAGE_VERSION 15" }
+    }
+  }
+}
+
+// Keep IDE and CI builds on the same grammar ABI. Generate the Java parser
+// before any grammar module configures or builds its native CMake target.
+subprojects {
+  plugins.withId("android-tree-sitter.ts") {
+    tasks.configureEach {
+      if (name.startsWith("configureCMake") || name.startsWith("buildCMake")) {
+        dependsOn(rootProject.tasks.named("generateJavaGrammarAbi15"))
+      }
+    }
+  }
+}
+
 tasks.register<Delete>("clean").configure {
   dependsOn("cleanTreeSitterBuild")
   delete(rootProject.layout.buildDirectory)
@@ -233,7 +266,7 @@ fun Project.configureTsModule() {
       logger.lifecycle("Set namespace '$namespace' to $project")
     }
 
-    ndkVersion = "24.0.8215888"
+    ndkVersion = pinnedNdkVersion
 
     defaultConfig {
       val rootProjDir = project.rootProject.projectDir.absolutePath
@@ -249,7 +282,7 @@ fun Project.configureTsModule() {
     externalNativeBuild {
       cmake {
         path = project.file("src/main/cpp/CMakeLists.txt")
-        version = "3.22.1"
+        version = pinnedCmakeVersion
       }
     }
   }
