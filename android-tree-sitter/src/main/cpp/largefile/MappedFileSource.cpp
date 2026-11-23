@@ -44,6 +44,7 @@ MappedFileSource &MappedFileSource::operator=(MappedFileSource &&other) noexcept
 std::unique_ptr<MappedFileSource> MappedFileSource::createSnapshot(
     const TextSource &source, const std::string &directory
 ) noexcept {
+    if (!source.isValid()) return nullptr;
     const uint64_t source_size = source.sizeBytes();
     if ((source_size & 1u) != 0 ||
         source_size > static_cast<uint64_t>(std::numeric_limits<off_t>::max()) ||
