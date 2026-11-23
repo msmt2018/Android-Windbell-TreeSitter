@@ -267,23 +267,38 @@ class TshSyntaxHighlighter(
             return null
         }
         val active = largeSession ?: return null
-        val editPending = active.pendingEditEpoch.get() != active.appliedEditEpoch.get()
+        // Serialize revision observation and cache reads with edit admission. The
+        // edit callback increments pendingEditEpoch and invalidates display spans
+        // under this same lock, so a renderer cannot read a pre-edit cache entry
+        // after the editor has already moved to the new document coordinates.
+        val spans = synchronized(nativeEditLock) {
+            if (largeSession !== active || generation.get() != active.ticket) {
+                return@synchronized emptyList()
+            }
+            val editPending =
+                active.pendingEditEpoch.get() != active.appliedEditEpoch.get()
 
-        // During an edit the native length intentionally remains at the last committed
-        // revision. Display coordinates already follow the editor's applied edit, so do
-        // not clamp them to that older native length.
-        val boundedStart = if (editPending) queryStart else queryStart.coerceAtMost(active.lengthChars.get())
-        val boundedEnd = if (editPending) queryEnd else queryEnd.coerceAtMost(active.lengthChars.get())
-        val spans = if (boundedStart >= boundedEnd) emptyList() else {
-            val requested = CaptureRangeKey(active.cacheSessionId, boundedStart.toInt(), boundedEnd.toInt())
-            val semantic = if (editPending) null else findContainingCaptureRange(requested)
-            if (semantic != null) {
-                ArrayList<WindbellTshEngine.HighlightSpan>().also {
-                    semantic.appendQuery(boundedStart.toInt(), boundedEnd.toInt(), it)
+            // During an edit the native length intentionally remains at the last
+            // committed revision. Display coordinates already follow the editor's
+            // applied edit, so do not clamp them to that older native length.
+            val boundedStart = if (editPending) queryStart
+                else queryStart.coerceAtMost(active.lengthChars.get())
+            val boundedEnd = if (editPending) queryEnd
+                else queryEnd.coerceAtMost(active.lengthChars.get())
+            if (boundedStart >= boundedEnd) emptyList()
+            else {
+                val requested = CaptureRangeKey(
+                    active.cacheSessionId, boundedStart.toInt(), boundedEnd.toInt())
+                val semantic = if (editPending) null
+                    else findContainingCaptureRange(requested)
+                if (semantic != null) {
+                    ArrayList<WindbellTshEngine.HighlightSpan>().also {
+                        semantic.appendQuery(boundedStart.toInt(), boundedEnd.toInt(), it)
+                    }
+                } else {
+                    if (!editPending) enqueueViewportRange(requested)
+                    queryDisplayCaptures(requested, boundedStart.toInt(), boundedEnd.toInt())
                 }
-            } else {
-                if (!editPending) enqueueViewportRange(requested)
-                queryDisplayCaptures(requested, boundedStart.toInt(), boundedEnd.toInt())
             }
         }
 
@@ -317,7 +332,6 @@ class TshSyntaxHighlighter(
         end: Int
     ): Boolean {
         val active = largeSession ?: return !parsing
-        val editPending = active.pendingEditEpoch.get() != active.appliedEditEpoch.get()
         if (lineStartOffset < 0 || start < 0 || end <= start) return false
 
         // start/end are columns in the current buffer line. Omitting start here used
@@ -326,16 +340,27 @@ class TshSyntaxHighlighter(
         val queryStart = lineStartOffset.toLong() + start.toLong()
         val queryEnd = lineStartOffset.toLong() + end.toLong() +
             visibleLineBreakLength(bufferLine, end, host?.buffer?.getLineLength(bufferLine) ?: end).toLong()
-        val length = if (editPending) Long.MAX_VALUE else active.lengthChars.get()
-        if (queryStart >= length) return true
-        if (queryStart > Int.MAX_VALUE || queryEnd > Int.MAX_VALUE || queryEnd < queryStart) return false
-        val boundedStart = queryStart.coerceAtLeast(0L)
-        val boundedEnd = queryEnd.coerceAtMost(length)
-        if (boundedStart >= boundedEnd) return true
-        val key = CaptureRangeKey(active.cacheSessionId, boundedStart.toInt(), boundedEnd.toInt())
-        if (!editPending && findContainingCaptureRange(key) != null) return true
-        if (!editPending) enqueueViewportRange(key)
-        return findContainingDisplayRange(key) != null
+        return synchronized(nativeEditLock) {
+            if (largeSession !== active || generation.get() != active.ticket) {
+                return@synchronized false
+            }
+            val editPending =
+                active.pendingEditEpoch.get() != active.appliedEditEpoch.get()
+            val length = if (editPending) Long.MAX_VALUE else active.lengthChars.get()
+            if (queryStart >= length) return@synchronized true
+            if (queryStart > Int.MAX_VALUE || queryEnd > Int.MAX_VALUE ||
+                queryEnd < queryStart) return@synchronized false
+            val boundedStart = queryStart.coerceAtLeast(0L)
+            val boundedEnd = queryEnd.coerceAtMost(length)
+            if (boundedStart >= boundedEnd) return@synchronized true
+            val key = CaptureRangeKey(
+                active.cacheSessionId, boundedStart.toInt(), boundedEnd.toInt())
+            if (!editPending && findContainingCaptureRange(key) != null) {
+                return@synchronized true
+            }
+            if (!editPending) enqueueViewportRange(key)
+            findContainingDisplayRange(key) != null
+        }
     }
 
     fun createBracketMatcher(): PlainBracketMatcher? {
@@ -361,20 +386,22 @@ class TshSyntaxHighlighter(
         if (excludedScopes.isEmpty()) return false
         val active = largeSession
         val spans = if (active != null) {
-            if (active.pendingEditEpoch.get() != active.appliedEditEpoch.get()) {
-                // Never answer scope queries from a pre-edit token snapshot.
-                return true
-            }
-            if (offset < 0 || offset.toLong() >= active.lengthChars.get() || offset == Int.MAX_VALUE) {
-                return false
-            }
-            val key = CaptureRangeKey(active.cacheSessionId, offset, offset + 1)
-            val cached = findContainingCaptureRange(key)
-            if (cached == null) {
-                enqueueViewportRange(key)
-                return true
-            }
-            cached.query(offset, offset + 1)
+            val resolved = synchronized(nativeEditLock) {
+                if (largeSession !== active || generation.get() != active.ticket ||
+                    active.pendingEditEpoch.get() != active.appliedEditEpoch.get()) {
+                    // Never answer scope queries from a stale document revision.
+                    return@synchronized null
+                }
+                if (offset < 0 || offset.toLong() >= active.lengthChars.get() ||
+                    offset == Int.MAX_VALUE) return@synchronized emptyList()
+                val key = CaptureRangeKey(active.cacheSessionId, offset, offset + 1)
+                val cached = findContainingCaptureRange(key)
+                if (cached == null) {
+                    enqueueViewportRange(key)
+                    null
+                } else cached.query(offset, offset + 1)
+            } ?: return true
+            resolved
         } else {
             // There is no Kotlin-side full-document capture index anymore.
             // Until the native document is published, treat lexical scope as
