@@ -349,7 +349,7 @@ static bool tshSourceMatchesUtf8Literal(
     return tail == expected;
 }
 
-static bool tshUtf8ToUtf16(const std::string& input, std::vector<UChar>& output) {
+static bool tshUtf8ToUtf16(std::string_view input, std::vector<UChar>& output) {
     output.clear();
     for (size_t i = 0; i < input.size();) {
         const uint8_t first = static_cast<uint8_t>(input[i++]);
@@ -792,7 +792,10 @@ static TshPredicateResult tshEvaluateNativePredicates(const NativeQueryProgram& 
 
         std::vector<std::vector<UChar>> expected;
         std::vector<std::string> expected_types;
-        std::vector<std::vector<UChar>> actual;
+        // Predicate arity is fixed by the immutable query program. Reserve once
+        // for this evaluation to avoid geometric growth while decoding literals.
+        expected.reserve(predicate_size > 2 ? predicate_size - 2 : 0);
+        expected_types.reserve(predicate_size > 2 ? predicate_size - 2 : 0);
         const bool contains_operator = op == "contains?" || op == "not-contains?" ||
             op == "any-contains?" || op == "any-not-contains?";
         const bool ancestry_operator = op == "has-ancestor?" || op == "not-has-ancestor?" ||
@@ -816,7 +819,7 @@ static TshPredicateResult tshEvaluateNativePredicates(const NativeQueryProgram& 
                     expected_types.emplace_back(value, length);
                 } else {
                     std::vector<UChar> converted;
-                    if (!tshUtf8ToUtf16(std::string(value, length), converted))
+                    if (!tshUtf8ToUtf16(std::string_view(value, length), converted))
                         return TshPredicateResult::REJECT;
                     expected.push_back(std::move(converted));
                 }
