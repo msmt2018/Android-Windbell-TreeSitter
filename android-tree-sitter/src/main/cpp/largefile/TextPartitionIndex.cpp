@@ -25,6 +25,26 @@ void TextPartitionIndex::addCheckpoint(uint64_t byteOffset, uint64_t line) noexc
     // Queries are not guaranteed to arrive in document order: editors can ask
     // for a distant line and then jump back to the beginning. Keep the vector
     // sorted because every lookup uses upper_bound().
+    constexpr size_t kCheckpointMemoryBudget = 2u * 1024u * 1024u;
+    const auto compact = [&]() noexcept {
+        if (checkpoints_.size() * sizeof(Checkpoint) <= kCheckpointMemoryBudget) return;
+        try {
+            std::vector<Checkpoint> sparse;
+            sparse.reserve(checkpoints_.size() / 2u + 2u);
+            for (size_t i = 0; i < checkpoints_.size(); i += 2u) {
+                sparse.push_back(checkpoints_[i]);
+            }
+            if (!checkpoints_.empty() &&
+                sparse.back().byte_offset != checkpoints_.back().byte_offset) {
+                sparse.push_back(checkpoints_.back());
+            }
+            checkpoints_.swap(sparse);
+        } catch (...) {
+            // Index density is optional. On allocation pressure, preserve the
+            // last valid index rather than failing a text-source query.
+        }
+    };
+    compact();
     auto position = std::lower_bound(
         checkpoints_.begin(), checkpoints_.end(), byteOffset,
         [](const Checkpoint &checkpoint, uint64_t value) {
@@ -40,7 +60,9 @@ void TextPartitionIndex::addCheckpoint(uint64_t byteOffset, uint64_t line) noexc
     } catch (...) {
         // The index is an optimization. A failed checkpoint allocation leaves
         // the preceding valid sparse index usable.
+        return;
     }
+    compact();
 }
 
 bool TextPartitionIndex::scan(const TextSource &source, uint64_t startByte,
