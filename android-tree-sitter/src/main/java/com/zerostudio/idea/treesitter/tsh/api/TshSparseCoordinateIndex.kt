@@ -69,7 +69,7 @@ class TshSparseCoordinateIndex private constructor(
         while (index < text.length) {
             val cp = Character.codePointAt(text, index)
             val units = Character.charCount(cp)
-            if (cp == '\\n'.code) {
+            if (cp == '\n'.code) {
                 line = safeAdd(line, 1L)
                 column = 0L
             } else {
@@ -128,7 +128,7 @@ class TshSparseCoordinateIndex private constructor(
                 }
                 val cp = Character.codePointAt(text, index)
                 val units = Character.charCount(cp)
-                if (cp == '\\n'.code) {
+                if (cp == '\n'.code) {
                     currentLine = safeAdd(currentLine, 1L)
                     currentColumn = 0L
                 } else {
@@ -413,7 +413,7 @@ class TshSparseCoordinateIndex private constructor(
                             else -> 4L
                         })
                         codePoints = safeAdd(codePoints, 1L)
-                        if (cp == '\\n'.code) {
+                        if (cp == '\n'.code) {
                             line = safeAdd(line, 1L)
                             lineStartUtf16 = utf16
                         }
