@@ -482,13 +482,25 @@ internal class PieceTreeBase {
     }
 
     fun setEOL(newEOL: String) {
-        this._versionId++
+        this.bumpVersionId()
         this._EOL = newEOL
         this._EOLLength = this._EOL.length
         this.normalizeEOL(newEOL)
     }
 
     fun getVersionId() = this._versionId
+
+    /**
+     * Snapshot/cache identity must never wrap back to an earlier version.
+     * Reject a mutation before it changes the tree when the Int-backed
+     * compatibility version space is exhausted.
+     */
+    private fun bumpVersionId() {
+        check(this._versionId < Int.MAX_VALUE) {
+            "PieceTree document version space is exhausted"
+        }
+        this._versionId++
+    }
 
     /**
      * An immutable copy of the current content, see [PieceTreeSnapshot]. A read: same threading
@@ -709,7 +721,7 @@ internal class PieceTreeBase {
             throw IndexOutOfBoundsException("offset: $offset, length: ${this._length}")
         }
 
-        this._versionId++
+        this.bumpVersionId()
         this._EOLNormalized = this._EOLNormalized && eolNormalized
         this._lastVisitedLine = VisitedLine(0, "")
 
@@ -1466,7 +1478,7 @@ internal class PieceTreeBase {
             throw IndexOutOfBoundsException("offset: $offset, length: ${this._length}")
         }
 
-        this._versionId++
+        this.bumpVersionId()
         this._EOLNormalized = this._EOLNormalized && eolNormalized
         this._lastVisitedLine = VisitedLine(0, "")
         var value = text
@@ -1595,7 +1607,7 @@ internal class PieceTreeBase {
             )
         }
 
-        this._versionId++
+        this.bumpVersionId()
         this._lastVisitedLine = VisitedLine(0, "")
 
         // validated above and the tree is not empty, so both offsets are always found
