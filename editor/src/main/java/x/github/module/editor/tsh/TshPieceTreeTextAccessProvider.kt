@@ -39,6 +39,10 @@ class TshPieceTreeDocument(
     private val changeListeners = CopyOnWriteArrayList<TshTextChangeListener>()
     private val disposedListeners = CopyOnWriteArrayList<TshTextDocumentDisposedListener>()
     private val disposed = AtomicBoolean(false)
+    // Subscription and disposal transitions must be atomic with one another. The
+    // copy-on-write lists alone do not prevent a listener being added just after
+    // dispose() has cleared them.
+    private val lifecycleLock = Any()
 
     fun createSnapshot(): PieceTreeSnapshot {
         check(!disposed.get()) { "PieceTree document $documentId is disposed" }
@@ -49,36 +53,47 @@ class TshPieceTreeDocument(
     }
 
     fun publishChange(change: TshTextChange) {
-        check(!disposed.get()) { "Cannot publish a change for a disposed document" }
-        require(change.documentId == documentId) { "Change belongs to another document" }
-        changeListeners.forEach { listener -> runCatching { listener.onChanged(change) } }
+        synchronized(lifecycleLock) {
+            check(!disposed.get()) { "Cannot publish a change for a disposed document" }
+            require(change.documentId == documentId) { "Change belongs to another document" }
+            for (listener in changeListeners) {
+                if (disposed.get()) break
+                runCatching { listener.onChanged(change) }
+            }
+        }
     }
 
     fun dispose(finalVersion: Long) {
-        if (!disposed.compareAndSet(false, true)) return
-        changeListeners.clear()
-        disposedListeners.forEach { listener -> runCatching { listener.onDisposed(documentId, finalVersion) } }
-        disposedListeners.clear()
+        val listeners = synchronized(lifecycleLock) {
+            if (!disposed.compareAndSet(false, true)) return
+            changeListeners.clear()
+            disposedListeners.toList().also { disposedListeners.clear() }
+        }
+        listeners.forEach { listener -> runCatching { listener.onDisposed(documentId, finalVersion) } }
     }
 
     fun isDisposed(): Boolean = disposed.get()
 
     internal fun addChangeListener(listener: TshTextChangeListener) {
-        check(!disposed.get()) { "Cannot subscribe to a disposed document" }
-        changeListeners.addIfAbsent(listener)
+        synchronized(lifecycleLock) {
+            check(!disposed.get()) { "Cannot subscribe to a disposed document" }
+            changeListeners.addIfAbsent(listener)
+        }
     }
 
     internal fun removeChangeListener(listener: TshTextChangeListener) {
-        changeListeners.remove(listener)
+        synchronized(lifecycleLock) { changeListeners.remove(listener) }
     }
 
     internal fun addDisposedListener(listener: TshTextDocumentDisposedListener) {
-        check(!disposed.get()) { "Cannot subscribe to a disposed document" }
-        disposedListeners.addIfAbsent(listener)
+        synchronized(lifecycleLock) {
+            check(!disposed.get()) { "Cannot subscribe to a disposed document" }
+            disposedListeners.addIfAbsent(listener)
+        }
     }
 
     internal fun removeDisposedListener(listener: TshTextDocumentDisposedListener) {
-        disposedListeners.remove(listener)
+        synchronized(lifecycleLock) { disposedListeners.remove(listener) }
     }
 }
 
