@@ -726,3 +726,24 @@ The previous adapter rejected `TshQueryExecutionBudget.maxSteps` because Tree-si
 - This does not change the dual query pipeline, does not impose a default result ceiling, and does not reinterpret match/capture limits as VM steps.
 
 Regression coverage exercises an actual Java grammar query with a one-work-unit budget and checks partial-result status, exact `stepsUsed`, and the stable diagnostic. CI validation is required before treating the implementation as complete.
+
+## 2026-11-24 Source-only defect repair status
+
+The following changes are committed to `integration/all-open-prs`. No tests, builds, CI jobs, or device workflows were executed during this repair pass.
+
+| Defect | Source change | Status |
+|---|---|---|
+| Native `any-eq?` / `any-not-eq?` with a missing OR-branch capture | Retained the existing missing-capture polarity implementation; corrected the regression query so the OR expression and predicate belong to one top-level pattern; the compiler now rejects detached predicate-only top-level patterns rather than silently executing the preceding OR without its filter. | SOURCE_PATCHED; validation deferred |
+| ATS `previousSibling` + `nextSibling` together | Resolve the current node and both adjacent siblings through one parent child-index walk; preserve symbol/type matching and include type-only selectors when a symbol ID is unavailable. | SOURCE_PATCHED; validation deferred |
+| ATS supertype sibling selectors | Added regression source coverage for concrete `decimal_integer_literal` operands and transitive `expression` supertype operands. | TEST_SOURCE_ADDED; not executed |
+| Detached predicate regression | Added a regression case requiring malformed standalone predicate patterns to be rejected during native query compilation. | TEST_SOURCE_ADDED; not executed |
+
+### Source-audit notes
+
+- Tree-sitter's query cursor keeps branch-local capture lists when it forks query states. The missing-capture case must therefore be evaluated against the captures of the returned match, while `pattern_index` selects the predicate program for its top-level pattern.
+- The earlier failed equality fixture placed the OR expression and predicate in separate top-level query expressions. That allowed the OR pattern to run without the predicate. The corrected fixture groups them in one expression.
+- Parser cancellation/reuse already has a per-parse round guard: cancellation state is cleared at begin/end, and a cancelled/null parse resets the native parser before reuse. No additional source change was justified by this audit.
+- Query execution already reports incomplete results when the native cursor exceeds match/step limits or the result collector truncates; such results are not marked complete.
+- API 30 `device offline` remains an environment failure, not evidence of a source defect. XML/DTD and AIDL language-selection defects are outside the current branch's packaged TSH language set and were not changed in this pass.
+
+**Validation gate:** all test, build, CI, and device validation remains intentionally deferred until the outstanding source-level bug backlog is closed. Source presence and regression-test source do not constitute a passing result.
