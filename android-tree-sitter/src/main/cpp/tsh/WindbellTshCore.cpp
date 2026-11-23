@@ -1938,20 +1938,31 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
             // partition snapshots that produced it. Byte offsets alone cannot
             // establish that an edited suffix is unchanged, so invalidate the
             // complete checkpoint set whenever either version changes.
-            const bool has_stale_checkpoint = std::any_of(
-                regex_state_checkpoints->begin(), regex_state_checkpoints->end(),
-                [&](const RegexStateCheckpoint& checkpoint) {
-                    return checkpoint.source_version != source_version ||
-                        checkpoint.partition_version != partition_version;
-                });
-            if (has_stale_checkpoint) regex_state_checkpoints->clear();
+            // Checkpoints are inserted in byte-offset order and the complete
+            // vector is invalidated whenever the source/partition generation
+            // changes. The first/last entries therefore prove the generation
+            // for the entire retained set without scanning up to 8192 records.
+            if (!regex_state_checkpoints->empty()) {
+                const auto& first = regex_state_checkpoints->front();
+                const auto& last = regex_state_checkpoints->back();
+                const bool stale =
+                    first.source_version != source_version ||
+                    first.partition_version != partition_version ||
+                    last.source_version != source_version ||
+                    last.partition_version != partition_version;
+                if (stale) regex_state_checkpoints->clear();
+            }
 
             const RegexStateCheckpoint* nearest = nullptr;
-            for (const auto& checkpoint : *regex_state_checkpoints) {
-                if (checkpoint.byte_offset > range_start_byte ||
-                    checkpoint.state_stack.empty()) continue;
-                if (!nearest || checkpoint.byte_offset > nearest->byte_offset)
-                    nearest = &checkpoint;
+            const auto after_viewport = std::upper_bound(
+                regex_state_checkpoints->begin(), regex_state_checkpoints->end(),
+                static_cast<uint64_t>(range_start_byte),
+                [](uint64_t offset, const RegexStateCheckpoint& checkpoint) {
+                    return offset < checkpoint.byte_offset;
+                });
+            if (after_viewport != regex_state_checkpoints->begin()) {
+                const auto candidate = std::prev(after_viewport);
+                if (!candidate->state_stack.empty()) nearest = &*candidate;
             }
             if (nearest) {
                 position = static_cast<uint32_t>(nearest->byte_offset);
@@ -1967,25 +1978,22 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
         auto save_regex_state_checkpoint = [&]() {
             if (!regex_state_checkpoints || position < next_checkpoint) return;
 
-            const bool already_current = std::any_of(
+            auto insertion = std::lower_bound(
                 regex_state_checkpoints->begin(), regex_state_checkpoints->end(),
-                [&](const RegexStateCheckpoint& candidate) {
-                    return candidate.source_version == source_version &&
-                        candidate.partition_version == partition_version &&
-                        candidate.byte_offset == position;
+                position,
+                [](const RegexStateCheckpoint& candidate, uint64_t offset) {
+                    return candidate.byte_offset < offset;
                 });
+            const bool already_current = insertion != regex_state_checkpoints->end() &&
+                insertion->byte_offset == position &&
+                insertion->source_version == source_version &&
+                insertion->partition_version == partition_version;
             if (!already_current) {
                 RegexStateCheckpoint checkpoint;
                 checkpoint.byte_offset = position;
                 checkpoint.source_version = source_version;
                 checkpoint.partition_version = partition_version;
                 checkpoint.state_stack = state_stack;
-                auto insertion = std::lower_bound(
-                    regex_state_checkpoints->begin(), regex_state_checkpoints->end(),
-                    position,
-                    [](const RegexStateCheckpoint& candidate, uint64_t offset) {
-                        return candidate.byte_offset < offset;
-                    });
                 regex_state_checkpoints->insert(insertion, std::move(checkpoint));
             }
 
