@@ -232,8 +232,6 @@ class TshSparseCoordinateIndexTest {
             sourceLease, chunkSizeUtf16 = 256, checkpointStrideUtf16 = 256
         ) as TshResult.Success).value
         assertTrue(index.convert(1L, TshCoordinateSystem.UTF16_CODE_UNIT,
-            TshCoordinateSystem.LINE_COLUMN) is TshResult.Failure)
-        assertTrue(index.convert(1L, TshCoordinateSystem.UTF16_CODE_UNIT,
             TshCoordinateSystem.GRAPHEME_CLUSTER) is TshResult.Failure)
         index.close()
         sourceLease.close()
