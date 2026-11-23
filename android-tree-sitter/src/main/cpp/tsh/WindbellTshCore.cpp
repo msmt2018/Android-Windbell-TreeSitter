@@ -37,12 +37,13 @@ static bool tshAstSymbolMatchesNode(
     if (selector_symbol == visible_symbol || selector_symbol == grammar_symbol) {
         return true;
     }
-    const auto visible = grammar.ast_supertype_selectors_by_node_symbol.find(visible_symbol);
-    if (visible != grammar.ast_supertype_selectors_by_node_symbol.end() &&
-        visible->second.find(selector_symbol) != visible->second.end()) return true;
-    const auto grammar_type = grammar.ast_supertype_selectors_by_node_symbol.find(grammar_symbol);
-    return grammar_type != grammar.ast_supertype_selectors_by_node_symbol.end() &&
-        grammar_type->second.find(selector_symbol) != grammar_type->second.end();
+    const auto has_selector = [&](TSSymbol concrete_symbol) {
+        const auto found =
+            grammar.ast_supertype_selectors_by_node_symbol.find(concrete_symbol);
+        return found != grammar.ast_supertype_selectors_by_node_symbol.end() &&
+            std::binary_search(found->second.begin(), found->second.end(), selector_symbol);
+    };
+    return has_selector(visible_symbol) || has_selector(grammar_symbol);
 }
 
 static bool tshAstNodeMatchesSelector(

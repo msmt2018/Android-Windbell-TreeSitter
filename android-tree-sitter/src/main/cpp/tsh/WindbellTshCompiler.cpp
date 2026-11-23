@@ -3722,7 +3722,7 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
         for (const TSSymbol concrete_symbol : visited) {
             if (concrete_symbol == selector_symbol) continue;
             grammar->ast_supertype_selectors_by_node_symbol[concrete_symbol]
-                .insert(selector_symbol);
+                .push_back(selector_symbol);
         }
     };
     for (const AstSelectorRule& rule : grammar->ast_selector_rules) {
@@ -3731,6 +3731,13 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
         index_relation_supertype(rule.child_symbol);
         index_relation_supertype(rule.previous_sibling_symbol);
         index_relation_supertype(rule.next_sibling_symbol);
+    }
+    // A compact sorted vector is cheaper to retain than one hash table per
+    // concrete grammar symbol, while binary_search keeps runtime checks bounded.
+    for (auto& entry : grammar->ast_supertype_selectors_by_node_symbol) {
+        auto& selectors = entry.second;
+        std::sort(selectors.begin(), selectors.end());
+        selectors.erase(std::unique(selectors.begin(), selectors.end()), selectors.end());
     }
 
     // Each native query block was compiled independently by Tree-sitter's

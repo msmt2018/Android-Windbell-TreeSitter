@@ -16,7 +16,6 @@
 #include <memory>
 #include <map>
 #include <unordered_map>
-#include <unordered_set>
 #include <mutex>
 #include <utility>
 
@@ -439,7 +438,7 @@ public:
     // Reverse subtype lookup for relational ATS selectors (parent/ancestor/child/
     // sibling). Built once with the grammar; runtime matching is hash lookup,
     // not a recursive ts_language_subtypes walk for every candidate node.
-    std::unordered_map<TSSymbol, std::unordered_set<TSSymbol>>
+    std::unordered_map<TSSymbol, std::vector<TSSymbol>>
         ast_supertype_selectors_by_node_symbol;
     std::unordered_map<TSSymbol, std::vector<uint32_t>> ast_field_rules_by_parent_symbol;
     AstTypeRuleIndex ast_field_rules_by_parent_type;
