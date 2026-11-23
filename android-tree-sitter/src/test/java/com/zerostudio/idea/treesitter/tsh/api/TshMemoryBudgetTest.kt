@@ -76,10 +76,10 @@ class TshMemoryBudgetTest {
 
         assertTrue("Existing owners must still be able to shrink retained allocations",
             retained.resize(4) is TshResult.Success)
-        assertTrue(budget.reserve(TshMemoryCategory.QUERY_RESULT, 1) is TshResult.Success)
-
+        val admitted = budget.reserve(TshMemoryCategory.QUERY_RESULT, 1) as TshResult.Success
         assertTrue("Null restores the configured baseline", budget.updateAvailableMemory(null) is TshResult.Success)
         assertEquals(100L, budget.limitBytes)
+        admitted.value.close()
         retained.close()
     }
 
