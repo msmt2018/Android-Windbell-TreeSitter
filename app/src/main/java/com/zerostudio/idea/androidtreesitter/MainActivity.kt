@@ -10,6 +10,7 @@ package com.zerostudio.idea.androidtreesitter
 
 import android.app.ProgressDialog
 import android.os.Bundle
+import android.net.Uri
 import android.text.Editable
 import android.text.TextWatcher
 import android.util.Log
@@ -18,7 +19,9 @@ import android.view.Menu
 import android.view.MenuItem
 import android.view.View
 import android.widget.ArrayAdapter
+import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatDelegate
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.tabs.TabLayout
@@ -69,6 +72,10 @@ class MainActivity : AppCompatActivity() {
 
     // 核心编辑器控件与文本缓存
     private var editorView: EditorView? = null
+    private var openedFileName: String? = null
+    private val openLocalFileLauncher = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) openLocalFile(uri)
+    }
     private var editorTree: TSTree? = null
     @Volatile private var javaTshReady: Boolean = false
     private var activeTshHighlighter: TshSyntaxHighlighter? = null
@@ -590,6 +597,41 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    /** Opens a user-selected local document without flattening it into a whole-file String. */
+    private fun openLocalFile(uri: Uri) {
+        activityScope.launch(Dispatchers.IO) {
+            val loaded = runCatching {
+                contentResolver.openInputStream(uri)?.use { input ->
+                    input.bufferedReader(Charsets.UTF_8).use { reader ->
+                        val builder = PieceTreeTextBufferBuilder()
+                        val chunk = CharArray(64 * 1024)
+                        while (true) {
+                            val count = reader.read(chunk)
+                            if (count < 0) break
+                            if (count > 0) builder.acceptChunk(String(chunk, 0, count))
+                        }
+                        PieceTreeBuffer(builder.build())
+                    }
+                } ?: error("无法读取所选文件")
+            }
+            val name = runCatching {
+                contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)
+                    ?.use { cursor -> if (cursor.moveToFirst()) cursor.getString(0) else null }
+            }.getOrNull() ?: uri.lastPathSegment ?: "本地文件"
+            withContext(Dispatchers.Main) {
+                loaded.onSuccess { buffer ->
+                    editorView?.setBuffer(buffer)
+                    openedFileName = name
+                    ensureEditorHighlighterInstalled()
+                    Toast.makeText(this@MainActivity, "已打开：$name（${buffer.length} 字符）", Toast.LENGTH_LONG).show()
+                }.onFailure { error ->
+                    showResultDialog("打开本地文件失败", error.stackTraceToString())
+                }
+            }
+        }
+    }
+
+
     override fun onCreateOptionsMenu(menu: Menu): Boolean {
         menuInflater.inflate(R.menu.main, menu)
         return true
@@ -597,6 +639,10 @@ class MainActivity : AppCompatActivity() {
 
     override fun onOptionsItemSelected(item: MenuItem): Boolean {
         when (item.itemId) {
+            R.id.action_open_file -> {
+                openLocalFileLauncher.launch(arrayOf("text/*", "application/json", "application/xml", "application/octet-stream"))
+                return true
+            }
             R.id.reload_external -> {
                 destroyParserResources()
                 loadExternalLanguages()
