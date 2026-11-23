@@ -150,8 +150,10 @@ data class TshQueryResult(
     val stepsUsed: Long?,
     val isComplete: Boolean = true,
     /** Byte ranges in captures use this tree source encoding. */
-    val inputEncoding: TshTreeSitterInputEncoding = TshTreeSitterInputEncoding.UTF8
-) {
+    val inputEncoding: TshTreeSitterInputEncoding = TshTreeSitterInputEncoding.UTF8,
+    /** Retained Engine-ledger lease for this result; close the result when its captures are released. */
+    internal val memoryReservation: TshMemoryReservation? = null
+) : AutoCloseable {
     init {
         require(queryId.isNotBlank())
         require(queryRevision.isNotBlank())
