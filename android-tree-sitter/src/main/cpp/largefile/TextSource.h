@@ -26,6 +26,9 @@ struct TextChunkView {
 class TextSource {
 public:
     virtual ~TextSource() = default;
+    // True only when the source can currently provide a complete, stable
+    // logical document. Adapters with an explicit open/seal state override it.
+    virtual bool isValid() const noexcept { return true; }
     virtual uint64_t sizeBytes() const noexcept = 0;
     virtual bool read(uint64_t offset, uint32_t maxBytes, TextChunkView *out) const noexcept = 0;
 
@@ -79,7 +82,7 @@ public:
 
     uint64_t sizeBytes() const noexcept override;
     bool read(uint64_t offset, uint32_t maxBytes, TextChunkView *out) const noexcept override;
-    bool isValid() const noexcept;
+    bool isValid() const noexcept override;
 
 private:
     std::vector<TextSegment> segments_;
@@ -95,7 +98,7 @@ public:
     uint64_t sizeBytes() const noexcept override;
     bool read(uint64_t offset, uint32_t maxBytes, TextChunkView *out) const noexcept override;
     bool contiguousData(const char **data, uint64_t *sizeBytes) const noexcept override;
-    bool isValid() const noexcept;
+    bool isValid() const noexcept override;
 
 private:
     const char *data_;
