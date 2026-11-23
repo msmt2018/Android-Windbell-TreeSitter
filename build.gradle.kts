@@ -221,6 +221,34 @@ tasks.register<BuildTreeSitterTask>("buildTreeSitter")
 
 tasks.register<CleanTreeSitterBuildTask>("cleanTreeSitterBuild")
 
+tasks.register<Exec>("generateJavaGrammarAbi15") {
+  group = "build setup"
+  description = "Regenerates the Java Tree-sitter parser with ABI 15 supertype metadata."
+  workingDir(rootProject.projectDir)
+  commandLine("bash", "scripts/generate-java-grammar-abi15.sh")
+  inputs.file(rootProject.file("grammars/java/src/grammar.json"))
+  inputs.file(rootProject.file("scripts/generate-java-grammar-abi15.sh"))
+  outputs.file(rootProject.file("grammars/java/src/parser.c"))
+  outputs.upToDateWhen {
+    val parser = rootProject.file("grammars/java/src/parser.c")
+    parser.isFile && parser.useLines { lines ->
+      lines.any { it.trim() == "#define LANGUAGE_VERSION 15" }
+    }
+  }
+}
+
+// Keep IDE and CI builds on the same grammar ABI. Generate the Java parser
+// before any grammar module configures or builds its native CMake target.
+subprojects {
+  plugins.withId("android-tree-sitter.ts") {
+    tasks.configureEach {
+      if (name.startsWith("configureCMake") || name.startsWith("buildCMake")) {
+        dependsOn(rootProject.tasks.named("generateJavaGrammarAbi15"))
+      }
+    }
+  }
+}
+
 tasks.register<Delete>("clean").configure {
   dependsOn("cleanTreeSitterBuild")
   delete(rootProject.layout.buildDirectory)
