@@ -61,6 +61,13 @@ class TreeSitterPlugin : Plugin<Project> {
               include("**/grammar.js", "**/src/**", "**/tree-sitter.json")
             })
           }
+          if (grammarName == "java") {
+            // buildForHost fingerprints grammars/java/src/parser.c as an input.
+            // The root ABI-15 generator rewrites that same file, so Gradle must
+            // know the producer-consumer edge instead of reporting an implicit
+            // dependency (and racing the parser generation task).
+            dependsOn(rootProject.tasks.named("generateJavaGrammarAbi15"))
+          }
           this.outputFile.set(BuildForHostTask.getOutputFile(project).second)
         }
 
