@@ -10,7 +10,7 @@ package com.zerostudio.idea.treesitter.tsh.api
 class TshRegexWindowSequence private constructor(
     private val snapshotLease: TshTextSnapshotLease,
     val constraints: TshRegexWindowConstraints,
-    private val memoryBudget: TshMemoryBudget?,
+    private val memoryBudget: TshMemoryBudget,
     val documentId: String,
     val documentVersion: Long,
     val documentLengthUtf16: Long
@@ -99,7 +99,7 @@ class TshRegexWindowSequence private constructor(
         fun open(
             lease: TshTextSnapshotLease,
             constraints: TshRegexWindowConstraints,
-            memoryBudget: TshMemoryBudget? = null
+            memoryBudget: TshMemoryBudget = TshMemoryBudget()
         ): TshResult<TshRegexWindowSequence> {
             if (lease.isClosed) return failure(
                 "TSH-REGEX-SEQUENCE-003", "Cannot open a Regex window sequence from a closed Snapshot Lease"
