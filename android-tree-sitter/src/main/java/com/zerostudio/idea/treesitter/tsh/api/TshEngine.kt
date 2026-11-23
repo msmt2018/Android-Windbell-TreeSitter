@@ -98,6 +98,25 @@ class TshEngine private constructor(val options: TshEngineOptions) : AutoCloseab
         )
     }
 
+    /**
+     * Creates a MatchSet merge policy backed by this Engine's shared memory ledger.
+     * The returned MatchSet owns its reservation and must be closed when no longer retained.
+     */
+    @JvmOverloads
+    fun createMatchMergeBudget(
+        maxMatches: Int = Int.MAX_VALUE,
+        maxEstimatedBytes: Long = Long.MAX_VALUE
+    ): TshMatchMergeBudget = synchronized(lifecycleLock) {
+        check(state == TshEngineState.INITIALIZED) {
+            "TSH engine must be initialized before creating a MatchSet merge budget"
+        }
+        TshMatchMergeBudget(
+            maxMatches = maxMatches,
+            maxEstimatedBytes = maxEstimatedBytes,
+            memoryBudget = memoryBudget
+        )
+    }
+
     /** Attaches a host object without requiring inheritance or transferring host ownership. */
     fun attach(
         request: TshAttachmentRequest,
