@@ -244,8 +244,11 @@ object TshMatchMerger {
         // Keep only bounded diagnostics from caller and stale-input filtering. Reserve one slot
         // for the diagnostic that reports diagnostic truncation itself.
         val outputDiagnostics = ArrayList<TshDiagnostic>(minOf(diagnostics.size, MAX_DIAGNOSTICS))
-        diagnostics.take(MAX_DIAGNOSTICS - 1).forEach { outputDiagnostics.add(it) }
-        var diagnosticsTruncated = diagnostics.size > MAX_DIAGNOSTICS - 1
+        val initialDiagnosticCount = minOf(diagnostics.size, MAX_DIAGNOSTICS - 1)
+        for (index in 0 until initialDiagnosticCount) {
+            outputDiagnostics.add(diagnostics[index])
+        }
+        var diagnosticsTruncated = diagnostics.size > initialDiagnosticCount
         var staleMatches = 0
         var truncated = false
         var estimatedBytes = 0L
@@ -360,12 +363,15 @@ object TshMatchMerger {
             staleMatches > 0 && completeness == TshMatchCompleteness.COMPLETE -> TshMatchCompleteness.PARTIAL
             else -> completeness
         }
+        // Materialize the immutable diagnostic snapshot once and share it between
+        // the MatchSet and the result envelope instead of copying the same list twice.
+        val finalDiagnostics = outputDiagnostics.toList()
         val result = TshMatchSet(
             documentId, documentVersion, treeSitterRevision, regexRevision, configRevision,
-            sorted, finalCompleteness, outputDiagnostics.toList(), resultReservation
+            sorted, finalCompleteness, finalDiagnostics, resultReservation
         )
         reservationTransferred = resultReservation != null
-        return TshResult.Success(result, outputDiagnostics.toList())
+        return TshResult.Success(result, finalDiagnostics)
         } finally {
             if (!reservationTransferred) resultReservation?.close()
         }
