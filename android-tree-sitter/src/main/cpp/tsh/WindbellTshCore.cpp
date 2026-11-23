@@ -954,7 +954,37 @@ static TshPredicateResult tshEvaluateNativePredicates(const NativeQueryProgram& 
             bool has_capture = false;
             bool all_match = true;
             bool all_not_match = true;
-            if (text_source &&
+            // File-backed TextSource implementations may already expose a stable
+            // contiguous mapping. Use it directly before considering window copies
+            // or the bounded fallback materializer; this removes the 8 MiB temporary
+            // capture ceiling for mmap/contiguous sources without changing regex
+            // semantics or allocating another document-sized buffer.
+            const char* contiguous_source_data = nullptr;
+            uint64_t contiguous_source_bytes = 0;
+            const bool has_contiguous_source = text_source &&
+                text_source->contiguousData(&contiguous_source_data, &contiguous_source_bytes) &&
+                contiguous_source_bytes >= source_bytes &&
+                (contiguous_source_data != nullptr || source_bytes == 0);
+            if (has_contiguous_source) {
+                for (uint32_t i = 0; i < match.capture_count; ++i) {
+                    if (match.captures[i].index != predicate[1].value_id) continue;
+                    has_capture = true;
+                    const uint32_t start_byte = ts_node_start_byte(match.captures[i].node);
+                    const uint32_t end_byte = ts_node_end_byte(match.captures[i].node);
+                    if (start_byte > end_byte || end_byte > source_bytes ||
+                        (start_byte & 1u) || (end_byte & 1u))
+                        return TshPredicateResult::ERROR;
+                    const UChar* begin = start_byte == end_byte ? nullptr :
+                        reinterpret_cast<const UChar*>(contiguous_source_data + start_byte);
+                    const UChar* end = start_byte == end_byte ? nullptr :
+                        reinterpret_cast<const UChar*>(contiguous_source_data + end_byte);
+                    const int matched = tshPredicateRegexMatchesContiguous(
+                        compiled->regex, begin, end);
+                    if (matched < 0) return TshPredicateResult::ERROR;
+                    all_match = all_match && (matched == 1);
+                    all_not_match = all_not_match && (matched == 0);
+                }
+            } else if (text_source &&
                 compiled->execution_capability == RegexExecutionCapability::BOUNDED_WINDOW &&
                 compiled->maximum_match_bytes > 0) {
                 for (uint32_t i = 0; i < match.capture_count; ++i) {
