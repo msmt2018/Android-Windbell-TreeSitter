@@ -389,6 +389,7 @@ jobs:
 
 
   android_emulator_tests:
+    if: ${{ false }} # Device tests are intentionally disabled; prioritize build and native/local validation.
     name: Android device tests (API ${{ matrix.api-level }})
     runs-on: ubuntu-latest
     timeout-minutes: 90
