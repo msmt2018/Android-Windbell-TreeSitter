@@ -64,6 +64,32 @@ class TshMemoryBudgetTest {
         assertTrue(token.resize(1) is TshResult.Failure)
     }
 
+    @Test fun runtimeMemoryPressureLowersAdmissionWithoutInvalidatingRetainedReservations() {
+        val budget = TshMemoryBudget(TshMemoryBudgetOptions(targetBytes = 100, hardLimitBytes = 200))
+        val retained = (budget.reserve(TshMemoryCategory.TEXT_SNAPSHOT, 8) as TshResult.Success).value
+
+        assertTrue(budget.updateAvailableMemory(16) is TshResult.Success)
+        assertEquals(4L, budget.limitBytes)
+        assertEquals(8L, budget.snapshot().reservedBytes)
+        assertTrue("New work must be rejected while retained memory exceeds the new limit",
+            budget.reserve(TshMemoryCategory.QUERY_RESULT, 1) is TshResult.Failure)
+
+        assertTrue("Existing owners must still be able to shrink retained allocations",
+            retained.resize(4) is TshResult.Success)
+        assertTrue(budget.reserve(TshMemoryCategory.QUERY_RESULT, 1) is TshResult.Success)
+
+        assertTrue("Null restores the configured baseline", budget.updateAvailableMemory(null) is TshResult.Success)
+        assertEquals(100L, budget.limitBytes)
+        retained.close()
+    }
+
+    @Test fun runtimeMemoryPressureRejectsInvalidSamplesAndClosedBudgets() {
+        val budget = TshMemoryBudget(TshMemoryBudgetOptions(targetBytes = 100, hardLimitBytes = 200))
+        assertTrue(budget.updateAvailableMemory(0) is TshResult.Failure)
+        budget.close()
+        assertTrue(budget.updateAvailableMemory(16) is TshResult.Failure)
+    }
+
     @Test fun closingBudgetRejectsNewWorkButAllowsExistingRelease() {
         val budget = TshMemoryBudget(TshMemoryBudgetOptions(100, 200))
         val token = (budget.reserve(TshMemoryCategory.TEXT_SNAPSHOT, 40) as TshResult.Success).value
