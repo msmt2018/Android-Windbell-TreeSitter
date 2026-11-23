@@ -40,6 +40,7 @@ PieceTreeSource::PieceTreeSource(std::shared_ptr<const TextSource> original,
 PieceTreeSource::~PieceTreeSource() = default;
 
 std::unique_ptr<PieceTreeSource> PieceTreeSource::clone() const noexcept {
+    if (!isValid()) return nullptr;
     auto copy = std::unique_ptr<PieceTreeSource>(
         new (std::nothrow) PieceTreeSource(original_, memory_limit_bytes_, SnapshotTag{}));
     if (!copy) return nullptr;
@@ -65,13 +66,15 @@ std::unique_ptr<PieceTreeSource> PieceTreeSource::clone() const noexcept {
     return copy;
 }
 
-bool PieceTreeSource::isValid() const noexcept { return valid_; }
+bool PieceTreeSource::isValid() const noexcept {
+    return valid_ && original_ && original_->isValid();
+}
 uint64_t PieceTreeSource::sizeBytes() const noexcept { return subtreeBytes(root_); }
 
 bool PieceTreeSource::contiguousData(
     const char **data, uint64_t *sizeBytes
 ) const noexcept {
-    if (!data || !sizeBytes || !valid_) return false;
+    if (!data || !sizeBytes || !isValid()) return false;
     *data = nullptr;
     *sizeBytes = this->sizeBytes();
     if (*sizeBytes == 0) return true;
@@ -349,7 +352,7 @@ bool PieceTreeSource::read(uint64_t offset, uint32_t maxBytes,
     out->data = nullptr;
     out->size = 0;
     const uint64_t total = sizeBytes();
-    if (!valid_ || (offset & 1u) || offset > total) return false;
+    if (!isValid() || (offset & 1u) || offset > total) return false;
     if (offset == total) return true;
     if (maxBytes < 2u) return false;
 
@@ -371,7 +374,7 @@ bool PieceTreeSource::read(uint64_t offset, uint32_t maxBytes,
 
 bool PieceTreeSource::replace(uint64_t startByte, uint64_t oldEndByte,
                               const void *inserted, uint64_t insertedBytes) noexcept {
-    if (!valid_ || (startByte & 1u) || (oldEndByte & 1u) ||
+    if (!isValid() || (startByte & 1u) || (oldEndByte & 1u) ||
         (insertedBytes & 1u) || oldEndByte < startByte ||
         oldEndByte > sizeBytes() || (insertedBytes != 0 && !inserted)) return false;
 
