@@ -1629,10 +1629,11 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
         (input_chars != nullptr || text_source != nullptr || total_bytes == 0);
 
     std::vector<HighlightSpan> micro_spans;
-    // Do not reserve proportional to document length: a 300 MB source can
-    // contain comparatively few syntax captures, and the old estimate eagerly
-    // reserved hundreds of megabytes before the first rule had matched.
-    micro_spans.reserve(std::min<size_t>(length_chars / 4, 4096));
+    // Size scratch capacity from the requested viewport, not the full document.
+    // A tiny viewport in a huge file should not reserve thousands of spans.
+    const size_t viewport_chars =
+        static_cast<size_t>((range_end_byte - range_start_byte) / sizeof(uint16_t));
+    micro_spans.reserve(std::min<size_t>(viewport_chars / 4, 4096));
 
     // Large Piece Trees do not expose a document-sized contiguous pointer.
     // Execute the compiler-proven finite-width MATCH subset directly against
@@ -1645,6 +1646,10 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
         // proven maximum-match overlap. mmap contiguity must not trigger a full
         // document scan for every editor draw.
         constexpr uint64_t kRegexCoreWindowBytes = 256u * 1024u;
+        // Reuse one bounded PieceTree/file window across all partitions and
+        // Regex rules. Its capacity is released with this highlight call.
+        std::vector<UChar> bounded_regex_window;
+        std::vector<UChar> encoded_group_name;
         for (const auto& rule : grammar->regex_rules) {
             if (!rule.enabled || rule.type != RegexRuleType::MATCH ||
                 !rule.onig_start ||
@@ -1685,7 +1690,6 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                         sizeof(UChar)) {
                     throw std::runtime_error("TSH bounded Regex window has an invalid byte range");
                 }
-                std::vector<UChar> window;
                 uint64_t window_base_byte = core_start;
                 const UChar* window_start = nullptr;
                 const UChar* window_end_ptr = nullptr;
@@ -1707,13 +1711,14 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                     // Oniguruma still needs a bounded contiguous materialization.
                     // Let bad_alloc reach the JNI boundary; silently breaking here
                     // would return a partial highlight set as if it were complete.
-                    window.resize(static_cast<size_t>(window_bytes / sizeof(UChar)));
+                    bounded_regex_window.resize(
+                        static_cast<size_t>(window_bytes / sizeof(UChar)));
                     if (!windbell::largefile::copyTextRange(
-                            *text_source, core_start, window_bytes, window.data())) {
+                            *text_source, core_start, window_bytes, bounded_regex_window.data())) {
                         throw std::runtime_error("TSH could not read a bounded Regex window");
                     }
-                    window_start = window.data();
-                    window_end_ptr = window_start + window.size();
+                    window_start = bounded_regex_window.data();
+                    window_end_ptr = window_start + bounded_regex_window.size();
                     current = window_start;
                     search_range_end = window_end_ptr;
                 }
@@ -1782,11 +1787,11 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                                     append_window_capture(group, style->second);
                             }
                             for (const auto& named : rule.named_group_style_map) {
-                                std::vector<UChar> name;
-                                name.assign(named.first.begin(), named.first.end());
+                                encoded_group_name.assign(
+                                    named.first.begin(), named.first.end());
                                 const int group = onig_name_to_backref_number(
-                                    rule.onig_start, name.data(),
-                                    name.data() + name.size(), region);
+                                    rule.onig_start, encoded_group_name.data(),
+                                    encoded_group_name.data() + encoded_group_name.size(), region);
                                 append_window_capture(group, named.second);
                             }
                         }
@@ -2297,7 +2302,7 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
     if (tree && tree_source_valid && !grammar->ast_selector_rules.empty()) {
         // AST/query capture density is grammar-dependent. Start with a small
         // bounded capacity and grow only when real captures are produced.
-        macro_spans.reserve(std::min<size_t>(length_chars / 6, 4096));
+        macro_spans.reserve(std::min<size_t>(viewport_chars / 6, 4096));
         TSTreeCursor cursor = ts_tree_cursor_new(ts_tree_root_node(tree));
         std::vector<const AstSelectorRule*> candidate_rules;
         candidate_rules.reserve(grammar->ast_wildcard_rules.size() + 16);
