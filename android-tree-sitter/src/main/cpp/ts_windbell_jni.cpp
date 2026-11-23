@@ -516,25 +516,28 @@ static jintArray encodeNativeHighlightResult(
         env->SetIntArrayRegion(output, 0, 4, values);
         if (env->ExceptionCheck()) return nullptr;
     }
-    constexpr size_t kBatchSpans = 4096;
-    std::vector<jint> batch;
-    batch.reserve(kBatchSpans * kFields);
+    // Encode in a small fixed stack batch. The previous per-call vector
+    // reserved 96 KiB even for tiny viewport results and allocated on every JNI
+    // invocation. A 512-span batch uses 12 KiB of bounded stack storage and
+    // keeps the JNI transfer incremental without another heap allocation.
+    constexpr size_t kBatchSpans = 512;
+    std::array<jint, kBatchSpans * kFields> batch{};
     for (size_t base = 0; base < spans.size();) {
         const size_t count = std::min(kBatchSpans, spans.size() - base);
-        batch.clear();
         for (size_t i = 0; i < count; ++i) {
             const auto &span = spans[base + i];
-            batch.push_back(static_cast<jint>(span.start_byte));
-            batch.push_back(static_cast<jint>(span.end_byte));
-            batch.push_back(static_cast<jint>(
-                span.style_id | (static_cast<uint32_t>(span.flags) << 16)));
-            batch.push_back(static_cast<jint>(span.priority));
-            batch.push_back(static_cast<jint>(span.declaration_order));
-            batch.push_back(static_cast<jint>(span.source));
+            const size_t offset = i * kFields;
+            batch[offset] = static_cast<jint>(span.start_byte);
+            batch[offset + 1] = static_cast<jint>(span.end_byte);
+            batch[offset + 2] = static_cast<jint>(
+                span.style_id | (static_cast<uint32_t>(span.flags) << 16));
+            batch[offset + 3] = static_cast<jint>(span.priority);
+            batch[offset + 4] = static_cast<jint>(span.declaration_order);
+            batch[offset + 5] = static_cast<jint>(span.source);
         }
         env->SetIntArrayRegion(
             output, header + static_cast<jsize>(base * kFields),
-            static_cast<jsize>(batch.size()), batch.data());
+            static_cast<jsize>(count * kFields), batch.data());
         if (env->ExceptionCheck()) return nullptr;
         base += count;
     }
