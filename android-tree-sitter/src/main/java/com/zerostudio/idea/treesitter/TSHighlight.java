@@ -214,11 +214,20 @@ public final class TSHighlight {
     }
 
     final TSQueryCursor nativeCursor = TSQueryCursor.create();
+    final boolean[] cancelled = new boolean[1];
     try {
       nativeCursor.setByteRange(startByte, endByte);
       if (maxPendingMatches > 0) nativeCursor.setMatchLimit(maxPendingMatches);
-      nativeCursor.exec(query, root, progressCallback == null ? null : progressCallback);
-      return new Cursor(nativeCursor, styleIds);
+      if (progressCallback == null) {
+        nativeCursor.exec(query, root);
+      } else {
+        nativeCursor.exec(query, root, currentOffset -> {
+          final boolean stop = progressCallback.onProgress(currentOffset);
+          if (stop) cancelled[0] = true;
+          return stop;
+        });
+      }
+      return new Cursor(nativeCursor, styleIds, cancelled);
     } catch (RuntimeException error) {
       nativeCursor.close();
       throw error;
@@ -229,15 +238,17 @@ public final class TSHighlight {
   public static final class Cursor implements AutoCloseable {
     private final TSQueryCursor cursor;
     private final int[] styleIds;
+    private final boolean[] cancelled;
     private TSQueryMatch currentMatch;
     private int nextCaptureIndex;
     private boolean exhausted;
     private boolean cancelled;
     private boolean closed;
 
-    private Cursor(TSQueryCursor cursor, int[] styleIds) {
+    private Cursor(TSQueryCursor cursor, int[] styleIds, boolean[] cancelled) {
       this.cursor = cursor;
       this.styleIds = styleIds.clone();
+      this.cancelled = cancelled;
     }
 
     /**
@@ -299,7 +310,7 @@ public final class TSHighlight {
           emitted == 0 ? new long[0] : Arrays.copyOf(buffer, emitted * 6),
           exhausted && !exceeded && !cancelled,
           exceeded,
-          cancelled);
+          cancelled[0]);
     }
 
     public synchronized boolean didExceedMatchLimit() {
