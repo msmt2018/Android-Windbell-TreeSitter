@@ -223,10 +223,22 @@ bool TshRegexNativeRegistry::execute(
 
         const int start_byte_position = region.value->beg[0];
         const int end_byte_position = region.value->end[0];
-        if (start_byte_position < static_cast<int>(prefix_bytes) ||
-            start_byte_position > static_cast<int>(actual_end_byte) ||
-            end_byte_position < start_byte_position ||
+        if (start_byte_position < 0 || end_byte_position < 0 ||
             (start_byte_position & 1) != 0 || (end_byte_position & 1) != 0) {
+            error = "Oniguruma returned a malformed UTF-16 match range";
+            return false;
+        }
+        if (start_byte_position < static_cast<int>(prefix_bytes)) {
+            // The synthetic prefix is a valid UTF-16 NUL code unit. A pattern
+            // that explicitly matches NUL can therefore hit the sentinel before
+            // the real window content. This is not corrupt region data: discard
+            // the sentinel-originated candidate and resume at the first real
+            // code unit so a genuine leading NUL in the document remains visible.
+            current = actual_begin;
+            continue;
+        }
+        if (start_byte_position > static_cast<int>(actual_end_byte) ||
+            end_byte_position < start_byte_position) {
             error = "Oniguruma returned a malformed UTF-16 match range";
             return false;
         }
