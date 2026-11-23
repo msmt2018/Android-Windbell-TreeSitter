@@ -26,7 +26,7 @@ struct PieceTreeSource::Node {
 PieceTreeSource::PieceTreeSource(std::shared_ptr<const TextSource> original,
                                  uint64_t memoryLimitBytes) noexcept
     : original_(std::move(original)), memory_limit_bytes_(memoryLimitBytes) {
-    if (!original_ || (original_->sizeBytes() & 1u) != 0) return;
+    if (!original_ || !original_->isValid() || (original_->sizeBytes() & 1u) != 0) return;
     const uint64_t size = original_->sizeBytes();
     if (size != 0 && memory_limit_bytes_ >= sizeof(Node))
         root_ = makeNode(Buffer::Original, 0, size);
