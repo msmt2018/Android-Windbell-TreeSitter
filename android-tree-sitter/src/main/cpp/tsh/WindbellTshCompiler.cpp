@@ -2812,11 +2812,11 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                                 const std::string_view pattern_source(
                                     query_source.data() + pattern_start,
                                     pattern_end - pattern_start);
-                                size_t first = pattern_source.find_first_not_of(" \\t\\r\\n");
+                                size_t first = pattern_source.find_first_not_of(" \t\r\n");
                                 if (first == std::string_view::npos ||
                                     pattern_source[first] != '(') continue;
                                 ++first;
-                                first = pattern_source.find_first_not_of(" \\t\\r\\n", first);
+                                first = pattern_source.find_first_not_of(" \t\r\n", first);
                                 if (first != std::string_view::npos &&
                                     pattern_source[first] == '#') {
                                     g_tsh_last_error_detail =
