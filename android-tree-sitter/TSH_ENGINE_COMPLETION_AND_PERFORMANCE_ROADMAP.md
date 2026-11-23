@@ -668,3 +668,22 @@ TSH 已有可继续演进的底层基础，但当前最突出的问题已经不�
 100 MiB 约 16.8 秒和 32,768 个真实声明约 7.6 秒都不满足目标。后续不应继续靠低缓存预算、少返回结果或只处理视口来掩盖成本。必须通过分阶段 profiling，改进 Native 输入、Piece Tree 多路节点、坐标聚合索引、Tree-sitter Subtree/Token 分配、ATS dispatch、Query Capture 批量输出和 Regex 增量窗口来降低真实工作量。
 
 最终验收不是某个单测通过，而是：**在 100–300 MiB 文件上，完整语义、正确视口、准确颜色、连续编辑和稳定内存同时成立，并达到本文件的性能目标。**
+
+
+## 17. Runtime memory-pressure admission update (2026-11-23)
+
+### Implemented in the current integration branch
+
+- `TshMemoryBudget.updateAvailableMemory(availableMemoryBytes)` allows the host to refresh the available-memory sample without recreating the Engine-owned reservation ledger.
+- The active admission limit is recomputed as the minimum of the configured target, configured hard limit, and the sampled available-memory fraction. A null sample restores the configured baseline.
+- Lowering the active limit does not invalidate, release, or silently truncate existing reservations. New reservations and reservation growth are rejected while retained allocations exceed the refreshed limit; existing owners can still shrink or release their reservations.
+- The budget remains bounded by the configured absolute 512 MiB hard limit.
+- Unit coverage now exercises pressure-driven limit reduction, over-limit retained allocations, shrink recovery, baseline restoration, invalid samples, and closed-budget behavior.
+
+### Integration contract and remaining work
+
+- The host is responsible for sampling memory at meaningful lifecycle points (for example, Android memory-pressure callbacks and before expensive background work) and calling the update API. The ledger does not independently poll the operating system.
+- The sample is an admission signal, not a measurement of Native Heap, JVM Heap, mmap RSS, or total process PSS. Those metrics must remain separately observable.
+- Runtime limit updates do not make Tree-sitter internal allocations fully observable; Native syntax-tree reservations remain host estimates.
+- The current CI validates the source branch only after the new commits' workflow completes. The prior successful run `45145108133` validates commit `6eaf83c`, not the runtime-pressure commits added after it.
+- Exact Native Query Step Budget remains unimplemented. The Tree-sitter core is pinned as the `tree-sitter-lib` submodule at `62816e1c0d0a4ca9553174f3cbe5b9631047f7f4`; the project JNI wrapper alone cannot expose exact VM work units. A core patch must add a monotonic 64-bit work counter and a stable budget-exceeded result, then update the submodule pointer and synchronize the C API, JNI, Java, Kotlin, ABI and regression tests. Progress-callback frequency must not be used as a substitute for work units.
