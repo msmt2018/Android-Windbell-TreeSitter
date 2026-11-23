@@ -16,7 +16,7 @@ It is not a process-RSS monitor and does not measure allocations made internally
 
 ## Categories
 
-`TshMemoryCategory` separates reservations for text snapshots, parser input, syntax trees, query results, regex windows, match sets, render plans, coordinate indexes, and other TSH-owned allocations.
+`TshMemoryCategory` separates reservations for text snapshots, parser input, syntax trees, query cursor working sets, query results, regex windows, match sets, render plans, coordinate indexes, and other TSH-owned allocations.
 
 Category accounting reports reservations, not measured actual allocation sizes.
 
@@ -28,20 +28,21 @@ Category accounting reports reservations, not measured actual allocation sizes.
 4. Closing the budget prevents new reservations. Existing reservation tokens remain able to release their accounting.
 5. Reservation and release operations are synchronized; overflow-safe capacity checks prevent the total from crossing the configured limit.
 
-## Query execution limits
+## Query execution admission
 
-`TshQueryExecutionBudget` independently bounds:
-- total matches drained from the cursor;
-- total captures materialized into the public result;
-- estimated retained result bytes.
+`TshQueryExecutionBudget` keeps explicit caller-policy fields for maximum matches, captures, and estimated result bytes, but their defaults no longer impose semantic result ceilings. Engine-created executors share `engine.memoryBudget`; standalone executors receive a bounded local governor.
 
-The capture estimate accounts for UTF-16 string payload lengths and a fixed per-capture overhead. It is a conservative accounting heuristic, not a JVM object-layout guarantee. If any query result limit is reached, the executor returns a partial result and warning diagnostic rather than continuing to accumulate results.
+Before creating a native cursor, the executor reserves a working-set allowance under `QUERY_CURSOR`. The native pending-match limit is derived from the currently available ledger capacity and a conservative per-pending-match estimate. This is a resource-admission threshold, not a total-match limit. Tree-sitter may report that its pending-match limit was exceeded; in that case the result is explicitly incomplete and carries a warning. This API does not yet resume a cursor after Tree-sitter has discarded pending matches.
 
-## Unified MatchSet merge limits
+Each materialized capture grows a `QUERY_RESULT` reservation before it is published. The resulting `TshQueryResult` owns that reservation and implements `AutoCloseable`; callers must close the result when its captures are no longer retained. The estimates cover retained capture strings and object/list overhead heuristics, not opaque Native cursor/tree allocations or exact JVM heap layout.
 
-`TshMatchMerger` accepts `TshMatchMergeBudget` (default 250,000 candidate matches and 64 MiB estimated merge working set). It validates and deduplicates in one pass instead of materializing several full-size filter/groupBy/map copies. `TshMatchSet` constructor invariants are also checked in one pass with a single ID set, avoiding repeated `filter`/`map`/`distinct` temporary lists. Its estimate includes Match/provenance fields, nested capture text, scope paths, and fixed map/sort overhead. Reaching either limit returns a `TRUNCATED` MatchSet with a memory warning. Merge diagnostics are capped at 4,096 entries.
+## Unified MatchSet merge admission
 
-These limits account for the merger's additional working set only. The input `Collection` already exists and is not included; upstream Tree-sitter/Regex execution must enforce its own result limits. The estimate is not a JVM heap measurement.
+`TshMatchMerger` accepts `TshMatchMergeBudget`. Its default count and estimated-byte policy fields no longer impose fixed semantic ceilings; the budget's `TshMemoryBudget` controls admission. Use `engine.createMatchMergeBudget()` to share the Engine ledger, or the default constructor for a bounded standalone ledger.
+
+The merger reserves/resizes `MATCH_SET` before accepting each unique Match. The resulting `TshMatchSet` owns the reservation and implements `AutoCloseable`; callers must close it when its matches are no longer retained. It validates and deduplicates in one pass. Its estimate includes Match/provenance fields, nested capture text, scope paths, and conservative map/list overhead. Admission failure returns a `TRUNCATED` MatchSet with a warning. Merge diagnostics are still aggregated with a bounded 4,096-entry diagnostic policy.
+
+The input `Collection` already exists and is not included in the MatchSet reservation. Estimates are not JVM heap measurements.
 
 ## Regex window leases
 
@@ -53,10 +54,9 @@ This is an input-window resource contract only. It does not compile or execute R
 
 ## Current limitations
 
-- Query result limits do not yet retain a `TshMemoryReservation` for the full lifetime of `TshQueryResult`.
-- The enum also exposes `TEXT_SNAPSHOT`, `QUERY_RESULT`, and `MATCH_SET`, but these categories are not yet wired to shared-ledger reservations. Query `maxResultBytes` and MatchSet merge limits are per-operation estimates/caps, not global admission reservations; snapshot lease lifetime is currently managed by the provider/lease contract.
-- Sparse coordinate-index checkpoints can optionally reserve an estimated budget before allocation; the reservation is held until the index closes.
-- `TshRenderCoordinator` does **not** yet reserve RenderPlan bytes in the shared ledger. It currently bounds pending work by `maxPendingPlans` (a count limit), not by estimated bytes; `TshMemoryCategory.RENDER_PLAN` is reserved for a future integration.
+- `TEXT_SNAPSHOT` remains provider-owned: snapshot allocation and backing-store memory are not currently charged to the Engine ledger. The lease contract controls lifetime, but does not estimate provider storage.
+- Sparse coordinate-index construction always reserves its checkpoint upper bound under `COORDINATE_INDEX` before allocating the checkpoint list. Standalone builds use a local bounded ledger; pass `engine.memoryBudget` to share the Engine ledger. The reservation is held until the index closes.
+- Pending RenderPlans reserve an estimated byte amount under `RENDER_PLAN` before entering the provider queue. The reservation is released on completion, rejection, cancellation, or coordinator shutdown. `engine.createRenderCoordinator(provider)` connects the coordinator to the Engine ledger; standalone coordinators receive a local bounded ledger. The explicit `maxPendingPlans` option remains available as caller policy, but its default is not a fixed count ceiling.
 - `TshEngine` owns one shared `TshMemoryBudget`, configured by `TshEngineOptions.memoryBudgetOptions`, and exposes its accounting snapshot through `engine.memoryBudget.snapshot()`. Engine shutdown retires Native resources before closing the ledger; outstanding reservations remain releasable after the budget is closed.
 - Snapshot-backed `TshTreeSitterParserOwner.parse(snapshotLease, ...)` reserves `2 * chunkSizeBytes + fixed overhead` under `PARSER_INPUT` for the duration of the parse. This reflects the current callback implementation, which allocates a destination `ByteArray` and may allocate a trimmed copy. It does not count provider-created UTF-16 `String` objects or opaque allocations made by Tree-sitter/JNI. The reservation is released in `finally` on success or failure.
 - The legacy `TshTreeSitterParserOwner.parse(..., source: String)` path reserves `2 * source.length + fixed overhead` before `TSParser.parseString()` starts, then releases it after parsing. This does not account for the caller's already-existing JVM String; large host documents should use the Snapshot/Piece Tree streaming overload.
