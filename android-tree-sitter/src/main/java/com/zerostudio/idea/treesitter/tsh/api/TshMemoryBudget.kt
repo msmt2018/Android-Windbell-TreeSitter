@@ -66,8 +66,36 @@ class TshMemoryBudget(
     private var highWatermark = 0L
     private var closed = false
 
-    val limitBytes: Long get() = options.effectiveLimitBytes
+    private var activeLimitBytes: Long = options.effectiveLimitBytes
+
+    /** Current admission limit after the most recent host memory-pressure update. */
+    val limitBytes: Long get() = synchronized(lock) { activeLimitBytes }
     val hardLimitBytes: Long get() = options.hardLimitBytes
+
+    /**
+     * Recomputes the admission limit from a fresh host memory sample.
+     *
+     * Lowering the limit never invalidates or releases existing reservations. If retained
+     * allocations are now above the limit, new reservations and reservation growth are rejected
+     * until owners release or shrink enough memory. Passing null restores the configured baseline.
+     * The host should call this from a memory-pressure callback or before starting expensive work,
+     * not for every allocation.
+     */
+    fun updateAvailableMemory(availableMemoryBytes: Long?): TshResult<Unit> {
+        if (availableMemoryBytes != null && availableMemoryBytes <= 0L) {
+            return failure("TSH-MEMORY-014", "Available memory must be positive or null")
+        }
+        synchronized(lock) {
+            if (closed) return failure("TSH-MEMORY-003", "Memory budget is closed")
+            val sampled = availableMemoryBytes ?: options.availableMemoryBytes
+            activeLimitBytes = minOf(
+                options.targetBytes,
+                options.hardLimitBytes,
+                sampled?.div(options.availableMemoryFraction.toLong()) ?: Long.MAX_VALUE
+            ).coerceAtLeast(1L)
+            return TshResult.Success(Unit)
+        }
+    }
 
     fun reserve(category: TshMemoryCategory, bytes: Long, ownerId: String? = null): TshResult<TshMemoryReservation> {
         if (bytes <= 0L) return failure("TSH-MEMORY-001", "Reservation size must be positive")
@@ -77,7 +105,7 @@ class TshMemoryBudget(
             if (active.size >= options.maxActiveReservations) {
                 return failure("TSH-MEMORY-010", "Active memory reservation count limit has been reached")
             }
-            if (reserved > limitBytes || bytes > limitBytes - reserved) {
+            if (reserved > activeLimitBytes || bytes > activeLimitBytes - reserved) {
                 return failure("TSH-MEMORY-004", "Reservation exceeds the remaining memory budget")
             }
             if (nextId == Long.MAX_VALUE) return failure("TSH-MEMORY-005", "Reservation identity space is exhausted")
@@ -91,7 +119,7 @@ class TshMemoryBudget(
     }
 
     fun snapshot(): TshMemoryBudgetSnapshot = synchronized(lock) {
-        TshMemoryBudgetSnapshot(limitBytes, hardLimitBytes, reserved, highWatermark, active.size, byCategory.toMap(), closed)
+        TshMemoryBudgetSnapshot(activeLimitBytes, hardLimitBytes, reserved, highWatermark, active.size, byCategory.toMap(), closed)
     }
 
     override fun close() {
@@ -106,7 +134,7 @@ class TshMemoryBudget(
             if (newBytes > oldBytes) {
                 val increase = newBytes - oldBytes
                 if (closed) return failure("TSH-MEMORY-003", "Memory budget is closed")
-                if (reserved > limitBytes || increase > limitBytes - reserved) {
+                if (reserved > activeLimitBytes || increase > activeLimitBytes - reserved) {
                     return failure("TSH-MEMORY-004", "Resized reservation exceeds the remaining memory budget")
                 }
                 reserved += increase
