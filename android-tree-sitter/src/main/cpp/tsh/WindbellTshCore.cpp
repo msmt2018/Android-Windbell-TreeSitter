@@ -410,6 +410,16 @@ static bool tshSourceRegexMatchesBounded(
     constexpr uint64_t kCoreWindowBytes = 256u * 1024u;
     const uint64_t overlap = maximum_match_bytes >= 2u
         ? maximum_match_bytes - 2u : 0u;
+    // Reuse the bounded input and match region across windows. AST text
+    // predicates can be evaluated for many nodes during one viewport pass;
+    // per-window allocations otherwise amplify latency on large files.
+    std::vector<UChar> window;
+    struct RegionOwner {
+        OnigRegion* value;
+        ~RegionOwner() { if (value) onig_region_free(value, 1); }
+    } region{onig_region_new()};
+    if (!region.value) throw std::bad_alloc();
+
     uint64_t core_start = start_byte;
     while (core_start < end_byte) {
         const uint64_t remaining = end_byte - core_start;
@@ -423,18 +433,12 @@ static bool tshSourceRegexMatchesBounded(
             window_bytes > static_cast<uint64_t>(std::numeric_limits<size_t>::max())) {
             throw std::runtime_error("TSH bounded AST Regex window has an invalid size");
         }
-        std::vector<UChar> window;
         try { window.resize(static_cast<size_t>(window_bytes)); }
         catch (const std::bad_alloc&) { throw; }
         if (!windbell::largefile::copyTextRange(
                 source, core_start, window_bytes, window.data())) {
             throw std::runtime_error("TSH bounded AST Regex could not read its TextSource window");
         }
-        struct RegionOwner {
-            OnigRegion* value;
-            ~RegionOwner() { if (value) onig_region_free(value, 1); }
-        } region{onig_region_new()};
-        if (!region.value) throw std::bad_alloc();
         const UChar* begin = window.data();
         const UChar* end = begin + window.size();
         const UChar* current = begin;
