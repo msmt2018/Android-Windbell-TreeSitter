@@ -244,15 +244,18 @@ class TshTreeSitterParserMemoryBudgetTest {
 
         val editedOffset = oldSource.indexOf("1;")
         assertTrue("The fixture must contain the literal being edited", editedOffset >= 0)
-        val startByte = editedOffset.toUInt() * 2U
-        val oldEndByte = startByte + 2U
-        val edit = TSInputEdit(
-            startByte = startByte,
-            oldEndByte = oldEndByte,
-            newEndByte = oldEndByte,
-            startPoint = TSPoint(0U, startByte),
-            oldEndPoint = TSPoint(0U, oldEndByte),
-            newEndPoint = TSPoint(0U, oldEndByte)
+        // TSInputEdit and TSPoint are Java-backed API types: use their public
+        // factories and signed Int byte offsets rather than Kotlin named arguments
+        // or UInt values (the native ABI stores these offsets as Int).
+        val startByte = editedOffset * 2
+        val oldEndByte = startByte + 2
+        val edit = TSInputEdit.create(
+            startByte,
+            oldEndByte,
+            oldEndByte,
+            TSPoint.create(0, startByte),
+            TSPoint.create(0, oldEndByte),
+            TSPoint.create(0, oldEndByte)
         )
         val editResult = owner.editTree(
             ownedTree = oldTree,
