@@ -685,5 +685,29 @@ TSH 已有可继续演进的底层基础，但当前最突出的问题已经不�
 - The host is responsible for sampling memory at meaningful lifecycle points (for example, Android memory-pressure callbacks and before expensive background work) and calling the update API. The ledger does not independently poll the operating system.
 - The sample is an admission signal, not a measurement of Native Heap, JVM Heap, mmap RSS, or total process PSS. Those metrics must remain separately observable.
 - Runtime limit updates do not make Tree-sitter internal allocations fully observable; Native syntax-tree reservations remain host estimates.
-- The current CI validates the source branch only after the new commits' workflow completes. The prior successful run `45145108133` validates commit `6eaf83c`, not the runtime-pressure commits added after it.
+- Workflow run `45151763603` completed successfully for head `559044e49d7de32243304df2a0a7513587728d67`: Release APK and Local tests passed; Android device tests were skipped by the current workflow configuration. This validates the runtime-pressure implementation and its tests, but does not provide API 26/30/35 device-runtime evidence.
 - Exact Native Query Step Budget remains unimplemented. The Tree-sitter core is pinned as the `tree-sitter-lib` submodule at `62816e1c0d0a4ca9553174f3cbe5b9631047f7f4`; the project JNI wrapper alone cannot expose exact VM work units. A core patch must add a monotonic 64-bit work counter and a stable budget-exceeded result, then update the submodule pointer and synchronize the C API, JNI, Java, Kotlin, ABI and regression tests. Progress-callback frequency must not be used as a substitute for work units.
+
+
+## 18. Follow-up validation and Regex exact-limit correction (2026-11-23)
+
+### Verified CI evidence
+
+- Workflow: [45151763603](https://github.com/msmt2018/Android-Windbell-TreeSitter/actions/runs/45151763603)
+- Validated head: `559044e49d7de32243304df2a0a7513587728d67`
+- `Build Release APK`: success.
+- `Run local tests`: success, including native large-file storage tests (ASan/UBSan), host JNI build, native TSH cache tests and Debug tests.
+- Android device tests: skipped. This run is not device validation.
+
+### Regex exact-match-limit bug fixed after that CI head
+
+The full-window executor previously marked the result `TRUNCATED` immediately when the accepted match count reached `maxMatches` before the final core. That bypassed the existing one-match non-admitting probe on subsequent cores and could misclassify an exactly-full but complete result set.
+
+The executor now continues to the next core when the accepted limit is reached before the final core. The next iteration probes for one additional match without admitting it; only an actual additional match or a native truncation signal establishes `TRUNCATED`. The final core can still finish normally without a false truncation status.
+
+Regression coverage was added for the decision to probe non-final cores. The fix commits are:
+
+- `4b8ca787b5c24043329361616eb7a085b78d2db1` — executor correction.
+- `6be9bd14775d4330776e65177487621daed4d96b` — regression test.
+
+These commits are newer than the successful CI head above; their CI result must be checked separately before treating the fix as validated.
