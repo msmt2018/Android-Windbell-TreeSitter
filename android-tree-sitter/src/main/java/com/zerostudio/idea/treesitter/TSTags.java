@@ -45,6 +45,7 @@ public final class TSTags {
    * @param maxPendingMatches Tree-sitter in-progress match limit
    * @return query matches, including their original pattern and capture data
    */
+  @Deprecated
   public static TSQueryMatch[] extract(
       TSQuery query,
       TSNode root,
