@@ -733,10 +733,12 @@ The following changes are committed to `integration/all-open-prs`. No tests, bui
 
 | Defect | Source change | Status |
 |---|---|---|
-| Native `any-eq?` / `any-not-eq?` with a missing OR-branch capture | Retained the existing missing-capture polarity implementation; corrected the regression query so the OR expression and predicate belong to one top-level pattern; the compiler now rejects detached predicate-only top-level patterns rather than silently executing the preceding OR without its filter. | SOURCE_PATCHED; validation deferred |
-| ATS `previousSibling` + `nextSibling` together | Resolve the current node and both adjacent siblings through one parent child-index walk; preserve symbol/type matching and include type-only selectors when a symbol ID is unavailable. | SOURCE_PATCHED; validation deferred |
+| Native `any-eq?` / `any-not-eq?` with a missing OR-branch capture | Retained the missing-capture polarity implementation; corrected the regression query so the OR expression and predicate belong to one top-level pattern; the compiler rejects detached predicate-only top-level patterns instead of silently running the OR without its filter. | SOURCE_PATCHED; validation deferred |
+| ATS `previousSibling` + `nextSibling` together | Resolve the current node and both adjacent siblings through one parent child-index walk; preserve symbol/type matching and type-only selectors. | SOURCE_PATCHED; validation deferred |
 | ATS supertype sibling selectors | Added regression source coverage for concrete `decimal_integer_literal` operands and transitive `expression` supertype operands. | TEST_SOURCE_ADDED; not executed |
 | Detached predicate regression | Added a regression case requiring malformed standalone predicate patterns to be rejected during native query compilation. | TEST_SOURCE_ADDED; not executed |
+| Stale Kotlin display spans after edits | Removed coordinate rebasing of presentation-only spans; invalidate the document's display cache synchronously with the edit epoch, and serialize renderer cache reads with edit admission. | SOURCE_PATCHED; validation deferred |
+| Sparse line-index growth and edit-boundary checkpoints | Bound retained checkpoint payload to 2 MiB, bound transactional index rebuild capacity, and discard the old suffix boundary checkpoint unless the replacement/deletion leaves a real line boundary. | SOURCE_PATCHED; validation deferred |
 
 ### Source-audit notes
 
@@ -744,6 +746,8 @@ The following changes are committed to `integration/all-open-prs`. No tests, bui
 - The earlier failed equality fixture placed the OR expression and predicate in separate top-level query expressions. That allowed the OR pattern to run without the predicate. The corrected fixture groups them in one expression.
 - Parser cancellation/reuse already has a per-parse round guard: cancellation state is cleared at begin/end, and a cancelled/null parse resets the native parser before reuse. No additional source change was justified by this audit.
 - Query execution already reports incomplete results when the native cursor exceeds match/step limits or the result collector truncates; such results are not marked complete.
+- Parser cancellation/reuse already clears cancellation state at parse-round boundaries and resets Tree-sitter after cancelled/null parse results.
+- Kotlin display spans are presentation-only and do not carry query dependency envelopes; they are no longer coordinate-rebased across edits. Native AST selector cache dependencies remain document-wide until candidate dependency envelopes can be proven safe, so this pass prioritizes correctness over edit-cache reuse.
 - API 30 `device offline` remains an environment failure, not evidence of a source defect. XML/DTD and AIDL language-selection defects are outside the current branch's packaged TSH language set and were not changed in this pass.
 
 **Validation gate:** all test, build, CI, and device validation remains intentionally deferred until the outstanding source-level bug backlog is closed. Source presence and regression-test source do not constitute a passing result.
