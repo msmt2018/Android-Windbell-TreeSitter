@@ -2338,8 +2338,25 @@ Java_com_zerostudio_idea_treesitter_tsh_api_TshOnigurumaNative_nativeFindAll(
             return nullptr;
         }
 
+        // Compute the exact wire size before allocating. Capture-heavy Regex
+        // results can contain far more than the historical eight values per
+        // match; repeated vector growth needlessly duplicated memory while
+        // encoding a bounded Native batch for JNI.
+        size_t value_count = 2u;
+        for (const auto& match : batch.matches) {
+            const size_t capture_count = match.capture_ranges_utf16.size();
+            if (capture_count > (std::numeric_limits<size_t>::max() - value_count - 3u) / 2u) {
+                throw_illegal_args(env, "Regex result size overflow");
+                return nullptr;
+            }
+            value_count += 3u + capture_count * 2u;
+        }
+        if (value_count > static_cast<size_t>(std::numeric_limits<jsize>::max())) {
+            throw_illegal_args(env, "Regex result exceeds Java array capacity");
+            return nullptr;
+        }
         std::vector<jlong> flat;
-        flat.reserve(2 + batch.matches.size() * 8);
+        flat.reserve(value_count);
         flat.push_back(batch.truncated ? 1 : 0);
         flat.push_back(static_cast<jlong>(batch.matches.size()));
         for (const auto& match : batch.matches) {
@@ -2351,10 +2368,7 @@ Java_com_zerostudio_idea_treesitter_tsh_api_TshOnigurumaNative_nativeFindAll(
                 flat.push_back(capture.second);
             }
         }
-        if (flat.size() > static_cast<size_t>(std::numeric_limits<jsize>::max())) {
-            throw_illegal_args(env, "Regex result exceeds Java array capacity");
-            return nullptr;
-        }
+        // The exact size was validated before allocation above.
         jlongArray result = env->NewLongArray(static_cast<jsize>(flat.size()));
         if (!result) return nullptr;
         if (!flat.empty()) {
