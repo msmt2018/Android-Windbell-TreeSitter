@@ -17,6 +17,19 @@
 
 
 pluginManagement {
+    // AGP 8.13.2 bundles an R8 release that predates Kotlin 2.4 metadata.
+    // Use Google's compatible R8 release without forcing an AGP 9 / Gradle 9
+    // migration into this integration branch.
+    buildscript {
+        repositories {
+            maven { url = uri("https://storage.googleapis.com/r8-releases/raw") }
+            google()
+            mavenCentral()
+        }
+        dependencies {
+            classpath("com.android.tools:r8:9.1.29")
+        }
+    }
     includeBuild("build-logic")
     repositories {
         // Google-hosted Maven Central mirror avoids transient Central HTTP 429s.
