@@ -190,7 +190,9 @@ class TshRenderPlanSyntaxHighlighter(
 
     override fun onTextChanged(change: EditorDocument.AppliedChange) {
         synchronized(stateLock) {
-            snapshot = null
+            // Keep the last committed plan visible while the edit is being reparsed.
+            // Clearing it here makes every keystroke briefly remove all syntax spans,
+            // which is perceived as comment/token flicker. New plans replace it atomically.
             diagnostics = emptyList()
             editInProgress = true
         }
@@ -263,29 +265,12 @@ class TshRenderPlanSyntaxHighlighter(
     }
 
     private fun currentSnapshot(): RenderSnapshot? {
-        val current = synchronized(stateLock) {
-            if (editInProgress) null else snapshot
-        } ?: return null
-        val version = try {
-            currentDocumentVersion()
-        } catch (_: Exception) {
-            return null
-        } catch (_: LinkageError) {
-            return null
-        }
-        return synchronized(stateLock) {
-            if (!editInProgress && snapshot === current &&
-                version == current.plan.revisions.documentVersion
-            ) {
-                current
-            } else {
-                if (snapshot === current && version != current.plan.revisions.documentVersion) {
-                    snapshot = null
-                    diagnostics = emptyList()
-                }
-                null
-            }
-        }
+        // RenderPlan publication is atomic. During edits and while the next plan is
+        // being produced, keep drawing with the last committed snapshot instead of
+        // toggling all syntax spans off/on on every document-version change.
+        // Line caches are keyed by generation + version, so stale line spans are
+        // never reused across edits. The next valid plan replaces this snapshot.
+        return synchronized(stateLock) { snapshot }
     }
  
     private fun lineStyleCache(
