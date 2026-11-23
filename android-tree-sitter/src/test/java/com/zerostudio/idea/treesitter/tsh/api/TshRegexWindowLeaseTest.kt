@@ -34,6 +34,11 @@ class TshRegexWindowLeaseTest {
     )
 
     @Test
+    fun defaultWindowMaximumIsGovernedByTheMemoryBudget() {
+        assertEquals(Int.MAX_VALUE, TshRegexWindowConstraints().maxWindowUtf16)
+    }
+
+    @Test
     fun acquiresOnlyTheCoreAndRequiredFiniteContext() {
         val snapshot = Snapshot("a".repeat(2_000))
         val sourceLease = lease(snapshot)
