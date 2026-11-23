@@ -2784,6 +2784,50 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                             // Predicate steps are evaluated by TSH at complete-match
                             // granularity. Reject unsupported or malformed forms at compile time.
                             const uint32_t compiled_pattern_count = ts_query_pattern_count(program.query);
+                            // A predicate is metadata attached to a structural query
+                            // pattern, not an independent top-level pattern. If a DSL
+                            // author writes:
+                            //   [(node_a) (node_b)] (#any-eq? @capture "value")
+                            // Tree-sitter parses the alternation and predicate as two
+                            // separate top-level patterns. The first then runs without
+                            // its filter and can emit false-positive captures. Reject
+                            // this malformed shape instead of silently weakening the
+                            // query; the intended form is:
+                            //   ([(node_a) (node_b)] (#any-eq? @capture "value"))
+                            for (uint32_t pattern = 0;
+                                 pattern < compiled_pattern_count; ++pattern) {
+                                const uint32_t pattern_start =
+                                    ts_query_start_byte_for_pattern(program.query, pattern);
+                                const uint32_t pattern_end =
+                                    ts_query_end_byte_for_pattern(program.query, pattern);
+                                if (pattern_start >= pattern_end ||
+                                    pattern_end > query_source.size()) {
+                                    g_tsh_last_error_detail =
+                                        "native query returned an invalid top-level pattern source range";
+                                    release_predicate_regexes();
+                                    ts_query_delete(program.query);
+                                    program.query = nullptr;
+                                    return nullptr;
+                                }
+                                const std::string_view pattern_source(
+                                    query_source.data() + pattern_start,
+                                    pattern_end - pattern_start);
+                                size_t first = pattern_source.find_first_not_of(" \\t\\r\\n");
+                                if (first == std::string_view::npos ||
+                                    pattern_source[first] != '(') continue;
+                                ++first;
+                                first = pattern_source.find_first_not_of(" \\t\\r\\n", first);
+                                if (first != std::string_view::npos &&
+                                    pattern_source[first] == '#') {
+                                    g_tsh_last_error_detail =
+                                        "native query predicate is detached from its structural pattern; "
+                                        "wrap the node alternation and predicate in one grouped expression";
+                                    release_predicate_regexes();
+                                    ts_query_delete(program.query);
+                                    program.query = nullptr;
+                                    return nullptr;
+                                }
+                            }
                             program.predicates_by_pattern.resize(compiled_pattern_count);
                             for (uint32_t pattern = 0;
                                  pattern < compiled_pattern_count; ++pattern) {
