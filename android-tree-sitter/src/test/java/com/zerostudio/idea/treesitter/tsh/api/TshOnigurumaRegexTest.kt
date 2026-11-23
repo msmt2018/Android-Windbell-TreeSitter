@@ -6,6 +6,13 @@ import org.junit.jupiter.api.Test
 
 class TshOnigurumaRegexTest {
     @Test
+    fun exactMatchLimitAtNonFinalWindowRequiresProbeInsteadOfImmediateTruncation() {
+        assertEquals(true, shouldProbeAfterWindow(matchesAtLimit = true, isLastCore = false))
+        assertEquals(false, shouldProbeAfterWindow(matchesAtLimit = true, isLastCore = true))
+        assertEquals(false, shouldProbeAfterWindow(matchesAtLimit = false, isLastCore = false))
+    }
+
+    @Test
     fun rejectsSearchCursorAndResetStartEscapes() {
         assertEquals('G', unsupportedWindowSearchEscape("\\Gfoo"))
         assertEquals('K', unsupportedWindowSearchEscape("foo\\K"))
