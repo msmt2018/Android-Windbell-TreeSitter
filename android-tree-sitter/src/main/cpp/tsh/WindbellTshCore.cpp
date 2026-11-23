@@ -1861,9 +1861,20 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
     // capture ABI as ordinary Regex rules; there is no separate token model.
     constexpr uint64_t kMaxRegexStateContextFallbackBytes = 50ull * 1024ull * 1024ull;
     if (!grammar->regex_states.empty()) {
+        // Keep checkpoint density proportional to document size. 64 KiB is the
+        // minimum stride for ordinary files; larger documents spread the same
+        // target checkpoint count across the full source instead of discarding
+        // the oldest checkpoints after an arbitrary fixed prefix.
+        constexpr uint64_t kMinimumRegexStateCheckpointStrideBytes = 64ull * 1024ull;
+        constexpr uint64_t kTargetRegexStateCheckpointCount = 8192ull;
+        const uint64_t scaled_stride =
+            static_cast<uint64_t>(total_bytes) / kTargetRegexStateCheckpointCount +
+            (static_cast<uint64_t>(total_bytes) % kTargetRegexStateCheckpointCount != 0 ? 1ull : 0ull);
+        const uint64_t regex_state_checkpoint_stride =
+            std::max(kMinimumRegexStateCheckpointStrideBytes, scaled_stride);
         std::vector<std::string> state_stack{grammar->regex_start_state};
         uint32_t position = 0;
-        uint64_t next_checkpoint = 64u * 1024u;
+        uint64_t next_checkpoint = regex_state_checkpoint_stride;
         // Checkpoints are reusable only for the exact immutable source and
         // partition snapshots from which their tokenizer state was produced.
         if (regex_state_checkpoints) {
@@ -1890,8 +1901,8 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                 position = static_cast<uint32_t>(nearest->byte_offset);
                 state_stack = nearest->state_stack;
                 next_checkpoint =
-                    ((static_cast<uint64_t>(position) / (64u * 1024u)) + 1u) *
-                    (64u * 1024u);
+                    ((static_cast<uint64_t>(position) / regex_state_checkpoint_stride) + 1u) *
+                    regex_state_checkpoint_stride;
             }
         }
         // Dependencies begin at the nearest reusable state checkpoint; the
@@ -1922,18 +1933,9 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                 regex_state_checkpoints->insert(insertion, std::move(checkpoint));
             }
 
-            // Bound persistent tokenizer metadata independently from the
-            // source size. 8192 checkpoints cover 512 MiB at 64 KiB spacing.
-            constexpr size_t kMaxRegexStateCheckpoints = 8192;
-            if (regex_state_checkpoints->size() > kMaxRegexStateCheckpoints) {
-                regex_state_checkpoints->erase(
-                    regex_state_checkpoints->begin(),
-                    regex_state_checkpoints->begin() +
-                        (regex_state_checkpoints->size() - kMaxRegexStateCheckpoints));
-            }
             next_checkpoint =
-                ((static_cast<uint64_t>(position) / (64u * 1024u)) + 1u) *
-                (64u * 1024u);
+                ((static_cast<uint64_t>(position) / regex_state_checkpoint_stride) + 1u) *
+                regex_state_checkpoint_stride;
         };
         OnigRegion* state_region = onig_region_new();
         OnigRegion* state_case_region = onig_region_new();
