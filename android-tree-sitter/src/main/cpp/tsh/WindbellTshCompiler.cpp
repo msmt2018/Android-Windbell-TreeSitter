@@ -887,9 +887,13 @@ static void splitSelectorAlternatives(
     }
 }
 
-static bool expandSelectorGroups(
+// Visit selector-group expansions one at a time. Materializing the Cartesian
+// product in vectors imposed an unrelated 256-alternative ceiling and amplified
+// peak memory by retaining every intermediate expansion. Streaming keeps memory
+// proportional to the current expansion path while preserving every alternative.
+static bool visitSelectorGroupExpansions(
     const std::string& input,
-    std::vector<std::string>& output,
+    const std::function<bool(std::string&&)>& visitor,
     size_t depth = 0
 ) {
     if (depth > 32) return false;
@@ -906,8 +910,7 @@ static bool expandSelectorGroups(
     }
     if (nesting != 0) return false;
     if (open == std::string::npos) {
-        output.push_back(trimScopeToken(input));
-        return true;
+        return visitor(trimScopeToken(input));
     }
 
     std::vector<std::string> alternatives;
@@ -916,10 +919,8 @@ static bool expandSelectorGroups(
     const std::string prefix = input.substr(0, open);
     const std::string suffix = input.substr(close + 1);
     for (const auto& alternative : alternatives) {
-        std::vector<std::string> expanded;
-        if (!expandSelectorGroups(prefix + alternative + suffix, expanded, depth + 1)) return false;
-        output.insert(output.end(), expanded.begin(), expanded.end());
-        if (output.size() > 256) return false;
+        if (!visitSelectorGroupExpansions(
+                prefix + alternative + suffix, visitor, depth + 1)) return false;
     }
     return true;
 }
@@ -929,15 +930,16 @@ static int textMateSelectorSpecificity(const std::string& selector, const std::v
     splitSelectorAlternatives(selector, top_level);
     int best = -1;
     for (const auto& alternative : top_level) {
-        std::vector<std::string> expanded;
-        if (!expandSelectorGroups(alternative, expanded)) continue;
-        for (std::string candidate : expanded) {
-            candidate = trimScopeToken(candidate);
-            if (candidate.rfind("L:", 0) == 0 || candidate.rfind("R:", 0) == 0) {
-                candidate.erase(0, 2);
-            }
-            best = std::max(best, matchOneTextMateSelector(candidate, scopes));
-        }
+        const bool valid = visitSelectorGroupExpansions(
+            alternative,
+            [&](std::string&& candidate) {
+                if (candidate.rfind("L:", 0) == 0 || candidate.rfind("R:", 0) == 0) {
+                    candidate.erase(0, 2);
+                }
+                best = std::max(best, matchOneTextMateSelector(candidate, scopes));
+                return true;
+            });
+        if (!valid) continue;
     }
     return best;
 }
