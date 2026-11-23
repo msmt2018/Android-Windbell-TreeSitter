@@ -176,7 +176,7 @@ class TshSparseCoordinateIndexTest {
 
     @Test
     fun mapsLfLineAndUtf16ColumnAcrossCrLfAndSurrogatePairs() {
-        val source = lease("a𠮷\\r\\nb\\nend")
+        val source = lease("a𠮷\r\nb\nend")
         val index = (TshSparseCoordinateIndex.build(
             source, chunkSizeUtf16 = 256, checkpointStrideUtf16 = 256
         ) as TshResult.Success).value
@@ -206,7 +206,7 @@ class TshSparseCoordinateIndexTest {
     fun lineColumnLookupUsesSparseCheckpointsForLongLines() {
         val text = buildString {
             repeat(5_000) { append('x') }
-            append('\\n')
+            append('\n')
             append("tail")
         }
         val source = lease(text)
