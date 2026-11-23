@@ -2923,8 +2923,10 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                         ? pattern_metadata->second.declaration_order : 0;
                 for (uint32_t capture_index = 0; capture_index < match.capture_count; ++capture_index) {
                     const TSQueryCapture& capture = match.captures[capture_index];
-                    auto style_binding = native_query.capture_style_ids.find(capture.index);
-                    if (style_binding == native_query.capture_style_ids.end()) continue;
+                    if (capture.index >= native_query.capture_style_ids_by_index.size()) continue;
+                    const int32_t style_id =
+                        native_query.capture_style_ids_by_index[capture.index];
+                    if (style_id < 0) continue;
                     HighlightSpan span;
                     const uint32_t capture_start = ts_node_start_byte(capture.node);
                     const uint32_t capture_end = ts_node_end_byte(capture.node);
@@ -2932,7 +2934,7 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                         (capture_start & 1u) || (capture_end & 1u)) continue;
                     span.start_byte = capture_start;
                     span.end_byte = capture_end;
-                    span.style_id = style_binding->second;
+                    span.style_id = static_cast<uint16_t>(style_id);
                     span.flags = 0;
                     span.priority = pattern_priority;
                     span.allow_overlap = pattern_metadata != native_query.pattern_metadata.end() &&
