@@ -3,7 +3,7 @@ package com.zerostudio.idea.treesitter.tsh.api
 import java.util.concurrent.atomic.AtomicBoolean
 
 enum class TshMemoryCategory {
-    TEXT_SNAPSHOT, PARSER_INPUT, SYNTAX_TREE, QUERY_RESULT, REGEX_WINDOW,
+    TEXT_SNAPSHOT, PARSER_INPUT, SYNTAX_TREE, QUERY_CURSOR, QUERY_RESULT, REGEX_WINDOW,
     MATCH_SET, RENDER_PLAN, COORDINATE_INDEX, OTHER
 }
 
