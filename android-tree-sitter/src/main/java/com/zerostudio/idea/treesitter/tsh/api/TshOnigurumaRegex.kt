@@ -206,13 +206,30 @@ class TshOnigurumaRegex private constructor(
             val isLastCore = acquired.coreEndUtf16 == sequence.documentLengthUtf16
             val remaining = maxMatches - records.size
             if (remaining <= 0) {
-                acquired.close()
-                truncated = !isLastCore
-                if (truncated) break
-                // No matches can be accepted from a zero-capacity execution; conservatively report
-                // truncation because this final core has not been inspected.
-                truncated = true
-                break
+                // The accepted result budget is full, but this core still has to be
+                // inspected. Otherwise an exactly-full result set is incorrectly marked
+                // truncated even when the remaining document contains no further matches.
+                // Probe one match without admitting it: a hit proves truncation; exhaustion
+                // proves that the result set is complete.
+                val probe = try {
+                    executeWindow(acquired, 1)
+                } finally {
+                    acquired.close()
+                }
+                when (probe) {
+                    is TshResult.Failure -> {
+                        executionDiagnostics.addAll(probe.diagnostics)
+                        partial = true
+                        break
+                    }
+                    is TshResult.Success -> {
+                        if (probe.value.matches.isNotEmpty() || probe.value.truncated) {
+                            truncated = true
+                            break
+                        }
+                        continue
+                    }
+                }
             }
 
             val execution = try {
