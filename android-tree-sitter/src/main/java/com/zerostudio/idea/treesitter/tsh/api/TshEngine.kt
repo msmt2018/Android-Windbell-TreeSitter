@@ -94,8 +94,39 @@ class TshEngine private constructor(val options: TshEngineOptions) : AutoCloseab
         TshTreeSitterQueryExecutor(
             objects = objects, queries = compiledQueries, leases = nativeQueryLeases,
             treeLeases = nativeResourceLeases, predicateHandlers = predicateHandlers,
-            resourceRegistry = nativeResources
+            resourceRegistry = nativeResources, memoryBudget = memoryBudget
         )
+    }
+
+    /**
+     * Creates a MatchSet merge policy backed by this Engine's shared memory ledger.
+     * The returned MatchSet owns its reservation and must be closed when no longer retained.
+     */
+    @JvmOverloads
+    fun createMatchMergeBudget(
+        maxMatches: Int = Int.MAX_VALUE,
+        maxEstimatedBytes: Long = Long.MAX_VALUE
+    ): TshMatchMergeBudget = synchronized(lifecycleLock) {
+        check(state == TshEngineState.INITIALIZED) {
+            "TSH engine must be initialized before creating a MatchSet merge budget"
+        }
+        TshMatchMergeBudget(
+            maxMatches = maxMatches,
+            maxEstimatedBytes = maxEstimatedBytes,
+            memoryBudget = memoryBudget
+        )
+    }
+
+    /** Creates a render coordinator whose pending plans share this Engine's memory ledger. */
+    @JvmOverloads
+    fun createRenderCoordinator(
+        provider: TshRenderProvider,
+        maxPendingPlans: Int = Int.MAX_VALUE
+    ): TshRenderCoordinator = synchronized(lifecycleLock) {
+        check(state == TshEngineState.INITIALIZED) {
+            "TSH engine must be initialized before creating a render coordinator"
+        }
+        TshRenderCoordinator(provider, maxPendingPlans, memoryBudget)
     }
 
     /** Attaches a host object without requiring inheritance or transferring host ownership. */
