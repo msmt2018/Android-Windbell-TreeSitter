@@ -310,9 +310,9 @@ public final class TSHighlight {
       final boolean exceeded = exhausted && cursor.didExceedMatchLimit();
       return new Batch(
           emitted == 0 ? new long[0] : Arrays.copyOf(buffer, emitted * 6),
-          exhausted && !exceeded && !cancelled[0],
+          exhausted && !exceeded && !cancellationState[0],
           exceeded,
-          cancelled[0]);
+          cancellationState[0]);
     }
 
     public synchronized boolean didExceedMatchLimit() {
