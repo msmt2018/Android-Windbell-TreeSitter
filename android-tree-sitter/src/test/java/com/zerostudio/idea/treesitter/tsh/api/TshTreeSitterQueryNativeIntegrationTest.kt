@@ -112,11 +112,15 @@ class TshTreeSitterQueryNativeIntegrationTest {
                 boundedResult is TshResult.Success,
                 "Exhausting a step budget should return retained partial matches, not a generic failure"
             )
-            val bounded = (boundedResult as TshResult.Success).value
+            val boundedSuccess = boundedResult as TshResult.Success
+            val bounded = boundedSuccess.value
             try {
                 assertEquals(1L, bounded.stepsUsed)
                 assertFalse(bounded.isComplete)
-                assertTrue(bounded.diagnostics.any { it.code == "TSH-QUERY-EXEC-036" })
+                assertTrue(
+                    boundedSuccess.diagnostics.any { it.code == "TSH-QUERY-EXEC-036" },
+                    "Step-budget exhaustion must be exposed through the execution result diagnostics"
+                )
             } finally {
                 bounded.close()
             }
