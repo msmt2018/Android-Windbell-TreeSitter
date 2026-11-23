@@ -200,7 +200,7 @@ class TshTreeSitterQueryExecutor(
     private val treeLeases: TshNativeResourceLeaseStore = TshNativeResourceLeaseStore(),
     private val predicateHandlers: List<TSPredicateHandler> = emptyList(),
     private val resourceRegistry: TshNativeResourceRegistry? = null,
-    private val memoryBudget: TshMemoryBudget? = null
+    private val memoryBudget: TshMemoryBudget = TshMemoryBudget()
 ) : TshQueryExecutor {
 
     override fun execute(
@@ -438,22 +438,20 @@ class TshTreeSitterQueryExecutor(
                         truncated = true
                         break
                     }
-                    if (memoryBudget != null) {
-                        val admission = if (resultReservation == null) {
-                            memoryBudget.reserve(
-                                TshMemoryCategory.QUERY_RESULT,
-                                nextEstimatedBytes.coerceAtLeast(1L),
-                                "query-result:${query.queryId}:${tree.documentId}:${tree.documentVersion}"
-                            ).also { reserved ->
-                                if (reserved is TshResult.Success) resultReservation = reserved.value
-                            }
-                        } else {
-                            resultReservation!!.resize(nextEstimatedBytes)
+                    val admission = if (resultReservation == null) {
+                        memoryBudget.reserve(
+                            TshMemoryCategory.QUERY_RESULT,
+                            nextEstimatedBytes.coerceAtLeast(1L),
+                            "query-result:${query.queryId}:${tree.documentId}:${tree.documentVersion}"
+                        ).also { reserved ->
+                            if (reserved is TshResult.Success) resultReservation = reserved.value
                         }
-                        if (admission is TshResult.Failure) {
-                            truncated = true
-                            break
-                        }
+                    } else {
+                        resultReservation!!.resize(nextEstimatedBytes)
+                    }
+                    if (admission is TshResult.Failure) {
+                        truncated = true
+                        break
                     }
                     captures += TshCapture(
                         name = captureName,
