@@ -374,6 +374,9 @@ bool PieceTreeSource::read(uint64_t offset, uint32_t maxBytes,
 
 bool PieceTreeSource::replace(uint64_t startByte, uint64_t oldEndByte,
                               const void *inserted, uint64_t insertedBytes) noexcept {
+    // Version is part of every immutable snapshot/cache identity. Never wrap
+    // it and make a new document state appear to be an old version.
+    if (version_ == std::numeric_limits<uint64_t>::max()) return false;
     if (!isValid() || (startByte & 1u) || (oldEndByte & 1u) ||
         (insertedBytes & 1u) || oldEndByte < startByte ||
         oldEndByte > sizeBytes() || (insertedBytes != 0 && !inserted)) return false;
