@@ -199,7 +199,8 @@ class TshTreeSitterQueryExecutor(
     private val leases: TshNativeQueryLeaseStore,
     private val treeLeases: TshNativeResourceLeaseStore = TshNativeResourceLeaseStore(),
     private val predicateHandlers: List<TSPredicateHandler> = emptyList(),
-    private val resourceRegistry: TshNativeResourceRegistry? = null
+    private val resourceRegistry: TshNativeResourceRegistry? = null,
+    private val memoryBudget: TshMemoryBudget? = null
 ) : TshQueryExecutor {
 
     override fun execute(
@@ -390,6 +391,8 @@ class TshTreeSitterQueryExecutor(
             val captures = ArrayList<TshCapture>(minOf(budget.maxCaptures, budget.maxMatches, 256))
             var matchesSeen = 0
             var estimatedResultBytes = 0L
+            var resultReservation: TshMemoryReservation? = null
+            var reservationTransferred = false
             var truncated = false
             while (true) {
                 if (cancellation.isCancelled()) {
@@ -426,9 +429,31 @@ class TshTreeSitterQueryExecutor(
                     // The estimate is deliberately explicit and does not include Native objects.
                     val estimatedCaptureBytes = 96L +
                         2L * (captureName.length.toLong() + nodeType.length.toLong())
-                    if (estimatedCaptureBytes > budget.maxResultBytes - estimatedResultBytes) {
+                    if (estimatedCaptureBytes > Long.MAX_VALUE - estimatedResultBytes) {
                         truncated = true
                         break
+                    }
+                    val nextEstimatedBytes = estimatedResultBytes + estimatedCaptureBytes
+                    if (nextEstimatedBytes > budget.maxResultBytes) {
+                        truncated = true
+                        break
+                    }
+                    if (memoryBudget != null) {
+                        val admission = if (resultReservation == null) {
+                            memoryBudget.reserve(
+                                TshMemoryCategory.QUERY_RESULT,
+                                nextEstimatedBytes.coerceAtLeast(1L),
+                                "query-result:${query.queryId}:${tree.documentId}:${tree.documentVersion}"
+                            ).also { reserved ->
+                                if (reserved is TshResult.Success) resultReservation = reserved.value
+                            }
+                        } else {
+                            resultReservation!!.resize(nextEstimatedBytes)
+                        }
+                        if (admission is TshResult.Failure) {
+                            truncated = true
+                            break
+                        }
                     }
                     captures += TshCapture(
                         name = captureName,
@@ -437,7 +462,7 @@ class TshTreeSitterQueryExecutor(
                         nodeId = node.nodeId,
                         patternIndex = match.patternIndex
                     )
-                    estimatedResultBytes += estimatedCaptureBytes
+                    estimatedResultBytes = nextEstimatedBytes
                 }
                 if (truncated) break
             }
@@ -465,8 +490,9 @@ class TshTreeSitterQueryExecutor(
                     // Null means the native cursor does not expose VM step counts.
                     stepsUsed = null,
                     isComplete = complete,
-                    inputEncoding = tree.inputEncoding
-                ),
+                    inputEncoding = tree.inputEncoding,
+                    memoryReservation = resultReservation
+                ).also { reservationTransferred = resultReservation != null },
                 diagnostics = buildList {
                     if (!progressCallbackAvailable) add(diagnostic(
                         "TSH-QUERY-EXEC-033",
@@ -484,6 +510,7 @@ class TshTreeSitterQueryExecutor(
         } catch (error: Throwable) {
             failure("TSH-QUERY-EXEC-016", "Tree-sitter query execution failed: ${error.message}", cause = error)
         } finally {
+            if (!reservationTransferred) resultReservation?.close()
             cursor.close()
         }
         } finally {
