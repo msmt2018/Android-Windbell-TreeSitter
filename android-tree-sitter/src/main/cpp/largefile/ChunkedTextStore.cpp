@@ -61,6 +61,10 @@ bool ChunkedTextStore::isSealed() const noexcept {
     return sealed_;
 }
 
+bool ChunkedTextStore::isValid() const noexcept {
+    return sealed_;
+}
+
 uint64_t ChunkedTextStore::sizeBytes() const noexcept {
     return size_bytes_;
 }
