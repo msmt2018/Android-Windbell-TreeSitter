@@ -1041,14 +1041,25 @@ static void appendRegexCaptureSpans(
         output.push_back(span);
     };
     for (const auto& entry : numeric_styles) append(entry.first, entry.second);
+    // Capture names are usually short ASCII identifiers. Encode those into a
+    // stack buffer instead of allocating a UTF-16 vector for every match.
+    std::array<uint16_t, 128> short_name_buffer{};
+    std::vector<uint16_t> long_name_buffer;
     for (const auto& entry : named_styles) {
-        std::vector<uint16_t> encoded_name(entry.first.begin(), entry.first.end());
+        const size_t name_length = entry.first.size();
+        uint16_t* encoded_name = short_name_buffer.data();
+        if (name_length <= short_name_buffer.size()) {
+            for (size_t i = 0; i < name_length; ++i) {
+                encoded_name[i] = static_cast<unsigned char>(entry.first[i]);
+            }
+        } else {
+            long_name_buffer.assign(entry.first.begin(), entry.first.end());
+            encoded_name = long_name_buffer.data();
+        }
+        const UChar* name_begin = reinterpret_cast<const UChar*>(encoded_name);
+        const UChar* name_end = name_begin + name_length * sizeof(uint16_t);
         const int group = onig_name_to_backref_number(
-            regex,
-            reinterpret_cast<const UChar*>(encoded_name.data()),
-            reinterpret_cast<const UChar*>(encoded_name.data() + encoded_name.size()),
-            region
-        );
+            regex, name_begin, name_end, region);
         append(group, entry.second);
     }
 }
