@@ -7,6 +7,7 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 
 class TshTreeSitterQueryNativeIntegrationTest {
     @Test
@@ -227,11 +228,12 @@ class TshTreeSitterQueryNativeIntegrationTest {
             queryId = query.queryId
 
             val progressCalls = AtomicInteger()
+            val progressOffset = AtomicLong(-1L)
             val cancellation = object : TshQueryCancellation {
                 override fun isCancelled(): Boolean = false
 
                 override fun onProgress(currentByteOffset: Long): Boolean {
-                    assertTrue(currentByteOffset >= 0L, "Native progress offset must be non-negative")
+                    progressOffset.set(currentByteOffset)
                     progressCalls.incrementAndGet()
                     return true
                 }
@@ -251,7 +253,7 @@ class TshTreeSitterQueryNativeIntegrationTest {
                 "Cancellation must map to the stable TSH query-cancel diagnostic: ${failure.diagnostics}"
             )
             assertTrue(
-                progressCalls.get() > 0,
+                progressCalls.get() > 0 && progressOffset.get() >= 0L,
                 "Tree-sitter must invoke the progress callback while nextMatch is executing"
             )
             val budget = engine.memoryBudget.snapshot()
