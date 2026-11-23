@@ -808,3 +808,15 @@ Static call-site review found the native document parser already separately trac
 进一步检查编辑器实际使用的 Kotlin PieceTree 后，发现底层 `pieceTreeBase.kt` 的 `_versionId` 是 `Int`，且 setEOL、slice insert、普通 insert、delete 四条变更路径都直接执行 `++`。溢出后版本会变为负数并可能重用历史身份；TSH 快照层再转为 Long 也无法恢复已经丢失的唯一性。
 
 已统一改为 `bumpVersionId()`：在每条变更路径开始修改树之前检查 `Int.MAX_VALUE`，耗尽时拒绝本次变更，不允许版本号回绕。保留现有 Int API，避免不必要的 ABI/API 破坏。未执行测试、编译或构建。
+
+## 2026-11-24 PieceTree 文档订阅与销毁竞态修复（源码已提交，验证暂缓）
+
+静态审查发现 `TshPieceTreeDocument` 的 `addChangeListener` / `addDisposedListener` 原先采用“先检查 AtomicBoolean，再写入 CopyOnWriteArrayList”的非原子序列。并发 `dispose()` 可能恰好在检查后清空列表、而订阅随后才完成写入，导致已销毁文档仍保留新监听器；该监听器永远收不到销毁通知，也无法通过正常生命周期清理。
+
+修复：
+- 引入文档级 lifecycle lock，串行化监听器注册/移除、变更发布和 dispose 状态转换。
+- `dispose()` 在锁内原子标记销毁、清空变更监听器并提取销毁监听器快照，再在锁外分发销毁通知。
+- 变更发布在同一生命周期锁内执行，并在每个监听器调用前检查销毁状态；回调中重入 dispose 时，不再继续向后分发变更。
+- 监听器注册与 dispose 现在具有明确的先后关系：要么成功注册并被 dispose 捕获，要么因文档已销毁而拒绝。
+
+没有执行测试、编译、构建、CI、设备验证或基准测试。
