@@ -1699,18 +1699,17 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                 const UChar* window_end_ptr = nullptr;
                 const UChar* current = nullptr;
                 const UChar* search_range_end = nullptr;
-                if (source_is_contiguous) {
-                    // Contiguous sources (JNI-pinned UTF-16 and mmap) already
-                    // provide the exact Oniguruma input representation. Search
-                    // that storage directly: do not allocate/copy a 256 KiB
-                    // scratch window for every rule and viewport partition.
-                    // The full string bounds preserve document context while
-                    // search_range_end limits match starts to this core partition.
+                if (has_contiguous_text) {
+                    // Both legacy JNI input_chars and TextSource-backed contiguous
+                    // storage are already UTF-16LE buffers. Use the original bytes
+                    // directly; do not copy a 256 KiB scratch window per rule or
+                    // viewport partition. Keep full-document bounds for anchors
+                    // and lookbehind while restricting match starts to this core.
                     window_base_byte = 0;
-                    window_start = reinterpret_cast<const UChar*>(contiguous_source_data);
-                    window_end_ptr = window_start + total_bytes / sizeof(UChar);
-                    current = window_start + core_start / sizeof(UChar);
-                    search_range_end = window_start + core_end / sizeof(UChar);
+                    window_start = text_start;
+                    window_end_ptr = text_end;
+                    current = text_start + core_start;
+                    search_range_end = text_start + core_end;
                 } else {
                     // PieceTree/file-window sources expose borrowed chunks, so
                     // Oniguruma still needs a bounded contiguous materialization.
@@ -2382,9 +2381,12 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                 if (ast_rule.field_id != 0) {
                     const char* parent_type = ts_node_is_null(parent) ? nullptr : ts_node_type(parent);
                     const char* parent_grammar_type = ts_node_is_null(parent) ? nullptr : ts_node_grammar_type(parent);
+                    // The compile-time dispatch index already expanded the
+                    // target supertype's transitive subtype closure. Re-checking
+                    // it recursively for every viewport node only repeats that work.
                     const bool owner_symbol_matches = ast_rule.target_symbol != 0 &&
-                        tshAstNodeMatchesSelector(grammar->ts_language, parent,
-                            ast_rule.target_symbol, ast_rule.target_type);
+                        (ast_rule.target_symbol == parent_sym ||
+                         ast_rule.target_symbol == parent_grammar_sym);
                     const bool owner_type_matches = !ast_rule.target_type.empty() &&
                         ((parent_type && ast_rule.target_type == parent_type) ||
                          (parent_grammar_type && ast_rule.target_type == parent_grammar_type));
@@ -2394,9 +2396,13 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                         continue;
                     }
                 } else {
+                    // Candidate dispatch is keyed by both visible and grammar
+                    // symbols and includes all compiled supertype descendants.
+                    // Exact identity here is sufficient and avoids a recursive
+                    // language-subtype walk for every candidate node.
                     const bool node_symbol_matches = ast_rule.target_symbol != 0 &&
-                        tshAstNodeMatchesSelector(grammar->ts_language, node,
-                            ast_rule.target_symbol, ast_rule.target_type);
+                        (ast_rule.target_symbol == sym ||
+                         ast_rule.target_symbol == node_grammar_sym);
                     const bool node_type_matches = !ast_rule.target_type.empty() &&
                         ((node_type && ast_rule.target_type == node_type) ||
                          (node_grammar_type && ast_rule.target_type == node_grammar_type));

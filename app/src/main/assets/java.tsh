@@ -113,6 +113,8 @@
             ]
         },
 
+        // Keep the marker as an independent capture; the following rule colors the full qualified name.
+        {match: /@(?=[A-Za-z_$])/, 0: "annotation", priority: 120},
         // ---------- 5.5 元数据注解 (Annotations) ----------
         {match: /@\w+(?:\.\w+)*/, 0: "annotation"},
 
