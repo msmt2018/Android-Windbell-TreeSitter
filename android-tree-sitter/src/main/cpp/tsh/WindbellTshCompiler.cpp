@@ -3637,11 +3637,13 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
     // rules that can target the current node (plus intentionally generic rules).
     grammar->ast_rules_by_node_symbol.clear();
     grammar->ast_rules_by_node_type.clear();
+    grammar->ast_supertype_rules_by_node_type.clear();
     grammar->ast_field_rules_by_parent_symbol.clear();
     grammar->ast_field_rules_by_parent_type.clear();
+    grammar->ast_supertype_field_rules_by_parent_type.clear();
     grammar->ast_wildcard_rules.clear();
-    auto index_symbol_and_subtypes = [&](auto& index, TSSymbol symbol,
-                                          uint32_t rule_index) {
+    auto index_symbol_and_subtypes = [&](auto& index, auto& subtype_type_index,
+                                          TSSymbol symbol, uint32_t rule_index) {
         if (symbol == 0) return;
         // Supertype relations may be nested. Expand the complete subtype closure
         // once at compile time so large-document traversal remains O(1) indexed.
@@ -3652,6 +3654,12 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
             pending.pop_back();
             if (!visited.insert(current).second) continue;
             index[current].push_back(rule_index);
+            if (current != symbol) {
+                const char* subtype_name = ts_language_symbol_name(ts_lang, current);
+                if (subtype_name && subtype_name[0] != '\0') {
+                    subtype_type_index[subtype_name].push_back(rule_index);
+                }
+            }
             uint32_t subtype_count = 0;
             const TSSymbol* subtypes =
                 ts_language_subtypes(ts_lang, current, &subtype_count);
@@ -3665,7 +3673,9 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
         const AstSelectorRule& rule = grammar->ast_selector_rules[rule_index];
         if (rule.field_id != 0) {
             index_symbol_and_subtypes(
-                grammar->ast_field_rules_by_parent_symbol, rule.target_symbol, rule_index);
+                grammar->ast_field_rules_by_parent_symbol,
+                grammar->ast_supertype_field_rules_by_parent_type,
+                rule.target_symbol, rule_index);
             if (!rule.target_type.empty()) {
                 grammar->ast_field_rules_by_parent_type[rule.target_type].push_back(rule_index);
             }
@@ -3674,7 +3684,9 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
             }
         } else {
             index_symbol_and_subtypes(
-                grammar->ast_rules_by_node_symbol, rule.target_symbol, rule_index);
+                grammar->ast_rules_by_node_symbol,
+                grammar->ast_supertype_rules_by_node_type,
+                rule.target_symbol, rule_index);
             if (!rule.target_type.empty()) {
                 grammar->ast_rules_by_node_type[rule.target_type].push_back(rule_index);
             }

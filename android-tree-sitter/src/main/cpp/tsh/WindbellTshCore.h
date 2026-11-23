@@ -432,8 +432,12 @@ public:
     // are indexed by their owner symbol; ordinary selectors by target symbol.
     std::unordered_map<TSSymbol, std::vector<uint32_t>> ast_rules_by_node_symbol;
     AstTypeRuleIndex ast_rules_by_node_type;
+    // Type-name aliases for supertype descendants are compiled once with the
+    // grammar. Runtime viewport traversal must not rebuild these maps.
+    AstTypeRuleIndex ast_supertype_rules_by_node_type;
     std::unordered_map<TSSymbol, std::vector<uint32_t>> ast_field_rules_by_parent_symbol;
     AstTypeRuleIndex ast_field_rules_by_parent_type;
+    AstTypeRuleIndex ast_supertype_field_rules_by_parent_type;
     std::vector<uint32_t> ast_wildcard_rules;
     std::vector<NativeQueryProgram> native_queries;
 

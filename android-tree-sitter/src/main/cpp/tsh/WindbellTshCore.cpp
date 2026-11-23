@@ -74,31 +74,6 @@ static bool tshAstNodeMatchesSelector(
     return false;
 }
 
-// Build a reverse index for ATS selectors that name a Tree-sitter supertype.
-// The parse cursor visits concrete nodes only, so looking up only the concrete
-// symbol misses rules such as node: "expression". Expand nested subtype
-// relationships once per highlight pass instead of scanning every rule per node.
-static void tshCollectAstSubtypeSymbols(
-    const TSLanguage* language,
-    TSSymbol symbol,
-    uint32_t depth,
-    std::unordered_set<TSSymbol>& visited,
-    std::vector<TSSymbol>& output
-) {
-    constexpr uint32_t kMaxSupertypeDepth = 64;
-    if (!language || symbol == 0 || depth >= kMaxSupertypeDepth ||
-        !visited.insert(symbol).second) return;
-
-    uint32_t subtype_count = 0;
-    const TSSymbol* subtypes = ts_language_subtypes(language, symbol, &subtype_count);
-    for (uint32_t i = 0; subtypes && i < subtype_count; ++i) {
-        const TSSymbol subtype = subtypes[i];
-        if (subtype == 0) continue;
-        output.push_back(subtype);
-        tshCollectAstSubtypeSymbols(language, subtype, depth + 1, visited, output);
-    }
-}
-
 } // namespace
 
 static void tshIncrementDiagnostic(uint32_t* value, uint64_t amount = 1u) noexcept {
@@ -1697,25 +1672,44 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                 const uint64_t window_bytes = window_end - core_start;
                 if (window_bytes == 0 || (window_bytes & 1u) != 0 ||
                     window_bytes > static_cast<uint64_t>(std::numeric_limits<size_t>::max()) /
-                        sizeof(UChar)) break;
+                        sizeof(UChar)) {
+                    throw std::runtime_error("TSH bounded Regex window has an invalid byte range");
+                }
                 std::vector<UChar> window;
-                try { window.resize(static_cast<size_t>(window_bytes / sizeof(UChar))); }
-                catch (...) { break; }
+                // Let bad_alloc reach the JNI boundary; silently breaking here
+                // would return a partial highlight set as if it were complete.
+                window.resize(static_cast<size_t>(window_bytes / sizeof(UChar)));
                 if (!windbell::largefile::copyTextRange(
-                        *text_source, core_start, window_bytes, window.data())) break;
+                        *text_source, core_start, window_bytes, window.data())) {
+                    throw std::runtime_error("TSH could not read a bounded Regex window");
+                }
                 const UChar* window_start = window.data();
                 const UChar* window_end_ptr = window_start + window.size();
                 const UChar* current = window_start;
                 OnigRegion* region = onig_region_new();
-                if (!region) break;
+                if (!region) throw std::bad_alloc();
+                struct WindowRegionGuard {
+                    OnigRegion* value;
+                    ~WindowRegionGuard() { if (value) onig_region_free(value, 1); }
+                } region_guard{region};
                 while (current < window_end_ptr) {
                     const int hit = onig_search(
                         rule.onig_start, window_start, window_end_ptr,
                         current, window_end_ptr, region, ONIG_OPTION_NONE);
-                    if (hit < 0) break;
+                    if (hit == ONIG_MISMATCH) break;
+                    if (hit < 0) {
+                        throw std::runtime_error(
+                            "Oniguruma bounded Regex execution failed with status " +
+                            std::to_string(hit));
+                    }
                     const int64_t local_start = region->beg[0];
                     const int64_t local_end = region->end[0];
-                    if (local_start < 0 || local_end < local_start) break;
+                    if (local_start < 0 || local_end < local_start ||
+                        local_end > static_cast<int64_t>(window_bytes) ||
+                        (local_start & 1LL) != 0 || (local_end & 1LL) != 0) {
+                        throw std::runtime_error(
+                            "Oniguruma returned an invalid bounded UTF-16 match range");
+                    }
                     const uint64_t absolute_start = core_start +
                         static_cast<uint64_t>(local_start);
                     const uint64_t absolute_end = core_start +
@@ -1763,9 +1757,7 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                             }
                             for (const auto& named : rule.named_group_style_map) {
                                 std::vector<UChar> name;
-                                try {
-                                    name.assign(named.first.begin(), named.first.end());
-                                } catch (...) { continue; }
+                                name.assign(named.first.begin(), named.first.end());
                                 const int group = onig_name_to_backref_number(
                                     rule.onig_start, name.data(),
                                     name.data() + name.size(), region);
@@ -1773,16 +1765,16 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                             }
                         }
                     }
-                    // Oniguruma offsets are UTF-16LE byte offsets here.
-                    // A zero-width match must advance by one complete code unit;
-                    // advancing one byte would restart inside a UTF-16 code unit.
-                    const int64_t next = local_end > local_start
-                        ? local_end : local_start + 2;
-                    if (next <= 0 || (next & 1LL) != 0 ||
-                        static_cast<uint64_t>(next) >= window.size()) break;
-                    current = window_start + next;
+                    // Oniguruma offsets are UTF-16LE byte offsets. A zero-width
+                    // match must advance by one complete Unicode code point, not
+                    // merely one UTF-16 code unit (which can split a surrogate pair).
+                    const UChar* next = local_end > local_start
+                        ? window_start + local_end
+                        : advanceOneUtf16CodePoint(
+                            window_start + local_start, window_end_ptr);
+                    if (next <= current || next >= window_end_ptr) break;
+                    current = next;
                 }
-                onig_region_free(region, 1);
                 core_start = core_end;
             }
         }
@@ -1811,7 +1803,11 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
         if (!rule.onig_start) continue;
 
         OnigRegion* region = onig_region_new();
-        if (!region) continue;
+        if (!region) throw std::bad_alloc();
+        struct ContiguousRegionGuard {
+            OnigRegion* value;
+            ~ContiguousRegionGuard() { if (value) onig_region_free(value, 1); }
+        } region_guard{region};
         const UChar* current = text_start;
 
         while (current < text_end) {
@@ -1873,10 +1869,14 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                     advanceOneUtf16CodePoint(text_start + region->beg[0], text_end) :
                     text_start + region->end[0];
             } else {
+                if (hit_pos != ONIG_MISMATCH) {
+                    throw std::runtime_error(
+                        "Oniguruma contiguous Regex execution failed with status " +
+                        std::to_string(hit_pos));
+                }
                 break;
             }
         }
-        onig_region_free(region, 1);
         retain_requested_range(micro_spans);
     }
     retain_requested_range(micro_spans);
@@ -2243,36 +2243,6 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
         std::vector<const AstSelectorRule*> candidate_rules;
         candidate_rules.reserve(grammar->ast_wildcard_rules.size() + 16);
 
-        std::unordered_map<TSSymbol, std::vector<uint32_t>> ast_supertype_node_rules;
-        std::unordered_map<TSSymbol, std::vector<uint32_t>> ast_supertype_field_rules;
-        // Symbol IDs are grammar-local and can differ across visible/grammar
-        // aliases. Keep a type-name dispatch fallback for every expanded
-        // subtype so ATS supertype rules remain addressable by either identity.
-        AstTypeRuleIndex ast_supertype_node_rules_by_type;
-        AstTypeRuleIndex ast_supertype_field_rules_by_type;
-        for (uint32_t rule_index = 0;
-             rule_index < grammar->ast_selector_rules.size(); ++rule_index) {
-            const AstSelectorRule& rule = grammar->ast_selector_rules[rule_index];
-            if (rule.target_symbol == 0) continue;
-            std::unordered_set<TSSymbol> visited;
-            std::vector<TSSymbol> subtypes;
-            tshCollectAstSubtypeSymbols(grammar->ts_language, rule.target_symbol,
-                0, visited, subtypes);
-            auto& reverse_index = rule.field_id != 0
-                ? ast_supertype_field_rules : ast_supertype_node_rules;
-            for (TSSymbol subtype : subtypes) {
-                reverse_index[subtype].push_back(rule_index);
-                const char* subtype_name =
-                    ts_language_symbol_name(grammar->ts_language, subtype);
-                if (subtype_name && subtype_name[0] != '\0') {
-                    auto& type_index = rule.field_id != 0
-                        ? ast_supertype_field_rules_by_type
-                        : ast_supertype_node_rules_by_type;
-                    type_index[subtype_name].push_back(rule_index);
-                }
-            }
-        }
-
         while (true) {
             TSNode node = ts_tree_cursor_current_node(&cursor);
             const uint32_t current_start_byte = ts_node_start_byte(node);
@@ -2309,10 +2279,10 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
             const char* node_type = ts_node_type(node);
             const char* node_grammar_type = ts_node_grammar_type(node);
             append_indexed_type_rules(grammar->ast_rules_by_node_type, node_type);
-            append_indexed_type_rules(ast_supertype_node_rules_by_type, node_type);
+            append_indexed_type_rules(grammar->ast_supertype_rules_by_node_type, node_type);
             if (!node_grammar_type || !node_type || std::strcmp(node_grammar_type, node_type) != 0) {
                 append_indexed_type_rules(grammar->ast_rules_by_node_type, node_grammar_type);
-                append_indexed_type_rules(ast_supertype_node_rules_by_type, node_grammar_type);
+                append_indexed_type_rules(grammar->ast_supertype_rules_by_node_type, node_grammar_type);
             }
             auto node_rules = grammar->ast_rules_by_node_symbol.find(sym);
             if (node_rules != grammar->ast_rules_by_node_symbol.end()) {
@@ -2326,17 +2296,6 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                     append_indexed_rules(grammar_node_rules->second);
                 }
             }
-            auto supertype_node_rules = ast_supertype_node_rules.find(sym);
-            if (supertype_node_rules != ast_supertype_node_rules.end()) {
-                append_indexed_rules(supertype_node_rules->second);
-            }
-            if (node_grammar_sym != sym) {
-                auto grammar_supertype_node_rules =
-                    ast_supertype_node_rules.find(node_grammar_sym);
-                if (grammar_supertype_node_rules != ast_supertype_node_rules.end()) {
-                    append_indexed_rules(grammar_supertype_node_rules->second);
-                }
-            }
             if (!ts_node_is_null(parent)) {
                 auto field_rules = grammar->ast_field_rules_by_parent_symbol.find(parent_sym);
                 if (field_rules != grammar->ast_field_rules_by_parent_symbol.end()) {
@@ -2345,10 +2304,10 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                 const char* parent_type = ts_node_type(parent);
                 const char* parent_grammar_type = ts_node_grammar_type(parent);
                 append_indexed_type_rules(grammar->ast_field_rules_by_parent_type, parent_type);
-                append_indexed_type_rules(ast_supertype_field_rules_by_type, parent_type);
+                append_indexed_type_rules(grammar->ast_supertype_field_rules_by_parent_type, parent_type);
                 if (!parent_grammar_type || !parent_type || std::strcmp(parent_grammar_type, parent_type) != 0) {
                     append_indexed_type_rules(grammar->ast_field_rules_by_parent_type, parent_grammar_type);
-                    append_indexed_type_rules(ast_supertype_field_rules_by_type, parent_grammar_type);
+                    append_indexed_type_rules(grammar->ast_supertype_field_rules_by_parent_type, parent_grammar_type);
                 }
                 // Field selectors are indexed by the compiled owner symbol.
                 // Also dispatch through the original grammar identity when an
@@ -2358,17 +2317,6 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                         grammar->ast_field_rules_by_parent_symbol.find(parent_grammar_sym);
                     if (grammar_field_rules != grammar->ast_field_rules_by_parent_symbol.end()) {
                         append_indexed_rules(grammar_field_rules->second);
-                    }
-                }
-                auto supertype_field_rules = ast_supertype_field_rules.find(parent_sym);
-                if (supertype_field_rules != ast_supertype_field_rules.end()) {
-                    append_indexed_rules(supertype_field_rules->second);
-                }
-                if (parent_grammar_sym != parent_sym) {
-                    auto grammar_supertype_field_rules =
-                        ast_supertype_field_rules.find(parent_grammar_sym);
-                    if (grammar_supertype_field_rules != ast_supertype_field_rules.end()) {
-                        append_indexed_rules(grammar_supertype_field_rules->second);
                     }
                 }
             }

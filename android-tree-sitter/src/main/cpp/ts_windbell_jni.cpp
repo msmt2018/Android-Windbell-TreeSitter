@@ -1363,6 +1363,12 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlight(
         }
     } source_guard{env, text_jstr, source_chars};
 
+    // Adapt the existing pinned Java UTF-16 buffer to the shared Native
+    // TextSource contract. This is zero-copy: the view is valid only for this
+    // synchronous call and allows finite-width Regex to use the same bounded
+    // window executor as mmap/PieceTree documents.
+    windbell::largefile::ContiguousTextSource contiguous_source(
+        source_chars, sourceByteLength);
     std::vector<HighlightSpan> raw_candidates;
     uint32_t pipeline_match_counts[4] = {};
     std::vector<HighlightSpan> spans;
@@ -1376,7 +1382,8 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlight(
             diagnostics == JNI_TRUE ? &raw_candidates : nullptr,
             diagnostics == JNI_TRUE ? pipeline_match_counts : nullptr,
             static_cast<uint32_t>(range_start_byte),
-            static_cast<uint32_t>(range_end_byte)
+            static_cast<uint32_t>(range_end_byte),
+            &contiguous_source
         );
     } catch (const std::bad_alloc&) {
         throwNativeAllocationFailure(env, "Native TSH capture processing exhausted memory");
