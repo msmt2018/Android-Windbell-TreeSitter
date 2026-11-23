@@ -435,6 +435,11 @@ public:
     // Type-name aliases for supertype descendants are compiled once with the
     // grammar. Runtime viewport traversal must not rebuild these maps.
     AstTypeRuleIndex ast_supertype_rules_by_node_type;
+    // Reverse subtype lookup for relational ATS selectors (parent/ancestor/child/
+    // sibling). Built once with the grammar; runtime matching is hash lookup,
+    // not a recursive ts_language_subtypes walk for every candidate node.
+    std::unordered_map<TSSymbol, std::unordered_set<TSSymbol>>
+        ast_supertype_selectors_by_node_symbol;
     std::unordered_map<TSSymbol, std::vector<uint32_t>> ast_field_rules_by_parent_symbol;
     AstTypeRuleIndex ast_field_rules_by_parent_type;
     AstTypeRuleIndex ast_supertype_field_rules_by_parent_type;

@@ -24,13 +24,12 @@ namespace windbell::tsh {
 namespace {
 
 // ATS node names may resolve to Tree-sitter supertypes (for example,
-// Java's "expression"). Parsed nodes carry their concrete subtype symbol,
-// so exact symbol equality is insufficient for those selectors.
+// Java's "expression"). Grammar compilation stores the transitive subtype
+// closure in reverse form so every runtime selector check is O(1) average.
 static bool tshAstSymbolMatchesNode(
-    const TSLanguage* language,
+    const TshGrammar& grammar,
     TSNode node,
-    TSSymbol selector_symbol,
-    uint32_t depth = 0
+    TSSymbol selector_symbol
 ) noexcept {
     if (selector_symbol == 0 || ts_node_is_null(node)) return false;
     const TSSymbol visible_symbol = ts_node_symbol(node);
@@ -38,30 +37,22 @@ static bool tshAstSymbolMatchesNode(
     if (selector_symbol == visible_symbol || selector_symbol == grammar_symbol) {
         return true;
     }
-    // Supertype relations can be nested (for example expression ->
-    // primary_expression -> _literal -> decimal_integer_literal). Resolve the
-    // transitive closure rather than assuming a single subtype level.
-    constexpr uint32_t kMaxSupertypeDepth = 64;
-    if (!language || depth >= kMaxSupertypeDepth) return false;
-    uint32_t subtype_count = 0;
-    const TSSymbol* subtypes =
-        ts_language_subtypes(language, selector_symbol, &subtype_count);
-    for (uint32_t i = 0; subtypes && i < subtype_count; ++i) {
-        if (tshAstSymbolMatchesNode(language, node, subtypes[i], depth + 1)) {
-            return true;
-        }
-    }
-    return false;
+    const auto visible = grammar.ast_supertype_selectors_by_node_symbol.find(visible_symbol);
+    if (visible != grammar.ast_supertype_selectors_by_node_symbol.end() &&
+        visible->second.find(selector_symbol) != visible->second.end()) return true;
+    const auto grammar_type = grammar.ast_supertype_selectors_by_node_symbol.find(grammar_symbol);
+    return grammar_type != grammar.ast_supertype_selectors_by_node_symbol.end() &&
+        grammar_type->second.find(selector_symbol) != grammar_type->second.end();
 }
 
 static bool tshAstNodeMatchesSelector(
-    const TSLanguage* language,
+    const TshGrammar& grammar,
     TSNode node,
     TSSymbol selector_symbol,
     const std::string& selector_type
 ) noexcept {
     if (ts_node_is_null(node)) return false;
-    if (tshAstSymbolMatchesNode(language, node, selector_symbol)) return true;
+    if (tshAstSymbolMatchesNode(grammar, node, selector_symbol)) return true;
 
     if (!selector_type.empty()) {
         const char* visible_type = ts_node_type(node);
@@ -2437,7 +2428,7 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                     const char* parent_type = ts_node_is_null(parent) ? nullptr : ts_node_type(parent);
                     const char* parent_grammar_type = ts_node_is_null(parent) ? nullptr : ts_node_grammar_type(parent);
                     const bool parent_symbol_matches = ast_rule.parent_symbol != 0 &&
-                        tshAstNodeMatchesSelector(grammar->ts_language, parent,
+                        tshAstNodeMatchesSelector(*grammar, parent,
                             ast_rule.parent_symbol, ast_rule.parent_type);
                     const bool parent_type_matches = !ast_rule.parent_type.empty() &&
                         ((parent_type && ast_rule.parent_type == parent_type) ||
@@ -2454,7 +2445,7 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                         const char* visible_type = ts_node_type(ancestor);
                         const char* grammar_type = ts_node_grammar_type(ancestor);
                         const bool symbol_matches =
-                            tshAstNodeMatchesSelector(grammar->ts_language, ancestor,
+                            tshAstNodeMatchesSelector(*grammar, ancestor,
                                 ast_rule.ancestor_symbol, ast_rule.ancestor_type);
                         const bool type_matches = !ast_rule.ancestor_type.empty() &&
                             ((visible_type && ast_rule.ancestor_type == visible_type) ||
@@ -2474,7 +2465,7 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                         TSNode child = ts_node_child(node, child_index);
                         const char* child_visible_type = ts_node_type(child);
                         const char* child_grammar_type = ts_node_grammar_type(child);
-                        if (tshAstNodeMatchesSelector(grammar->ts_language, child,
+                        if (tshAstNodeMatchesSelector(*grammar, child,
                                 ast_rule.child_symbol, ast_rule.child_type) ||
                             (!ast_rule.child_type.empty() &&
                              ((child_visible_type && ast_rule.child_type == child_visible_type) ||
@@ -2621,7 +2612,7 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                         const char* previous_type = ts_node_type(previous);
                         const char* previous_grammar_type = ts_node_grammar_type(previous);
                         const bool previous_symbol_matches =
-                            tshAstNodeMatchesSelector(grammar->ts_language, previous,
+                            tshAstNodeMatchesSelector(*grammar, previous,
                                 ast_rule.previous_sibling_symbol, ast_rule.previous_sibling_type);
                         const bool previous_type_matches =
                             (!ast_rule.previous_sibling_type.empty() && previous_type &&
@@ -2636,7 +2627,7 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                         const char* next_type = ts_node_type(next);
                         const char* next_grammar_type = ts_node_grammar_type(next);
                         const bool next_symbol_matches =
-                            tshAstNodeMatchesSelector(grammar->ts_language, next,
+                            tshAstNodeMatchesSelector(*grammar, next,
                                 ast_rule.next_sibling_symbol, ast_rule.next_sibling_type);
                         const bool next_type_matches =
                             (!ast_rule.next_sibling_type.empty() && next_type &&

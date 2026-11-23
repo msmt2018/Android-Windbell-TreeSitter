@@ -3638,6 +3638,7 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
     grammar->ast_rules_by_node_symbol.clear();
     grammar->ast_rules_by_node_type.clear();
     grammar->ast_supertype_rules_by_node_type.clear();
+    grammar->ast_supertype_selectors_by_node_symbol.clear();
     grammar->ast_field_rules_by_parent_symbol.clear();
     grammar->ast_field_rules_by_parent_type.clear();
     grammar->ast_supertype_field_rules_by_parent_type.clear();
@@ -3694,6 +3695,42 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                 grammar->ast_wildcard_rules.push_back(rule_index);
             }
         }
+    }
+
+    // Relational selectors are evaluated on parent/ancestor/child/sibling
+    // nodes, not only on the indexed target. Precompute their complete nested
+    // supertype closures once, then reverse-index concrete symbols to the
+    // selector symbols they satisfy. This removes recursive grammar traversal
+    // from the per-node viewport hot path.
+    std::unordered_set<TSSymbol> indexed_relation_symbols;
+    auto index_relation_supertype = [&](TSSymbol selector_symbol) {
+        if (selector_symbol == 0 ||
+            !indexed_relation_symbols.insert(selector_symbol).second) return;
+        std::vector<TSSymbol> pending{selector_symbol};
+        std::unordered_set<TSSymbol> visited;
+        while (!pending.empty()) {
+            const TSSymbol current = pending.back();
+            pending.pop_back();
+            if (!visited.insert(current).second) continue;
+            uint32_t subtype_count = 0;
+            const TSSymbol* subtypes =
+                ts_language_subtypes(ts_lang, current, &subtype_count);
+            for (uint32_t i = 0; subtypes && i < subtype_count; ++i) {
+                pending.push_back(subtypes[i]);
+            }
+        }
+        for (const TSSymbol concrete_symbol : visited) {
+            if (concrete_symbol == selector_symbol) continue;
+            grammar->ast_supertype_selectors_by_node_symbol[concrete_symbol]
+                .insert(selector_symbol);
+        }
+    };
+    for (const AstSelectorRule& rule : grammar->ast_selector_rules) {
+        index_relation_supertype(rule.parent_symbol);
+        index_relation_supertype(rule.ancestor_symbol);
+        index_relation_supertype(rule.child_symbol);
+        index_relation_supertype(rule.previous_sibling_symbol);
+        index_relation_supertype(rule.next_sibling_symbol);
     }
 
     // Each native query block was compiled independently by Tree-sitter's
