@@ -273,6 +273,41 @@ class JavaTshFullTest {
                 }.sortedWith(compareBy<List<Long>> { it[0] }.thenBy { it[1] }.thenBy { it[2] })
                 assertEquals(expected, actual,
                     "Annotation capture for $name must be identical in full-document and viewport execution")
+
+                // Exercise the exact JNI/Query boundaries independently: a viewport
+                // containing only '@', one beginning inside the annotation name, and
+                // one ending at the marker/name boundary must remain deterministic.
+                val boundaryRanges = listOf(
+                    tokenStart to (tokenStart + 1),
+                    (tokenStart + 1) to (tokenStart + 2),
+                    (tokenStart + 2) to (tokenStart + name.length),
+                    tokenStart to (tokenStart + name.length + 1)
+                )
+                for ((boundaryStart, boundaryEnd) in boundaryRanges) {
+                    val boundaryStartByte = boundaryStart.toLong() * 2L
+                    val boundaryEndByte = boundaryEnd.toLong() * 2L
+                    val boundaryActual = engine.computeHighlights(
+                        tree, source, "java", boundaryStartByte, boundaryEndByte
+                    ).map { span ->
+                        listOf(span.startByte.toLong(), span.endByte.toLong(),
+                            span.styleId.toLong(), span.priority.toLong(),
+                            span.declarationOrder.toLong(), span.source.toLong())
+                    }.sortedWith(compareBy<List<Long>> { it[0] }
+                        .thenBy { it[1] }.thenBy { it[2] })
+                    val boundaryExpected = allFull.mapNotNull { span ->
+                        val clippedStart = maxOf(span.startByte.toLong(), boundaryStartByte)
+                        val clippedEnd = minOf(span.endByte.toLong(), boundaryEndByte)
+                        if (clippedStart < clippedEnd) {
+                            listOf(clippedStart, clippedEnd, span.styleId.toLong(),
+                                span.priority.toLong(), span.declarationOrder.toLong(),
+                                span.source.toLong())
+                        } else null
+                    }.sortedWith(compareBy<List<Long>> { it[0] }
+                        .thenBy { it[1] }.thenBy { it[2] })
+                    assertEquals(boundaryExpected, boundaryActual,
+                        "Annotation $name must remain stable at UTF-16 viewport boundary " +
+                            "[$boundaryStart, $boundaryEnd)")
+                }
             }
         } finally {
             tree?.close()
