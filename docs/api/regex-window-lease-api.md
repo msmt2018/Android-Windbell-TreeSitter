@@ -11,7 +11,7 @@ This is an input-resource contract for the independent Regex pipeline. It does n
 A caller supplies `TshRegexWindowConstraints`:
 
 - `coreWindowUtf16`: maximum length of the non-overlapping ownership interval.
-- `maxWindowUtf16`: hard maximum contiguous slice length (256 KiB by default; maximum 1 Mi UTF-16 units).
+- `maxWindowUtf16`: caller-selected maximum contiguous slice length. It is constrained by the active memory reservation and native coordinate representation, not by a library-wide fixed 1 Mi-unit ceiling.
 - `maxMatchLengthUtf16`: finite maximum consumed match length. Null is rejected by `acquire()`.
 - `maxLookbehindUtf16` and `maxLookaheadUtf16`: finite context required by the pattern.
 

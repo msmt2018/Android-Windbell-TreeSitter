@@ -660,7 +660,7 @@ static int tshPredicateRegexMatchesTextSourceBounded(
 ) {
     if (!regex || start_byte > end_byte || (start_byte & 1u) ||
         (end_byte & 1u) || end_byte > source.sizeBytes() ||
-        maximum_match_bytes == 0 || maximum_match_bytes > 8u * 1024u * 1024u)
+        maximum_match_bytes == 0)
         return -1;
     if (start_byte == end_byte) {
         static const UChar empty_input = 0;
@@ -2208,19 +2208,30 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                                 ast_rule.text_regex,
                                 ast_rule.text_regex_maximum_bytes)) continue;
                     } else {
-                    // Context-dependent AST regexes retain the contiguous adapter,
-                    // but cap the temporary node to prevent a single giant string or
-                    // comment node from allocating a document-sized second copy.
-                    constexpr uint64_t kMaxContiguousAstRegexBytes = 4ULL * 1024ULL * 1024ULL;
-                    if (text_source && ast_rule.text_regex &&
-                        text_end - text_start > kMaxContiguousAstRegexBytes) continue;
+                    // Context-dependent Regex needs the complete node slice, but a
+                    // mapped TextSource already exposes it without a second large heap
+                    // copy. Materialize only if the source has no contiguous backing;
+                    // convert to UTF-8 only when literal predicates require it.
                     std::string node_text_storage;
-                    std::vector<UChar> node_text_window((text_end - text_start) / sizeof(UChar));
+                    std::vector<UChar> node_text_window;
                     const UChar* node_source = nullptr;
                     if (text_end > text_start) {
                         if (text_source) {
-                            if (!windbell::largefile::copyTextRange(*text_source, text_start, text_end - text_start, node_text_window.data())) continue;
-                            node_source = node_text_window.data();
+                            const char* mapped_data = nullptr;
+                            uint64_t mapped_size = 0;
+                            if (text_source->contiguousData(&mapped_data, &mapped_size) &&
+                                mapped_data && text_end <= mapped_size) {
+                                node_source = reinterpret_cast<const UChar*>(mapped_data) + text_start;
+                            } else {
+                                const uint64_t node_bytes = text_end - text_start;
+                                if ((node_bytes & 1u) != 0 ||
+                                    node_bytes > static_cast<uint64_t>(node_text_window.max_size())) continue;
+                                try { node_text_window.resize(static_cast<size_t>(node_bytes)); }
+                                catch (const std::bad_alloc&) { continue; }
+                                if (!windbell::largefile::copyTextRange(
+                                        *text_source, text_start, node_bytes, node_text_window.data())) continue;
+                                node_source = node_text_window.data();
+                            }
                         } else if (has_contiguous_text) {
                             const UChar *document_source = input_chars
                                 ? reinterpret_cast<const UChar*>(input_chars)
@@ -2229,8 +2240,13 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                         }
                         else continue;
                     } else node_source = &kEmptyInput;
-                    if (!tshUtf16SliceToUtf8(node_source, text_end - text_start, node_text_storage)) continue;
-                    const std::string_view node_text(node_text_storage);
+                    const bool needs_utf8_literals = ast_rule.has_text_equals ||
+                        ast_rule.has_text_prefix || ast_rule.has_text_suffix;
+                    std::string_view node_text;
+                    if (needs_utf8_literals) {
+                        if (!tshUtf16SliceToUtf8(node_source, text_end - text_start, node_text_storage)) continue;
+                        node_text = node_text_storage;
+                    }
                     if (ast_rule.has_text_equals && node_text != ast_rule.text_equals) continue;
                     if (ast_rule.has_text_prefix &&
                         (node_text.size() < ast_rule.text_prefix.size() ||

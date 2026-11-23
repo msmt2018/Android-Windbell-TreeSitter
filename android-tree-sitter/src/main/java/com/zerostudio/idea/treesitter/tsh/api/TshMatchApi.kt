@@ -167,8 +167,8 @@ data class TshMatchSet(
 
 /** Limits the merger's retained working set; estimates are not JVM heap measurements. */
 data class TshMatchMergeBudget(
-    val maxMatches: Int = 250_000,
-    val maxEstimatedBytes: Long = 64L * 1024L * 1024L
+    val maxMatches: Int = Int.MAX_VALUE,
+    val maxEstimatedBytes: Long = 100L * 1024L * 1024L
 ) {
     init {
         require(maxMatches > 0)

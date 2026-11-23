@@ -126,7 +126,7 @@ Piece Tree 跨 chunk、emoji/组合字符、超长行、窗口边缘匹配、loo
 - `TshRegexWindowSequence`：独立 Snapshot Lease、自动连续分区、失败不推进、空文档单窗口。
 - `TshRegexNativeRegistry` / `TshOnigurumaRegex`：新增独立 Oniguruma Native Handle Registry、compile/release/find-all JNI 和 Kotlin Executor；opaque handle 由注册表管理，执行期间以 shared ownership 保活，单个 handle 的执行串行化。
 - Kotlin Handle 生命周期采用读写锁：JNI find-all 持有读锁，`close()` 持有写锁并等待正在执行的 JNI 调用退出后再释放 Native Handle，避免 Kotlin close 与 JNI 首次查找句柄之间的竞态；关闭后新调用稳定返回 closed 诊断。该机制不提供执行超时，也不能中断正在运行的 Oniguruma 回溯。
-/`\A`/`\z` 锚点语义、core start 归属、匹配数/捕获组上限。Kotlin 校验返回范围和 Unicode 边界并转换为绝对 UTF-16 范围。当前捕获组用 `group_N` 数字名；Native 按非重叠全局搜索枚举结果，零宽匹配按下一个 Unicode code point 推进；每个 Match 仅由其 start 所属的 core window 输出。Native 对单个 pattern 和单个窗口分别设置 64 Ki UTF-16 code-unit pattern 上限、512 个活跃 Native Regex Handle 上限与 2 MiB 单窗口结果载荷上限。
+/`\A`/`\z` 锚点语义、core start 归属和调用方结果预算。Kotlin 校验返回范围和 Unicode 边界并转换为绝对 UTF-16 范围。当前捕获组用 `group_N` 数字名；Native 按非重叠全局搜索枚举结果，零宽匹配按下一个 Unicode code point 推进；每个 Match 仅由其 start 所属的 core window 输出。pattern、活跃句柄和捕获组数量不再设置库内固定数量阈值；结果规模由调用方预算、动态内存预算及 JNI/Oniguruma 的真实表示边界共同约束。
 - Native UTF-16LE 的代理对校验与零宽推进改为逐字节解码，不再把 JNI byte array 或 `std::vector<UChar>` 缓冲区强制转换为 `uint16_t*`；避免未保证对齐的缓冲区解引用，也不依赖宿主 CPU 字节序。Oniguruma 本身仍接收原始 UTF-16LE 字节缓冲区。
 
 ### 仍未完成 / 不能宣称已验证

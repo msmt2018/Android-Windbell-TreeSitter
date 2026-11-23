@@ -43,7 +43,6 @@ public:
         bool document_start,
         bool document_end,
         uint32_t max_matches,
-        uint32_t max_capture_groups,
         TshRegexNativeBatch& output,
         std::string& error
     );

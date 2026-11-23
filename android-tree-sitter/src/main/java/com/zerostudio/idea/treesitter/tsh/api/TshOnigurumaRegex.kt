@@ -54,8 +54,7 @@ class TshOnigurumaRegex private constructor(
      */
     fun executeWindow(
         window: TshRegexWindowLease,
-        maxMatches: Int = MAX_MATCHES_PER_WINDOW,
-        maxCaptureGroups: Int = DEFAULT_MAX_CAPTURE_GROUPS
+        maxMatches: Int = Int.MAX_VALUE
     ): TshResult<TshRegexWindowExecution> {
         if (window.isClosed) return failure(
             "TSH-REGEX-NATIVE-002", "Regex window lease is closed"
@@ -63,20 +62,9 @@ class TshOnigurumaRegex private constructor(
         if (window.constraints != windowConstraints) return failure(
             "TSH-REGEX-NATIVE-023", "Regex window constraints do not match the compiled Regex declaration"
         )
-        if (maxMatches !in 1..MAX_MATCHES_PER_WINDOW ||
-            maxCaptureGroups !in 1..MAX_CAPTURE_GROUPS) {
-            return failure(
-                "TSH-REGEX-NATIVE-003",
-                "Regex execution limits exceed the supported bounded Native limits"
-            )
-        }
-
-        val bytesPerNativeMatch = 24L + (maxCaptureGroups + 1L) * 16L
-        val memoryBoundedMatchLimit = maxOf(
-            1,
-            (MAX_NATIVE_RESULT_BYTES_PER_WINDOW / bytesPerNativeMatch).toInt()
+        if (maxMatches <= 0) return failure(
+            "TSH-REGEX-NATIVE-003", "Regex result budget must be positive"
         )
-        val effectiveMaxMatches = minOf(maxMatches, memoryBoundedMatchLimit)
         val raw = try {
             val readLock = lifecycleLock.readLock()
             readLock.lock()
@@ -94,8 +82,7 @@ class TshOnigurumaRegex private constructor(
                     window.coreEndInWindow,
                     window.isDocumentStart,
                     window.isDocumentEnd,
-                    effectiveMaxMatches,
-                    maxCaptureGroups
+                    maxMatches
                 )
             } finally {
                 readLock.unlock()
@@ -105,7 +92,7 @@ class TshOnigurumaRegex private constructor(
         } ?: return failure("TSH-REGEX-NATIVE-005", "Oniguruma returned a null result")
 
         if (raw.size < 2 || raw[0] !in 0L..1L ||
-            raw[1] < 0L || raw[1] > effectiveMaxMatches.toLong()) {
+            raw[1] < 0L || raw[1] > maxMatches.toLong()) {
             return failure("TSH-REGEX-NATIVE-006", "Oniguruma returned a malformed result header")
         }
         val count = raw[1].toInt()
@@ -120,13 +107,13 @@ class TshOnigurumaRegex private constructor(
             val groupCountLong = raw[cursor++]
             if (localStart < 0L || localEnd < localStart ||
                 localEnd > window.lengthUtf16.toLong() ||
-                groupCountLong !in 1L..(maxCaptureGroups + 1).toLong()) {
+                groupCountLong !in 1L..Int.MAX_VALUE.toLong()) {
                 return failure(
                     "TSH-REGEX-NATIVE-008", "Oniguruma returned invalid match or capture coordinates"
                 )
             }
             val groupCount = groupCountLong.toInt()
-            if (cursor + groupCount * 2 > raw.size) return failure(
+            if (groupCountLong > ((raw.size - cursor) / 2).toLong()) return failure(
                 "TSH-REGEX-NATIVE-009", "Oniguruma capture payload is truncated at match $matchIndex"
             )
 
@@ -186,8 +173,7 @@ class TshOnigurumaRegex private constructor(
      */
     fun execute(
         sequence: TshRegexWindowSequence,
-        maxMatches: Int = DEFAULT_MAX_MATCHES,
-        maxCaptureGroups: Int = DEFAULT_MAX_CAPTURE_GROUPS,
+        maxMatches: Int = Int.MAX_VALUE,
         budget: TshMatchMergeBudget = TshMatchMergeBudget(maxMatches = maxMatches)
     ): TshResult<TshMatchSet> {
         if (isClosed) return failure("TSH-REGEX-NATIVE-001", "Regex handle is closed")
@@ -230,7 +216,7 @@ class TshOnigurumaRegex private constructor(
             }
 
             val execution = try {
-                executeWindow(acquired, minOf(remaining, MAX_MATCHES_PER_WINDOW), maxCaptureGroups)
+                executeWindow(acquired, remaining)
             } finally {
                 acquired.close()
             }
@@ -313,13 +299,6 @@ class TshOnigurumaRegex private constructor(
     )
 
     companion object {
-        private const val MAX_MATCHES_PER_WINDOW = 8192
-        private const val MAX_NATIVE_RESULT_BYTES_PER_WINDOW = 2L * 1024L * 1024L
-        private const val MAX_CAPTURE_GROUPS = 256
-        private const val DEFAULT_MAX_CAPTURE_GROUPS = 32
-        private const val DEFAULT_MAX_MATCHES = 250_000
-        private const val MAX_PATTERN_UTF16 = 64 * 1024
-
         @JvmStatic
         fun compile(
             pattern: String,
@@ -328,12 +307,6 @@ class TshOnigurumaRegex private constructor(
             pipelineRevision: String,
             windowConstraints: TshRegexWindowConstraints
         ): TshResult<TshOnigurumaRegex> {
-            if (pattern.length > MAX_PATTERN_UTF16) {
-                return failure(
-                    "TSH-REGEX-NATIVE-024",
-                    "Regex pattern exceeds the 64 Ki UTF-16 code-unit compile limit"
-                )
-            }
             if (regexId.isBlank() || regexRevision.isBlank() || pipelineRevision.isBlank()) {
                 return failure("TSH-REGEX-NATIVE-018", "Regex identity and revisions must not be blank")
             }
@@ -391,7 +364,6 @@ private class TshOnigurumaNative {
         coreEndUtf16: Int,
         documentStart: Boolean,
         documentEnd: Boolean,
-        maxMatches: Int,
-        maxCaptureGroups: Int
+        maxMatches: Int
     ): LongArray?
 }

@@ -43,9 +43,7 @@ uint64_t TshRegexNativeRegistry::compile(
     size_t pattern_bytes,
     std::string& error
 ) {
-    constexpr size_t kMaxPatternUtf16 = 64u * 1024u;
     if ((!pattern && pattern_bytes != 0) || (pattern_bytes & 1u) != 0 ||
-        pattern_bytes / 2u > kMaxPatternUtf16 ||
         pattern_bytes > static_cast<size_t>(std::numeric_limits<std::ptrdiff_t>::max())) {
         error = "Regex pattern has an invalid or oversized UTF-16LE buffer";
         return 0;
@@ -100,11 +98,6 @@ uint64_t TshRegexNativeRegistry::compile(
     }
 
     std::lock_guard<std::mutex> lock(mutex_);
-    constexpr size_t kMaxActiveRegexHandles = 512;
-    if (entries_.size() >= kMaxActiveRegexHandles) {
-        error = "Active Regex handle limit (512) has been reached";
-        return 0;
-    }
     if (next_handle_ == 0 || next_handle_ > static_cast<uint64_t>(std::numeric_limits<int64_t>::max())) {
         error = "Regex native handle space is exhausted";
         return 0;
@@ -136,38 +129,28 @@ bool TshRegexNativeRegistry::execute(
     bool document_start,
     bool document_end,
     uint32_t max_matches,
-    uint32_t max_capture_groups,
     TshRegexNativeBatch& output,
     std::string& error
 ) {
     output = {};
+    // Oniguruma's region offsets are signed byte offsets. Both synthetic
+    // UTF-16 sentinels must fit in the same representation.
+    const size_t onig_offset_capacity = static_cast<size_t>(std::numeric_limits<int>::max());
+    const size_t sentinel_overhead = 2u * sizeof(uint16_t);
     if ((!text && text_bytes != 0) || (text_bytes & 1u) != 0 ||
-        text_bytes / 2u > 1024u * 1024u) {
-        error = "Regex window is not a valid bounded UTF-16LE buffer";
+        text_bytes > onig_offset_capacity - sentinel_overhead ||
+        text_bytes > static_cast<size_t>(std::numeric_limits<std::ptrdiff_t>::max())) {
+        error = "Regex window exceeds the Oniguruma signed byte-offset representation";
         return false;
     }
     static const UChar empty_text[] = {0, 0};
     if (!text) text = empty_text;
     const int32_t length = static_cast<int32_t>(text_bytes / 2u);
-    constexpr uint32_t kMaxMatchesPerWindow = 8192;
-    constexpr uint32_t kMaxCaptureGroups = 256;
-    constexpr size_t kMaxNativeResultBytesPerWindow = 2u * 1024u * 1024u;
     if (core_start_utf16 < 0 || core_end_utf16 < core_start_utf16 ||
-        core_end_utf16 > length || max_matches == 0 ||
-        max_matches > kMaxMatchesPerWindow || max_capture_groups == 0 ||
-        max_capture_groups > kMaxCaptureGroups) {
-        error = "Regex core range or execution budget is invalid";
+        core_end_utf16 > length || max_matches == 0) {
+        error = "Regex core range or caller result budget is invalid";
         return false;
     }
-    // Enforce the result-memory ceiling here as well as in Kotlin. JNI is not
-    // the only possible caller of this registry, and a future adapter must not
-    // be able to request an unbounded capture payload by bypassing its wrapper.
-    const size_t estimated_bytes_per_match =
-        24u + (static_cast<size_t>(max_capture_groups) + 1u) * 16u;
-    const uint32_t memory_bounded_matches = static_cast<uint32_t>(
-        std::max<size_t>(1u, kMaxNativeResultBytesPerWindow / estimated_bytes_per_match)
-    );
-    const uint32_t effective_max_matches = std::min(max_matches, memory_bounded_matches);
     // Keep the Native boundary self-validating. Kotlin window leases already
     // reject malformed UTF-16 and split core boundaries, but JNI must not rely
     // on callers preserving those invariants (reflection/future adapters can
@@ -311,7 +294,7 @@ bool TshRegexNativeRegistry::execute(
             break;
         }
         if (start >= core_start_utf16) {
-            if (output.matches.size() >= effective_max_matches) {
+            if (output.matches.size() >= static_cast<size_t>(max_matches)) {
                 output.truncated = true;
                 break;
             }
@@ -319,10 +302,9 @@ bool TshRegexNativeRegistry::execute(
             match.start_utf16 = start;
             match.end_utf16 = finish;
             const int capture_count = std::max(0, region.value->num_regs);
-            const int retained_count = std::min<int>(
-                capture_count, static_cast<int>(max_capture_groups) + 1
-            );
-            if (capture_count > retained_count) output.truncated = true;
+            // Capture cardinality is grammar-defined data, not a tuning limit.
+            // Preserve every group reported by Oniguruma.
+            const int retained_count = capture_count;
             match.capture_ranges_utf16.reserve(static_cast<size_t>(retained_count));
             for (int group = 0; group < retained_count; ++group) {
                 const int beg_position = region.value->beg[group];

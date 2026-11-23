@@ -2299,16 +2299,14 @@ Java_com_zerostudio_idea_treesitter_tsh_api_TshOnigurumaNative_nativeFindAll(
     jint core_end_utf16,
     jboolean document_start,
     jboolean document_end,
-    jint max_matches,
-    jint max_capture_groups
+    jint max_matches
 ) {
     if (handle <= 0 || !window_text) {
         throw_illegal_args(env, "Regex handle and window text are required");
         return nullptr;
     }
-    if (max_matches <= 0 || max_matches > 8192 ||
-        max_capture_groups <= 0 || max_capture_groups > 256) {
-        throw_illegal_args(env, "Regex execution limits exceed the supported native bounds");
+    if (max_matches <= 0) {
+        throw_illegal_args(env, "Regex result budget must be positive");
         return nullptr;
     }
 
@@ -2328,7 +2326,6 @@ Java_com_zerostudio_idea_treesitter_tsh_api_TshOnigurumaNative_nativeFindAll(
             document_start == JNI_TRUE,
             document_end == JNI_TRUE,
             static_cast<uint32_t>(max_matches),
-            static_cast<uint32_t>(max_capture_groups),
             batch,
             error
         );

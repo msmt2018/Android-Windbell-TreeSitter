@@ -16,8 +16,8 @@ data class TshRegexWindowConstraints(
     val maxLookaheadUtf16: Int = 0
 ) {
     init {
-        require(coreWindowUtf16 in 256..(1024 * 1024))
-        require(maxWindowUtf16 in 256..(1024 * 1024))
+        require(coreWindowUtf16 > 0)
+        require(maxWindowUtf16 > 0)
         require(maxMatchLengthUtf16 == null || maxMatchLengthUtf16 > 0)
         require(maxLookbehindUtf16 >= 0)
         require(maxLookaheadUtf16 >= 0)

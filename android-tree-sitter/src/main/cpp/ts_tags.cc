@@ -59,18 +59,14 @@ struct OwnedQueryMatch {
 #if defined(TSH_TREE_SITTER_HAS_QUERY_CURSOR_OPTIONS)
 struct TagsProgressBudget {
   uint32_t callbacks = 0;
-  static constexpr uint32_t kMaxCallbacks = 100000;
   bool cancelled = false;
 };
 
 bool tagsProgressCallback(TSQueryCursorState *state) {
   if (!state || !state->payload) return true;
   auto *budget = static_cast<TagsProgressBudget *>(state->payload);
-  if (++budget->callbacks >= TagsProgressBudget::kMaxCallbacks) {
-    budget->cancelled = true;
-    return true;
-  }
-  return false;
+  ++budget->callbacks;
+  return budget->cancelled;
 }
 #endif
 
@@ -94,9 +90,8 @@ static jobject TSQuery_extractBounded(
         env, "Invalid absolute byte range: Tree-sitter byte offsets are uint32");
     return nullptr;
   }
-  if (max_results < 1 || max_results > 250000 ||
-      max_pending_matches < 1 || max_pending_matches > 1000000) {
-    throwTagsIllegalArgument(env, "maxResults must be between 1 and 250000; maxPendingMatches must be between 1 and 1000000");
+  if (max_results < 1 || max_pending_matches < 1) {
+    throwTagsIllegalArgument(env, "maxResults and maxPendingMatches must be positive");
     return nullptr;
   }
 
@@ -109,8 +104,8 @@ static jobject TSQuery_extractBounded(
       throwTagsIllegalArgument(env, "styleIds length must equal the query capture count");
       return nullptr;
     }
-    if (max_spans < 1 || max_spans > 500000) {
-      throwTagsIllegalArgument(env, "maxSpans must be between 1 and 500000");
+    if (max_spans < 1) {
+      throwTagsIllegalArgument(env, "maxSpans must be positive");
       return nullptr;
     }
     try {
@@ -169,7 +164,6 @@ static jobject TSQuery_extractBounded(
   size_t capture_count_for_spans = 0;
   size_t query_match_count = 0;
   size_t query_capture_count = 0;
-  constexpr size_t kMaxQueryCaptures = 500000;
   try {
     matches.reserve(static_cast<size_t>(std::min(max_results, 4096)));
     TSQueryMatch match{};
@@ -179,8 +173,8 @@ static jobject TSQuery_extractBounded(
         return nullptr;
       }
       ++query_match_count;
-      if (match.capture_count > kMaxQueryCaptures - query_capture_count) {
-        throwTagsIllegalState(env, "Tree-sitter query exceeded maxCaptures; no partial result was returned");
+      if (match.capture_count > std::numeric_limits<size_t>::max() - query_capture_count) {
+        throwTagsIllegalState(env, "Tree-sitter capture accounting overflowed native size_t");
         return nullptr;
       }
       query_capture_count += match.capture_count;
