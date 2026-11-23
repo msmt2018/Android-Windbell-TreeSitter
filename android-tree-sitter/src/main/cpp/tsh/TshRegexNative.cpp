@@ -295,6 +295,14 @@ bool TshRegexNativeRegistry::execute(
         const int32_t finish = static_cast<int32_t>(
             (end_byte_position - static_cast<int>(prefix_bytes)) / 2
         );
+        // Regex offsets are UTF-16 code units, but public TSH ranges promise
+        // Unicode code-point boundaries. Do not leak a match that starts or
+        // ends between the two code units of a supplementary character.
+        if (starts_surrogate_pair(text, length, start - 1) ||
+            starts_surrogate_pair(text, length, finish - 1)) {
+            error = "Oniguruma returned a Regex match range that splits a UTF-16 surrogate pair";
+            return false;
+        }
 
         // Core ownership is half-open. Only the final document EOF owns its zero-width match.
         if (start > core_end_utf16 ||
@@ -337,14 +345,18 @@ bool TshRegexNativeRegistry::execute(
                         error = "Oniguruma returned a malformed UTF-16 capture range";
                         return false;
                     }
-                    match.capture_ranges_utf16.emplace_back(
-                        static_cast<int32_t>(
-                            (beg_position - static_cast<int>(prefix_bytes)) / 2
-                        ),
-                        static_cast<int32_t>(
-                            (group_end_position - static_cast<int>(prefix_bytes)) / 2
-                        )
+                    const int32_t capture_start = static_cast<int32_t>(
+                        (beg_position - static_cast<int>(prefix_bytes)) / 2
                     );
+                    const int32_t capture_end = static_cast<int32_t>(
+                        (group_end_position - static_cast<int>(prefix_bytes)) / 2
+                    );
+                    if (starts_surrogate_pair(text, length, capture_start - 1) ||
+                        starts_surrogate_pair(text, length, capture_end - 1)) {
+                        error = "Oniguruma returned a capture range that splits a UTF-16 surrogate pair";
+                        return false;
+                    }
+                    match.capture_ranges_utf16.emplace_back(capture_start, capture_end);
                 }
             }
             output.matches.emplace_back(std::move(match));
