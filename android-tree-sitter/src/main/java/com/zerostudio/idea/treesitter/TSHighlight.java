@@ -241,17 +241,16 @@ public final class TSHighlight {
   public static final class Cursor implements AutoCloseable {
     private final TSQueryCursor cursor;
     private final int[] styleIds;
-    private final boolean[] cancelled;
+    private final boolean[] cancellationState;
     private TSQueryMatch currentMatch;
     private int nextCaptureIndex;
     private boolean exhausted;
-    private boolean cancelled;
     private boolean closed;
 
-    private Cursor(TSQueryCursor cursor, int[] styleIds, boolean[] cancelled) {
+    private Cursor(TSQueryCursor cursor, int[] styleIds, boolean[] cancellationState) {
       this.cursor = cursor;
       this.styleIds = styleIds.clone();
-      this.cancelled = cancelled;
+      this.cancellationState = cancellationState;
     }
 
     /**
