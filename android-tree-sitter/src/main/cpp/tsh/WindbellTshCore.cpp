@@ -2725,10 +2725,8 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                 }
 
                 // Resolve positional and adjacent-sibling constraints from one
-                // parent child-list snapshot. Tree-sitter's direct sibling helpers
-                // can be inconsistent for anonymous/aliased grammar nodes; using the
-                // parent's indexed children guarantees that previous and next are
-                // evaluated against the same concrete node identity.
+                // parent child-list snapshot. This keeps both neighbor checks tied to
+                // the same current-node identity and preserves anonymous child positions.
                 const bool needs_child_position =
                     ast_rule.child_index != UINT32_MAX ||
                     ast_rule.named_child_index != UINT32_MAX ||
