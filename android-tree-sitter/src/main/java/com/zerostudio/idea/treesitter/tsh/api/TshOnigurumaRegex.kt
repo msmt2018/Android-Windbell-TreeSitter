@@ -30,6 +30,13 @@ data class TshRegexWindowExecution(
 )
 
 /**
+ * Whether reaching the accepted-match limit at the end of this core requires a probe
+ * of later cores before completeness can be decided.
+ */
+internal fun shouldProbeAfterWindow(matchesAtLimit: Boolean, isLastCore: Boolean): Boolean =
+    matchesAtLimit && !isLastCore
+
+/**
  * Independent Oniguruma Regex compiler/executor backed by an opaque Native handle.
  *
  * Window constraints are an explicit caller declaration, not a proof-producing Regex analyzer.
@@ -258,9 +265,10 @@ class TshOnigurumaRegex private constructor(
                 truncated = true
                 break
             }
-            if (records.size >= maxMatches && !isLastCore) {
-                truncated = true
-                break
+            if (shouldProbeAfterWindow(records.size >= maxMatches, isLastCore)) {
+                // Do not call this truncated yet. The next window is probed with a one-match
+                // non-admitting scan; only an actual additional match proves truncation.
+                continue
             }
             if (records.size >= maxMatches && isLastCore) {
                 // The last core was fully searched and the Native result was not truncated.
