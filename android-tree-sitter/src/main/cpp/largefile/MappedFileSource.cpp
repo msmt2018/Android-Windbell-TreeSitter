@@ -183,6 +183,10 @@ bool MappedFileSource::isOpen() const noexcept {
     return open_;
 }
 
+bool MappedFileSource::isValid() const noexcept {
+    return open_ && (size_bytes_ == 0 || mapping_ != nullptr);
+}
+
 uint64_t MappedFileSource::sizeBytes() const noexcept {
     return size_bytes_;
 }
