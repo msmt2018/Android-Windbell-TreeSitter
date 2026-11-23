@@ -2578,12 +2578,12 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                     }
                 }
 
+                // Only positional child-index selectors need a parent-wide
+                // sibling scan. First/last and adjacent-sibling selectors use
+                // Tree-sitter's direct sibling links and avoid O(child_count)
+                // work for every candidate in large declarations/argument lists.
                 if (ast_rule.child_index != UINT32_MAX ||
-                    ast_rule.named_child_index != UINT32_MAX ||
-                    ast_rule.first_child >= 0 || ast_rule.last_child >= 0 ||
-                    ast_rule.previous_sibling_symbol != 0 || ast_rule.next_sibling_symbol != 0 ||
-                    !ast_rule.previous_sibling_type.empty() ||
-                    !ast_rule.next_sibling_type.empty()) {
+                    ast_rule.named_child_index != UINT32_MAX) {
                     if (ts_node_is_null(parent)) continue;
                     const uint32_t sibling_count = ts_node_child_count(parent);
                     uint32_t current_index = UINT32_MAX;
@@ -2603,40 +2603,46 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                         current_index != ast_rule.child_index) continue;
                     if (ast_rule.named_child_index != UINT32_MAX &&
                         current_named_index != ast_rule.named_child_index) continue;
-                    if (ast_rule.first_child >= 0 &&
-                        (current_index == 0) != (ast_rule.first_child != 0)) continue;
-                    if (ast_rule.last_child >= 0 &&
-                        (current_index + 1 == sibling_count) != (ast_rule.last_child != 0)) continue;
-                    if (ast_rule.previous_sibling_symbol != 0) {
-                        if (current_index == 0) continue;
-                        TSNode previous = ts_node_child(parent, current_index - 1);
-                        const char* previous_type = ts_node_type(previous);
-                        const char* previous_grammar_type = ts_node_grammar_type(previous);
-                        const bool previous_symbol_matches =
-                            tshAstNodeMatchesSelector(*grammar, previous,
-                                ast_rule.previous_sibling_symbol, ast_rule.previous_sibling_type);
-                        const bool previous_type_matches =
-                            (!ast_rule.previous_sibling_type.empty() && previous_type &&
-                                ast_rule.previous_sibling_type == previous_type) ||
-                            (!ast_rule.previous_sibling_type.empty() && previous_grammar_type &&
-                                ast_rule.previous_sibling_type == previous_grammar_type);
-                        if (!previous_symbol_matches && !previous_type_matches) continue;
-                    }
-                    if (ast_rule.next_sibling_symbol != 0) {
-                        if (current_index + 1 >= sibling_count) continue;
-                        TSNode next = ts_node_child(parent, current_index + 1);
-                        const char* next_type = ts_node_type(next);
-                        const char* next_grammar_type = ts_node_grammar_type(next);
-                        const bool next_symbol_matches =
-                            tshAstNodeMatchesSelector(*grammar, next,
-                                ast_rule.next_sibling_symbol, ast_rule.next_sibling_type);
-                        const bool next_type_matches =
-                            (!ast_rule.next_sibling_type.empty() && next_type &&
-                                ast_rule.next_sibling_type == next_type) ||
-                            (!ast_rule.next_sibling_type.empty() && next_grammar_type &&
-                                ast_rule.next_sibling_type == next_grammar_type);
-                        if (!next_symbol_matches && !next_type_matches) continue;
-                    }
+                }
+                if (ast_rule.first_child >= 0) {
+                    const bool is_first = ts_node_is_null(ts_node_prev_sibling(node));
+                    if (is_first != (ast_rule.first_child != 0)) continue;
+                }
+                if (ast_rule.last_child >= 0) {
+                    const bool is_last = ts_node_is_null(ts_node_next_sibling(node));
+                    if (is_last != (ast_rule.last_child != 0)) continue;
+                }
+                if (ast_rule.previous_sibling_symbol != 0 ||
+                    !ast_rule.previous_sibling_type.empty()) {
+                    TSNode previous = ts_node_prev_sibling(node);
+                    if (ts_node_is_null(previous)) continue;
+                    const char* previous_type = ts_node_type(previous);
+                    const char* previous_grammar_type = ts_node_grammar_type(previous);
+                    const bool previous_symbol_matches =
+                        tshAstNodeMatchesSelector(*grammar, previous,
+                            ast_rule.previous_sibling_symbol, ast_rule.previous_sibling_type);
+                    const bool previous_type_matches =
+                        (!ast_rule.previous_sibling_type.empty() && previous_type &&
+                            ast_rule.previous_sibling_type == previous_type) ||
+                        (!ast_rule.previous_sibling_type.empty() && previous_grammar_type &&
+                            ast_rule.previous_sibling_type == previous_grammar_type);
+                    if (!previous_symbol_matches && !previous_type_matches) continue;
+                }
+                if (ast_rule.next_sibling_symbol != 0 ||
+                    !ast_rule.next_sibling_type.empty()) {
+                    TSNode next = ts_node_next_sibling(node);
+                    if (ts_node_is_null(next)) continue;
+                    const char* next_type = ts_node_type(next);
+                    const char* next_grammar_type = ts_node_grammar_type(next);
+                    const bool next_symbol_matches =
+                        tshAstNodeMatchesSelector(*grammar, next,
+                            ast_rule.next_sibling_symbol, ast_rule.next_sibling_type);
+                    const bool next_type_matches =
+                        (!ast_rule.next_sibling_type.empty() && next_type &&
+                            ast_rule.next_sibling_type == next_type) ||
+                        (!ast_rule.next_sibling_type.empty() && next_grammar_type &&
+                            ast_rule.next_sibling_type == next_grammar_type);
+                    if (!next_symbol_matches && !next_type_matches) continue;
                 }
 
                 if (diagnostic_match_counts) tshIncrementDiagnostic(&diagnostic_match_counts[2]);
