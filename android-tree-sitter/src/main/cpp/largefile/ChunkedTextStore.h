@@ -33,6 +33,7 @@ public:
     // sealed stores so all chunk views remain stable and thread-safe.
     void seal() noexcept;
     bool isSealed() const noexcept;
+    bool isValid() const noexcept override;
 
     uint64_t sizeBytes() const noexcept override;
     uint64_t allocatedBytes() const noexcept;
