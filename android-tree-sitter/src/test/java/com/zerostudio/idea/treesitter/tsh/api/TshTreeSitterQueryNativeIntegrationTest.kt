@@ -6,6 +6,7 @@ import com.zerostudio.idea.treesitter.java.TSLanguageJava
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import java.util.concurrent.atomic.AtomicInteger
 
 class TshTreeSitterQueryNativeIntegrationTest {
     @Test
@@ -153,4 +154,107 @@ class TshTreeSitterQueryNativeIntegrationTest {
             engine.close()
         }
     }
+
+    @Test
+    fun nativeProgressCallbackCancelsAnInFlightQueryAndReleasesReservations() {
+        TreeSitter.loadLibrary()
+
+        val engine = TshEngine.create()
+        assertTrue(engine.initialize() is TshResult.Success)
+
+        var parserOwner: TshTreeSitterParserOwner? = null
+        var queryCompiler: TshTreeSitterQueryCompiler? = null
+        var queryId: String? = null
+        try {
+            val language = TSLanguage.create(
+                "java-query-cancel-test",
+                TSLanguageJava.getInstance().nativeObject
+            )
+            val grammar = TshGrammarDescriptor(
+                languageId = "java",
+                grammarVersion = "test-java-grammar",
+                abiVersion = language.languageVersion,
+                fingerprint = "java-query-cancel-native-integration-v1"
+            )
+            val languageRegistration = engine.nativeResources.register(
+                language,
+                type = "grammar-language",
+                metadata = mapOf(
+                    "languageId" to grammar.languageId,
+                    "grammarFingerprint" to grammar.fingerprint
+                )
+            )
+            val opened = engine.openTreeSitterParser(languageRegistration.handle, grammar)
+            assertTrue(opened is TshResult.Success, "Native Java parser must open")
+            parserOwner = (opened as TshResult.Success).value
+
+            // Enough syntax nodes to cross Tree-sitter's bounded native progress-check interval.
+            val source = buildString {
+                append("class QueryCancellationProbe {")
+                repeat(2_048) { index ->
+                    append("int value")
+                    append(index)
+                    append(" = ")
+                    append(index)
+                    append(';')
+                }
+                append('}')
+            }
+            val parsed = parserOwner!!.parse(
+                documentId = "java-query-cancel-probe",
+                documentVersion = 1L,
+                treeRevision = 1L,
+                source = source
+            )
+            assertTrue(parsed is TshResult.Success, "Cancellation fixture must parse")
+            val tree = (parsed as TshResult.Success).value
+
+            queryCompiler = engine.createTreeSitterQueryCompiler(
+                TshGrammarLanguageResolver { requested ->
+                    if (requested.fingerprint == grammar.fingerprint) languageRegistration.handle else null
+                }
+            )
+            val compiled = queryCompiler!!.compile(
+                TshAtsSource(
+                    text = "(identifier) @id",
+                    language = TshQuerySourceLanguage.TREE_SITTER,
+                    sourceId = "java-query-cancel-probe"
+                ),
+                grammar
+            )
+            assertTrue(compiled is TshResult.Success, "Identifier query must compile")
+            val query = (compiled as TshResult.Success).value
+            queryId = query.queryId
+
+            val progressCalls = AtomicInteger()
+            val cancelled = engine.createTreeSitterQueryExecutor().execute(
+                query = query,
+                tree = tree.snapshot,
+                cancellation = TshQueryCancellation {
+                    progressCalls.incrementAndGet() >= 1
+                }
+            )
+            assertTrue(
+                cancelled is TshResult.Failure,
+                "A native progress callback cancellation must not be reported as a complete query"
+            )
+            val failure = cancelled as TshResult.Failure
+            assertTrue(
+                failure.diagnostics.any { it.code == "TSH-QUERY-EXEC-012" },
+                "Cancellation must map to the stable TSH query-cancel diagnostic: ${failure.diagnostics}"
+            )
+            assertTrue(
+                progressCalls.get() > 0,
+                "Tree-sitter must invoke the progress callback while nextMatch is executing"
+            )
+            val budget = engine.memoryBudget.snapshot()
+            assertEquals(0L, budget.bytesByCategory[TshMemoryCategory.QUERY_CURSOR])
+            assertEquals(0L, budget.bytesByCategory[TshMemoryCategory.QUERY_RESULT])
+        } finally {
+            queryId?.let { queryCompiler?.release(it) }
+            parserOwner?.close()
+            engine.close()
+        }
+    }
+
 }
