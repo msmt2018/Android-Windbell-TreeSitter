@@ -181,6 +181,28 @@ class TshEngineNativeResourceLifecycleTest {
     }
 
     @Test
+    fun engineRefreshesMemoryPressureOnlyWhileInitialized() {
+        val engine = TshEngine.create(
+            TshEngineOptions(
+                memoryBudgetOptions = TshMemoryBudgetOptions(targetBytes = 100, hardLimitBytes = 200)
+            )
+        )
+        assertTrue(engine.updateAvailableMemory(16) is TshResult.Failure)
+        assertTrue(engine.initialize() is TshResult.Success)
+
+        val retained = (engine.memoryBudget.reserve(TshMemoryCategory.TEXT_SNAPSHOT, 8) as TshResult.Success).value
+        assertTrue(engine.updateAvailableMemory(16) is TshResult.Success)
+        assertEquals(4L, engine.memoryBudget.limitBytes)
+        assertTrue(engine.memoryBudget.reserve(TshMemoryCategory.QUERY_RESULT, 1) is TshResult.Failure)
+        assertTrue(retained.resize(4) is TshResult.Success)
+
+        engine.close()
+        assertTrue(engine.updateAvailableMemory(null) is TshResult.Failure)
+        retained.close()
+        assertEquals(0L, engine.memoryBudget.snapshot().reservedBytes)
+    }
+
+    @Test
     fun treeResourceReservationLivesUntilNativeTreeActuallyCloses() {
         val engine = TshEngine.create()
         val tree = FakeTree()
