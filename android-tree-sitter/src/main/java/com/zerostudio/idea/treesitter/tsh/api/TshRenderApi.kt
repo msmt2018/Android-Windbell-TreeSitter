@@ -197,9 +197,11 @@ class TshRenderCoordinator(
                 return failure("TSH-RENDER-002", "RenderPlan became stale before submission")
             }
             if (pending.containsKey(stablePlan.id)) {
+                planReservation.close()
                 return failure("TSH-RENDER-004", "RenderPlan id is already pending")
             }
             if (pending.size >= maxPendingPlans) {
+                planReservation.close()
                 return failure(
                     "TSH-RENDER-022",
                     "Renderer pending-plan limit ($maxPendingPlans) has been reached; apply backpressure or cancel stale plans"
