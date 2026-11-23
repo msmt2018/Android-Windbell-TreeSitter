@@ -9,7 +9,7 @@ namespace windbell::largefile {
 
 bool copyTextRange(const TextSource &source, uint64_t offset,
                    uint64_t length, void *destination) noexcept {
-    if ((offset & 1u) || (length & 1u) ||
+    if ((source.sizeBytes() & 1u) || (offset & 1u) || (length & 1u) ||
         offset > source.sizeBytes() || length > source.sizeBytes() - offset ||
         (length != 0 && !destination) ||
         length > static_cast<uint64_t>(std::numeric_limits<size_t>::max())) return false;
@@ -31,8 +31,8 @@ bool copyTextRange(const TextSource &source, uint64_t offset,
 bool checkUtf16SurrogateBoundary(const TextSource &source,
                                  uint64_t byteOffset,
                                  bool *splitsPair) noexcept {
-    if (!splitsPair || (byteOffset & 1u) != 0 ||
-        byteOffset > source.sizeBytes()) return false;
+    if (!splitsPair || (source.sizeBytes() & 1u) != 0 ||
+        (byteOffset & 1u) != 0 || byteOffset > source.sizeBytes()) return false;
     *splitsPair = false;
     if (byteOffset == 0 || byteOffset >= source.sizeBytes()) return true;
 
@@ -58,7 +58,7 @@ bool copyTreeSitterInputChunk(
     if (!bytesRead) return false;
     *bytesRead = 0;
     const uint64_t documentSize = source.sizeBytes();
-    if ((offset & 1u) != 0 || offset > documentSize) return false;
+    if ((documentSize & 1u) != 0 || (offset & 1u) != 0 || offset > documentSize) return false;
     if (offset == documentSize) return true;
     if (!destination || destinationCapacity < 2u) return false;
 
