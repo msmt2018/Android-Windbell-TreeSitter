@@ -785,3 +785,16 @@ Static call-site review found the native document parser already separately trac
 边界说明：
 - 该修复解决的是数据源生命周期/有效性传播，不代表 PieceTree 多快照聚合内存预算、随机 treap 高度上界或全局 100 MiB / 512 MiB 自适应预算已经完成。
 - 本轮未执行任何测试、编译、构建、CI、设备验证或基准测试；相关验证保持待办，遵守“全部 Bug 修复前跳过测试”的要求。
+
+## 2026-11-24 ChunkedTextStore 部分摄取失败隔离（源码已提交，验证暂缓）
+
+静态审查发现：`ChunkedTextStore::append` 在处理一个跨多个 chunk 的大块追加时，可能先成功写入前缀，随后因内存预算耗尽或分配失败返回 `false`。旧实现允许调用方随后执行 `seal()`，而 `isValid()` 仅检查 sealed 状态，因此部分文档可能被误认为完整只读输入。
+
+修复：
+- 新增失败终止状态 `failed_`。
+- 摄取开始后发生 chunk 索引溢出、内存预算不足、chunk 分配失败或容器异常时，将 store 标记为 failed。
+- failed store 不再接受追加；即使调用 `seal()`，`isValid()` 仍返回 false。
+- `read()` 通过 `isValid()` 拒绝读取失败的部分文档。
+- 更新头文件契约：发生摄取中途失败的 store 不得作为部分文档被 seal 后解析。
+
+这避免 Tree-sitter/JNI 把内存压力下只摄取到的前缀当作完整文档。没有执行测试、编译、构建、CI、设备验证或基准测试。
