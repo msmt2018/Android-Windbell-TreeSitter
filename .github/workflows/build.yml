@@ -60,6 +60,22 @@ jobs:
         id: setup-ndk
         with:
           ndk-version: r29
+      - name: Install pinned Android CMake
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          sdkmanager_bin="$(command -v sdkmanager || true)"
+          if [[ -z "$sdkmanager_bin" ]]; then
+            for candidate in "${ANDROID_HOME:-}/cmdline-tools/latest/bin/sdkmanager" "${ANDROID_SDK_ROOT:-}/cmdline-tools/latest/bin/sdkmanager"; do
+              if [[ -x "$candidate" ]]; then sdkmanager_bin="$candidate"; break; fi
+            done
+          fi
+          if [[ -z "$sdkmanager_bin" ]]; then
+            echo "::error::Android sdkmanager was not found; cannot install CMake 3.31.6"
+            exit 1
+          fi
+          yes | "$sdkmanager_bin" --licenses >/dev/null || true
+          "$sdkmanager_bin" --install "cmake;3.31.6"
       - name: Install dependencies (retry transient Ubuntu mirror failures)
         shell: bash
         run: |
@@ -221,6 +237,22 @@ jobs:
         id: setup-ndk
         with:
           ndk-version: r29
+      - name: Install pinned Android CMake
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          sdkmanager_bin="$(command -v sdkmanager || true)"
+          if [[ -z "$sdkmanager_bin" ]]; then
+            for candidate in "${ANDROID_HOME:-}/cmdline-tools/latest/bin/sdkmanager" "${ANDROID_SDK_ROOT:-}/cmdline-tools/latest/bin/sdkmanager"; do
+              if [[ -x "$candidate" ]]; then sdkmanager_bin="$candidate"; break; fi
+            done
+          fi
+          if [[ -z "$sdkmanager_bin" ]]; then
+            echo "::error::Android sdkmanager was not found; cannot install CMake 3.31.6"
+            exit 1
+          fi
+          yes | "$sdkmanager_bin" --licenses >/dev/null || true
+          "$sdkmanager_bin" --install "cmake;3.31.6"
       - name: Install dependencies
         run: $ATS_SUDO $ATS_APT_UPDATE && $ATS_SUDO $ATS_APT_INSTALL $ATS_APT_DEPS
       - name: Set up Python for native grammar builds
@@ -382,6 +414,22 @@ jobs:
         id: setup-ndk
         with:
           ndk-version: r29
+      - name: Install pinned Android CMake
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          sdkmanager_bin="$(command -v sdkmanager || true)"
+          if [[ -z "$sdkmanager_bin" ]]; then
+            for candidate in "${ANDROID_HOME:-}/cmdline-tools/latest/bin/sdkmanager" "${ANDROID_SDK_ROOT:-}/cmdline-tools/latest/bin/sdkmanager"; do
+              if [[ -x "$candidate" ]]; then sdkmanager_bin="$candidate"; break; fi
+            done
+          fi
+          if [[ -z "$sdkmanager_bin" ]]; then
+            echo "::error::Android sdkmanager was not found; cannot install CMake 3.31.6"
+            exit 1
+          fi
+          yes | "$sdkmanager_bin" --licenses >/dev/null || true
+          "$sdkmanager_bin" --install "cmake;3.31.6"
       - name: Install dependencies
         run: $ATS_SUDO $ATS_APT_UPDATE && $ATS_SUDO $ATS_APT_INSTALL $ATS_APT_DEPS
       - name: Set up Python for native grammar builds
