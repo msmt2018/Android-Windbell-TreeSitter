@@ -347,6 +347,11 @@
         },
 
         // ---------- 5.5 元数据注解 (Annotations) ----------
+        // The annotation name is emitted by the AST field selector above;
+        // color the leading marker with the same semantic style as a separate
+        // bounded Native Regex capture. Higher-priority comment/string scopes
+        // continue to own @ characters inside documentation and literals.
+        {match: /@/, 0: "annotation", priority: 120},
 
         // ---------- 5.6 静态常量规范 (SCREAMING_SNAKE_CASE) ----------
 

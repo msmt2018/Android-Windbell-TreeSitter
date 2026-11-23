@@ -1663,6 +1663,24 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
             uint64_t core_start = range_start_byte > overlap
                 ? range_start_byte - overlap : 0u;
             core_start &= ~uint64_t{1};
+            if (core_start != 0) {
+                bool splits_surrogate_pair = false;
+                if (!windbell::largefile::checkUtf16SurrogateBoundary(
+                        *text_source, core_start, &splits_surrogate_pair)) {
+                    throw std::runtime_error(
+                        "TSH could not validate the bounded Regex start boundary");
+                }
+                if (splits_surrogate_pair) core_start -= 2u;
+            }
+            // Reuse one Oniguruma region across all core windows for this rule.
+            // Region allocation is not proportional to the number of 256 KiB
+            // partitions and remains exception-safe for the whole rule execution.
+            OnigRegion* region = onig_region_new();
+            if (!region) throw std::bad_alloc();
+            struct WindowRegionGuard {
+                OnigRegion* value;
+                ~WindowRegionGuard() { if (value) onig_region_free(value, 1); }
+            } region_guard{region};
             while (core_start < range_end_byte) {
                 const uint64_t core_end = std::min<uint64_t>(
                     range_end_byte, core_start + kRegexCoreWindowBytes);
@@ -1676,26 +1694,42 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                     throw std::runtime_error("TSH bounded Regex window has an invalid byte range");
                 }
                 std::vector<UChar> window;
-                // Let bad_alloc reach the JNI boundary; silently breaking here
-                // would return a partial highlight set as if it were complete.
-                window.resize(static_cast<size_t>(window_bytes / sizeof(UChar)));
-                if (!windbell::largefile::copyTextRange(
-                        *text_source, core_start, window_bytes, window.data())) {
-                    throw std::runtime_error("TSH could not read a bounded Regex window");
+                uint64_t window_base_byte = core_start;
+                const UChar* window_start = nullptr;
+                const UChar* window_end_ptr = nullptr;
+                const UChar* current = nullptr;
+                const UChar* search_range_end = nullptr;
+                if (source_is_contiguous) {
+                    // Contiguous sources (JNI-pinned UTF-16 and mmap) already
+                    // provide the exact Oniguruma input representation. Search
+                    // that storage directly: do not allocate/copy a 256 KiB
+                    // scratch window for every rule and viewport partition.
+                    // The full string bounds preserve document context while
+                    // search_range_end limits match starts to this core partition.
+                    window_base_byte = 0;
+                    window_start = reinterpret_cast<const UChar*>(contiguous_source_data);
+                    window_end_ptr = window_start + total_bytes / sizeof(UChar);
+                    current = window_start + core_start / sizeof(UChar);
+                    search_range_end = window_start + core_end / sizeof(UChar);
+                } else {
+                    // PieceTree/file-window sources expose borrowed chunks, so
+                    // Oniguruma still needs a bounded contiguous materialization.
+                    // Let bad_alloc reach the JNI boundary; silently breaking here
+                    // would return a partial highlight set as if it were complete.
+                    window.resize(static_cast<size_t>(window_bytes / sizeof(UChar)));
+                    if (!windbell::largefile::copyTextRange(
+                            *text_source, core_start, window_bytes, window.data())) {
+                        throw std::runtime_error("TSH could not read a bounded Regex window");
+                    }
+                    window_start = window.data();
+                    window_end_ptr = window_start + window.size();
+                    current = window_start;
+                    search_range_end = window_end_ptr;
                 }
-                const UChar* window_start = window.data();
-                const UChar* window_end_ptr = window_start + window.size();
-                const UChar* current = window_start;
-                OnigRegion* region = onig_region_new();
-                if (!region) throw std::bad_alloc();
-                struct WindowRegionGuard {
-                    OnigRegion* value;
-                    ~WindowRegionGuard() { if (value) onig_region_free(value, 1); }
-                } region_guard{region};
-                while (current < window_end_ptr) {
+                while (current < search_range_end) {
                     const int hit = onig_search(
                         rule.onig_start, window_start, window_end_ptr,
-                        current, window_end_ptr, region, ONIG_OPTION_NONE);
+                        current, search_range_end, region, ONIG_OPTION_NONE);
                     if (hit == ONIG_MISMATCH) break;
                     if (hit < 0) {
                         throw std::runtime_error(
@@ -1705,25 +1739,26 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                     const int64_t local_start = region->beg[0];
                     const int64_t local_end = region->end[0];
                     if (local_start < 0 || local_end < local_start ||
-                        local_end > static_cast<int64_t>(window_bytes) ||
+                        local_end > static_cast<int64_t>(source_is_contiguous ? total_bytes : window_bytes) ||
                         (local_start & 1LL) != 0 || (local_end & 1LL) != 0) {
                         throw std::runtime_error(
                             "Oniguruma returned an invalid bounded UTF-16 match range");
                     }
-                    const uint64_t absolute_start = core_start +
+                    const uint64_t absolute_start = window_base_byte +
                         static_cast<uint64_t>(local_start);
-                    const uint64_t absolute_end = core_start +
+                    const uint64_t absolute_end = window_base_byte +
                         static_cast<uint64_t>(local_end);
                     if (absolute_start >= core_start && absolute_start < core_end &&
-                        absolute_end <= window_end && (absolute_start & 1u) == 0 &&
+                        absolute_end <= (source_is_contiguous ? total_bytes : window_end) &&
+                        (absolute_start & 1u) == 0 &&
                         (absolute_end & 1u) == 0) {
                         if (diagnostic_match_counts) tshIncrementDiagnostic(&diagnostic_match_counts[0]);
                         auto append_window_capture = [&](int group, uint16_t style_id) {
                             if (group < 0 || group >= region->num_regs ||
                                 region->beg[group] < 0 || region->end[group] < 0) return;
-                            const uint64_t capture_start = core_start +
+                            const uint64_t capture_start = window_base_byte +
                                 static_cast<uint64_t>(region->beg[group]);
-                            const uint64_t capture_end = core_start +
+                            const uint64_t capture_end = window_base_byte +
                                 static_cast<uint64_t>(region->end[group]);
                             if (capture_start >= capture_end ||
                                 capture_end <= range_start_byte ||
@@ -1772,7 +1807,7 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                         ? window_start + local_end
                         : advanceOneUtf16CodePoint(
                             window_start + local_start, window_end_ptr);
-                    if (next <= current || next >= window_end_ptr) break;
+                    if (next <= current || next >= search_range_end) break;
                     current = next;
                 }
                 core_start = core_end;
@@ -2242,8 +2277,17 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
         TSTreeCursor cursor = ts_tree_cursor_new(ts_tree_root_node(tree));
         std::vector<const AstSelectorRule*> candidate_rules;
         candidate_rules.reserve(grammar->ast_wildcard_rules.size() + 16);
+        // Candidate rules are already indexed by node/owner symbol. Deduplicate
+        // those small index lists with an epoch table instead of a linear
+        // std::find for every candidate on every visited syntax node.
+        std::vector<uint32_t> candidate_seen(grammar->ast_selector_rules.size(), 0u);
+        uint32_t candidate_epoch = 0u;
 
         while (true) {
+            if (++candidate_epoch == 0u) {
+                std::fill(candidate_seen.begin(), candidate_seen.end(), 0u);
+                candidate_epoch = 1u;
+            }
             TSNode node = ts_tree_cursor_current_node(&cursor);
             const uint32_t current_start_byte = ts_node_start_byte(node);
             const uint32_t current_end_byte = ts_node_end_byte(node);
@@ -2261,11 +2305,10 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
             candidate_rules.clear();
             auto append_indexed_rules = [&](const std::vector<uint32_t>& indices) {
                 for (uint32_t index : indices) {
-                    if (index >= grammar->ast_selector_rules.size()) continue;
-                    const AstSelectorRule* rule = &grammar->ast_selector_rules[index];
-                    if (std::find(candidate_rules.begin(), candidate_rules.end(), rule) == candidate_rules.end()) {
-                        candidate_rules.push_back(rule);
-                    }
+                    if (index >= grammar->ast_selector_rules.size() ||
+                        candidate_seen[index] == candidate_epoch) continue;
+                    candidate_seen[index] = candidate_epoch;
+                    candidate_rules.push_back(&grammar->ast_selector_rules[index]);
                 }
             };
             auto append_indexed_type_rules = [&](const auto& index, const char* type) {

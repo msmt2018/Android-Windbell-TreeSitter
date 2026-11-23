@@ -175,6 +175,88 @@ class JavaTshFullTest {
     }
 
     @Test
+    fun testJavaAnnotationCapturesAreStableForQualifiedAndParameterizedNames() {
+        val source = """
+            // 😀 UTF-16 prefix
+            package com.zerostudio.annotationprobe;
+
+            import android.view.ViewDebug;
+            import androidx.annotation.ColorInt;
+
+            @Deprecated
+            @ColorInt
+            @ViewDebug.ExportedProperty(category = "drawing", resolveId = true)
+            class AnnotationProbe {
+                @SuppressWarnings({"unchecked", "deprecation"})
+                void run() {}
+            }
+        """.trimIndent()
+        val parser = TSParser.create().apply { language = TSLanguageJava.getInstance() }
+        val tree = parser.parseString(source)
+        assertNotNull(tree)
+        try {
+            val engine = WindbellTshEngine.instance
+            val allFull = engine.computeHighlights(tree, source, "java")
+            val astCaptures = allFull.filter { it.source == 2 }
+            val annotationNames = listOf(
+                "Deprecated", "ColorInt", "ViewDebug.ExportedProperty", "SuppressWarnings"
+            )
+            val annotationSpans = annotationNames.map { name ->
+                val start = source.indexOf(name)
+                assertTrue(start >= 0, "Fixture annotation $name must exist")
+                val matches = astCaptures.filter { span ->
+                    span.startByte == start * 2 && span.endByte == (start + name.length) * 2
+                }
+                assertEquals(1, matches.size,
+                    "Native ATS must capture the complete annotation name $name exactly once")
+                assertEquals(120, matches.single().priority,
+                    "Annotation style must win over generic identifier/type styling for $name")
+
+                val markerStart = start - 1
+                assertTrue(markerStart >= 0 && source[markerStart] == '@',
+                    "Annotation $name must have a leading @ marker")
+                val marker = requireNotNull(allFull.singleOrNull { span ->
+                    span.source == 0 && span.startByte == markerStart * 2 &&
+                        span.endByte == (markerStart + 1) * 2
+                }) { "Native Regex must emit a dedicated @ marker capture for $name" }
+                assertEquals(matches.single().styleId, marker.styleId,
+                    "The @ marker and annotation name must use the same semantic color for $name")
+                assertEquals(120, marker.priority,
+                    "The @ marker must retain annotation precedence for $name")
+                matches.single()
+            }
+            assertEquals(1, annotationSpans.map { it.styleId }.distinct().size,
+                "Simple, qualified and parameterized annotation names must share one semantic style")
+
+            for (name in annotationNames) {
+                val tokenStart = source.indexOf(name)
+                val start = (tokenStart - 2).coerceAtLeast(0)
+                val end = (tokenStart + name.length + 2).coerceAtMost(source.length)
+                val startByte = start.toLong() * 2L
+                val endByte = end.toLong() * 2L
+                val viewport = engine.computeHighlights(tree, source, "java", startByte, endByte)
+                val expected = allFull.mapNotNull { span ->
+                    val clippedStart = maxOf(span.startByte.toLong(), startByte)
+                    val clippedEnd = minOf(span.endByte.toLong(), endByte)
+                    if (clippedStart < clippedEnd) {
+                        listOf(clippedStart, clippedEnd, span.styleId.toLong(),
+                            span.priority.toLong(), span.declarationOrder.toLong(), span.source.toLong())
+                    } else null
+                }.sortedWith(compareBy<List<Long>> { it[0] }.thenBy { it[1] }.thenBy { it[2] })
+                val actual = viewport.map { span ->
+                    listOf(span.startByte.toLong(), span.endByte.toLong(), span.styleId.toLong(),
+                        span.priority.toLong(), span.declarationOrder.toLong(), span.source.toLong())
+                }.sortedWith(compareBy<List<Long>> { it[0] }.thenBy { it[1] }.thenBy { it[2] })
+                assertEquals(expected, actual,
+                    "Annotation capture for $name must be identical in full-document and viewport execution")
+            }
+        } finally {
+            tree?.close()
+            parser.close()
+        }
+    }
+
+    @Test
     fun testAstSelectorViewportMatchesFullDocumentAndSkipsEarlierSubtrees() {
         val declarations = (0 until 3000).joinToString("\n") { index ->
             "    private int field_$index = $index;"
