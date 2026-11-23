@@ -202,8 +202,9 @@ class JavaTshFullTest {
                 "Deprecated", "ColorInt", "ViewDebug.ExportedProperty", "SuppressWarnings"
             )
             val annotationSpans = annotationNames.map { name ->
-                val start = source.indexOf(name)
-                assertTrue(start >= 0, "Fixture annotation $name must exist")
+                val annotationStart = source.indexOf("@$name")
+                assertTrue(annotationStart >= 0, "Fixture annotation @$name must exist")
+                val start = annotationStart + 1
                 val matches = astCaptures.filter { span ->
                     span.startByte == start * 2 && span.endByte == (start + name.length) * 2
                 }
