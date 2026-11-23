@@ -339,6 +339,10 @@ jobs:
       ANDROID_I_WANT_MY_TCG: "yes"
     strategy:
       fail-fast: false
+      # Emulator jobs share hosted-runner CPU, RAM and nested virtualization
+      # resources. Serializing the matrix avoids multiple TCG emulators competing
+      # for the same runner and producing offline/unresponsive ADB devices.
+      max-parallel: 1
       matrix:
         api-level: [26, 30, 35]
     steps:
@@ -443,6 +447,7 @@ jobs:
           # Let the action finish emulator boot without issuing fragile settings
           # writes while API 30 TCG emulation is still recovering from boot.
           disable-animations: false
+          emulator-options: -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect -memory 2048
           # Keep the runner payload on one shell command: android-emulator-runner
           # invokes script lines separately through /bin/sh, so multiline if/then
           # blocks are truncated and fail with "expecting fi".
