@@ -149,11 +149,25 @@ bool TshRegexNativeRegistry::execute(
     static const UChar empty_text[] = {0, 0};
     if (!text) text = empty_text;
     const int32_t length = static_cast<int32_t>(text_bytes / 2u);
+    constexpr uint32_t kMaxMatchesPerWindow = 8192;
+    constexpr uint32_t kMaxCaptureGroups = 256;
+    constexpr size_t kMaxNativeResultBytesPerWindow = 2u * 1024u * 1024u;
     if (core_start_utf16 < 0 || core_end_utf16 < core_start_utf16 ||
-        core_end_utf16 > length || max_matches == 0 || max_capture_groups == 0) {
+        core_end_utf16 > length || max_matches == 0 ||
+        max_matches > kMaxMatchesPerWindow || max_capture_groups == 0 ||
+        max_capture_groups > kMaxCaptureGroups) {
         error = "Regex core range or execution budget is invalid";
         return false;
     }
+    // Enforce the result-memory ceiling here as well as in Kotlin. JNI is not
+    // the only possible caller of this registry, and a future adapter must not
+    // be able to request an unbounded capture payload by bypassing its wrapper.
+    const size_t estimated_bytes_per_match =
+        24u + (static_cast<size_t>(max_capture_groups) + 1u) * 16u;
+    const uint32_t memory_bounded_matches = static_cast<uint32_t>(
+        std::max<size_t>(1u, kMaxNativeResultBytesPerWindow / estimated_bytes_per_match)
+    );
+    const uint32_t effective_max_matches = std::min(max_matches, memory_bounded_matches);
     // Keep the Native boundary self-validating. Kotlin window leases already
     // reject malformed UTF-16 and split core boundaries, but JNI must not rely
     // on callers preserving those invariants (reflection/future adapters can
@@ -297,7 +311,7 @@ bool TshRegexNativeRegistry::execute(
             break;
         }
         if (start >= core_start_utf16) {
-            if (output.matches.size() >= max_matches) {
+            if (output.matches.size() >= effective_max_matches) {
                 output.truncated = true;
                 break;
             }
