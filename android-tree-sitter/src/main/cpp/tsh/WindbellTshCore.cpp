@@ -265,7 +265,9 @@ static bool tshSourceMatchesUtf8Literal(
     uint8_t mode // 0=equals, 1=prefix, 2=suffix
 ) {
     if (start_byte > end_byte || end_byte > source.sizeBytes() ||
-        ((start_byte | end_byte) & 1u)) return false;
+        ((start_byte | end_byte) & 1u)) {
+        throw std::runtime_error("TSH AST literal predicate received an invalid TextSource range");
+    }
     if (mode == 0 && end_byte - start_byte > expected.size() * 2ULL) return false;
     if (mode == 1 && start_byte == end_byte) return expected.empty();
     if (mode == 2 && start_byte == end_byte) return expected.empty();
@@ -314,13 +316,17 @@ static bool tshSourceMatchesUtf8Literal(
         const uint32_t request = static_cast<uint32_t>(std::min<uint64_t>(
             windbell::largefile::kTreeSitterInputChunkBytes, end_byte - offset));
         if (!source.read(offset, request, &chunk) || !chunk.data || chunk.size == 0 ||
-            (chunk.size & 1u) || chunk.size > end_byte - offset) return false;
+            (chunk.size & 1u) || chunk.size > end_byte - offset) {
+            throw std::runtime_error("TSH AST literal predicate could not read a valid TextSource chunk");
+        }
         for (uint32_t i = 0; i < chunk.size; i += 2) {
             const auto* bytes = reinterpret_cast<const uint8_t*>(chunk.data);
             const uint16_t unit = static_cast<uint16_t>(bytes[i]) |
                 (static_cast<uint16_t>(bytes[i + 1]) << 8);
             if (pending_high) {
-                if (unit < 0xDC00 || unit > 0xDFFF) return false;
+                if (unit < 0xDC00 || unit > 0xDFFF) {
+                    throw std::runtime_error("TSH AST literal predicate encountered malformed UTF-16");
+                }
                 const uint32_t cp = 0x10000u +
                     ((static_cast<uint32_t>(pending_high) - 0xD800u) << 10) +
                     (static_cast<uint32_t>(unit) - 0xDC00u);
@@ -329,13 +335,15 @@ static bool tshSourceMatchesUtf8Literal(
             } else if (unit >= 0xD800 && unit <= 0xDBFF) {
                 pending_high = unit;
             } else if (unit >= 0xDC00 && unit <= 0xDFFF) {
-                return false;
+                throw std::runtime_error("TSH AST literal predicate encountered an unpaired UTF-16 low surrogate");
             } else if (!emit(unit)) return false;
             if (mode == 1 && prefix_complete) return true;
         }
         offset += chunk.size;
     }
-    if (pending_high) return false;
+    if (pending_high) {
+        throw std::runtime_error("TSH AST literal predicate encountered an unpaired UTF-16 high surrogate");
+    }
     if (mode == 0) return output_index == expected.size();
     if (mode == 1) return prefix_complete;
     return tail == expected;
@@ -386,11 +394,18 @@ static bool tshSourceRegexMatchesBounded(
     regex_t* regex,
     uint64_t maximum_match_bytes
 ) {
-    if (!regex || start_byte > end_byte || (start_byte & 1u) ||
-        (end_byte & 1u) || maximum_match_bytes == 0) return false;
+    if (!regex || start_byte > end_byte || end_byte > source.sizeBytes() ||
+        (start_byte & 1u) || (end_byte & 1u) || maximum_match_bytes == 0) {
+        throw std::runtime_error("TSH bounded AST Regex received an invalid TextSource range");
+    }
     static const UChar empty_input = 0;
     if (start_byte == end_byte) {
-        return tshPredicateRegexMatchesContiguous(regex, &empty_input, &empty_input);
+        const int matched = tshPredicateRegexMatchesContiguous(
+            regex, &empty_input, &empty_input);
+        if (matched < 0) {
+            throw std::runtime_error("TSH bounded AST Regex failed on an empty input");
+        }
+        return matched == 1;
     }
     constexpr uint64_t kCoreWindowBytes = 256u * 1024u;
     const uint64_t overlap = maximum_match_bytes >= 2u
@@ -405,36 +420,42 @@ static bool tshSourceRegexMatchesBounded(
             ? end_byte : core_end + overlap;
         const uint64_t window_bytes = window_end - core_start;
         if (window_bytes == 0 || (window_bytes & 1u) != 0 ||
-            window_bytes > static_cast<uint64_t>(std::numeric_limits<size_t>::max()))
-            return false;
+            window_bytes > static_cast<uint64_t>(std::numeric_limits<size_t>::max())) {
+            throw std::runtime_error("TSH bounded AST Regex window has an invalid size");
+        }
         std::vector<UChar> window;
-        // Oniguruma's UChar is an 8-bit storage byte in this UTF-16LE
-        // adapter. The window length is therefore already the element count;
-        // do not divide by sizeof(UChar) or reinterpret it as native uint16_t.
         try { window.resize(static_cast<size_t>(window_bytes)); }
-        catch (...) { return false; }
+        catch (const std::bad_alloc&) { throw; }
         if (!windbell::largefile::copyTextRange(
-                source, core_start, window_bytes, window.data())) return false;
-        OnigRegion* region = onig_region_new();
-        if (!region) return false;
+                source, core_start, window_bytes, window.data())) {
+            throw std::runtime_error("TSH bounded AST Regex could not read its TextSource window");
+        }
+        struct RegionOwner {
+            OnigRegion* value;
+            ~RegionOwner() { if (value) onig_region_free(value, 1); }
+        } region{onig_region_new()};
+        if (!region.value) throw std::bad_alloc();
         const UChar* begin = window.data();
         const UChar* end = begin + window.size();
         const UChar* current = begin;
-        bool matched = false;
         while (current < end) {
             const int hit = onig_search(
-                regex, begin, end, current, end, region, ONIG_OPTION_NONE);
-            if (hit < 0) break;
-            if (region->beg[0] < 0 || region->end[0] < region->beg[0]) break;
-            const uint64_t local_start = static_cast<uint64_t>(region->beg[0]);
-            if (local_start < core_end - core_start) {
-                matched = true;
-                break;
+                regex, begin, end, current, end, region.value, ONIG_OPTION_NONE);
+            if (hit == ONIG_MISMATCH) break;
+            if (hit < 0) {
+                throw std::runtime_error(
+                    "Oniguruma bounded AST Regex execution failed with status " +
+                    std::to_string(hit));
             }
+            if (region.value->beg[0] < 0 ||
+                region.value->end[0] < region.value->beg[0]) {
+                throw std::runtime_error(
+                    "Oniguruma bounded AST Regex returned an invalid match range");
+            }
+            const uint64_t local_start = static_cast<uint64_t>(region.value->beg[0]);
+            if (local_start < core_end - core_start) return true;
             break;
         }
-        onig_region_free(region, 1);
-        if (matched) return true;
         core_start = core_end;
     }
     return false;
@@ -1165,35 +1186,50 @@ void WindbellEngine::matchBlockRecursive(
     std::vector<HighlightSpan>& out_spans,
     uint32_t* regex_match_count
 ) {
-    OnigRegion* start_region = onig_region_new();
-    OnigRegion* end_region = onig_region_new();
-    if (!start_region || !end_region) {
-        if (start_region) onig_region_free(start_region, 1);
-        if (end_region) onig_region_free(end_region, 1);
-        return;
-    }
+    struct RegionOwner {
+        OnigRegion* value;
+        ~RegionOwner() { if (value) onig_region_free(value, 1); }
+    } start_owner{onig_region_new()}, end_owner{onig_region_new()};
+    if (!start_owner.value || !end_owner.value) throw std::bad_alloc();
+    OnigRegion* start_region = start_owner.value;
+    OnigRegion* end_region = end_owner.value;
     // Recover an active block at the viewport boundary with a reverse
     // delimiter search. This avoids scanning the whole document prefix on each
     // render while retaining the original block state.
     const UChar* curr = range_start;
     if (search_floor < range_start) {
-        OnigRegion* previous_start = onig_region_new();
-        OnigRegion* previous_end = onig_region_new();
-        if (previous_start && previous_end) {
-            const int start_hit = onig_search(
-                rule.onig_start, text_start, text_end,
-                range_start, search_floor, previous_start, ONIG_OPTION_NONE);
-            const int end_hit = onig_search(
-                rule.onig_end, text_start, text_end,
-                range_start, search_floor, previous_end, ONIG_OPTION_NONE);
-            if (start_hit >= 0 && previous_start->beg[0] >= 0 &&
-                (end_hit < 0 || previous_end->beg[0] < 0 ||
-                 previous_start->beg[0] > previous_end->beg[0])) {
-                curr = text_start + previous_start->beg[0];
-            }
+        RegionOwner previous_start_owner{onig_region_new()};
+        RegionOwner previous_end_owner{onig_region_new()};
+        if (!previous_start_owner.value || !previous_end_owner.value) throw std::bad_alloc();
+        OnigRegion* previous_start = previous_start_owner.value;
+        OnigRegion* previous_end = previous_end_owner.value;
+        const int start_hit = onig_search(
+            rule.onig_start, text_start, text_end,
+            range_start, search_floor, previous_start, ONIG_OPTION_NONE);
+        const int end_hit = onig_search(
+            rule.onig_end, text_start, text_end,
+            range_start, search_floor, previous_end, ONIG_OPTION_NONE);
+        if (start_hit < 0 && start_hit != ONIG_MISMATCH) {
+            throw std::runtime_error("Oniguruma block start recovery failed with status " +
+                std::to_string(start_hit));
         }
-        if (previous_start) onig_region_free(previous_start, 1);
-        if (previous_end) onig_region_free(previous_end, 1);
+        if (end_hit < 0 && end_hit != ONIG_MISMATCH) {
+            throw std::runtime_error("Oniguruma block end recovery failed with status " +
+                std::to_string(end_hit));
+        }
+        if (start_hit >= 0 &&
+            (previous_start->beg[0] < 0 || previous_start->end[0] < previous_start->beg[0])) {
+            throw std::runtime_error("Oniguruma returned an invalid recovered block start");
+        }
+        if (end_hit >= 0 &&
+            (previous_end->beg[0] < 0 || previous_end->end[0] < previous_end->beg[0])) {
+            throw std::runtime_error("Oniguruma returned an invalid recovered block end");
+        }
+        if (start_hit >= 0 &&
+            (end_hit == ONIG_MISMATCH ||
+             previous_start->beg[0] > previous_end->beg[0])) {
+            curr = text_start + previous_start->beg[0];
+        }
     }
 
     while (curr < range_end) {
@@ -1206,7 +1242,14 @@ void WindbellEngine::matchBlockRecursive(
             start_region,
             ONIG_OPTION_NONE
         );
-        if (hit_start < 0) break;
+        if (hit_start == ONIG_MISMATCH) break;
+        if (hit_start < 0) {
+            throw std::runtime_error("Oniguruma block start execution failed with status " +
+                std::to_string(hit_start));
+        }
+        if (start_region->beg[0] < 0 || start_region->end[0] < start_region->beg[0]) {
+            throw std::runtime_error("Oniguruma returned an invalid block start range");
+        }
         if (regex_match_count) ++(*regex_match_count);
 
         uint32_t block_start_byte = static_cast<uint32_t>(start_region->beg[0]);
@@ -1222,6 +1265,14 @@ void WindbellEngine::matchBlockRecursive(
             ONIG_OPTION_NONE
         );
 
+        if (hit_end < 0 && hit_end != ONIG_MISMATCH) {
+            throw std::runtime_error("Oniguruma block end execution failed with status " +
+                std::to_string(hit_end));
+        }
+        if (hit_end >= 0 &&
+            (end_region->beg[0] < 0 || end_region->end[0] < end_region->beg[0])) {
+            throw std::runtime_error("Oniguruma returned an invalid block end range");
+        }
         uint32_t block_end_byte = (hit_end >= 0) ?
             static_cast<uint32_t>(end_region->end[0]) :
             static_cast<uint32_t>(text_end - text_start);
@@ -1290,8 +1341,9 @@ void WindbellEngine::matchBlockRecursive(
                         continue;
                     }
                     if (nested.type == RegexRuleType::MATCH && nested.onig_start) {
-                        OnigRegion* inner_region = onig_region_new();
-                        if (!inner_region) continue;
+                        RegionOwner inner_region_owner{onig_region_new()};
+                        if (!inner_region_owner.value) throw std::bad_alloc();
+                        OnigRegion* inner_region = inner_region_owner.value;
                         const UChar* nested_scan_start = inner_start;
                         const UChar* nested_scan_end = inner_end;
                         if (nested.execution_capability == RegexExecutionCapability::BOUNDED_WINDOW &&
@@ -1334,7 +1386,17 @@ void WindbellEngine::matchBlockRecursive(
                                 inner_region,
                                 ONIG_OPTION_NONE
                             );
-                            if (inner_hit < 0) break;
+                            if (inner_hit == ONIG_MISMATCH) break;
+                            if (inner_hit < 0) {
+                                throw std::runtime_error(
+                                    "Oniguruma nested block Regex execution failed with status " +
+                                    std::to_string(inner_hit));
+                            }
+                            if (inner_region->beg[0] < 0 ||
+                                inner_region->end[0] < inner_region->beg[0]) {
+                                throw std::runtime_error(
+                                    "Oniguruma returned an invalid nested Regex match range");
+                            }
                             if (regex_match_count) ++(*regex_match_count);
 
                             auto append_nested_capture = [&](int group, uint16_t style_id) {
@@ -1377,7 +1439,7 @@ void WindbellEngine::matchBlockRecursive(
                                 advanceOneUtf16CodePoint(text_start + inner_region->beg[0], nested_scan_end) :
                                 text_start + inner_region->end[0];
                         }
-                        onig_region_free(inner_region, 1);
+
                     }
                 }
             }
@@ -1394,8 +1456,6 @@ void WindbellEngine::matchBlockRecursive(
         }
     }
 
-    onig_region_free(start_region, 1);
-    onig_region_free(end_region, 1);
 }
 
 static bool collectQueryRootRanges(
