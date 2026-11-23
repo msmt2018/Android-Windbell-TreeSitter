@@ -69,6 +69,10 @@ bool FileWindowSource::isOpen() const noexcept {
     return fd_ >= 0;
 }
 
+bool FileWindowSource::isValid() const noexcept {
+    return isOpen() && window_bytes_ >= 2u && window_.size() == window_bytes_;
+}
+
 uint64_t FileWindowSource::sizeBytes() const noexcept {
     return size_bytes_;
 }
