@@ -1074,6 +1074,30 @@ class WindbellTshLinkageTest {
     }
 
     @Test
+    fun testNativeQueryCompilerRejectsDetachedPredicatePattern() {
+        val engine = WindbellTshEngine.instance
+        val language = TSLanguageJava.getInstance()
+        val malformed = """
+            tsh 2 {
+                language { id: "java-detached-predicate" name: "Java Detached Predicate" extensions: [".jdp"] }
+                styles {
+                    methodName { scope: "entity.name.function" }
+                }
+                treeSitter {
+                    queries: [{
+                        id: "detached-predicate"
+                        source: `[(class_declaration name: (identifier) @target) (method_declaration name: (identifier) @methodName)] (#any-eq? @target "Demo")`
+                    }]
+                }
+            }
+        """.trimIndent()
+
+        // A predicate-only top-level expression would otherwise be compiled as
+        // a separate pattern, leaving the preceding OR pattern unfiltered.
+        assertFalse(engine.loadTshSource("java-detached-predicate", malformed, language))
+    }
+
+    @Test
     fun testAstSelectorNodeFlagsAreExecuted() {
         val engine = WindbellTshEngine.instance
         val language = TSLanguageJava.getInstance()
