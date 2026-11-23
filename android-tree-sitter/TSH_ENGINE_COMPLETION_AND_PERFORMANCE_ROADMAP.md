@@ -772,3 +772,16 @@ Static call-site review found the native document parser already separately trac
 | Shared range/input helpers did not enforce whole-document UTF-16LE alignment | Added document-size parity guards at common helper boundaries. | SOURCE_PATCHED; validation deferred |
 | Segmented/PieceTree EOF behavior differed from contiguous source when maxBytes was zero or one | Normalize EOF as successful zero-byte read before checking requested capacity. | SOURCE_PATCHED; validation deferred |
 
+## 2026-11-24 Native TextSource 有效性契约修复（源码已提交，验证按要求暂缓）
+
+本轮静态审查发现并修复一个跨数据源生命周期缺陷：原有 `PieceTreeSource` 构造函数只检查底层 `TextSource` 指针和字节长度，没有检查底层数据源是否处于可读取状态。因而未封存的 `ChunkedTextStore`、未打开的 `FileWindowSource` / `MappedFileSource`，以及无效的 `SegmentedTextSource` 可能被 PieceTree 接纳，直到后续读取才失败。
+
+已提交的源码调整：
+- `TextSource` 增加默认兼容的 `isValid() const noexcept` 契约；已有外部实现不必立即改写，但具有生命周期状态的内建实现显式覆盖。
+- `SegmentedTextSource`、`ContiguousTextSource` 沿用其真实结构有效性；`FileWindowSource` 以打开状态和窗口存储状态判定；`MappedFileSource` 以映射/空文件打开状态判定；`ChunkedTextStore` 仅在封存后可作为有效只读源。
+- `PieceTreeSource` 构造时拒绝无效底层源；运行期间继续检查底层源状态，底层文件源关闭后 PieceTree 不再报告有效，也拒绝读取、编辑和克隆。
+- `copyTextRange`、UTF-16 surrogate 边界检查、Tree-sitter 输入块复制和 `MappedFileSource::createSnapshot` 均在入口拒绝无效源。
+
+边界说明：
+- 该修复解决的是数据源生命周期/有效性传播，不代表 PieceTree 多快照聚合内存预算、随机 treap 高度上界或全局 100 MiB / 512 MiB 自适应预算已经完成。
+- 本轮未执行任何测试、编译、构建、CI、设备验证或基准测试；相关验证保持待办，遵守“全部 Bug 修复前跳过测试”的要求。
