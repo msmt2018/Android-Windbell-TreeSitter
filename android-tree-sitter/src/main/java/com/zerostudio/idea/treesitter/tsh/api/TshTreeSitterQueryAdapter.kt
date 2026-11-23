@@ -397,6 +397,8 @@ class TshTreeSitterQueryExecutor(
             return failure("TSH-QUERY-EXEC-011", "Cannot create Tree-sitter query cursor: ${error.message}", cause = error)
         }
 
+        var resultReservation: TshMemoryReservation? = null
+        var reservationTransferred = false
         try {
             cursor.setByteRange(effectiveRange.startByte, effectiveRange.endByte)
             cursor.setMatchLimit(pendingMatchLimit)
@@ -431,8 +433,6 @@ class TshTreeSitterQueryExecutor(
             val captures = ArrayList<TshCapture>(minOf(budget.maxCaptures, budget.maxMatches, 256))
             var matchesSeen = 0
             var estimatedResultBytes = 0L
-            var resultReservation: TshMemoryReservation? = null
-            var reservationTransferred = false
             var truncated = false
             while (true) {
                 if (cancellation.isCancelled()) {

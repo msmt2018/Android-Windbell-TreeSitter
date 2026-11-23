@@ -96,6 +96,11 @@ data class TshSyntaxTreeSnapshot(
         require(documentVersion >= 0)
         require(treeRevision >= 0)
     }
+
+    /** Releases the retained Engine-ledger reservation; the provider owns the Native tree. */
+    override fun close() {
+        memoryReservation?.close()
+    }
 }
 
 data class TshQueryExecutionBudget @JvmOverloads constructor(
