@@ -2981,6 +2981,7 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                             }
 
                             const uint32_t capture_count = ts_query_capture_count(program.query);
+                            program.capture_style_ids_by_index.assign(capture_count, -1);
                             for (uint32_t capture_id = 0; capture_id < capture_count; ++capture_id) {
                                 uint32_t name_length = 0;
                                 const char* capture_name = ts_query_capture_name_for_id(
@@ -3025,8 +3026,8 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                                     program.query = nullptr;
                                     return nullptr;
                                 }
-                                program.capture_style_ids.emplace(
-                                    static_cast<uint32_t>(capture_id), style->second);
+                                program.capture_style_ids_by_index[capture_id] =
+                                    static_cast<int32_t>(style->second);
                             }
                             for (const auto& binding : program.capture_bindings) {
                                 bool found = false;
