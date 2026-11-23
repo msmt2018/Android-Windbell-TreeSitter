@@ -121,9 +121,20 @@ data class TshQueryExecutionBudget @JvmOverloads constructor(
     }
 }
 
-/** Cooperative cancellation only; native calls must provide their own interruption boundary. */
+/**
+ * Cooperative query cancellation.
+ *
+ * [isCancelled] is polled at Kotlin execution boundaries. [onProgress] is invoked only
+ * from Tree-sitter's native 0.28 progress callback while the cursor is traversing the tree.
+ * Returning true from onProgress halts in-flight native traversal; older Native builds may
+ * fall back to boundary-only cancellation and report that limitation.
+ */
 fun interface TshQueryCancellation {
     fun isCancelled(): Boolean
+
+    /** Approximate absolute Tree-sitter byte offset at a native progress checkpoint. */
+    fun onProgress(currentByteOffset: Long): Boolean = isCancelled()
+
     companion object {
         val NEVER = TshQueryCancellation { false }
     }
