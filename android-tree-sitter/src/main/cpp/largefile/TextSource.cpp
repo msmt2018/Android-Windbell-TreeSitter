@@ -127,9 +127,11 @@ bool SegmentedTextSource::read(
     if (out == nullptr) return false;
     out->data = nullptr;
     out->size = 0;
-    if (!valid_ || (offset & 1u) != 0 || maxBytes < 2u) return false;
+    if (!valid_ || (offset & 1u) != 0 || offset > total_bytes_) return false;
+    // EOF is a successful empty read regardless of the requested chunk size,
+    // matching ContiguousTextSource and the TextSource callback contract.
     if (offset == total_bytes_) return true;
-    if (offset > total_bytes_) return false;
+    if (maxBytes < 2u) return false;
 
     const auto it = std::upper_bound(segment_starts_.begin(), segment_starts_.end(), offset);
     if (it == segment_starts_.begin()) return false;
