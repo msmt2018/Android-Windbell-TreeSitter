@@ -383,8 +383,35 @@ static bool tshUtf8ToUtf16(const std::string& input, std::vector<UChar>& output)
     return true;
 }
 
+struct TshRegexExecutionWorkspace {
+    std::vector<UChar> window;
+    OnigRegion* region = nullptr;
+
+    TshRegexExecutionWorkspace() = default;
+    TshRegexExecutionWorkspace(const TshRegexExecutionWorkspace&) = delete;
+    TshRegexExecutionWorkspace& operator=(const TshRegexExecutionWorkspace&) = delete;
+
+    ~TshRegexExecutionWorkspace() {
+        if (region) onig_region_free(region, 1);
+    }
+
+    bool ensureRegion() noexcept {
+        if (region) return true;
+        region = onig_region_new();
+        return region != nullptr;
+    }
+
+    void resetRegion() noexcept {
+        if (region) onig_region_clear(region);
+    }
+};
+
 static int tshPredicateRegexMatchesContiguous(
     regex_t* regex, const UChar* begin, const UChar* end
+);
+static int tshPredicateRegexMatchesContiguous(
+    regex_t* regex, const UChar* begin, const UChar* end,
+    TshRegexExecutionWorkspace& workspace
 );
 
 static bool tshSourceRegexMatchesBounded(
@@ -392,7 +419,8 @@ static bool tshSourceRegexMatchesBounded(
     uint64_t start_byte,
     uint64_t end_byte,
     regex_t* regex,
-    uint64_t maximum_match_bytes
+    uint64_t maximum_match_bytes,
+    TshRegexExecutionWorkspace& workspace
 ) {
     if (!regex || start_byte > end_byte || end_byte > source.sizeBytes() ||
         (start_byte & 1u) || (end_byte & 1u) || maximum_match_bytes == 0) {
@@ -401,7 +429,7 @@ static bool tshSourceRegexMatchesBounded(
     static const UChar empty_input = 0;
     if (start_byte == end_byte) {
         const int matched = tshPredicateRegexMatchesContiguous(
-            regex, &empty_input, &empty_input);
+            regex, &empty_input, &empty_input, workspace);
         if (matched < 0) {
             throw std::runtime_error("TSH bounded AST Regex failed on an empty input");
         }
@@ -410,15 +438,9 @@ static bool tshSourceRegexMatchesBounded(
     constexpr uint64_t kCoreWindowBytes = 256u * 1024u;
     const uint64_t overlap = maximum_match_bytes >= 2u
         ? maximum_match_bytes - 2u : 0u;
-    // Reuse the bounded input and match region across windows. AST text
-    // predicates can be evaluated for many nodes during one viewport pass;
-    // per-window allocations otherwise amplify latency on large files.
-    std::vector<UChar> window;
-    struct RegionOwner {
-        OnigRegion* value;
-        ~RegionOwner() { if (value) onig_region_free(value, 1); }
-    } region{onig_region_new()};
-    if (!region.value) throw std::bad_alloc();
+    // Share one lazy scratch workspace across AST and Query Regex predicates
+    // for the complete highlight pass, not merely across windows of one node.
+    if (!workspace.ensureRegion()) throw std::bad_alloc();
 
     uint64_t core_start = start_byte;
     while (core_start < end_byte) {
@@ -433,30 +455,31 @@ static bool tshSourceRegexMatchesBounded(
             window_bytes > static_cast<uint64_t>(std::numeric_limits<size_t>::max())) {
             throw std::runtime_error("TSH bounded AST Regex window has an invalid size");
         }
-        try { window.resize(static_cast<size_t>(window_bytes)); }
+        try { workspace.window.resize(static_cast<size_t>(window_bytes)); }
         catch (const std::bad_alloc&) { throw; }
         if (!windbell::largefile::copyTextRange(
-                source, core_start, window_bytes, window.data())) {
+                source, core_start, window_bytes, workspace.window.data())) {
             throw std::runtime_error("TSH bounded AST Regex could not read its TextSource window");
         }
-        const UChar* begin = window.data();
-        const UChar* end = begin + window.size();
+        const UChar* begin = workspace.window.data();
+        const UChar* end = begin + workspace.window.size();
         const UChar* current = begin;
+        workspace.resetRegion();
         while (current < end) {
             const int hit = onig_search(
-                regex, begin, end, current, end, region.value, ONIG_OPTION_NONE);
+                regex, begin, end, current, end, workspace.region, ONIG_OPTION_NONE);
             if (hit == ONIG_MISMATCH) break;
             if (hit < 0) {
                 throw std::runtime_error(
                     "Oniguruma bounded AST Regex execution failed with status " +
                     std::to_string(hit));
             }
-            if (region.value->beg[0] < 0 ||
-                region.value->end[0] < region.value->beg[0]) {
+            if (workspace.region->beg[0] < 0 ||
+                workspace.region->end[0] < workspace.region->beg[0]) {
                 throw std::runtime_error(
                     "Oniguruma bounded AST Regex returned an invalid match range");
             }
-            const uint64_t local_start = static_cast<uint64_t>(region.value->beg[0]);
+            const uint64_t local_start = static_cast<uint64_t>(workspace.region->beg[0]);
             if (local_start < core_end - core_start) return true;
             break;
         }
@@ -651,32 +674,11 @@ static bool tshPredicateNodeHasType(const TSNode& node,
     return false;
 }
 
-struct TshPredicateRegexWorkspace {
-    std::vector<UChar> window;
-    OnigRegion* region = nullptr;
 
-    TshPredicateRegexWorkspace() = default;
-    TshPredicateRegexWorkspace(const TshPredicateRegexWorkspace&) = delete;
-    TshPredicateRegexWorkspace& operator=(const TshPredicateRegexWorkspace&) = delete;
-
-    ~TshPredicateRegexWorkspace() {
-        if (region) onig_region_free(region, 1);
-    }
-
-    bool ensureRegion() noexcept {
-        if (region) return true;
-        region = onig_region_new();
-        return region != nullptr;
-    }
-
-    void resetRegion() noexcept {
-        if (region) onig_region_clear(region);
-    }
-};
 
 static int tshPredicateRegexMatchesContiguous(
     regex_t* regex, const UChar* begin, const UChar* end,
-    TshPredicateRegexWorkspace& workspace
+    TshRegexExecutionWorkspace& workspace
 ) {
     if (!regex) return -1;
     static const UChar empty_input = 0;
@@ -694,7 +696,7 @@ static int tshPredicateRegexMatchesContiguous(
 static int tshPredicateRegexMatchesContiguous(
     regex_t* regex, const UChar* begin, const UChar* end
 ) {
-    TshPredicateRegexWorkspace workspace;
+    TshRegexExecutionWorkspace workspace;
     return tshPredicateRegexMatchesContiguous(regex, begin, end, workspace);
 }
 
@@ -704,7 +706,7 @@ static int tshPredicateRegexMatchesTextSourceBounded(
     uint64_t end_byte,
     regex_t* regex,
     uint64_t maximum_match_bytes,
-    TshPredicateRegexWorkspace& workspace
+    TshRegexExecutionWorkspace& workspace
 ) {
     if (!regex || start_byte > end_byte || (start_byte & 1u) ||
         (end_byte & 1u) || end_byte > source.sizeBytes() ||
@@ -764,7 +766,7 @@ enum class TshPredicateResult : uint8_t { ACCEPT, REJECT, ERROR };
 static TshPredicateResult tshEvaluateNativePredicates(const NativeQueryProgram& program,
     const TSQueryMatch& match, const UChar* utf16_source,
     const windbell::largefile::TextSource* text_source, uint32_t source_bytes,
-    TshPredicateRegexWorkspace& regex_workspace) {
+    TshRegexExecutionWorkspace& regex_workspace) {
     const TSQuery* query = program.query;
     if (match.pattern_index >= program.predicates_by_pattern.size()) return TshPredicateResult::REJECT;
     const auto& predicates = program.predicates_by_pattern[match.pattern_index];
@@ -1680,6 +1682,7 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
     std::vector<HighlightDependencyRange>* dependency_ranges
 ) {
     std::vector<HighlightSpan> final_spans;
+    TshRegexExecutionWorkspace regex_workspace;
     if (dependency_ranges) dependency_ranges->clear();
     if (diagnostic_match_counts) std::fill(diagnostic_match_counts, diagnostic_match_counts + 4, 0u);
     if (length_chars != 0 && input_chars == nullptr && !text_source) return final_spans;
@@ -2642,7 +2645,8 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                         if (!tshSourceRegexMatchesBounded(
                                 *text_source, text_start, text_end,
                                 ast_rule.text_regex,
-                                ast_rule.text_regex_maximum_bytes)) continue;
+                                ast_rule.text_regex_maximum_bytes,
+                                regex_workspace)) continue;
                     } else {
                     // Context-dependent AST regexes retain the contiguous adapter,
                     // but cap the temporary node to prevent a single giant string or
@@ -2885,10 +2889,7 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
             TSQueryMatch match;
             uint64_t match_order = 0;
             uint64_t accepted_match_count = 0;
-            // One lazy Native scratch workspace per Query cursor. Regex predicates
-            // can run for thousands of captures in a viewport; allocating an
-            // Oniguruma region and a bounded window per capture multiplies latency.
-            TshPredicateRegexWorkspace predicate_regex_workspace;
+            // Reuse the highlight-pass Regex workspace for every Query match.
             while (ts_query_cursor_next_match(cursor, &match)) {
                 const uint64_t current_order = match_order++;
                 auto pattern_metadata = native_query.pattern_metadata.find(match.pattern_index);
@@ -2903,7 +2904,7 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                     native_query, match,
                     has_contiguous_text ? text_start : nullptr,
                     has_contiguous_text ? nullptr : text_source, total_bytes,
-                    predicate_regex_workspace);
+                    regex_workspace);
                 if (predicate_result == TshPredicateResult::ERROR) {
                     throw std::runtime_error(
                         "TSH native query predicate evaluation failed while reading capture text");
