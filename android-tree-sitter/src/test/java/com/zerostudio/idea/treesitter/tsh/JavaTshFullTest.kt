@@ -44,6 +44,29 @@ class JavaTshFullTest {
     }
 
     @Test
+    fun testLegacyJavaAssetMatchesCanonicalSyntaxAwareAsset() {
+        val canonicalCandidates = listOf(
+            File("../app/src/main/assets/tsh/java.tsh"),
+            File("app/src/main/assets/tsh/java.tsh")
+        )
+        val legacyCandidates = listOf(
+            File("../app/src/main/assets/java.tsh"),
+            File("app/src/main/assets/java.tsh")
+        )
+        val canonical = requireNotNull(canonicalCandidates.firstOrNull { it.isFile }) {
+            "Canonical app/src/main/assets/tsh/java.tsh must be present"
+        }
+        val legacy = requireNotNull(legacyCandidates.firstOrNull { it.isFile }) {
+            "Legacy app/src/main/assets/java.tsh must be present"
+        }
+        assertEquals(
+            canonical.readText(Charsets.UTF_8),
+            legacy.readText(Charsets.UTF_8),
+            "Legacy Java asset must not retain stale global @ Regex annotation rules"
+        )
+    }
+
+    @Test
     fun testBlockScopeAndSurrogatePairStability() {
         // 覆盖：现代 Text Block、Javadoc 嵌套块、Emoji 👨‍👩‍👧‍👦 (4 个 Code Units) 与罕见汉字 𠮷
         val textBlockDelimiter = "\"\"\""
