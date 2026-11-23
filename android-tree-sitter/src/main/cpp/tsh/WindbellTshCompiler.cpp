@@ -30,6 +30,7 @@
 #include <unordered_set>
 #include <cstdint>
 #include <new>
+#include <string_view>
 #include "ts__log.h"
 #include "QueryDependencyAnalyzer.h"
 
