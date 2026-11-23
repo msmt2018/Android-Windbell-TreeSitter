@@ -1170,6 +1170,7 @@ class WindbellTshLinkageTest {
                         node: "expression"
                         style: "expressionNode"
                         priority: 22
+                        overlap: allow
                     },
                     {
                         node: "+"
@@ -1186,6 +1187,7 @@ class WindbellTshLinkageTest {
                         nextSibling: "expression"
                         style: "operatorWithExpressionOperands"
                         priority: 22
+                        overlap: allow
                     },
                     {
                         node: "+"
