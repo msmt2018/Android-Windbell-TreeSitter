@@ -179,6 +179,8 @@ jobs:
           rm -f "$failed_file"
           echo "✅ Installed dependencies for all ${#manifests[@]} grammar packages."
           
+      - name: Regenerate Java grammar with ABI 15 supertype metadata
+        run: bash scripts/generate-java-grammar-abi15.sh
       - name: Restore cache
         uses: actions/cache@v4
         with:
@@ -328,6 +330,8 @@ jobs:
           fi
           rm -f "$failed_file"
           echo "✅ Installed dependencies for all ${#manifests[@]} grammar packages."
+      - name: Regenerate Java grammar with ABI 15 supertype metadata
+        run: bash scripts/generate-java-grammar-abi15.sh
       - name: Restore cache
         uses: actions/cache@v4
         with:
@@ -510,6 +514,8 @@ jobs:
       # The current Android Emulator requires a hardware accelerator on
       # recent builds. Enable KVM for the runner when available; explicitly
       # opt into TCG only when the runner cannot expose /dev/kvm.
+      - name: Regenerate Java grammar with ABI 15 supertype metadata
+        run: bash scripts/generate-java-grammar-abi15.sh
       - name: Enable KVM or configure TCG fallback
         shell: bash
         run: |
