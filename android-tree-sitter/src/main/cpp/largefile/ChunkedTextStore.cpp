@@ -12,7 +12,7 @@ ChunkedTextStore::ChunkedTextStore(uint64_t memoryLimitBytes, uint32_t chunkByte
       chunk_bytes_(std::max<uint32_t>(2u, chunkBytes & ~1u)) {}
 
 bool ChunkedTextStore::append(const void *data, size_t length) noexcept {
-    if (sealed_ || (length != 0 && data == nullptr) || (length & 1u) != 0) return false;
+    if (sealed_ || failed_ || (length != 0 && data == nullptr) || (length & 1u) != 0) return false;
     if (length == 0) return true;
 
     const uint64_t amount = static_cast<uint64_t>(length);
@@ -23,6 +23,7 @@ bool ChunkedTextStore::append(const void *data, size_t length) noexcept {
         while (consumed < length) {
             const uint64_t chunk_index_64 = size_bytes_ / chunk_bytes_;
             if (chunk_index_64 > static_cast<uint64_t>(std::numeric_limits<size_t>::max())) {
+                failed_ = true;
                 return false;
             }
             const size_t chunk_index = static_cast<size_t>(chunk_index_64);
@@ -31,10 +32,14 @@ bool ChunkedTextStore::append(const void *data, size_t length) noexcept {
             if (chunk_index == chunks_.size()) {
                 if (chunk_bytes_ > memory_limit_bytes_ -
                     std::min(memory_limit_bytes_, allocated_bytes_)) {
+                    failed_ = true;
                     return false;
                 }
                 auto chunk = std::unique_ptr<char[]>(new (std::nothrow) char[chunk_bytes_]);
-                if (!chunk) return false;
+                if (!chunk) {
+                    failed_ = true;
+                    return false;
+                }
                 chunks_.push_back(std::move(chunk));
                 allocated_bytes_ += chunk_bytes_;
             }
@@ -46,8 +51,9 @@ bool ChunkedTextStore::append(const void *data, size_t length) noexcept {
             size_bytes_ += writable;
         }
     } catch (...) {
-        // Keep size_bytes_ and allocated_bytes_ describing the successfully
-        // appended prefix. The caller can discard this incomplete store.
+        // Preserve accounting for the ingested prefix but poison the store so
+        // a caller cannot accidentally seal and parse a truncated document.
+        failed_ = true;
         return false;
     }
     return true;
@@ -62,7 +68,7 @@ bool ChunkedTextStore::isSealed() const noexcept {
 }
 
 bool ChunkedTextStore::isValid() const noexcept {
-    return sealed_;
+    return sealed_ && !failed_;
 }
 
 uint64_t ChunkedTextStore::sizeBytes() const noexcept {
@@ -82,7 +88,7 @@ bool ChunkedTextStore::read(
     out->data = nullptr;
     out->size = 0;
 
-    if (!sealed_) return false;
+    if (!isValid()) return false;
     if ((offset & 1u) != 0) return false;
     if (offset == size_bytes_) return true;
     if (offset > size_bytes_ || maxBytes == 0 || chunks_.empty()) return false;
