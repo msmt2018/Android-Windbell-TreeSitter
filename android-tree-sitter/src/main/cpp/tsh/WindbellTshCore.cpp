@@ -651,20 +651,51 @@ static bool tshPredicateNodeHasType(const TSNode& node,
     return false;
 }
 
+struct TshPredicateRegexWorkspace {
+    std::vector<UChar> window;
+    OnigRegion* region = nullptr;
+
+    TshPredicateRegexWorkspace() = default;
+    TshPredicateRegexWorkspace(const TshPredicateRegexWorkspace&) = delete;
+    TshPredicateRegexWorkspace& operator=(const TshPredicateRegexWorkspace&) = delete;
+
+    ~TshPredicateRegexWorkspace() {
+        if (region) onig_region_free(region, 1);
+    }
+
+    bool ensureRegion() noexcept {
+        if (region) return true;
+        region = onig_region_new();
+        return region != nullptr;
+    }
+
+    void resetRegion() noexcept {
+        if (region) onig_region_clear(region);
+    }
+};
+
 static int tshPredicateRegexMatchesContiguous(
-    regex_t* regex, const UChar* begin, const UChar* end
+    regex_t* regex, const UChar* begin, const UChar* end,
+    TshPredicateRegexWorkspace& workspace
 ) {
     if (!regex) return -1;
     static const UChar empty_input = 0;
     if (!begin && !end) begin = end = &empty_input;
     else if (!begin || !end || end < begin) return -1;
     if (begin == end) begin = end = &empty_input;
-    OnigRegion* region = onig_region_new();
-    if (!region) return -1;
-    const int result = onig_search(regex, begin, end, begin, end, region, ONIG_OPTION_NONE);
-    onig_region_free(region, 1);
+    if (!workspace.ensureRegion()) return -1;
+    workspace.resetRegion();
+    const int result = onig_search(
+        regex, begin, end, begin, end, workspace.region, ONIG_OPTION_NONE);
     if (result >= 0) return 1;
     return result == ONIG_MISMATCH ? 0 : -1;
+}
+
+static int tshPredicateRegexMatchesContiguous(
+    regex_t* regex, const UChar* begin, const UChar* end
+) {
+    TshPredicateRegexWorkspace workspace;
+    return tshPredicateRegexMatchesContiguous(regex, begin, end, workspace);
 }
 
 static int tshPredicateRegexMatchesTextSourceBounded(
@@ -672,7 +703,8 @@ static int tshPredicateRegexMatchesTextSourceBounded(
     uint64_t start_byte,
     uint64_t end_byte,
     regex_t* regex,
-    uint64_t maximum_match_bytes
+    uint64_t maximum_match_bytes,
+    TshPredicateRegexWorkspace& workspace
 ) {
     if (!regex || start_byte > end_byte || (start_byte & 1u) ||
         (end_byte & 1u) || end_byte > source.sizeBytes() ||
@@ -680,20 +712,14 @@ static int tshPredicateRegexMatchesTextSourceBounded(
         return -1;
     if (start_byte == end_byte) {
         static const UChar empty_input = 0;
-        return tshPredicateRegexMatchesContiguous(regex, &empty_input, &empty_input);
+        return tshPredicateRegexMatchesContiguous(regex, &empty_input, &empty_input, workspace);
     }
     constexpr uint64_t kCoreWindowBytes = 256u * 1024u;
     const uint64_t overlap = maximum_match_bytes >= 2u
         ? maximum_match_bytes - 2u : 0u;
-    // A query predicate can be evaluated for many captures in a dense
-    // document. Keep one bounded scratch window and one Oniguruma region for
-    // this capture evaluation instead of allocating both for every partition.
-    std::vector<UChar> window;
-    struct RegionOwner {
-        OnigRegion* value;
-        ~RegionOwner() { if (value) onig_region_free(value, 1); }
-    } region{onig_region_new()};
-    if (!region.value) return -1;
+    // The workspace belongs to one native Query-cursor execution. Reuse its
+    // bounded input capacity and Oniguruma region across captures and windows.
+    if (!workspace.ensureRegion()) return -1;
 
     uint64_t core_start = start_byte;
     while (core_start < end_byte) {
@@ -707,21 +733,22 @@ static int tshPredicateRegexMatchesTextSourceBounded(
         if (window_bytes == 0 || (window_bytes & 1u) != 0 ||
             window_bytes > static_cast<uint64_t>(std::numeric_limits<size_t>::max()))
             return -1;
-        try { window.resize(static_cast<size_t>(window_bytes)); }
+        try { workspace.window.resize(static_cast<size_t>(window_bytes)); }
         catch (const std::bad_alloc&) { return -1; }
         if (!windbell::largefile::copyTextRange(
-                source, core_start, window_bytes, window.data())) return -1;
-        const UChar* begin = window.data();
-        const UChar* end = begin + window.size();
+                source, core_start, window_bytes, workspace.window.data())) return -1;
+        const UChar* begin = workspace.window.data();
+        const UChar* end = begin + workspace.window.size();
+        workspace.resetRegion();
         const int hit = onig_search(
-            regex, begin, end, begin, end, region.value, ONIG_OPTION_NONE);
+            regex, begin, end, begin, end, workspace.region, ONIG_OPTION_NONE);
         bool found_in_core = false;
         bool failed = false;
         if (hit >= 0) {
-            if (region.value->beg[0] < 0 ||
-                region.value->end[0] < region.value->beg[0]) failed = true;
+            if (workspace.region->beg[0] < 0 ||
+                workspace.region->end[0] < workspace.region->beg[0]) failed = true;
             else found_in_core =
-                static_cast<uint64_t>(region.value->beg[0]) < core_end - core_start;
+                static_cast<uint64_t>(workspace.region->beg[0]) < core_end - core_start;
         } else if (hit != ONIG_MISMATCH) {
             failed = true;
         }
@@ -736,7 +763,8 @@ enum class TshPredicateResult : uint8_t { ACCEPT, REJECT, ERROR };
 
 static TshPredicateResult tshEvaluateNativePredicates(const NativeQueryProgram& program,
     const TSQueryMatch& match, const UChar* utf16_source,
-    const windbell::largefile::TextSource* text_source, uint32_t source_bytes) {
+    const windbell::largefile::TextSource* text_source, uint32_t source_bytes,
+    TshPredicateRegexWorkspace& regex_workspace) {
     const TSQuery* query = program.query;
     if (match.pattern_index >= program.predicates_by_pattern.size()) return TshPredicateResult::REJECT;
     const auto& predicates = program.predicates_by_pattern[match.pattern_index];
@@ -980,7 +1008,7 @@ static TshPredicateResult tshEvaluateNativePredicates(const NativeQueryProgram& 
                     const UChar* end = start_byte == end_byte ? nullptr :
                         reinterpret_cast<const UChar*>(contiguous_source_data + end_byte);
                     const int matched = tshPredicateRegexMatchesContiguous(
-                        compiled->regex, begin, end);
+                        compiled->regex, begin, end, regex_workspace);
                     if (matched < 0) return TshPredicateResult::ERROR;
                     all_match = all_match && (matched == 1);
                     all_not_match = all_not_match && (matched == 0);
@@ -998,7 +1026,7 @@ static TshPredicateResult tshEvaluateNativePredicates(const NativeQueryProgram& 
                         return TshPredicateResult::ERROR;
                     const int matched = tshPredicateRegexMatchesTextSourceBounded(
                         *text_source, start_byte, end_byte, compiled->regex,
-                        compiled->maximum_match_bytes);
+                        compiled->maximum_match_bytes, regex_workspace);
                     if (matched < 0) return TshPredicateResult::ERROR;
                     all_match = all_match && (matched == 1);
                     all_not_match = all_not_match && (matched == 0);
@@ -2857,6 +2885,10 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
             TSQueryMatch match;
             uint64_t match_order = 0;
             uint64_t accepted_match_count = 0;
+            // One lazy Native scratch workspace per Query cursor. Regex predicates
+            // can run for thousands of captures in a viewport; allocating an
+            // Oniguruma region and a bounded window per capture multiplies latency.
+            TshPredicateRegexWorkspace predicate_regex_workspace;
             while (ts_query_cursor_next_match(cursor, &match)) {
                 const uint64_t current_order = match_order++;
                 auto pattern_metadata = native_query.pattern_metadata.find(match.pattern_index);
@@ -2870,7 +2902,8 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                 const TshPredicateResult predicate_result = tshEvaluateNativePredicates(
                     native_query, match,
                     has_contiguous_text ? text_start : nullptr,
-                    has_contiguous_text ? nullptr : text_source, total_bytes);
+                    has_contiguous_text ? nullptr : text_source, total_bytes,
+                    predicate_regex_workspace);
                 if (predicate_result == TshPredicateResult::ERROR) {
                     throw std::runtime_error(
                         "TSH native query predicate evaluation failed while reading capture text");
