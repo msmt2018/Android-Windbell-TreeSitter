@@ -154,6 +154,33 @@ bool TshRegexNativeRegistry::execute(
         error = "Regex core range or execution budget is invalid";
         return false;
     }
+    // Keep the Native boundary self-validating. Kotlin window leases already
+    // reject malformed UTF-16 and split core boundaries, but JNI must not rely
+    // on callers preserving those invariants (reflection/future adapters can
+    // reach this registry without going through the current lease factory).
+    for (int32_t i = 0; i < length; ++i) {
+        const uint16_t unit = read_utf16le(text, static_cast<size_t>(i));
+        if (unit >= 0xD800 && unit <= 0xDBFF) {
+            if (i + 1 >= length) {
+                error = "Regex window contains an unpaired UTF-16 high surrogate";
+                return false;
+            }
+            const uint16_t low = read_utf16le(text, static_cast<size_t>(i + 1));
+            if (low < 0xDC00 || low > 0xDFFF) {
+                error = "Regex window contains an unpaired UTF-16 high surrogate";
+                return false;
+            }
+            ++i;
+        } else if (unit >= 0xDC00 && unit <= 0xDFFF) {
+            error = "Regex window contains an unpaired UTF-16 low surrogate";
+            return false;
+        }
+    }
+    if (starts_surrogate_pair(text, length, core_start_utf16 - 1) ||
+        starts_surrogate_pair(text, length, core_end_utf16 - 1)) {
+        error = "Regex core boundary splits a UTF-16 surrogate pair";
+        return false;
+    }
 
     std::shared_ptr<Entry> entry;
     {
