@@ -1461,6 +1461,10 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeCreateDocument(
     env->DeleteLocalRef(reader_class);
     if (!read_method || env->ExceptionCheck()) return 0;
 
+#ifndef NDEBUG
+    const auto native_create_started = std::chrono::steady_clock::now();
+#endif
+
     try {
     std::string backing_path;
     ScopedNativeBackingPath backing_path_guard(backing_path);
