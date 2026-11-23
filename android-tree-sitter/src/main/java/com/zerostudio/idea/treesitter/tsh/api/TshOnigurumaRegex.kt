@@ -104,7 +104,8 @@ class TshOnigurumaRegex private constructor(
             return failure("TSH-REGEX-NATIVE-004", "Oniguruma execution failed: ${error.message}", error)
         } ?: return failure("TSH-REGEX-NATIVE-005", "Oniguruma returned a null result")
 
-        if (raw.size < 2 || raw[1] < 0L || raw[1] > effectiveMaxMatches.toLong()) {
+        if (raw.size < 2 || raw[0] !in 0L..1L ||
+            raw[1] < 0L || raw[1] > effectiveMaxMatches.toLong()) {
             return failure("TSH-REGEX-NATIVE-006", "Oniguruma returned a malformed result header")
         }
         val count = raw[1].toInt()
