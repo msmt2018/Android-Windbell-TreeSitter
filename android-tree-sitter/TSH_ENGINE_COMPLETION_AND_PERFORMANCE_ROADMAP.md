@@ -820,3 +820,15 @@ Static call-site review found the native document parser already separately trac
 - 监听器注册与 dispose 现在具有明确的先后关系：要么成功注册并被 dispose 捕获，要么因文档已销毁而拒绝。
 
 没有执行测试、编译、构建、CI、设备验证或基准测试。
+
+## 2026-11-24 Native Regex 匹配/捕获范围 Unicode 边界保护（源码已提交，验证暂缓）
+
+静态审查发现 Native Regex 执行入口验证了输入 UTF-16 的合法性和 core 边界，但对 Oniguruma 返回的 match/capture 范围只检查了字节对齐和窗口范围，没有再次确认返回的起止位置不是代理对内部边界。Native 结果因此可能把一个补充平面字符拆成两个 UTF-16 code unit 范围，违反 TSH 对外的 Unicode code-point 边界契约。
+
+修复：
+- 在 Native 层检查每个 match 的起止位置。
+- 对每个已匹配 capture group 同样检查起止位置。
+- 任何落在 high-surrogate / low-surrogate 之间的范围均作为 Native 执行错误拒绝，不进入统一 MatchSet。
+- 未匹配 optional capture 仍保留既有 `(-1, -1)` 表示，不受影响。
+
+没有执行测试、编译、构建、CI、设备验证或基准测试。
