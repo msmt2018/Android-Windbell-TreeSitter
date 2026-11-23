@@ -117,6 +117,18 @@ class TshEngine private constructor(val options: TshEngineOptions) : AutoCloseab
         )
     }
 
+    /** Creates a render coordinator whose pending plans share this Engine's memory ledger. */
+    @JvmOverloads
+    fun createRenderCoordinator(
+        provider: TshRenderProvider,
+        maxPendingPlans: Int = Int.MAX_VALUE
+    ): TshRenderCoordinator = synchronized(lifecycleLock) {
+        check(state == TshEngineState.INITIALIZED) {
+            "TSH engine must be initialized before creating a render coordinator"
+        }
+        TshRenderCoordinator(provider, maxPendingPlans, memoryBudget)
+    }
+
     /** Attaches a host object without requiring inheritance or transferring host ownership. */
     fun attach(
         request: TshAttachmentRequest,
