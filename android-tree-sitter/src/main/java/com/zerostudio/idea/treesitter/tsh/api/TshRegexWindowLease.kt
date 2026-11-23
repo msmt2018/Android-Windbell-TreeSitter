@@ -9,7 +9,7 @@ import java.util.concurrent.atomic.AtomicBoolean
  */
 data class TshRegexWindowConstraints(
     val coreWindowUtf16: Int = 64 * 1024,
-    val maxWindowUtf16: Int = 256 * 1024,
+    val maxWindowUtf16: Int = Int.MAX_VALUE,
     /** Null means the pattern may match unbounded input and cannot be windowed safely. */
     val maxMatchLengthUtf16: Int? = null,
     val maxLookbehindUtf16: Int = 0,
@@ -132,7 +132,7 @@ class TshRegexWindowLease private constructor(
             coreStartUtf16: Long,
             coreLengthUtf16: Int,
             constraints: TshRegexWindowConstraints,
-            memoryBudget: TshMemoryBudget? = null
+            memoryBudget: TshMemoryBudget = TshMemoryBudget()
         ): TshResult<TshRegexWindowLease> {
             if (lease.isClosed) return failure(
                 "TSH-REGEX-WINDOW-001", "Cannot acquire a Regex window from a closed Snapshot Lease"
@@ -202,15 +202,13 @@ class TshRegexWindowLease private constructor(
                     return failure("TSH-REGEX-WINDOW-009", "Regex window size exceeds supported capacity")
                 }
 
-                if (memoryBudget != null) {
-                    when (val reserved = memoryBudget.reserve(
+                when (val reserved = memoryBudget.reserve(
                         TshMemoryCategory.REGEX_WINDOW,
                         actualLength * 6L + FIXED_ESTIMATE_BYTES,
                         "regex-window:" + snapshot.documentId + ":" + snapshot.version + ":" + coreStartUtf16
-                    )) {
-                        is TshResult.Success -> reservation = reserved.value
-                        is TshResult.Failure -> return TshResult.Failure(reserved.diagnostics)
-                    }
+                )) {
+                    is TshResult.Success -> reservation = reserved.value
+                    is TshResult.Failure -> return TshResult.Failure(reserved.diagnostics)
                 }
 
                 val source = snapshot.readUtf16(windowStart, windowEnd)
