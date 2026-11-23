@@ -654,6 +654,63 @@ class WindbellTshLinkageTest {
     }
 
     @Test
+    fun testMonarchNestedIncludeStateHotPathRemainsStable() {
+        val engine = WindbellTshEngine.instance
+        val source = """
+            tsh 2 {
+                language { id: "nested-state" name: "Nested State" extensions: [".nestedstate"] }
+                styles {
+                    identifier.nested { scope: "variable.other", tags: ["identifier"] }
+                    text.nested { scope: "text.plain", tags: ["text"] }
+                }
+                schemes {
+                    plain {
+                        light [ identifier.nested: #202020, text.nested: #404040 ]
+                        dark [ identifier.nested: #E0E0E0, text.nested: #C0C0C0 ]
+                    }
+                }
+                monarch {
+                    variables { }
+                    start: "root"
+                    tokenizer {
+                        root: [{ include: "@identifiers" }]
+                        identifiers: [{ include: "@baseIdentifiers" }]
+                        baseIdentifiers: [
+                            { match: /[A-Za-z_][A-Za-z0-9_]*/, token: "identifier" }
+                        ]
+                    }
+                    tokenPostfix: ".nested"
+                    defaultToken: "text"
+                }
+            }
+        """.trimIndent()
+        assertTrue(engine.loadTshSource("nested-state", source, null))
+
+        val tokens = (0 until 4096).map { "identifier_$it" }
+        val code = tokens.joinToString(" ")
+        val full = engine.computeHighlights(null, code, "nested-state")
+            .filter { it.source == 1 }
+        assertEquals(tokens.size, full.size,
+            "Nested include-state traversal must emit each identifier exactly once")
+
+        val viewportStart = code.indexOf("identifier_3000")
+        val viewportEnd = code.indexOf("identifier_3010") + "identifier_3010".length
+        val viewport = engine.computeHighlights(
+            null, code, "nested-state",
+            viewportStart.toLong() * 2L,
+            viewportEnd.toLong() * 2L
+        ).filter { it.source == 1 }
+        val expected = full.filter {
+            it.endByte > viewportStart * 2 && it.startByte < viewportEnd * 2
+        }.map { listOf(it.startByte, it.endByte, it.styleId, it.priority, it.declarationOrder) }
+        val actual = viewport.map {
+            listOf(it.startByte, it.endByte, it.styleId, it.priority, it.declarationOrder)
+        }
+        assertEquals(expected, actual,
+            "Nested include-state viewport output must match the full-document result")
+    }
+
+    @Test
     fun testMonarchRejectsUnknownAndCyclicVariables() {
         val engine = WindbellTshEngine.instance
         val cyclic = """

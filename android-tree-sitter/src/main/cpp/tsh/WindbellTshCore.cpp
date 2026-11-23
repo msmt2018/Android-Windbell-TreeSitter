@@ -2006,7 +2006,9 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
         if (!state_region || !state_case_region) {
             if (state_region) onig_region_free(state_region, 1);
             if (state_case_region) onig_region_free(state_case_region, 1);
-            return final_spans;
+            // Never turn an allocation failure into a successful but incomplete
+            // highlight result. JNI maps this to OutOfMemoryError.
+            throw std::bad_alloc();
         }
         uint32_t zero_width_steps = 0;
         std::vector<UChar> state_window;
@@ -2082,44 +2084,44 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
             const uint32_t local_position = position - state_window_start;
             const UChar* state_position_ptr = state_text_start + local_position;
             const RegexStateRule* matched_rule = nullptr;
-            std::unordered_set<std::string> include_path;
-            std::function<const RegexStateRule*(const std::string&)> find_rule =
-                [&](const std::string& state_name) -> const RegexStateRule* {
-                    if (!include_path.insert(state_name).second) return nullptr;
-                    auto state = grammar->regex_states.find(state_name);
-                    if (state == grammar->regex_states.end()) {
-                        include_path.erase(state_name);
-                        return nullptr;
-                    }
-                    for (const auto& candidate : state->second) {
-                        if (!candidate.enabled) continue;
-                        if (!candidate.include_state.empty()) {
-                            if (const RegexStateRule* included = find_rule(candidate.include_state)) {
-                                include_path.erase(state_name);
-                                return included;
-                            }
-                        }
-                        if (!candidate.pattern) continue;
-                        const int length = onig_match(
-                            candidate.pattern,
-                            state_text_start,
-                            state_text_end,
-                            state_position_ptr,
-                            state_region,
-                            ONIG_OPTION_NONE
-                        );
-                        if (length >= 0) {
-                            include_path.erase(state_name);
-                            return &candidate;
+            // Include cycles and missing states are rejected during Grammar
+            // compilation. Use a self-recursive generic lambda so the hot
+            // per-code-point tokenizer does not construct std::function or an
+            // unordered_set<string> for every token probe.
+            const auto find_rule = [&](auto&& self,
+                                       const std::string& state_name) -> const RegexStateRule* {
+                const auto state = grammar->regex_states.find(state_name);
+                if (state == grammar->regex_states.end()) return nullptr;
+                for (const auto& candidate : state->second) {
+                    if (!candidate.enabled) continue;
+                    if (!candidate.include_state.empty()) {
+                        if (const RegexStateRule* included =
+                                self(self, candidate.include_state)) {
+                            return included;
                         }
                     }
-                    include_path.erase(state_name);
-                    return nullptr;
-                };
+                    if (!candidate.pattern) continue;
+                    const int length = onig_match(
+                        candidate.pattern,
+                        state_text_start,
+                        state_text_end,
+                        state_position_ptr,
+                        state_region,
+                        ONIG_OPTION_NONE
+                    );
+                    if (length >= 0) return &candidate;
+                    if (length != ONIG_MISMATCH) {
+                        throw std::runtime_error(
+                            "Oniguruma Regex State match failed with status " +
+                            std::to_string(length));
+                    }
+                }
+                return nullptr;
+            };
 
-            const std::string active_state = state_stack.empty() ?
+            const std::string& active_state = state_stack.empty() ?
                 grammar->regex_start_state : state_stack.back();
-            matched_rule = find_rule(active_state);
+            matched_rule = find_rule(find_rule, active_state);
             if (!matched_rule) {
                 const UChar* next = advanceOneUtf16CodePoint(state_position_ptr, state_text_end);
                 const uint32_t end = state_window_start + static_cast<uint32_t>(next - state_text_start);
@@ -2169,6 +2171,11 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                         has_resolved_style = true;
                         case_matched = true;
                         break;
+                    }
+                    if (case_length != ONIG_MISMATCH) {
+                        throw std::runtime_error(
+                            "Oniguruma Regex State case match failed with status " +
+                            std::to_string(case_length));
                     }
                 }
                 if (!case_matched) {
@@ -2545,12 +2552,17 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                         const UChar* regex_end = node_source +
                             (text_end - text_start) / sizeof(UChar);
                         OnigRegion* regex_region = onig_region_new();
-                        if (!regex_region) continue;
+                        if (!regex_region) throw std::bad_alloc();
                         const int regex_result = onig_search(
                             ast_rule.text_regex, regex_begin, regex_end,
                             regex_begin, regex_end, regex_region, ONIG_OPTION_NONE);
                         onig_region_free(regex_region, 1);
-                        if (regex_result < 0) continue;
+                        if (regex_result == ONIG_MISMATCH) continue;
+                        if (regex_result < 0) {
+                            throw std::runtime_error(
+                                "Oniguruma AST text Regex execution failed with status " +
+                                std::to_string(regex_result));
+                        }
                     }
                     }
                     }
