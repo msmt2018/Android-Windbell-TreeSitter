@@ -6,7 +6,7 @@ concurrency:
 
 on:
   push:
-    branches: [ "dev", "main", "fix/tsh-core-architecture", "integrate/tsh-unified-api-large-text", "integration/all-open-prs" ]
+    branches: [ "dev", "main", "fix/tsh-core-architecture", "integrate/tsh-unified-api-large-text" ]
     paths-ignore:
       - '**.md'
   pull_request:
@@ -389,6 +389,8 @@ jobs:
 
 
   android_emulator_tests:
+    # Device/emulator validation is intentionally disabled; CI focuses on native and JVM build checks.
+    if: ${{ false }}
     if: ${{ false }} # Device tests are intentionally disabled; prioritize build and native/local validation.
     name: Android device tests (API ${{ matrix.api-level }})
     runs-on: ubuntu-latest
