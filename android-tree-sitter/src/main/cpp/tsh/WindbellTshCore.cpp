@@ -784,13 +784,11 @@ static TshPredicateResult tshEvaluateNativePredicates(const NativeQueryProgram& 
         const char* op_text = ts_query_string_value_for_id(query, predicate[0].value_id, &op_length);
         if (!op_text || predicate_size < 3 ||
             predicate[1].type != TSQueryPredicateStepTypeCapture) return TshPredicateResult::REJECT;
-        std::string op;
-        try {
-            op.assign(op_text, op_length);
-        } catch (const std::bad_alloc&) {
-            return TshPredicateResult::ERROR;
-        }
-        if (!op.empty() && op.front() == '#') op.erase(op.begin());
+        // Query string storage is owned by the immutable TSQuery. Keep a
+        // non-owning view here: constructing std::string for every match was
+        // an avoidable allocation on the hottest predicate path.
+        std::string_view op(op_text, op_length);
+        if (!op.empty() && op.front() == '#') op.remove_prefix(1);
 
         std::vector<std::vector<UChar>> expected;
         std::vector<std::string> expected_types;
@@ -894,9 +892,10 @@ static TshPredicateResult tshEvaluateNativePredicates(const NativeQueryProgram& 
             if (op == "any-not-eq?" || op == "any-eq?") {
                 static std::atomic<uint32_t> missing_capture_debug_count{0};
                 if (!has_capture && missing_capture_debug_count.fetch_add(1, std::memory_order_relaxed) < 16u) {
-                    LOGD("WindbellTSH", "Native equality predicate: op=%s pattern=%u predicate=%u capture_id=%u match_captures=%u accepted=%d",
-                        op.c_str(), match.pattern_index, predicate_index, predicate[1].value_id,
-                        match.capture_count, accepted ? 1 : 0);
+                    LOGD("WindbellTSH", "Native equality predicate: op=%.*s pattern=%u predicate=%u capture_id=%u match_captures=%u accepted=%d",
+                        static_cast<int>(op.size()), op.data(), match.pattern_index,
+                        predicate_index, predicate[1].value_id, match.capture_count,
+                        accepted ? 1 : 0);
                     for (uint32_t capture = 0; capture < match.capture_count; ++capture) {
                         LOGD("WindbellTSH", "  capture[%u].index=%u", capture, match.captures[capture].index);
                     }
@@ -1044,7 +1043,7 @@ static TshPredicateResult tshEvaluateNativePredicates(const NativeQueryProgram& 
                         return TshPredicateResult::ERROR;
                     const int matched = tshPredicateRegexMatchesContiguous(
                         compiled->regex, utf16_source + start_byte,
-                        utf16_source + end_byte);
+                        utf16_source + end_byte, regex_workspace);
                     if (matched < 0) return TshPredicateResult::ERROR;
                     all_match = all_match && (matched == 1);
                     all_not_match = all_not_match && (matched == 0);
@@ -1058,7 +1057,7 @@ static TshPredicateResult tshEvaluateNativePredicates(const NativeQueryProgram& 
                     const UChar* begin = value.empty() ? nullptr : value.data();
                     const UChar* end = value.empty() ? nullptr : value.data() + value.size();
                     const int matched = tshPredicateRegexMatchesContiguous(
-                        compiled->regex, begin, end);
+                        compiled->regex, begin, end, regex_workspace);
                     if (matched < 0) return TshPredicateResult::ERROR;
                     all_match = all_match && (matched == 1);
                     all_not_match = all_not_match && (matched == 0);
@@ -3004,12 +3003,8 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
     } else if (micro_spans.empty()) {
         final_spans = std::move(macro_spans);
     } else {
-        std::sort(macro_spans.begin(), macro_spans.end(), [](const HighlightSpan& a, const HighlightSpan& b) {
-            return (a.start_byte != b.start_byte) ? a.start_byte < b.start_byte : a.end_byte < b.end_byte;
-        });
-        std::sort(micro_spans.begin(), micro_spans.end(), [](const HighlightSpan& a, const HighlightSpan& b) {
-            return (a.start_byte != b.start_byte) ? a.start_byte < b.start_byte : a.end_byte < b.end_byte;
-        });
+        // Do not sort producer vectors independently: the precedence sort
+        // below orders the combined candidate set once and is authoritative.
 
         // Keep overlapping captures. Their precedence is a rule-level concern,
         // not an accidental consequence of numeric style IDs.
