@@ -798,3 +798,7 @@ Static call-site review found the native document parser already separately trac
 - 更新头文件契约：发生摄取中途失败的 store 不得作为部分文档被 seal 后解析。
 
 这避免 Tree-sitter/JNI 把内存压力下只摄取到的前缀当作完整文档。没有执行测试、编译、构建、CI、设备验证或基准测试。
+
+## 2026-11-24 PieceTree 版本身份溢出保护（源码已提交，验证暂缓）
+
+`PieceTreeSource::replace` 原先无条件递增 64 位版本号。达到 `UINT64_MAX` 后会回绕，使新内容状态可能重新使用旧版本身份，破坏依赖版本键的快照、Regex 快照和缓存失效判断。现在在编辑事务开始前拒绝版本号耗尽的修改，避免分配或写入后才发现无法生成唯一的新版本。没有执行测试或构建验证。
