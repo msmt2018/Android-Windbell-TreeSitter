@@ -149,7 +149,12 @@ bool SegmentedTextSource::read(
 }
 
 ContiguousTextSource::ContiguousTextSource(const void *data, uint64_t sizeBytes) noexcept
-    : data_(static_cast<const char *>(data)), size_bytes_(sizeBytes) {}
+    : data_(static_cast<const char *>(data)), size_bytes_(sizeBytes),
+      valid_((sizeBytes & 1u) == 0 && (sizeBytes == 0 || data != nullptr)) {}
+
+bool ContiguousTextSource::isValid() const noexcept {
+    return valid_;
+}
 
 uint64_t ContiguousTextSource::sizeBytes() const noexcept {
     return size_bytes_;
@@ -158,7 +163,7 @@ uint64_t ContiguousTextSource::sizeBytes() const noexcept {
 bool ContiguousTextSource::contiguousData(
     const char **data, uint64_t *sizeBytes
 ) const noexcept {
-    if (!data || !sizeBytes || (size_bytes_ != 0 && !data_)) return false;
+    if (!data || !sizeBytes || !valid_) return false;
     *data = data_;
     *sizeBytes = size_bytes_;
     return true;
@@ -173,9 +178,9 @@ bool ContiguousTextSource::read(
     out->data = nullptr;
     out->size = 0;
 
-    if (data_ == nullptr || maxBytes == 0 || offset >= size_bytes_) {
-        return offset == size_bytes_;
-    }
+    if (!valid_ || (offset & 1u) != 0 || offset > size_bytes_) return false;
+    if (offset == size_bytes_) return true;
+    if (maxBytes < 2u || data_ == nullptr) return false;
 
     const uint64_t remaining = size_bytes_ - offset;
     uint64_t count = std::min<uint64_t>(remaining, maxBytes);
