@@ -802,3 +802,9 @@ Static call-site review found the native document parser already separately trac
 ## 2026-11-24 PieceTree 版本身份溢出保护（源码已提交，验证暂缓）
 
 `PieceTreeSource::replace` 原先无条件递增 64 位版本号。达到 `UINT64_MAX` 后会回绕，使新内容状态可能重新使用旧版本身份，破坏依赖版本键的快照、Regex 快照和缓存失效判断。现在在编辑事务开始前拒绝版本号耗尽的修改，避免分配或写入后才发现无法生成唯一的新版本。没有执行测试或构建验证。
+
+## 2026-11-24 Kotlin PieceTree 快照版本身份保护（源码已提交，验证暂缓）
+
+进一步检查编辑器实际使用的 Kotlin PieceTree 后，发现底层 `pieceTreeBase.kt` 的 `_versionId` 是 `Int`，且 setEOL、slice insert、普通 insert、delete 四条变更路径都直接执行 `++`。溢出后版本会变为负数并可能重用历史身份；TSH 快照层再转为 Long 也无法恢复已经丢失的唯一性。
+
+已统一改为 `bumpVersionId()`：在每条变更路径开始修改树之前检查 `Int.MAX_VALUE`，耗尽时拒绝本次变更，不允许版本号回绕。保留现有 Int API，避免不必要的 ABI/API 破坏。未执行测试、编译或构建。
