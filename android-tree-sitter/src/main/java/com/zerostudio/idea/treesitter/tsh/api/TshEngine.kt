@@ -94,7 +94,7 @@ class TshEngine private constructor(val options: TshEngineOptions) : AutoCloseab
         TshTreeSitterQueryExecutor(
             objects = objects, queries = compiledQueries, leases = nativeQueryLeases,
             treeLeases = nativeResourceLeases, predicateHandlers = predicateHandlers,
-            resourceRegistry = nativeResources
+            resourceRegistry = nativeResources, memoryBudget = memoryBudget
         )
     }
 
