@@ -410,9 +410,12 @@ class TshTreeSitterQueryExecutor(
                 return failure("TSH-QUERY-EXEC-012", "Query cancelled before native Tree-sitter execution")
             }
             var progressCallbackAvailable = true
+            var progressCallbackCancelled = false
             try {
-                cursor.exec(nativeQuery, root, TSQueryCursor.ProgressCallback { _ ->
-                    cancellation.isCancelled()
+                cursor.exec(nativeQuery, root, TSQueryCursor.ProgressCallback { currentByteOffset ->
+                    val cancel = cancellation.onProgress(currentByteOffset)
+                    if (cancel) progressCallbackCancelled = true
+                    cancel
                 })
             } catch (error: UnsupportedOperationException) {
                 // The Java binding can be newer than the bundled Tree-sitter C library.
@@ -505,10 +508,14 @@ class TshTreeSitterQueryExecutor(
                 if (truncated) break
             }
 
-            if (cancellation.isCancelled()) {
+            if (progressCallbackCancelled || cancellation.isCancelled()) {
                 return failure(
                     "TSH-QUERY-EXEC-012",
-                    "Query cancelled during native Tree-sitter execution"
+                    if (progressCallbackCancelled) {
+                        "Query cancelled by Tree-sitter's in-flight native progress callback"
+                    } else {
+                        "Query cancelled during native Tree-sitter execution"
+                    }
                 )
             }
 
