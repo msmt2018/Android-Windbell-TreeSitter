@@ -2608,23 +2608,37 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                     // comment node from allocating a document-sized second copy.
                     constexpr uint64_t kMaxContiguousAstRegexBytes = 4ULL * 1024ULL * 1024ULL;
                     if (text_source && ast_rule.text_regex &&
-                        text_end - text_start > kMaxContiguousAstRegexBytes) continue;
+                        text_end - text_start > kMaxContiguousAstRegexBytes) {
+                        throw std::runtime_error(
+                            "TSH context-dependent AST Regex exceeds the 4 MiB contiguous-node limit; "
+                            "refusing to publish an incomplete highlight result");
+                    }
                     std::string node_text_storage;
                     std::vector<UChar> node_text_window((text_end - text_start) / sizeof(UChar));
                     const UChar* node_source = nullptr;
                     if (text_end > text_start) {
                         if (text_source) {
-                            if (!windbell::largefile::copyTextRange(*text_source, text_start, text_end - text_start, node_text_window.data())) continue;
+                            if (!windbell::largefile::copyTextRange(
+                                    *text_source, text_start, text_end - text_start,
+                                    node_text_window.data())) {
+                                throw std::runtime_error(
+                                    "TSH could not read the AST text predicate's TextSource range");
+                            }
                             node_source = node_text_window.data();
                         } else if (has_contiguous_text) {
                             const UChar *document_source = input_chars
                                 ? reinterpret_cast<const UChar*>(input_chars)
                                 : reinterpret_cast<const UChar*>(contiguous_source_data);
                             node_source = document_source + text_start;
+                        } else {
+                            throw std::runtime_error(
+                                "TSH AST text predicate has no readable source buffer");
                         }
-                        else continue;
                     } else node_source = &kEmptyInput;
-                    if (!tshUtf16SliceToUtf8(node_source, text_end - text_start, node_text_storage)) continue;
+                    if (!tshUtf16SliceToUtf8(node_source, text_end - text_start, node_text_storage)) {
+                        throw std::runtime_error(
+                            "TSH AST text predicate encountered malformed UTF-16 input");
+                    }
                     const std::string_view node_text(node_text_storage);
                     if (ast_rule.has_text_equals && node_text != ast_rule.text_equals) continue;
                     if (ast_rule.has_text_prefix &&
