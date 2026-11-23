@@ -343,11 +343,12 @@ class TshTreeSitterQueryExecutor(
             return failure("TSH-QUERY-EXEC-010", "Requested query range is outside the syntax tree root range")
         }
 
-        if (effectiveRange.startByte > Int.MAX_VALUE.toLong() ||
-            effectiveRange.endByte > Int.MAX_VALUE.toLong()) {
+        if (effectiveRange.startByte < 0L ||
+            effectiveRange.endByte < effectiveRange.startByte ||
+            effectiveRange.endByte > 0xFFFF_FFFFL) {
             return failure(
                 "TSH-QUERY-EXEC-020",
-                "Native TSQueryCursor byte-range ABI is Int-limited; requested range exceeds Int.MAX_VALUE"
+                "Query byte range must fit Tree-sitter's unsigned 32-bit byte-offset domain"
             )
         }
 
@@ -384,7 +385,7 @@ class TshTreeSitterQueryExecutor(
         }
 
         try {
-            cursor.setByteRange(effectiveRange.startByte.toInt(), effectiveRange.endByte.toInt())
+            cursor.setByteRange(effectiveRange.startByte, effectiveRange.endByte)
             cursor.setMatchLimit(pendingMatchLimit)
             cursor.setPredicateEvaluationEnabled(query.options.enablePredicates)
             if (query.options.enablePredicates) {
