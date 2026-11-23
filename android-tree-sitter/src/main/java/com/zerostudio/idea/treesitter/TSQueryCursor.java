@@ -244,6 +244,18 @@ public class TSQueryCursor extends TSNativeObject implements Iterable<TSQueryMat
     Native.setByteRange(getNativeObject(), start, end);
   }
 
+  /**
+   * Set an absolute unsigned Tree-sitter byte range without narrowing through a signed Java int.
+   * Tree-sitter's public byte-offset representation is uint32; values above 2 GiB are valid.
+   */
+  public void setByteRange(long start, long end) {
+    checkAccess();
+    if (start < 0L || end < start || end > 0xFFFF_FFFFL) {
+      throw new IllegalArgumentException("Byte range must fit the unsigned 32-bit Tree-sitter offset domain");
+    }
+    Native.setByteRangeLong(getNativeObject(), start, end);
+  }
+
   public void setPointRange(TSPoint start, TSPoint end) {
     checkAccess();
     Native.setPointRange(getNativeObject(), start, end);
@@ -384,6 +396,7 @@ public class TSQueryCursor extends TSNativeObject implements Iterable<TSQueryMat
     static native int getMatchLimit(long cursor);
 
     static native void setByteRange(long cursor, int start, int end);
+    static native void setByteRangeLong(long cursor, long start, long end);
 
     static native void setPointRange(long cursor, TSPoint start, TSPoint end);
 
