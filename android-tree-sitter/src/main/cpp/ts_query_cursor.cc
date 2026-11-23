@@ -262,7 +262,7 @@ static void TSQueryCursor_setByteRangeLong(JNIEnv *env,
                                            jlong start,
                                            jlong end) {
   req_nnp(env, cursor);
-  if (start < 0 || end < start || end > 0xFFFF'FFFFLL) {
+  if (start < 0 || end < start || end > 0xFFFFFFFFLL) {
     throwIllegalArgument(
         env, "Byte range must fit the unsigned 32-bit Tree-sitter offset domain");
     return;
