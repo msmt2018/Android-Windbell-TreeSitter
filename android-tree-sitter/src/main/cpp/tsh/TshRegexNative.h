@@ -53,6 +53,9 @@ private:
         ~Entry() { if (regex) onig_free(regex); }
         regex_t* regex = nullptr;
         std::mutex execution_mutex;
+        // Reuse the small, frequent viewport sentinel copy while holding execution_mutex.
+        // Large windows use a transient buffer so one unusually large request is not retained.
+        std::vector<UChar> reusable_sentinel_buffer;
     };
 
     std::mutex mutex_;

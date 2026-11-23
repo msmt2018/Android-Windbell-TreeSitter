@@ -210,9 +210,19 @@ bool TshRegexNativeRegistry::execute(
         error = "Regex sentinel buffer size overflow";
         return false;
     }
-    std::vector<UChar> sentinel_buffer;
+    // Most editor viewport windows are small and are executed repeatedly while
+    // scrolling. Reuse their sentinel storage under the per-regex execution lock
+    // to avoid a fresh heap allocation on every request. Do not retain large
+    // windows: their temporary storage is released when this call returns.
+    constexpr size_t kReusableSentinelBufferLimitBytes = 1024u * 1024u;
+    std::vector<UChar> transient_sentinel_buffer;
+    std::vector<UChar>& sentinel_buffer =
+        prefix_bytes + text_bytes + suffix_bytes <= kReusableSentinelBufferLimitBytes
+            ? entry->reusable_sentinel_buffer
+            : transient_sentinel_buffer;
     const UChar* begin = text;
     if (prefix_bytes != 0 || suffix_bytes != 0) {
+        sentinel_buffer.clear();
         sentinel_buffer.reserve(prefix_bytes + text_bytes + suffix_bytes);
         if (prefix_bytes != 0) {
             sentinel_buffer.push_back(0);
