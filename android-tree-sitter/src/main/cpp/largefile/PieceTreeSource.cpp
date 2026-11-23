@@ -314,8 +314,9 @@ bool PieceTreeSource::readAdded(uint64_t offset, uint32_t maxBytes,
     out->data = nullptr;
     out->size = 0;
     constexpr uint64_t chunkBytes = 64u * 1024u;
-    if (offset > added_size_ || (offset & 1u) || maxBytes < 2u) return false;
+    if (offset > added_size_ || (offset & 1u)) return false;
     if (offset == added_size_) return true;
+    if (maxBytes < 2u) return false;
     const uint64_t index64 = offset / chunkBytes;
     if (index64 > static_cast<uint64_t>(std::numeric_limits<size_t>::max())) return false;
     const size_t index = static_cast<size_t>(index64);
@@ -348,8 +349,9 @@ bool PieceTreeSource::read(uint64_t offset, uint32_t maxBytes,
     out->data = nullptr;
     out->size = 0;
     const uint64_t total = sizeBytes();
-    if (!valid_ || (offset & 1u) || offset > total || maxBytes < 2u) return false;
+    if (!valid_ || (offset & 1u) || offset > total) return false;
     if (offset == total) return true;
+    if (maxBytes < 2u) return false;
 
     std::shared_ptr<Node> node = root_;
     uint64_t remaining = offset;
