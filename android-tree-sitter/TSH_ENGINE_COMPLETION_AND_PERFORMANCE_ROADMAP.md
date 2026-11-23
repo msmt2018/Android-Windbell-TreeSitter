@@ -751,3 +751,24 @@ The following changes are committed to `integration/all-open-prs`. No tests, bui
 - API 30 `device offline` remains an environment failure, not evidence of a source defect. XML/DTD and AIDL language-selection defects are outside the current branch's packaged TSH language set and were not changed in this pass.
 
 **Validation gate:** all test, build, CI, and device validation remains intentionally deferred until the outstanding source-level bug backlog is closed. Source presence and regression-test source do not constitute a passing result.
+
+
+### 2026-11-24 Continued source-only repair — UTF-16LE TextSource contract
+
+Additional commits after the previous status snapshot:
+
+- `d59f3ef88bbcd087eaaec1c51719951b374d2c3e` — `ContiguousTextSource` now records validity and rejects odd byte lengths or a null backing pointer for non-empty input.
+- `c71d4c8f168cf89b0a70a16ae8bcd412f8d21f59` — invalid contiguous sources cannot masquerade as successful EOF reads; reads enforce UTF-16 code-unit alignment and valid backing storage.
+- `d8ff82b408a1df94f867bb117a969d03671202dc` — shared range-copy, surrogate-boundary, and Tree-sitter input-chunk helpers reject odd-sized UTF-16LE documents.
+- `60fc2f68126a209f981a5fd69f216179c559f40b` — segmented-source EOF is a successful empty read independent of requested chunk capacity, matching contiguous-source semantics.
+- `1c6bee6963676f925050eddab1cd13e78f2ecee3` — PieceTree and its append-arena reader use the same EOF semantics.
+
+Static call-site review found the native document parser already separately tracks `read_failed` and rejects failed/incomplete parse candidates before publishing them. The regular string parser also checks its UTF-16LE byte length before constructing its contiguous source. No test or build was run for these changes.
+
+| Defect | Source change | Status |
+|---|---|---|
+| Contiguous source accepted odd UTF-16LE byte lengths | Added explicit validity state and consistent read/contiguous-view rejection. | SOURCE_PATCHED; validation deferred |
+| Null backing pointer on non-empty contiguous input could appear as EOF at document end | Invalid source state now rejects reads, including EOF access. | SOURCE_PATCHED; validation deferred |
+| Shared range/input helpers did not enforce whole-document UTF-16LE alignment | Added document-size parity guards at common helper boundaries. | SOURCE_PATCHED; validation deferred |
+| Segmented/PieceTree EOF behavior differed from contiguous source when maxBytes was zero or one | Normalize EOF as successful zero-byte read before checking requested capacity. | SOURCE_PATCHED; validation deferred |
+
