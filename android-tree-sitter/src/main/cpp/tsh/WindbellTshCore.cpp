@@ -792,6 +792,7 @@ static TshPredicateResult tshEvaluateNativePredicates(const NativeQueryProgram& 
 
         std::vector<std::vector<UChar>> expected;
         std::vector<std::string> expected_types;
+        std::vector<std::vector<UChar>> actual;
         // Predicate arity is fixed by the immutable query program. Reserve once
         // for this evaluation to avoid geometric growth while decoding literals.
         expected.reserve(predicate_size > 2 ? predicate_size - 2 : 0);
