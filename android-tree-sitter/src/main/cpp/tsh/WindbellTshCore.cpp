@@ -681,6 +681,16 @@ static int tshPredicateRegexMatchesTextSourceBounded(
     constexpr uint64_t kCoreWindowBytes = 256u * 1024u;
     const uint64_t overlap = maximum_match_bytes >= 2u
         ? maximum_match_bytes - 2u : 0u;
+    // A query predicate can be evaluated for many captures in a dense
+    // document. Keep one bounded scratch window and one Oniguruma region for
+    // this capture evaluation instead of allocating both for every partition.
+    std::vector<UChar> window;
+    struct RegionOwner {
+        OnigRegion* value;
+        ~RegionOwner() { if (value) onig_region_free(value, 1); }
+    } region{onig_region_new()};
+    if (!region.value) return -1;
+
     uint64_t core_start = start_byte;
     while (core_start < end_byte) {
         const uint64_t remaining = end_byte - core_start;
@@ -693,25 +703,24 @@ static int tshPredicateRegexMatchesTextSourceBounded(
         if (window_bytes == 0 || (window_bytes & 1u) != 0 ||
             window_bytes > static_cast<uint64_t>(std::numeric_limits<size_t>::max()))
             return -1;
-        std::vector<UChar> window;
         try { window.resize(static_cast<size_t>(window_bytes)); }
         catch (const std::bad_alloc&) { return -1; }
         if (!windbell::largefile::copyTextRange(
                 source, core_start, window_bytes, window.data())) return -1;
         const UChar* begin = window.data();
         const UChar* end = begin + window.size();
-        OnigRegion* region = onig_region_new();
-        if (!region) return -1;
-        const int hit = onig_search(regex, begin, end, begin, end, region, ONIG_OPTION_NONE);
+        const int hit = onig_search(
+            regex, begin, end, begin, end, region.value, ONIG_OPTION_NONE);
         bool found_in_core = false;
         bool failed = false;
         if (hit >= 0) {
-            if (region->beg[0] < 0 || region->end[0] < region->beg[0]) failed = true;
-            else found_in_core = static_cast<uint64_t>(region->beg[0]) < core_end - core_start;
+            if (region.value->beg[0] < 0 ||
+                region.value->end[0] < region.value->beg[0]) failed = true;
+            else found_in_core =
+                static_cast<uint64_t>(region.value->beg[0]) < core_end - core_start;
         } else if (hit != ONIG_MISMATCH) {
             failed = true;
         }
-        onig_region_free(region, 1);
         if (failed) return -1;
         if (found_in_core) return 1;
         core_start = core_end;
