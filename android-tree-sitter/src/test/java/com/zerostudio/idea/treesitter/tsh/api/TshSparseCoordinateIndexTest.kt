@@ -155,7 +155,7 @@ class TshSparseCoordinateIndexTest {
             memoryBudget = budget
         )
         assertTrue(built is TshResult.Success)
-        assertEquals(192L, budget.snapshot().reservedBytes)
+        assertEquals(224L, budget.snapshot().reservedBytes)
         (built as TshResult.Success).value.close()
         assertEquals(0L, budget.snapshot().reservedBytes)
         sourceLease.close()
@@ -172,6 +172,57 @@ class TshSparseCoordinateIndexTest {
         assertTrue(result is TshResult.Failure)
         assertEquals(0L, budget.snapshot().reservedBytes)
         sourceLease.close()
+    }
+
+    @Test
+    fun mapsLfLineAndUtf16ColumnAcrossCrLfAndSurrogatePairs() {
+        val source = lease("a𠮷\\r\\nb\\nend")
+        val index = (TshSparseCoordinateIndex.build(
+            source, chunkSizeUtf16 = 256, checkpointStrideUtf16 = 256
+        ) as TshResult.Success).value
+
+        assertEquals(TshLineColumn(0L, 0L),
+            (index.lineColumnAtUtf16(0L) as TshResult.Success).value)
+        assertEquals(TshLineColumn(0L, 3L),
+            (index.lineColumnAtUtf16(3L) as TshResult.Success).value)
+        assertEquals(TshLineColumn(1L, 0L),
+            (index.lineColumnAtUtf16(5L) as TshResult.Success).value)
+        assertEquals(TshLineColumn(1L, 1L),
+            (index.lineColumnAtUtf16(6L) as TshResult.Success).value)
+        assertEquals(TshLineColumn(2L, 3L),
+            (index.lineColumnAtUtf16(10L) as TshResult.Success).value)
+
+        assertEquals(6L, (index.utf16OffsetAtLineColumn(1L, 1L) as TshResult.Success).value)
+        assertEquals(10L, (index.utf16OffsetAtLineColumn(2L, 3L) as TshResult.Success).value)
+        assertTrue(index.utf16OffsetAtLineColumn(0L, 2L) is TshResult.Failure)
+        assertTrue(index.utf16OffsetAtLineColumn(9L, 0L) is TshResult.Failure)
+        assertTrue(index.lineColumnAtUtf16(2L) is TshResult.Failure)
+
+        index.close()
+        source.close()
+    }
+
+    @Test
+    fun lineColumnLookupUsesSparseCheckpointsForLongLines() {
+        val text = buildString {
+            repeat(5_000) { append('x') }
+            append('\\n')
+            append("tail")
+        }
+        val source = lease(text)
+        val index = (TshSparseCoordinateIndex.build(
+            source, chunkSizeUtf16 = 1024, checkpointStrideUtf16 = 512
+        ) as TshResult.Success).value
+
+        assertEquals(4_321L,
+            (index.utf16OffsetAtLineColumn(0L, 4_321L) as TshResult.Success).value)
+        assertEquals(TshLineColumn(0L, 4_321L),
+            (index.lineColumnAtUtf16(4_321L) as TshResult.Success).value)
+        assertEquals(5_001L,
+            (index.utf16OffsetAtLineColumn(1L, 0L) as TshResult.Success).value)
+
+        index.close()
+        source.close()
     }
 
     @Test
