@@ -193,6 +193,8 @@ class TshTreeSitterQueryCompiler(
  * Executes compiled queries through TSQueryCursor. Query and tree remain caller/registry-owned;
  * only the per-execution cursor is created and closed by this adapter.
  */
+private const val QUERY_CURSOR_ESTIMATED_BYTES_PER_PENDING_MATCH = 256L
+
 class TshTreeSitterQueryExecutor(
     private val objects: TshObjectRegistry,
     private val queries: TshCompiledQueryRegistry,
@@ -349,17 +351,41 @@ class TshTreeSitterQueryExecutor(
             )
         }
 
+        // Tree-sitter's match limit bounds pending in-progress matches, not total results.
+        // Derive it from the live Engine budget instead of treating it as a semantic match cap.
+        // The estimate is intentionally conservative and is accounting guidance, not an RSS claim.
+        val beforeCursor = memoryBudget.snapshot()
+        val availableBytes = (beforeCursor.limitBytes - beforeCursor.reservedBytes).coerceAtLeast(0L)
+        val pendingBytes = availableBytes / 4L
+        if (pendingBytes < QUERY_CURSOR_ESTIMATED_BYTES_PER_PENDING_MATCH) {
+            return failure(
+                "TSH-QUERY-EXEC-035",
+                "Insufficient shared memory budget for a Tree-sitter query cursor working set",
+                stage = TshDiagnosticStage.MEMORY
+            )
+        }
+        val pendingMatchLimit = minOf(
+            Int.MAX_VALUE.toLong(),
+            pendingBytes / QUERY_CURSOR_ESTIMATED_BYTES_PER_PENDING_MATCH
+        ).toInt().coerceAtLeast(1)
+        val cursorReservation = when (val reserved = memoryBudget.reserve(
+            TshMemoryCategory.QUERY_CURSOR,
+            pendingBytes,
+            "query-cursor:${query.queryId}:${tree.documentId}:${tree.documentVersion}"
+        )) {
+            is TshResult.Success -> reserved.value
+            is TshResult.Failure -> return TshResult.Failure(reserved.diagnostics)
+        }
         val cursor = try {
             TSQueryCursor.create()
         } catch (error: Throwable) {
+            cursorReservation.close()
             return failure("TSH-QUERY-EXEC-011", "Cannot create Tree-sitter query cursor: ${error.message}", cause = error)
         }
 
         try {
-            // Tree-sitter's match limit bounds pending in-progress matches, not total results.
-            // Enforce maxMatches while draining the cursor instead.
             cursor.setByteRange(effectiveRange.startByte.toInt(), effectiveRange.endByte.toInt())
-            cursor.setMatchLimit(budget.maxMatches)
+            cursor.setMatchLimit(pendingMatchLimit)
             cursor.setPredicateEvaluationEnabled(query.options.enablePredicates)
             if (query.options.enablePredicates) {
                 effectivePredicateHandlers.forEach(cursor::addPredicateHandler)
@@ -509,7 +535,11 @@ class TshTreeSitterQueryExecutor(
             failure("TSH-QUERY-EXEC-016", "Tree-sitter query execution failed: ${error.message}", cause = error)
         } finally {
             if (!reservationTransferred) resultReservation?.close()
-            cursor.close()
+            try {
+                cursor.close()
+            } finally {
+                cursorReservation.close()
+            }
         }
         } finally {
             treeLease.close()
