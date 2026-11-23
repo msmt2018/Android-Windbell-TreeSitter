@@ -13,7 +13,9 @@ namespace windbell::largefile {
  * A checkpoint is recorded every strideLines logical lines. Queries start at
  * the nearest preceding checkpoint and scan only the remaining local range.
  * After edits, unaffected suffix checkpoints are shifted by byte/line deltas;
- * checkpoints intersecting the replaced range are discarded.
+ * checkpoints intersecting the replaced range are discarded. Retained
+ * checkpoint payload is capped at 2 MiB; when the cap is reached the index
+ * becomes sparser and local lookups scan farther instead of growing unbounded.
  *
  * The owner must serialize index access with document edits.
  */

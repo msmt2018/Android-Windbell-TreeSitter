@@ -217,7 +217,7 @@ class TshSyntaxHighlighter(
                 insertedChars = inserted.length,
                 deletedChars = change.deletedTextLength
             )
-            largeSession?.let { rebaseDisplayCache(it.cacheSessionId, edit) }
+            largeSession?.let { invalidateDisplayCacheForEdit(it.cacheSessionId) }
             pendingNativeEdits += edit
         }
     }
@@ -572,7 +572,7 @@ class TshSyntaxHighlighter(
         }
     }
 
-    /** Old results are paint-only; new native results replace overlapping snapshots. */
+    /** Store decoded presentation spans only for the current native document revision. */
     private fun publishDisplayCaptureRange(key: CaptureRangeKey, index: CaptureIntervalIndex) {
         synchronized(displayCacheLock) {
             displayCache.invalidate { cached, _ ->
@@ -583,33 +583,16 @@ class TshSyntaxHighlighter(
         }
     }
 
-    /** Rebase the temporary paint cache synchronously with editor edit callbacks. */
-    private fun rebaseDisplayCache(sessionId: Long, edit: NativeEdit) {
+    /**
+     * Decoded Kotlin spans do not carry native query dependency envelopes. Moving
+     * their offsets after an edit can therefore preserve a match whose ancestor,
+     * sibling, predicate or lexical context changed. Drop this presentation cache
+     * synchronously; the native cache independently retains only dependency-safe
+     * entries, and current-revision viewport results repopulate the display cache.
+     */
+    private fun invalidateDisplayCacheForEdit(sessionId: Long) {
         synchronized(displayCacheLock) {
-            val startUtf16 = (edit.startByte / 2L).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
-            // Rebasing runs from the editor edit callback. Bound both entry count and
-            // total captures so a single keystroke cannot walk/allocate the whole cache.
-            // Keep the most recently used viewport windows; discard older snapshots.
-            val recentEntries = displayCache.snapshotMostRecentEntries(
-                predicate = { key, _ -> key.sessionId == sessionId },
-                maxEntries = 32
-            )
-            var remainingCaptures = 16_384
-            val retained = ArrayList<Pair<CaptureRangeKey, CaptureIntervalIndex>>(32)
-            for ((key, index) in recentEntries.asReversed()) {
-                if (index.size > remainingCaptures) continue
-                retained += key to index
-                remainingCaptures -= index.size
-            }
-            // Remove all old-coordinate entries, including older entries that were
-            // intentionally not retained in the bounded snapshot.
             displayCache.invalidate { key, _ -> key.sessionId == sessionId }
-            for ((key, index) in retained.asReversed()) {
-                val rebased = CaptureDisplayRebaser.rebase(
-                    key, index, startUtf16, edit.deletedChars, edit.insertedChars
-                ) ?: continue
-                displayCache.put(rebased.key, rebased.index)
-            }
         }
     }
 
@@ -773,7 +756,7 @@ class TshSyntaxHighlighter(
             // Serialize cache admission with onTextChanged. Otherwise an old-revision
             // viewport result could pass its revision check, race an edit+cache clear,
             // and be inserted after that clear. The edit callback uses this same lock
-            // before rebasing the display cache.
+            // before invalidating the display cache.
             synchronized(nativeEditLock) {
                 if (generation.get() == active.ticket && largeSession === active &&
                     active.documentRevision.get() == requestedRevision &&
