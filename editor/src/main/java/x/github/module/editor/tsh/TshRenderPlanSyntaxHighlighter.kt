@@ -265,22 +265,27 @@ class TshRenderPlanSyntaxHighlighter(
     }
 
     private fun currentSnapshot(): RenderSnapshot? {
+        // Read the host version before taking stateLock. EditorDocument invokes
+        // highlighter callbacks while holding its mutation lock; taking that lock
+        // from inside stateLock would invert the callback lock order.
+        val version = try {
+            currentDocumentVersion()
+        } catch (_: Exception) {
+            return null
+        } catch (_: LinkageError) {
+            return null
+        }
+
         var staleSnapshotDropped = false
         val current = synchronized(stateLock) {
             val active = snapshot ?: return@synchronized null
-            val version = try {
-                currentDocumentVersion()
-            } catch (_: Exception) {
-                return@synchronized null
-            } catch (_: LinkageError) {
-                return@synchronized null
-            }
 
-            // A committed RenderPlan is valid only for the exact document version
-            // from which it was produced. Keeping it visible after an edit would
-            // paint old token ranges over new text, even if the line cache is keyed
-            // by the old version. Drop it atomically as soon as the host advances.
-            if (version < 0L || active.plan.revisions.documentVersion != version) {
+            // Never draw a plan across an active edit transaction or against a
+            // newer document version. Old ranges painted over new text are stale
+            // syntax, not a useful temporary fallback.
+            if (editInProgress || version < 0L ||
+                active.plan.revisions.documentVersion != version
+            ) {
                 snapshot = null
                 diagnostics = emptyList()
                 staleSnapshotDropped = true
