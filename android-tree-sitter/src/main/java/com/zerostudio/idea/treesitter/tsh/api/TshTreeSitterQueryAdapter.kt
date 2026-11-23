@@ -413,7 +413,11 @@ class TshTreeSitterQueryExecutor(
             var progressCallbackCancelled = false
             try {
                 cursor.exec(nativeQuery, root, TSQueryCursor.ProgressCallback { currentByteOffset ->
-                    val cancel = cancellation.onProgress(currentByteOffset)
+                    val cancel = if (cancellation is TshQueryProgressCancellation) {
+                        cancellation.onProgress(currentByteOffset)
+                    } else {
+                        cancellation.isCancelled()
+                    }
                     if (cancel) progressCallbackCancelled = true
                     cancel
                 })
