@@ -87,8 +87,10 @@ data class TshSyntaxTreeSnapshot(
     val grammar: TshGrammarDescriptor,
     val rootByteRange: TshByteRange,
     val nativeObjectId: TshObjectId,
-    val inputEncoding: TshTreeSitterInputEncoding = TshTreeSitterInputEncoding.UTF8
-) {
+    val inputEncoding: TshTreeSitterInputEncoding = TshTreeSitterInputEncoding.UTF8,
+    /** Retained Engine-ledger lease for this result; close the result when its captures are no longer needed. */
+    internal val memoryReservation: TshMemoryReservation? = null
+) : AutoCloseable {
     init {
         require(documentId.isNotBlank())
         require(documentVersion >= 0)
@@ -98,10 +100,13 @@ data class TshSyntaxTreeSnapshot(
 
 data class TshQueryExecutionBudget @JvmOverloads constructor(
     val maxSteps: Long? = null,
-    val maxMatches: Int = 100_000,
-    val maxCaptures: Int = 1_000_000,
-    /** Estimated retained result bytes; this is not a measurement of Native cursor/tree memory. */
-    val maxResultBytes: Long = 32L * 1024L * 1024L
+    val maxMatches: Int = Int.MAX_VALUE,
+    val maxCaptures: Int = Int.MAX_VALUE,
+    /**
+     * Optional caller policy for retained query results. The default is not a semantic result
+     * ceiling; Engine-created executors enforce adaptive admission through TshMemoryBudget.
+     */
+    val maxResultBytes: Long = Long.MAX_VALUE
 ) {
     init {
         require(maxSteps == null || maxSteps > 0)
@@ -154,6 +159,10 @@ data class TshQueryResult(
         require(documentVersion >= 0)
         require(treeRevision >= 0)
         require(stepsUsed == null || stepsUsed >= 0L)
+    }
+
+    override fun close() {
+        memoryReservation?.close()
     }
 
     fun isCurrentFor(tree: TshSyntaxTreeSnapshot): Boolean =
