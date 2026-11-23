@@ -229,7 +229,7 @@ class TshTreeSitterQueryNativeIntegrationTest {
 
             val progressCalls = AtomicInteger()
             val progressOffset = AtomicLong(-1L)
-            val cancellation = object : TshQueryCancellation {
+            val cancellation = object : TshQueryProgressCancellation {
                 override fun isCancelled(): Boolean = false
 
                 override fun onProgress(currentByteOffset: Long): Boolean {
