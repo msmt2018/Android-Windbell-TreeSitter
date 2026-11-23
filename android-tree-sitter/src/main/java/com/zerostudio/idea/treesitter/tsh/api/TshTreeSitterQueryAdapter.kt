@@ -213,12 +213,6 @@ class TshTreeSitterQueryExecutor(
         budget: TshQueryExecutionBudget,
         cancellation: TshQueryCancellation
     ): TshResult<TshQueryResult> {
-        if (budget.maxSteps != null) {
-            return failure(
-                "TSH-QUERY-EXEC-021",
-                "maxSteps cannot be enforced by the current TSQueryCursor API; omit maxSteps or use a future step-budget capable adapter"
-            )
-        }
         if (!query.isCompatibleWith(tree.grammar)) {
             return failure("TSH-QUERY-EXEC-001", "Compiled query grammar does not match syntax tree grammar")
         }
@@ -434,6 +428,9 @@ class TshTreeSitterQueryExecutor(
                     cause = error
                 )
             }
+            // The exact VM budget is installed after exec() resets the native cursor and
+            // before nextMatch() performs any query traversal.
+            budget.maxSteps?.let(cursor::setStepLimit)
 
             // Avoid allocating a 16K-reference backing array for small or empty query results.
             // Grow with actual matches while keeping the initial transient allocation bounded.
@@ -524,7 +521,9 @@ class TshTreeSitterQueryExecutor(
             }
 
             val exceeded = cursor.didExceedMatchLimit()
-            val complete = !exceeded && !truncated
+            val exceededStepLimit = cursor.didExceedStepLimit()
+            val stepsUsed = cursor.stepsUsed
+            val complete = !exceeded && !truncated && !exceededStepLimit
             TshResult.Success(
                 TshQueryResult(
                     queryId = query.queryId,
@@ -536,8 +535,7 @@ class TshTreeSitterQueryExecutor(
                     // The capture buffer is locally owned and never mutated after publication. Wrap it
                     // without copying: toList() duplicated every capture reference at peak result size.
                     captures = Collections.unmodifiableList(captures),
-                    // Null means the native cursor does not expose VM step counts.
-                    stepsUsed = null,
+                    stepsUsed = stepsUsed,
                     isComplete = complete,
                     inputEncoding = tree.inputEncoding,
                     memoryReservation = resultReservation
@@ -550,10 +548,14 @@ class TshTreeSitterQueryExecutor(
                     ))
                     if (!complete) add(diagnostic(
                         "TSH-QUERY-EXEC-015",
-                        "Query result is partial because a match, capture-count, or estimated result-memory budget was reached, or Tree-sitter dropped pending matches.",
+                        "Query result is partial because a match, capture-count, estimated result-memory budget, native VM step budget, or Tree-sitter pending-match limit was reached.",
                         TshDiagnosticSeverity.WARNING
                     ))
-                    // Step budgets are rejected before entering Native execution; no false stepsUsed value is reported.
+                    if (exceededStepLimit) add(diagnostic(
+                        "TSH-QUERY-EXEC-036",
+                        "Native Tree-sitter query VM stopped after exhausting the configured work-unit budget.",
+                        TshDiagnosticSeverity.WARNING
+                    ))
                 }
             )
         } catch (error: Throwable) {

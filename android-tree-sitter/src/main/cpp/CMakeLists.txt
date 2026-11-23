@@ -27,6 +27,113 @@ set(PROJECT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../../..)
 # 引入项目通用配置
 include(${CMAKE_CURRENT_SOURCE_DIR}/../../../../cmake/common-config.cmake)
 
+# The pinned Tree-sitter 0.28 cursor API exposes cooperative progress callbacks,
+# but not an exact work budget. Build a private amalgamation overlay that adds a
+# monotonic VM work counter without modifying the checked-out Git submodule.
+# The source-shape guards intentionally fail closed when the upstream cursor
+# implementation changes; update this patch together with the pinned submodule.
+set(TSH_QUERY_STEP_BUDGET_OVERLAY "${CMAKE_CURRENT_BINARY_DIR}/tree-sitter-query-step-budget")
+file(MAKE_DIRECTORY "${TSH_QUERY_STEP_BUDGET_OVERLAY}")
+file(READ "${TS_DIR}/lib/src/query.c" TSH_TREE_SITTER_QUERY_SOURCE)
+file(READ "${TS_DIR}/lib/src/lib.c" TSH_TREE_SITTER_LIB_AMALGAMATION)
+
+set(TSH_QUERY_STEP_FIELD_MARKER "  unsigned work_count;\n")
+string(FIND "${TSH_TREE_SITTER_QUERY_SOURCE}" "${TSH_QUERY_STEP_FIELD_MARKER}" TSH_QUERY_STEP_FIELD_POSITION)
+if(TSH_QUERY_STEP_FIELD_POSITION LESS 0)
+    message(FATAL_ERROR "Tree-sitter query.c no longer matches the TSH step-budget patch; update the pinned-source overlay")
+endif()
+string(REPLACE
+    "${TSH_QUERY_STEP_FIELD_MARKER}"
+    "  unsigned work_count;\n  uint64_t total_work_count;\n  uint64_t max_work_count;\n  bool has_work_limit;\n  bool did_exceed_step_limit;\n"
+    TSH_TREE_SITTER_QUERY_SOURCE
+    "${TSH_TREE_SITTER_QUERY_SOURCE}"
+)
+
+set(TSH_QUERY_STEP_INIT_MARKER "    .work_count = 0,\n  };\n")
+string(FIND "${TSH_TREE_SITTER_QUERY_SOURCE}" "${TSH_QUERY_STEP_INIT_MARKER}" TSH_QUERY_STEP_INIT_POSITION)
+if(TSH_QUERY_STEP_INIT_POSITION LESS 0)
+    message(FATAL_ERROR "Tree-sitter query cursor initializer changed; refusing to build without verified step-budget state")
+endif()
+string(REPLACE
+    "${TSH_QUERY_STEP_INIT_MARKER}"
+    "    .work_count = 0,\n    .total_work_count = 0,\n    .max_work_count = 0,\n    .has_work_limit = false,\n    .did_exceed_step_limit = false,\n  };\n"
+    TSH_TREE_SITTER_QUERY_SOURCE
+    "${TSH_TREE_SITTER_QUERY_SOURCE}"
+)
+
+set(TSH_QUERY_STEP_EXEC_RESET_MARKER "  self->work_count = 0;\n  self->query_options = NULL;\n")
+string(FIND "${TSH_TREE_SITTER_QUERY_SOURCE}" "${TSH_QUERY_STEP_EXEC_RESET_MARKER}" TSH_QUERY_STEP_EXEC_RESET_POSITION)
+if(TSH_QUERY_STEP_EXEC_RESET_POSITION LESS 0)
+    message(FATAL_ERROR "Tree-sitter query cursor exec reset changed; refusing to reuse stale step-budget state")
+endif()
+string(REPLACE
+    "${TSH_QUERY_STEP_EXEC_RESET_MARKER}"
+    "  self->work_count = 0;\n  self->total_work_count = 0;\n  self->max_work_count = 0;\n  self->has_work_limit = false;\n  self->did_exceed_step_limit = false;\n  self->query_options = NULL;\n"
+    TSH_TREE_SITTER_QUERY_SOURCE
+    "${TSH_TREE_SITTER_QUERY_SOURCE}"
+)
+
+set(TSH_QUERY_STEP_API_MARKER "bool ts_query_cursor_did_exceed_match_limit(const TSQueryCursor *self) {")
+string(FIND "${TSH_TREE_SITTER_QUERY_SOURCE}" "${TSH_QUERY_STEP_API_MARKER}" TSH_QUERY_STEP_API_POSITION)
+if(TSH_QUERY_STEP_API_POSITION LESS 0)
+    message(FATAL_ERROR "Tree-sitter query cursor API insertion point changed; update the step-budget overlay")
+endif()
+set(TSH_QUERY_STEP_API [=[
+void ts_query_cursor_set_step_limit(TSQueryCursor *self, uint64_t max_steps) {
+  self->max_work_count = max_steps;
+  self->has_work_limit = true;
+  self->did_exceed_step_limit = self->total_work_count > max_steps;
+  if (self->did_exceed_step_limit) self->halted = true;
+}
+
+uint64_t ts_query_cursor_steps_used(const TSQueryCursor *self) {
+  return self->total_work_count;
+}
+
+bool ts_query_cursor_did_exceed_step_limit(const TSQueryCursor *self) {
+  return self->did_exceed_step_limit;
+}
+
+]=])
+string(REPLACE
+    "${TSH_QUERY_STEP_API_MARKER}"
+    "${TSH_QUERY_STEP_API}\n${TSH_QUERY_STEP_API_MARKER}"
+    TSH_TREE_SITTER_QUERY_SOURCE
+    "${TSH_TREE_SITTER_QUERY_SOURCE}"
+)
+
+set(TSH_QUERY_STEP_ADVANCE_MARKER "    self->work_count += 1 + self->states.size;\n")
+string(FIND "${TSH_TREE_SITTER_QUERY_SOURCE}" "${TSH_QUERY_STEP_ADVANCE_MARKER}" TSH_QUERY_STEP_ADVANCE_POSITION)
+if(TSH_QUERY_STEP_ADVANCE_POSITION LESS 0)
+    message(FATAL_ERROR "Tree-sitter query VM work loop changed; refusing to claim exact maxSteps support")
+endif()
+set(TSH_QUERY_STEP_ADVANCE [=[
+    const uint64_t step_cost = UINT64_C(1) + (uint64_t)self->states.size;
+    if (self->has_work_limit &&
+        (self->total_work_count >= self->max_work_count ||
+         step_cost > self->max_work_count - self->total_work_count)) {
+      self->did_exceed_step_limit = true;
+      self->halted = true;
+      continue;
+    }
+    if (step_cost > (uint64_t)INT64_MAX - self->total_work_count) {
+      self->total_work_count = (uint64_t)INT64_MAX;
+    } else {
+      self->total_work_count += step_cost;
+    }
+    self->work_count += 1 + self->states.size;
+]=])
+string(REPLACE
+    "${TSH_QUERY_STEP_ADVANCE_MARKER}"
+    "${TSH_QUERY_STEP_ADVANCE}"
+    TSH_TREE_SITTER_QUERY_SOURCE
+    "${TSH_TREE_SITTER_QUERY_SOURCE}"
+)
+
+file(WRITE "${TSH_QUERY_STEP_BUDGET_OVERLAY}/lib.c" "${TSH_TREE_SITTER_LIB_AMALGAMATION}")
+file(WRITE "${TSH_QUERY_STEP_BUDGET_OVERLAY}/query.c" "${TSH_TREE_SITTER_QUERY_SOURCE}")
+
+
 # Tree-sitter 核心头文件路径
 include_directories("${TS_DIR}/lib/src")
 include_directories("${TS_DIR}/lib/include")
@@ -132,7 +239,7 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 -fvisibility=hidden -DHAVE_CONFIG_H"
 # ==============================================================================
 add_library(android-tree-sitter SHARED
     # Tree-sitter 核心内核
-    "${TS_DIR}/lib/src/lib.c"
+    "${TSH_QUERY_STEP_BUDGET_OVERLAY}/lib.c"
 
     # Oniguruma 完整核心与编码表实现 (完全闭合依赖符号，避免 NDK 静态断言失败)
     "${ONIG_SRC_DIR}/regerror.c"

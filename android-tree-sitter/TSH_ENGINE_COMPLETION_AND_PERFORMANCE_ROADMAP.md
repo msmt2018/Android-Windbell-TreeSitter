@@ -711,3 +711,18 @@ Regression coverage was added for the decision to probe non-final cores. The fix
 - `6be9bd14775d4330776e65177487621daed4d96b` — regression test.
 
 These commits are newer than the successful CI head above; their CI result must be checked separately before treating the fix as validated.
+
+
+## 19. Exact Native Query VM work-unit budget
+
+The previous adapter rejected `TshQueryExecutionBudget.maxSteps` because Tree-sitter's 0.28 progress callback reports a byte offset, not an exact work count. This is now implemented at the Query VM boundary.
+
+- The pinned Tree-sitter `query.c` cursor gains a monotonic 64-bit `total_work_count`, a per-execution limit, and an explicit `did_exceed_step_limit` state.
+- One work unit is defined by Tree-sitter's existing traversal accounting: one base VM traversal iteration plus one unit for each active in-progress query state (`1 + states.size`). This is an exact count of the declared VM work metric, not a count of AST nodes, matches, captures, CPU instructions, or elapsed time.
+- The counter is monotonic across repeated `nextMatch()` calls and is reset only by a new cursor `exec()`. It saturates at Java `Long.MAX_VALUE` for unbounded executions.
+- When the next VM iteration would exceed the caller limit, the cursor halts before performing that iteration, releases unfinished states through the existing halt path, and preserves already-finished matches. The result is returned as incomplete with diagnostic `TSH-QUERY-EXEC-036`; `stepsUsed` reports completed work units.
+- JNI and Java expose `setStepLimit`, `getStepsUsed`, and `didExceedStepLimit`. The TSH executor installs the limit after `exec()` and before the first match retrieval.
+- The source patch is applied to a private CMake build overlay of the pinned Tree-sitter amalgamation. The Git submodule working tree is not modified. CMake checks upstream source-shape markers and fails closed if the pinned implementation changes.
+- This does not change the dual query pipeline, does not impose a default result ceiling, and does not reinterpret match/capture limits as VM steps.
+
+Regression coverage exercises an actual Java grammar query with a one-work-unit budget and checks partial-result status, exact `stepsUsed`, and the stable diagnostic. CI validation is required before treating the implementation as complete.

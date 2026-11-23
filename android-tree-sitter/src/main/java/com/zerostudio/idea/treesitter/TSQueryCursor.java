@@ -203,6 +203,36 @@ public class TSQueryCursor extends TSNativeObject implements Iterable<TSQueryMat
   }
 
   /**
+   * Set an exact Tree-sitter query VM work budget for the current execution.
+   *
+   * <p>One work unit is the native query cursor's cost for one VM traversal iteration:
+   * one base transition plus one unit per active in-progress query state. Set this after
+   * {@link #exec(TSQuery, TSNode)} and before retrieving matches.
+   */
+  public void setStepLimit(long maxSteps) {
+    checkAccess();
+    checkExecuted("setStepLimit");
+    if (maxSteps <= 0L) {
+      throw new IllegalArgumentException("maxSteps must be positive");
+    }
+    Native.setStepLimit(getNativeObject(), maxSteps);
+  }
+
+  /** Returns completed native query VM work units for the current execution. */
+  public long getStepsUsed() {
+    checkAccess();
+    checkExecuted("getStepsUsed");
+    return Native.getStepsUsed(getNativeObject());
+  }
+
+  /** Whether the current execution stopped because its exact native work budget was exhausted. */
+  public boolean didExceedStepLimit() {
+    checkAccess();
+    checkExecuted("didExceedStepLimit");
+    return Native.didExceedStepLimit(getNativeObject());
+  }
+
+  /**
    * Whether the maximum number of in-progress matches allowed by this query cursor has been
    * exceeded or not.
    *
@@ -388,6 +418,12 @@ public class TSQueryCursor extends TSNativeObject implements Iterable<TSQueryMat
 
     static native void execWithOptions(
       long cursor, long query, TSNode node, ProgressCallback callback);
+
+    static native void setStepLimit(long cursor, long maxSteps);
+
+    static native long getStepsUsed(long cursor);
+
+    static native boolean didExceedStepLimit(long cursor);
 
     static native boolean exceededMatchLimit(long cursor);
 

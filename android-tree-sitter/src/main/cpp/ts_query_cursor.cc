@@ -25,6 +25,7 @@
 #include "utils/ts_preconditions.h"
 
 #include "ts_query_cursor.h"
+#include "tsh/ts_query_cursor_step_budget.h"
 
 namespace {
 
@@ -215,6 +216,42 @@ static void TSQueryCursor_execWithOptions(JNIEnv *env,
 #endif
 }
 
+static void TSQueryCursor_setStepLimit(JNIEnv *env,
+                                        jclass self,
+                                        jlong cursor,
+                                        jlong maxSteps) {
+  req_nnp(env, cursor);
+  if (maxSteps <= 0) {
+    throwIllegalArgument(env, "maxSteps must be positive");
+    return;
+  }
+#if defined(TSH_TREE_SITTER_HAS_QUERY_CURSOR_OPTIONS)
+  if (rejectQueryCursorReentry(env, (TSQueryCursor *) cursor)) return;
+#endif
+  ts_query_cursor_set_step_limit((TSQueryCursor *) cursor,
+                                 static_cast<uint64_t>(maxSteps));
+}
+
+static jlong TSQueryCursor_getStepsUsed(JNIEnv *env, jclass self, jlong cursor) {
+  req_nnp(env, cursor);
+#if defined(TSH_TREE_SITTER_HAS_QUERY_CURSOR_OPTIONS)
+  if (rejectQueryCursorReentry(env, (TSQueryCursor *) cursor)) return 0;
+#endif
+  return static_cast<jlong>(
+      ts_query_cursor_steps_used((TSQueryCursor *) cursor));
+}
+
+static jboolean TSQueryCursor_didExceedStepLimit(JNIEnv *env,
+                                                 jclass self,
+                                                 jlong cursor) {
+  req_nnp(env, cursor);
+#if defined(TSH_TREE_SITTER_HAS_QUERY_CURSOR_OPTIONS)
+  if (rejectQueryCursorReentry(env, (TSQueryCursor *) cursor)) return 0;
+#endif
+  return static_cast<jboolean>(
+      ts_query_cursor_did_exceed_step_limit((TSQueryCursor *) cursor));
+}
+
 static jboolean
 TSQueryCursor_exceededMatchLimit(JNIEnv *env, jclass self, jlong cursor) {
   req_nnp(env, cursor);
@@ -331,6 +368,12 @@ void TSQueryCursor_Native__SetJniMethods(JNINativeMethod *methods, int count) {
   SET_JNI_METHOD(methods, TSQueryCursor_Native_exec, TSQueryCursor_exec);
   SET_JNI_METHOD(methods, TSQueryCursor_Native_execWithOptions,
                  TSQueryCursor_execWithOptions);
+  SET_JNI_METHOD(methods, TSQueryCursor_Native_setStepLimit,
+                 TSQueryCursor_setStepLimit);
+  SET_JNI_METHOD(methods, TSQueryCursor_Native_getStepsUsed,
+                 TSQueryCursor_getStepsUsed);
+  SET_JNI_METHOD(methods, TSQueryCursor_Native_didExceedStepLimit,
+                 TSQueryCursor_didExceedStepLimit);
   SET_JNI_METHOD(methods, TSQueryCursor_Native_exceededMatchLimit,
                  TSQueryCursor_exceededMatchLimit);
   SET_JNI_METHOD(methods, TSQueryCursor_Native_setMatchLimit,

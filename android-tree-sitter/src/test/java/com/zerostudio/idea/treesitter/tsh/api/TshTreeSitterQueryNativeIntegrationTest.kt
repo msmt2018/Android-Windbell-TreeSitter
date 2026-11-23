@@ -4,6 +4,7 @@ import com.zerostudio.idea.treesitter.TSLanguage
 import com.zerostudio.idea.treesitter.TreeSitter
 import com.zerostudio.idea.treesitter.java.TSLanguageJava
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import java.util.concurrent.atomic.AtomicInteger
@@ -99,7 +100,26 @@ class TshTreeSitterQueryNativeIntegrationTest {
             assertEquals(TshByteRange(nameStart * 2L, nameEnd * 2L), capture.byteRange)
             assertEquals(0, capture.patternIndex)
             assertTrue(queryResult.isComplete)
+            assertTrue((queryResult.stepsUsed ?: 0L) > 0L, "Native VM work units must be observable")
             assertEquals(documentId, queryResult.documentId)
+
+            val boundedResult = engine.createTreeSitterQueryExecutor().execute(
+                query = query,
+                tree = ownedTree.snapshot,
+                budget = TshQueryExecutionBudget(maxSteps = 1L)
+            )
+            assertTrue(
+                boundedResult is TshResult.Success,
+                "Exhausting a step budget should return retained partial matches, not a generic failure"
+            )
+            val bounded = (boundedResult as TshResult.Success).value
+            try {
+                assertEquals(1L, bounded.stepsUsed)
+                assertFalse(bounded.isComplete)
+                assertTrue(bounded.diagnostics.any { it.code == "TSH-QUERY-EXEC-036" })
+            } finally {
+                bounded.close()
+            }
             assertEquals(documentVersion, queryResult.documentVersion)
 
             val snapshotDocumentId = documentId
