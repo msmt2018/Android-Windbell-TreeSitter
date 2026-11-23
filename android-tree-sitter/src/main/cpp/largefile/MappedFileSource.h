@@ -39,6 +39,7 @@ public:
     static std::unique_ptr<MappedFileSource> createSnapshot(
         const TextSource &source, const std::string &directory) noexcept;
     bool isOpen() const noexcept;
+    bool isValid() const noexcept override;
 
     uint64_t sizeBytes() const noexcept override;
     bool read(uint64_t offset, uint32_t maxBytes, TextChunkView *out) const noexcept override;
