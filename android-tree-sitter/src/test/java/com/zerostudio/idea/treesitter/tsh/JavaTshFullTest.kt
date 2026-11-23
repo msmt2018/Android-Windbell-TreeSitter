@@ -189,6 +189,12 @@ class JavaTshFullTest {
             class AnnotationProbe {
                 @SuppressWarnings({"unchecked", "deprecation"})
                 void run() {}
+
+                String email = "dev@example.com";
+                String literal = "@StringLiteral";
+                // @CommentText is ordinary comment content.
+                /** @param value is a documentation tag, not an annotation marker. */
+                void markerFalsePositives(String value) {}
             }
         """.trimIndent()
         val parser = TSParser.create().apply { language = TSLanguageJava.getInstance() }
@@ -217,9 +223,9 @@ class JavaTshFullTest {
                 assertTrue(markerStart >= 0 && source[markerStart] == '@',
                     "Annotation $name must have a leading @ marker")
                 val marker = requireNotNull(allFull.singleOrNull { span ->
-                    span.source == 0 && span.startByte == markerStart * 2 &&
+                    span.source == 3 && span.startByte == markerStart * 2 &&
                         span.endByte == (markerStart + 1) * 2
-                }) { "Native Regex must emit a dedicated @ marker capture for $name" }
+                }) { "Native Tree-sitter Query must emit a dedicated @ marker capture for $name" }
                 assertEquals(matches.single().styleId, marker.styleId,
                     "The @ marker and annotation name must use the same semantic color for $name")
                 assertEquals(120, marker.priority,
@@ -228,6 +234,21 @@ class JavaTshFullTest {
             }
             assertEquals(1, annotationSpans.map { it.styleId }.distinct().size,
                 "Simple, qualified and parameterized annotation names must share one semantic style")
+
+            // Only syntactic annotation nodes may emit the marker capture.
+            val nonAnnotationMarkers = listOf(
+                source.indexOf("@example.com"),
+                source.indexOf("@StringLiteral"),
+                source.indexOf("@CommentText"),
+                source.indexOf("@param")
+            )
+            for (markerOffset in nonAnnotationMarkers) {
+                assertTrue(markerOffset >= 0)
+                assertTrue(allFull.none { span ->
+                    span.source == 3 && span.startByte == markerOffset * 2 &&
+                        span.endByte == (markerOffset + 1) * 2
+                }, "Non-annotation @ at UTF-16 offset $markerOffset must not be captured")
+            }
 
             for (name in annotationNames) {
                 val tokenStart = source.indexOf(name)
