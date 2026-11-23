@@ -191,15 +191,14 @@ bool TshRegexNativeRegistry::execute(
     }
 
     std::lock_guard<std::mutex> execution_lock(entry->execution_mutex);
-    OnigRegion* raw_region = onig_region_new();
-    if (!raw_region) {
+    // A regex handle is serialized by execution_mutex, so its match region can
+    // safely retain Oniguruma's capture-array capacity across viewport calls.
+    if (!entry->reusable_region) entry->reusable_region = onig_region_new();
+    if (!entry->reusable_region) {
         error = "Cannot allocate Oniguruma match region";
         return false;
     }
-    struct RegionGuard {
-        OnigRegion* value;
-        ~RegionGuard() { if (value) onig_region_free(value, 1); }
-    } region{raw_region};
+    onig_region_clear(entry->reusable_region);
 
     // Synthetic non-newline sentinels keep absolute \A/\z and line anchors from
     // treating a window edge as a document edge. The core is always separated from
@@ -245,7 +244,7 @@ bool TshRegexNativeRegistry::execute(
 
     while (current <= search_range) {
         const int hit = onig_search(
-            entry->regex, begin, end, current, search_range, region.value, options
+            entry->regex, begin, end, current, search_range, entry->reusable_region, options
         );
         if (hit < 0) {
             if (hit != ONIG_MISMATCH) {
@@ -255,8 +254,8 @@ bool TshRegexNativeRegistry::execute(
             break;
         }
 
-        const int start_byte_position = region.value->beg[0];
-        const int end_byte_position = region.value->end[0];
+        const int start_byte_position = entry->reusable_region->beg[0];
+        const int end_byte_position = entry->reusable_region->end[0];
         if (start_byte_position < 0 || end_byte_position < 0 ||
             (start_byte_position & 1) != 0 || (end_byte_position & 1) != 0) {
             error = "Oniguruma returned a malformed UTF-16 match range";
@@ -311,14 +310,14 @@ bool TshRegexNativeRegistry::execute(
             TshRegexNativeMatch match;
             match.start_utf16 = start;
             match.end_utf16 = finish;
-            const int capture_count = std::max(0, region.value->num_regs);
+            const int capture_count = std::max(0, entry->reusable_region->num_regs);
             // Capture cardinality is grammar-defined data, not a tuning limit.
             // Preserve every group reported by Oniguruma.
             const int retained_count = capture_count;
             match.capture_ranges_utf16.reserve(static_cast<size_t>(retained_count));
             for (int group = 0; group < retained_count; ++group) {
-                const int beg_position = region.value->beg[group];
-                const int group_end_position = region.value->end[group];
+                const int beg_position = entry->reusable_region->beg[group];
+                const int group_end_position = entry->reusable_region->end[group];
                 if (beg_position < 0 || group_end_position < 0) {
                     // Oniguruma represents an unmatched optional capture with
                     // both offsets set to -1. A half-populated pair is corrupt
