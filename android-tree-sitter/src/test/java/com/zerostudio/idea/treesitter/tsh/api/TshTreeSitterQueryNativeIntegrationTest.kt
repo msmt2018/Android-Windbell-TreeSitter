@@ -227,12 +227,19 @@ class TshTreeSitterQueryNativeIntegrationTest {
             queryId = query.queryId
 
             val progressCalls = AtomicInteger()
+            val cancellation = object : TshQueryCancellation {
+                override fun isCancelled(): Boolean = false
+
+                override fun onProgress(currentByteOffset: Long): Boolean {
+                    assertTrue(currentByteOffset >= 0L, "Native progress offset must be non-negative")
+                    progressCalls.incrementAndGet()
+                    return true
+                }
+            }
             val cancelled = engine.createTreeSitterQueryExecutor().execute(
                 query = query,
                 tree = tree.snapshot,
-                cancellation = TshQueryCancellation {
-                    progressCalls.incrementAndGet() >= 1
-                }
+                cancellation = cancellation
             )
             assertTrue(
                 cancelled is TshResult.Failure,
