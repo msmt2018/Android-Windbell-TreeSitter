@@ -28,6 +28,7 @@ public final class TSHighlight {
    * Extract highlight query matches intersecting an absolute document byte range.
    * Limits are enforced natively and an over-budget query fails atomically.
    */
+  @Deprecated
   public static TSQueryMatch[] extract(
       TSQuery query,
       TSNode root,
@@ -122,6 +123,7 @@ public final class TSHighlight {
    * patternIndex, styleId, and matchId. No TSQueryMatch/TSQueryCapture Java
    * object graph is created by this path.
    */
+  @Deprecated
   public static long[] extractPackedSpans(
       TSQuery query, TSNode root, long startByte, long endByte,
       int maxResults, int maxPendingMatches, int[] styleIds, int maxSpans) {
@@ -160,6 +162,7 @@ public final class TSHighlight {
   }
 
   /** Convenience API for callers that need objects instead of the packed buffer. */
+  @Deprecated
   public static List<TSHighlightSpan> extractSpans(
       TSQuery query, TSNode root, long startByte, long endByte,
       int maxResults, int maxPendingMatches, int[] styleIds, int maxSpans) {
