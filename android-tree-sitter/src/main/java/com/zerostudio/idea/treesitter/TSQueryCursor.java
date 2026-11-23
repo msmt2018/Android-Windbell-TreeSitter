@@ -218,7 +218,7 @@ public class TSQueryCursor extends TSNativeObject implements Iterable<TSQueryMat
     Native.setStepLimit(getNativeObject(), maxSteps);
   }
 
-  /** Returns completed native query VM work units for the current execution. */
+  /** Returns completed native query VM work units, or -1 when the bundled core lacks exact counting. */
   public long getStepsUsed() {
     checkAccess();
     checkExecuted("getStepsUsed");

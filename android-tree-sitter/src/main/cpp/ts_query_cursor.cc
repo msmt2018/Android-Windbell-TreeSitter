@@ -228,8 +228,14 @@ static void TSQueryCursor_setStepLimit(JNIEnv *env,
 #if defined(TSH_TREE_SITTER_HAS_QUERY_CURSOR_OPTIONS)
   if (rejectQueryCursorReentry(env, (TSQueryCursor *) cursor)) return;
 #endif
+#if defined(TSH_TREE_SITTER_HAS_EXACT_QUERY_STEP_BUDGET)
   ts_query_cursor_set_step_limit((TSQueryCursor *) cursor,
                                  static_cast<uint64_t>(maxSteps));
+#else
+  (void) self;
+  throwUnsupportedOperation(
+      env, "Exact query step budgets require the patched Tree-sitter Query VM");
+#endif
 }
 
 static jlong TSQueryCursor_getStepsUsed(JNIEnv *env, jclass self, jlong cursor) {
@@ -237,8 +243,13 @@ static jlong TSQueryCursor_getStepsUsed(JNIEnv *env, jclass self, jlong cursor) 
 #if defined(TSH_TREE_SITTER_HAS_QUERY_CURSOR_OPTIONS)
   if (rejectQueryCursorReentry(env, (TSQueryCursor *) cursor)) return 0;
 #endif
+#if defined(TSH_TREE_SITTER_HAS_EXACT_QUERY_STEP_BUDGET)
   return static_cast<jlong>(
       ts_query_cursor_steps_used((TSQueryCursor *) cursor));
+#else
+  (void) self;
+  return static_cast<jlong>(-1);
+#endif
 }
 
 static jboolean TSQueryCursor_didExceedStepLimit(JNIEnv *env,
@@ -248,8 +259,13 @@ static jboolean TSQueryCursor_didExceedStepLimit(JNIEnv *env,
 #if defined(TSH_TREE_SITTER_HAS_QUERY_CURSOR_OPTIONS)
   if (rejectQueryCursorReentry(env, (TSQueryCursor *) cursor)) return 0;
 #endif
+#if defined(TSH_TREE_SITTER_HAS_EXACT_QUERY_STEP_BUDGET)
   return static_cast<jboolean>(
       ts_query_cursor_did_exceed_step_limit((TSQueryCursor *) cursor));
+#else
+  (void) self;
+  return static_cast<jboolean>(false);
+#endif
 }
 
 static jboolean

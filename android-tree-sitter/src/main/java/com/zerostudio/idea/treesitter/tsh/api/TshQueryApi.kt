@@ -104,6 +104,7 @@ data class TshSyntaxTreeSnapshot(
 }
 
 data class TshQueryExecutionBudget @JvmOverloads constructor(
+    /** Exact Native Query VM work-unit limit; one unit is one traversal base cost plus active states. */
     val maxSteps: Long? = null,
     val maxMatches: Int = Int.MAX_VALUE,
     val maxCaptures: Int = Int.MAX_VALUE,
@@ -162,6 +163,7 @@ data class TshQueryResult(
     val treeRevision: Long,
     val grammarFingerprint: String,
     val captures: List<TshCapture>,
+    /** Completed Native Query VM work units, or null when the bundled core cannot expose them. */
     val stepsUsed: Long?,
     val isComplete: Boolean = true,
     /** Byte ranges in captures use this tree source encoding. */

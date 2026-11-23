@@ -430,7 +430,17 @@ class TshTreeSitterQueryExecutor(
             }
             // The exact VM budget is installed after exec() resets the native cursor and
             // before nextMatch() performs any query traversal.
-            budget.maxSteps?.let(cursor::setStepLimit)
+            if (budget.maxSteps != null) {
+                try {
+                    cursor.setStepLimit(budget.maxSteps)
+                } catch (error: UnsupportedOperationException) {
+                    return failure(
+                        "TSH-QUERY-EXEC-021",
+                        "Exact maxSteps requires a Tree-sitter build with the patched Query VM",
+                        cause = error
+                    )
+                }
+            }
 
             // Avoid allocating a 16K-reference backing array for small or empty query results.
             // Grow with actual matches while keeping the initial transient allocation bounded.
@@ -522,7 +532,7 @@ class TshTreeSitterQueryExecutor(
 
             val exceeded = cursor.didExceedMatchLimit()
             val exceededStepLimit = cursor.didExceedStepLimit()
-            val stepsUsed = cursor.stepsUsed
+            val stepsUsed = cursor.stepsUsed.takeIf { it >= 0L }
             val complete = !exceeded && !truncated && !exceededStepLimit
             TshResult.Success(
                 TshQueryResult(
