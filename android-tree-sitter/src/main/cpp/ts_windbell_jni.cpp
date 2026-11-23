@@ -521,7 +521,7 @@ static jintArray encodeNativeHighlightResult(
     // invocation. A 512-span batch uses 12 KiB of bounded stack storage and
     // keeps the JNI transfer incremental without another heap allocation.
     constexpr size_t kBatchSpans = 512;
-    std::array<jint, kBatchSpans * kFields> batch{};
+    std::array<jint, kBatchSpans * kFields> batch;
     for (size_t base = 0; base < spans.size();) {
         const size_t count = std::min(kBatchSpans, spans.size() - base);
         for (size_t i = 0; i < count; ++i) {
