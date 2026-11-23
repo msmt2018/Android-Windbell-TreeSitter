@@ -231,7 +231,7 @@ public final class TSHighlight {
         });
       }
       return new Cursor(nativeCursor, styleIds, cancelled);
-    } catch (RuntimeException error) {
+    } catch (RuntimeException | Error error) {
       nativeCursor.close();
       throw error;
     }
