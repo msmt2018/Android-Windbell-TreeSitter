@@ -2,8 +2,16 @@ package com.zerostudio.idea.treesitter.tsh.api
 
 import java.util.concurrent.atomic.AtomicBoolean
 
+/** Zero-based line and UTF-16 code-unit column, using Tree-sitter's LF row boundary semantics. */
+data class TshLineColumn(val line: Long, val columnUtf16: Long) {
+    init {
+        require(line >= 0L)
+        require(columnUtf16 >= 0L)
+    }
+}
+
 /**
- * Sparse, snapshot-scoped UTF-8/UTF-16/Unicode-code-point index.
+ * Sparse, snapshot-scoped UTF-8/UTF-16/Unicode-code-point/line-column index.
  *
  * The index owns an independent retained Snapshot Lease. Closing the caller's lease therefore
  * cannot invalidate this index; callers must close the index when it is no longer needed.
@@ -27,8 +35,123 @@ class TshSparseCoordinateIndex private constructor(
     private data class Checkpoint(
         val utf16: Long,
         val utf8: Long,
-        val codePoints: Long
+        val codePoints: Long,
+        val line: Long,
+        val lineStartUtf16: Long
     )
+
+    /**
+     * Maps an absolute UTF-16 offset to a zero-based line and UTF-16 column.
+     *
+     * LF (U+000A) advances the line, matching Tree-sitter's row semantics. In CRLF text,
+     * the CR code unit remains part of the preceding line's column count.
+     */
+    fun lineColumnAtUtf16(offsetUtf16: Long): TshResult<TshLineColumn> {
+        if (closed.get() || sourceLease.isClosed) return failure(
+            "TSH-COORD-INDEX-010", "Sparse coordinate index is closed"
+        )
+        if (offsetUtf16 < 0L || offsetUtf16 > lengthUtf16) return failure(
+            "TSH-COORD-INDEX-003", "UTF-16 offset is outside the indexed snapshot"
+        )
+        if (!isUtf16Boundary(offsetUtf16)) return failure(
+            "TSH-COORD-INDEX-004", "UTF-16 offset splits a surrogate pair"
+        )
+        val checkpoint = findCheckpoint(TshCoordinateSystem.UTF16_CODE_UNIT, offsetUtf16)
+        var line = checkpoint.line
+        var column = checkpoint.utf16 - checkpoint.lineStartUtf16
+        var cursor = checkpoint.utf16
+        if (cursor == offsetUtf16) return TshResult.Success(TshLineColumn(line, column))
+        val text = source.readUtf16(cursor, offsetUtf16)
+        if (text.length.toLong() != offsetUtf16 - cursor || !TshUnicode.isWellFormedUtf16(text)) {
+            return failure("TSH-COORD-INDEX-008", "Snapshot returned malformed or inconsistent UTF-16")
+        }
+        var index = 0
+        while (index < text.length) {
+            val cp = Character.codePointAt(text, index)
+            val units = Character.charCount(cp)
+            if (cp == '\\n'.code) {
+                line = safeAdd(line, 1L)
+                column = 0L
+            } else {
+                column = safeAdd(column, units.toLong())
+            }
+            index += units
+        }
+        return TshResult.Success(TshLineColumn(line, column))
+    }
+
+    /**
+     * Maps a zero-based line and UTF-16 column to an absolute UTF-16 offset.
+     * Columns are measured in UTF-16 code units and may not split surrogate pairs.
+     */
+    fun utf16OffsetAtLineColumn(line: Long, columnUtf16: Long): TshResult<Long> {
+        if (closed.get() || sourceLease.isClosed) return failure(
+            "TSH-COORD-INDEX-010", "Sparse coordinate index is closed"
+        )
+        if (line < 0L || columnUtf16 < 0L) return failure(
+            "TSH-COORD-INDEX-001", "Line and column must be non-negative"
+        )
+        val target = TshLineColumn(line, columnUtf16)
+        var low = 0
+        var high = checkpoints.lastIndex
+        while (low < high) {
+            val mid = (low + high + 1) ushr 1
+            val point = checkpoints[mid]
+            val pointColumn = point.utf16 - point.lineStartUtf16
+            if (point.line < target.line ||
+                (point.line == target.line && pointColumn <= target.columnUtf16)
+            ) low = mid else high = mid - 1
+        }
+        val checkpoint = checkpoints[low]
+        var currentLine = checkpoint.line
+        var currentColumn = checkpoint.utf16 - checkpoint.lineStartUtf16
+        var cursor = checkpoint.utf16
+        if (currentLine == target.line && currentColumn == target.columnUtf16) {
+            return TshResult.Success(cursor)
+        }
+        val maxEnd = minOf(lengthUtf16, safeAdd(cursor, checkpointStrideUtf16.toLong() + 2L))
+        while (cursor < maxEnd) {
+            val end = minOf(maxEnd, safeAdd(cursor, SCAN_CHUNK_UTF16.toLong()))
+            var text = source.readUtf16(cursor, end)
+            var actualEnd = end
+            if (text.isNotEmpty() && Character.isHighSurrogate(text.last()) && end < lengthUtf16) {
+                actualEnd++
+                text = source.readUtf16(cursor, actualEnd)
+            }
+            if (text.length.toLong() != actualEnd - cursor || !TshUnicode.isWellFormedUtf16(text)) {
+                return failure("TSH-COORD-INDEX-008", "Snapshot returned malformed or inconsistent UTF-16")
+            }
+            var index = 0
+            while (index < text.length) {
+                if (currentLine == target.line && currentColumn == target.columnUtf16) {
+                    return TshResult.Success(cursor)
+                }
+                val cp = Character.codePointAt(text, index)
+                val units = Character.charCount(cp)
+                if (cp == '\\n'.code) {
+                    currentLine = safeAdd(currentLine, 1L)
+                    currentColumn = 0L
+                } else {
+                    currentColumn = safeAdd(currentColumn, units.toLong())
+                }
+                cursor = safeAdd(cursor, units.toLong())
+                index += units
+                if (currentLine > target.line ||
+                    (currentLine == target.line && currentColumn > target.columnUtf16)
+                ) {
+                    return failure("TSH-COORD-INDEX-014", "Line/column is not a valid UTF-16 character boundary")
+                }
+            }
+            if (cursor != actualEnd) return failure(
+                "TSH-COORD-INDEX-008", "Snapshot chunk ended inside a Unicode code point"
+            )
+        }
+        return if (currentLine == target.line && currentColumn == target.columnUtf16) {
+            TshResult.Success(cursor)
+        } else {
+            failure("TSH-COORD-INDEX-015", "Line/column is outside the indexed snapshot")
+        }
+    }
 
     /** Converts only between UTF-8 bytes, UTF-16 code units and Unicode code points. */
     fun convert(
@@ -242,15 +365,17 @@ class TshSparseCoordinateIndex private constructor(
                 }
 
                 // Reserve the complete sparse-index upper bound before allocating checkpoints.
-                // 64 bytes/entry is a conservative estimate, not a JVM object-layout measurement.
+                // 80 bytes/entry covers the expanded coordinate checkpoint (UTF-8, UTF-16,
+                // code-point, line and line-start metrics) plus list-reference overhead.
+                // This remains an admission estimate, not a JVM object-layout measurement.
                 val checkpointCapacity = snapshot.lengthUtf16 / checkpointStrideUtf16.toLong() + 2L
                 if (checkpointCapacity > Int.MAX_VALUE.toLong() ||
-                    checkpointCapacity > (Long.MAX_VALUE - 64L) / 64L) {
+                    checkpointCapacity > (Long.MAX_VALUE - 64L) / 80L) {
                     return failure("TSH-COORD-INDEX-013", "Sparse coordinate index checkpoint estimate exceeds supported capacity")
                 }
                 when (val reserved = memoryBudget.reserve(
                     TshMemoryCategory.COORDINATE_INDEX,
-                    checkpointCapacity * 64L + 64L,
+                    checkpointCapacity * 80L + 64L,
                     "coordinate-index:" + snapshot.documentId + ":" + snapshot.version
                 )) {
                     is TshResult.Success -> reservation = reserved.value
@@ -261,8 +386,10 @@ class TshSparseCoordinateIndex private constructor(
                 var utf16 = 0L
                 var utf8 = 0L
                 var codePoints = 0L
+                var line = 0L
+                var lineStartUtf16 = 0L
                 var nextCheckpoint = checkpointStrideUtf16.toLong()
-                points += Checkpoint(0L, 0L, 0L)
+                points += Checkpoint(0L, 0L, 0L, 0L, 0L)
                 while (utf16 < snapshot.lengthUtf16) {
                     var end = minOf(snapshot.lengthUtf16, safeAdd(utf16, chunkSizeUtf16.toLong()))
                     var chunk = snapshot.readUtf16(utf16, end)
@@ -286,15 +413,21 @@ class TshSparseCoordinateIndex private constructor(
                             else -> 4L
                         })
                         codePoints = safeAdd(codePoints, 1L)
+                        if (cp == '\\n'.code) {
+                            line = safeAdd(line, 1L)
+                            lineStartUtf16 = utf16
+                        }
                         i += units
                         if (utf16 >= nextCheckpoint) {
-                            points += Checkpoint(utf16, utf8, codePoints)
+                            points += Checkpoint(utf16, utf8, codePoints, line, lineStartUtf16)
                             nextCheckpoint = safeAdd(utf16, checkpointStrideUtf16.toLong())
                         }
                     }
                     check(utf16 == end) { "Snapshot chunk boundary changed during index build" }
                 }
-                if (points.last().utf16 != utf16) points += Checkpoint(utf16, utf8, codePoints)
+                if (points.last().utf16 != utf16) {
+                    points += Checkpoint(utf16, utf8, codePoints, line, lineStartUtf16)
+                }
                 val index = TshSparseCoordinateIndex(
                     snapshot.documentId, snapshot.version, snapshot.lengthUtf16,
                     points, retained, snapshot, checkpointStrideUtf16, reservation
