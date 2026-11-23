@@ -2453,28 +2453,64 @@ Java_com_zerostudio_idea_treesitter_tsh_api_TshOnigurumaNative_nativeFindAll(
             return nullptr;
         }
 
-        std::vector<jlong> flat;
-        flat.reserve(2 + batch.matches.size() * 8);
-        flat.push_back(batch.truncated ? 1 : 0);
-        flat.push_back(static_cast<jlong>(batch.matches.size()));
+        // Compute the exact JNI array length before allocating. The former flat
+        // vector duplicated every match/capture pair while the Native batch was
+        // still alive, nearly doubling peak result memory for dense Regex windows.
+        // Stream records into a small fixed buffer after allocating the final array.
+        const size_t jni_max = static_cast<size_t>(std::numeric_limits<jsize>::max());
+        size_t value_count = 2u;
         for (const auto& match : batch.matches) {
-            flat.push_back(match.start_utf16);
-            flat.push_back(match.end_utf16);
-            flat.push_back(static_cast<jlong>(match.capture_ranges_utf16.size()));
+            if (value_count > jni_max - 3u) {
+                throw_illegal_args(env, "Regex result exceeds Java array capacity");
+                return nullptr;
+            }
+            value_count += 3u;
+            const size_t capture_count = match.capture_ranges_utf16.size();
+            if (capture_count > (jni_max - value_count) / 2u) {
+                throw_illegal_args(env, "Regex capture result exceeds Java array capacity");
+                return nullptr;
+            }
+            value_count += capture_count * 2u;
+        }
+
+        jlongArray result = env->NewLongArray(static_cast<jsize>(value_count));
+        if (!result) return nullptr;
+
+        constexpr size_t kTransferValues = 4096u;
+        std::array<jlong, kTransferValues> transfer{};
+        size_t buffered = 0;
+        jsize output_offset = 0;
+        auto append_value = [&](jlong value) -> bool {
+            transfer[buffered++] = value;
+            if (buffered != transfer.size()) return true;
+            env->SetLongArrayRegion(
+                result, output_offset, static_cast<jsize>(buffered), transfer.data());
+            if (env->ExceptionCheck()) return false;
+            output_offset += static_cast<jsize>(buffered);
+            buffered = 0;
+            return true;
+        };
+
+        bool encoded = append_value(batch.truncated ? 1 : 0) &&
+            append_value(static_cast<jlong>(batch.matches.size()));
+        for (const auto& match : batch.matches) {
+            if (!encoded) break;
+            encoded = append_value(match.start_utf16) &&
+                append_value(match.end_utf16) &&
+                append_value(static_cast<jlong>(match.capture_ranges_utf16.size()));
             for (const auto& capture : match.capture_ranges_utf16) {
-                flat.push_back(capture.first);
-                flat.push_back(capture.second);
+                if (!encoded) break;
+                encoded = append_value(capture.first) && append_value(capture.second);
             }
         }
-        if (flat.size() > static_cast<size_t>(std::numeric_limits<jsize>::max())) {
-            throw_illegal_args(env, "Regex result exceeds Java array capacity");
-            return nullptr;
+        if (encoded && buffered != 0) {
+            env->SetLongArrayRegion(
+                result, output_offset, static_cast<jsize>(buffered), transfer.data());
+            encoded = !env->ExceptionCheck();
         }
-        jlongArray result = env->NewLongArray(static_cast<jsize>(flat.size()));
-        if (!result) return nullptr;
-        if (!flat.empty()) {
-            env->SetLongArrayRegion(result, 0, static_cast<jsize>(flat.size()), flat.data());
-            if (env->ExceptionCheck()) return nullptr;
+        if (!encoded) {
+            env->DeleteLocalRef(result);
+            return nullptr;
         }
         return result;
     } catch (const std::bad_alloc&) {
