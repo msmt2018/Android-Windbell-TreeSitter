@@ -193,7 +193,8 @@ class TshTreeSitterQueryCompiler(
  * Executes compiled queries through TSQueryCursor. Query and tree remain caller/registry-owned;
  * only the per-execution cursor is created and closed by this adapter.
  */
-private const val QUERY_CURSOR_ESTIMATED_BYTES_PER_PENDING_MATCH = 256L
+private const val QUERY_CURSOR_BASE_ESTIMATED_BYTES_PER_PENDING_MATCH = 256L
+private const val QUERY_CURSOR_ESTIMATED_BYTES_PER_CAPTURE = 64L
 
 class TshTreeSitterQueryExecutor(
     private val objects: TshObjectRegistry,
@@ -358,16 +359,28 @@ class TshTreeSitterQueryExecutor(
         val beforeCursor = memoryBudget.snapshot()
         val availableBytes = (beforeCursor.limitBytes - beforeCursor.reservedBytes).coerceAtLeast(0L)
         val pendingBytes = availableBytes / 4L
-        if (pendingBytes < QUERY_CURSOR_ESTIMATED_BYTES_PER_PENDING_MATCH) {
+        // A pending query match retains more than a fixed cursor-state header: captures are
+        // accumulated while the pattern is in progress. Scale the estimate with the compiled
+        // query's capture vocabulary so dense/high-capture queries receive a smaller pending
+        // match window under the same shared memory budget.
+        val captureSlots = nativeQuery.captureCount.toLong().coerceAtLeast(1L)
+        val captureEstimate = captureSlots * QUERY_CURSOR_ESTIMATED_BYTES_PER_CAPTURE
+        val estimatedBytesPerPendingMatch =
+            if (captureEstimate > Long.MAX_VALUE - QUERY_CURSOR_BASE_ESTIMATED_BYTES_PER_PENDING_MATCH) {
+                Long.MAX_VALUE
+            } else {
+                QUERY_CURSOR_BASE_ESTIMATED_BYTES_PER_PENDING_MATCH + captureEstimate
+            }
+        if (pendingBytes < estimatedBytesPerPendingMatch) {
             return failure(
                 "TSH-QUERY-EXEC-035",
-                "Insufficient shared memory budget for a Tree-sitter query cursor working set",
+                "Insufficient shared memory budget for the query's pending-match and capture working set",
                 stage = TshDiagnosticStage.MEMORY
             )
         }
         val pendingMatchLimit = minOf(
             Int.MAX_VALUE.toLong(),
-            pendingBytes / QUERY_CURSOR_ESTIMATED_BYTES_PER_PENDING_MATCH
+            pendingBytes / estimatedBytesPerPendingMatch
         ).toInt().coerceAtLeast(1)
         val cursorReservation = when (val reserved = memoryBudget.reserve(
             TshMemoryCategory.QUERY_CURSOR,
