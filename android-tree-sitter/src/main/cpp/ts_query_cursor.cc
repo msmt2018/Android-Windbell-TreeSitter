@@ -111,6 +111,14 @@ void throwIllegalState(JNIEnv *env, const char *message) {
   }
 }
 
+void throwIllegalArgument(JNIEnv *env, const char *message) {
+  jclass exception_class = env->FindClass("java/lang/IllegalArgumentException");
+  if (exception_class) {
+    env->ThrowNew(exception_class, message);
+    env->DeleteLocalRef(exception_class);
+  }
+}
+
 } // namespace
 
 static jlong TSQueryCursor_newCursor(JNIEnv *env, jclass self) {
@@ -248,6 +256,26 @@ static void TSQueryCursor_setByteRange(JNIEnv *env,
   ts_query_cursor_set_byte_range((TSQueryCursor *) cursor, start, end);
 }
 
+static void TSQueryCursor_setByteRangeLong(JNIEnv *env,
+                                           jclass self,
+                                           jlong cursor,
+                                           jlong start,
+                                           jlong end) {
+  req_nnp(env, cursor);
+  if (start < 0 || end < start || end > 0xFFFF'FFFFLL) {
+    throwIllegalArgument(
+        env, "Byte range must fit the unsigned 32-bit Tree-sitter offset domain");
+    return;
+  }
+#if defined(TSH_TREE_SITTER_HAS_QUERY_CURSOR_OPTIONS)
+  if (rejectQueryCursorReentry(env, (TSQueryCursor *) cursor)) return;
+#endif
+  ts_query_cursor_set_byte_range(
+      (TSQueryCursor *) cursor,
+      static_cast<uint32_t>(start),
+      static_cast<uint32_t>(end));
+}
+
 static void TSQueryCursor_setPointRange(JNIEnv *env,
                                         jclass self,
                                         jlong cursor,
@@ -310,6 +338,7 @@ void TSQueryCursor_Native__SetJniMethods(JNINativeMethod *methods, int count) {
   SET_JNI_METHOD(methods, TSQueryCursor_Native_getMatchLimit,
                  TSQueryCursor_getMatchLimit);
   SET_JNI_METHOD(methods, TSQueryCursor_Native_setByteRange, TSQueryCursor_setByteRange);
+  SET_JNI_METHOD(methods, TSQueryCursor_Native_setByteRangeLong, TSQueryCursor_setByteRangeLong);
   SET_JNI_METHOD(methods, TSQueryCursor_Native_setPointRange,
                  TSQueryCursor_setPointRange);
   SET_JNI_METHOD(methods, TSQueryCursor_Native_nextMatch, TSQueryCursor_nextMatch);
