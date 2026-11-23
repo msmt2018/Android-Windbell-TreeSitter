@@ -222,7 +222,7 @@ public final class TSTags {
         });
       }
       return new Cursor(nativeCursor, cancelled);
-    } catch (RuntimeException error) {
+    } catch (RuntimeException | Error error) {
       nativeCursor.close();
       throw error;
     }
