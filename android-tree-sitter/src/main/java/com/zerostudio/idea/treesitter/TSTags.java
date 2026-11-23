@@ -190,6 +190,12 @@ public final class TSTags {
 
   public static Cursor openCursor(
       TSQuery query, TSNode root, long startByte, long endByte,
+      int maxPendingMatches) {
+    return openCursor(query, root, startByte, endByte, maxPendingMatches, null);
+  }
+
+  public static Cursor openCursor(
+      TSQuery query, TSNode root, long startByte, long endByte,
       int maxPendingMatches, TSQueryCursor.ProgressCallback progressCallback) {
     if (query == null || !query.canAccess()) {
       throw new IllegalArgumentException("Cannot extract tags with an invalid query");
