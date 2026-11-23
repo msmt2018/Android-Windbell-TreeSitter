@@ -24,9 +24,8 @@ public:
         uint64_t memoryLimitBytes = UINT64_MAX,
         uint32_t chunkBytes = kTextStoreChunkBytes) noexcept;
 
-    // Appends UTF-16LE bytes. Returns false without throwing on invalid input,
-    // budget exhaustion, or allocation failure. Allocation failure may leave
-    // a valid appended prefix; discard the store after a false result.
+    // Appends UTF-16LE bytes. A failure after ingestion begins poisons the
+    // store; it can no longer be sealed as a readable partial document.
     bool append(const void *data, size_t length) noexcept;
 
     // No further writes are accepted after seal(). Parsing should only use
@@ -46,6 +45,7 @@ private:
     uint64_t memory_limit_bytes_;
     uint32_t chunk_bytes_;
     bool sealed_ = false;
+    bool failed_ = false;
 };
 
 } // namespace windbell::largefile
