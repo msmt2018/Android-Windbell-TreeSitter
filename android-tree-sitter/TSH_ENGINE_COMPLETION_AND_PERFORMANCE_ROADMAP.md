@@ -924,3 +924,16 @@ Native document 创建已有 source transfer/write、backing map/PieceTree、Tre
 5. 已绘制 ATS 符号稳定性：本轮已移除滚动捕获触发的全局样式/结构刷新，并使编辑失效范围局部化；仍需继续检查 Renderer 行缓存、缓存淘汰和 Native 依赖 envelope 在极端大文件下是否存在额外失效路径。
 
 严格遵守当前开发顺序：以上均为源码修改和静态检查；没有运行 Unit/Instrumentation tests、Gradle build/compile、CI、设备验证或 Benchmark。所有验证流程继续冻结，直到用户提出的源码 Bug 修复完成。
+
+### 2026-11-24 后续静态收敛补充
+
+- BLOCK checkpoint 仅对 start/end 两个 delimiter 均通过有限宽度分析的规则启用；无法证明有限宽度的规则继续使用原有完整上下文/全局依赖路径。
+- 第一次反向恢复若发现 delimiter 本身跨越视口边界，不会把边界中间态错误保存为 checkpoint；checkpoint 记录在未完成 delimiter 起点，后续视口再完成状态迁移。
+- checkpoint 状态转换遵循现有 BLOCK 执行语义：已处于 block 内时忽略嵌套 start delimiter，直到 end delimiter 关闭当前 block。
+- checkpoint 容器最多 512 项；内存分配失败时清空优化缓存并回退到反向恢复，不让可选缓存分配失败中断 TSH 高亮结果。
+- 增量编辑只保留编辑点之前的 checkpoint，并同步更新其 source/partition version；编辑点之后的 checkpoint 丢弃。
+- Kotlin 视口刷新和编辑刷新均携带 documentRevision；若异步刷新任务落后于后续编辑，则直接丢弃，避免旧范围把新文档行缓存错误地重新失效。
+- EditorView 新增多范围样式失效入口：一个编辑事务中多个不连续脏行范围只增加一次 styles generation。
+- Native Query 缺失依赖元数据时，按 NATIVE_QUERY 来源单独添加 document-wide 保护依赖，不再被同一结果中的 Regex 依赖误掩盖。
+
+以上仍仅完成源码级静态检查，没有执行任何测试或构建流程。
