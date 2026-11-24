@@ -1002,3 +1002,9 @@ Native document 创建已有 source transfer/write、backing map/PieceTree、Tre
    - dependency vector 以 move 方式进入 ledger，避免每个视口结果再次复制整份依赖数组。
 
 以上改动仍处于源码静态审查阶段；按照当前开发顺序，没有执行测试、编译、CI、设备或 Benchmark。
+
+5. **增量编辑时捕获索引不再逐 token 创建对象。**
+   - CaptureIntervalIndex 新增 shiftBytes(delta)：对 start/end/prefix-max-end 三组坐标数组做统一偏移，样式 ID、font flags、priority、declaration order、source 等只读数组在新索引之间共享。
+   - rebaseCachedEntry() 不再对每个捕获构造 HighlightSpan、执行 lambda、重新打包和排序；坐标平移直接处理 primitive arrays，时间与临时对象分配均随缓存页数组规模线性下降。
+   - 如果任一偏移越界或 prefix-max-end 顺序不再成立，则拒绝复用该页，由原有依赖失效路径重新捕获。
+   - 实现只使用 Android API 21 可用的整数位运算，不依赖较新的 Integer.toUnsignedLong()。
