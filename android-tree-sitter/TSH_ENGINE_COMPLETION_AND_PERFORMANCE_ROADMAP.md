@@ -1043,3 +1043,17 @@ Native document 创建已有 source transfer/write、backing map/PieceTree、Tre
    - 现在 snapshotRanges() 只枚举有效键，不再触碰 LRU；只有 Native payload find() 的真实命中才刷新对应依赖项的访问顺序。
 
 这两项修复不扩大 Native/Kotlin 缓存预算，而是避免预算失败和非命中快照造成的无效证明丢失。没有执行测试、编译、构建、CI、设备验证或基准测试。
+
+## 2026-11-24 首次打开大文件：UTF-16LE Native 窗口传输批量写入（源码已提交，验证暂缓）
+
+静态检查 nativeCreateDocument() 的分块源传输路径后发现：每个 UTF-16 code unit 都由 Kotlin 执行两次 ByteBuffer.put()、两次位运算和两次 Byte 转换，再写入 Native direct buffer。对 100 MiB 文本，这条路径会执行约一亿次 Kotlin 层单字节写入调用，增加首次打开时的 CPU 开销。
+
+修复：
+- 使用 ByteBuffer 的 LITTLE_ENDIAN CharBuffer 视图，将 PieceTreeSnapshot 返回的 UTF-16 code unit 序列直接批量写入 Native direct buffer。
+- 显式设置底层 ByteBuffer position 为实际写入字节数，因为 CharBuffer view 的 position 不会自动更新原 ByteBuffer。
+- 保留窗口长度校验，确保 PieceTreeSnapshot 不会写出 Native 当前请求的有界窗口。
+- CharBuffer 按 UTF-16 code unit 原样写入，不进行 Unicode code point 转换，因此补充平面字符、代理对以及孤立代理项均保持原始 UTF-16LE 数据语义。
+
+该优化不创建整文档 String/ByteArray，不改变 Native PieceTree 或 Tree-sitter 输入契约，只减少分块传输阶段的逐字符 Kotlin 调用和转换成本。
+
+没有执行测试、编译、构建、CI、设备验证或基准测试。
