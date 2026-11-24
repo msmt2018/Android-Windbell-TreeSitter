@@ -2499,6 +2499,39 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
         // AST/query capture density is grammar-dependent. Start with a small
         // bounded capacity and grow only when real captures are produced.
         macro_spans.reserve(std::min<size_t>(viewport_chars / 6, 4096));
+        std::unordered_set<uint64_t> ast_dependency_keys;
+        auto append_ast_dependency = [&](TSNode dependency_node) {
+            if (!dependency_ranges || ts_node_is_null(dependency_node)) return;
+            uint32_t dependency_start = ts_node_start_byte(dependency_node);
+            uint32_t dependency_end = ts_node_end_byte(dependency_node);
+            if (dependency_start > dependency_end || dependency_end > total_bytes ||
+                (dependency_start & 1u) || (dependency_end & 1u)) return;
+            if (dependency_start == dependency_end) {
+                dependency_start = dependency_start >= 2u ? dependency_start - 2u : 0u;
+                dependency_end = static_cast<uint32_t>(std::min<uint64_t>(
+                    total_bytes, static_cast<uint64_t>(dependency_end) + 2u));
+            }
+            const uint64_t identity =
+                (static_cast<uint64_t>(dependency_start) << 32u) | dependency_end;
+            if (!ast_dependency_keys.insert(identity).second) return;
+            dependency_ranges->push_back({
+                dependency_start, dependency_end, UINT32_MAX,
+                static_cast<uint8_t>(HighlightSource::AST_SELECTOR), 0xFFu,
+                HIGHLIGHT_DEPENDENCY_BOUNDARY_SENSITIVE
+            });
+        };
+        // Even a viewport with no current ATS candidates depends on its own
+        // syntax region: an edit there may create or remove a target node.
+        if (dependency_ranges && range_start_byte < range_end_byte) {
+            const uint64_t identity =
+                (static_cast<uint64_t>(range_start_byte) << 32u) | range_end_byte;
+            ast_dependency_keys.insert(identity);
+            dependency_ranges->push_back({
+                range_start_byte, range_end_byte, UINT32_MAX,
+                static_cast<uint8_t>(HighlightSource::AST_SELECTOR), 0xFFu,
+                HIGHLIGHT_DEPENDENCY_BOUNDARY_SENSITIVE
+            });
+        }
         TSTreeCursor cursor = ts_tree_cursor_new(ts_tree_root_node(tree));
         std::vector<const AstSelectorRule*> candidate_rules;
         candidate_rules.reserve(grammar->ast_wildcard_rules.size() + 16);
@@ -2592,6 +2625,11 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
             for (const AstSelectorRule* ast_rule_ptr : candidate_rules) {
                 const AstSelectorRule& ast_rule = *ast_rule_ptr;
                 if (!ast_rule.enabled) continue;
+                // A candidate's own syntax/text properties influence this rule
+                // even when a later predicate rejects it. Keep that dependency so
+                // edits can invalidate a negative match without clearing unrelated
+                // document partitions.
+                append_ast_dependency(node);
                 if (ast_rule.named >= 0 &&
                     ts_node_is_named(node) != (ast_rule.named != 0)) continue;
                 if (ast_rule.missing >= 0 &&
@@ -2605,6 +2643,7 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                 // A selector with a field names the owner node and styles the
                 // selected child. A selector without a field targets the node itself.
                 if (ast_rule.field_id != 0) {
+                    append_ast_dependency(parent);
                     const char* parent_type = ts_node_is_null(parent) ? nullptr : ts_node_type(parent);
                     const char* parent_grammar_type = ts_node_is_null(parent) ? nullptr : ts_node_grammar_type(parent);
                     // The compile-time dispatch index already expanded the
@@ -2635,6 +2674,7 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                     if (!node_symbol_matches && !node_type_matches) continue;
                 }
                 if (ast_rule.parent_symbol != 0 || !ast_rule.parent_type.empty()) {
+                    append_ast_dependency(parent);
                     const char* parent_type = ts_node_is_null(parent) ? nullptr : ts_node_type(parent);
                     const char* parent_grammar_type = ts_node_is_null(parent) ? nullptr : ts_node_grammar_type(parent);
                     const bool parent_symbol_matches = ast_rule.parent_symbol != 0 &&
@@ -2649,6 +2689,9 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                     bool ancestor_found = false;
                     TSNode ancestor = parent;
                     while (!ts_node_is_null(ancestor)) {
+                        // Positive and negative ancestor constraints depend on every
+                        // inspected ancestor up to the first match (or the root).
+                        append_ast_dependency(ancestor);
                         // A node can expose an alias as its public symbol/type while
                         // retaining a different grammar symbol/type. ATS names are
                         // resolved against the grammar, so match both identities.
@@ -2815,6 +2858,9 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                     ast_rule.next_sibling_symbol != 0 ||
                     !ast_rule.next_sibling_type.empty();
                 if (needs_child_position) {
+                    // Child positions and adjacent siblings are properties of the
+                    // complete parent child-list, not just of the selected token.
+                    append_ast_dependency(parent);
                     if (ts_node_is_null(parent)) continue;
                     const uint32_t sibling_count = ts_node_child_count(parent);
                     uint32_t current_index = UINT32_MAX;
