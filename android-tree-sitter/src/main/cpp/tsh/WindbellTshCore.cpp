@@ -1423,7 +1423,12 @@ void WindbellEngine::matchBlockRecursive(
                                 nested_scan_end = viewport_end +
                                     static_cast<ptrdiff_t>(right_context);
                             } else {
-                                nested_scan_end = inner_end;
+                                // For context-sensitive nested matches, retain the
+                                // complete block as the string context but stop
+                                // candidate match starts at the viewport end. A match
+                                // may still finish beyond the viewport.
+                                nested_scan_end = std::min(
+                                    inner_end, text_start + output_end_byte);
                             }
                         }
                         const UChar* inner_curr = nested_scan_start;
