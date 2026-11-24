@@ -673,7 +673,6 @@ class WindbellTshEngine private constructor() {
             val activeFontByBit = Array(5) { java.util.TreeSet(compareCaptureIndices) }
             val fontFlagCounts = IntArray(5)
             var activeFontFlags = 0
-            val captureStyles = arrayOfNulls<StylePalette>(spans.size)
             val hasForeground = BooleanArray(captureCount)
             val hasBackground = BooleanArray(captureCount)
             val captureFontFlags = IntArray(captureCount)
@@ -685,7 +684,6 @@ class WindbellTshEngine private constructor() {
                 val sourceIndex = captureSourceIndices[index]
                 val span = spans[sourceIndex]
                 val style = palette[span.styleId]
-                captureStyles[sourceIndex] = style
                 // Resolve each appearance independently, but never let an
                 // omitted dark/light override fall through to the editor's base
                 // TextPaint color. That fallback is unrelated to the TSH style and
@@ -719,7 +717,7 @@ class WindbellTshEngine private constructor() {
                 val flags = Spannable.SPAN_EXCLUSIVE_EXCLUSIVE
                 backgroundIndex?.let { index ->
                     val sourceIndex = captureSourceIndices[index]
-                    val style = captureStyles[sourceIndex] ?: return@let
+                    val style = palette[spans[sourceIndex].styleId] ?: return@let
                     val background = when {
                         darkMode && style.hasDarkBackground -> style.darkBackground
                         style.hasLightBackground -> style.lightBackground
@@ -733,7 +731,7 @@ class WindbellTshEngine private constructor() {
                 }
                 foregroundIndex?.let { index ->
                     val sourceIndex = captureSourceIndices[index]
-                    val style = captureStyles[sourceIndex] ?: return@let
+                    val style = palette[spans[sourceIndex].styleId] ?: return@let
                     val color = when {
                         darkMode && style.hasDarkColor -> style.darkColor
                         style.hasLightColor -> style.lightColor
