@@ -1785,6 +1785,10 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeApplyDocumentEdi
         throw_illegal_state(env, "Unable to clone native syntax tree for transactional edit");
         return JNI_FALSE;
     }
+    // A fallback parser is part of the candidate transaction. Do not replace
+    // the live parser until every later dirty-range/index allocation succeeds.
+    std::unique_ptr<TSParser, decltype(&ts_parser_delete)> replacement_parser(
+        nullptr, &ts_parser_delete);
     TSInputEdit edit{};
     edit.start_byte = static_cast<uint32_t>(start_byte);
     edit.old_end_byte = static_cast<uint32_t>(old_end_byte);
@@ -1825,10 +1829,11 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeApplyDocumentEdi
                 "Unable to recreate Tree-sitter parser for full-document fallback; original document retained");
             return JNI_FALSE;
         }
+        replacement_parser.reset(fallback_parser);
         NativeDocumentInput fallback_payload{next_source.get(), false};
         TSInput fallback_input{
             &fallback_payload, nativeDocumentRead, TSInputEncodingUTF16LE, nullptr};
-        TSTree *fallback_tree = ts_parser_parse(fallback_parser, nullptr, fallback_input);
+        TSTree *fallback_tree = ts_parser_parse(replacement_parser.get(), nullptr, fallback_input);
         if (!fallback_tree || fallback_payload.read_failed ||
             !nativeTreeIsValidForDocument(fallback_tree, next_source->sizeBytes())) {
             uint32_t fallback_start = 0;
@@ -1839,7 +1844,7 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeApplyDocumentEdi
                 fallback_end = ts_node_end_byte(fallback_root);
                 ts_tree_delete(fallback_tree);
             }
-            ts_parser_delete(fallback_parser);
+            replacement_parser.reset();
             ts_tree_delete(edited_tree);
             ts_parser_reset(document->parser);
             const std::string reason =
@@ -1851,8 +1856,6 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeApplyDocumentEdi
             throw_illegal_state(env, reason.c_str());
             return JNI_FALSE;
         }
-        ts_parser_delete(document->parser);
-        document->parser = fallback_parser;
         next_tree = fallback_tree;
     }
 
@@ -1944,6 +1947,11 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeApplyDocumentEdi
     }
 
     const uint64_t old_source_version = document->source->version();
+    if (replacement_parser) {
+        TSParser *previous_parser = document->parser;
+        document->parser = replacement_parser.release();
+        ts_parser_delete(previous_parser);
+    }
     ts_tree_delete(document->tree);
     document->tree = next_tree;
     document->source = std::move(next_source);
