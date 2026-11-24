@@ -716,6 +716,7 @@ class TshSyntaxHighlighter(
                         }
                         queuedViewportRanges.also { queuedViewportRanges = emptyList() }
                     }
+                    val batchRevision = active.documentRevision.get()
                     var batchUpdated = false
                     val completedRanges = ArrayList<CaptureRangeKey>(batch.size)
                     try {
@@ -739,7 +740,7 @@ class TshSyntaxHighlighter(
                         // one structure invalidation, even if cancellation/supersession
                         // interrupts the remainder of the batch.
                         if (batchUpdated) {
-                            invalidateViewportStyles(active, completedRanges)
+                            invalidateViewportStyles(active, completedRanges, batchRevision)
                             if (structureRefreshPending.getAndSet(false)) {
                                 host?.invalidateStructure()
                             }
@@ -771,7 +772,11 @@ class TshSyntaxHighlighter(
      * serialized. If an edit has started since the native result was admitted,
      * its edit transaction owns the next invalidation instead.
      */
-    private fun invalidateViewportStyles(active: LargeSession, batch: List<CaptureRangeKey>) {
+    private fun invalidateViewportStyles(
+        active: LargeSession,
+        batch: List<CaptureRangeKey>,
+        expectedRevision: Long
+    ) {
         if (batch.isEmpty()) return
         val startOffset = batch.minOfOrNull { it.startUtf16 } ?: return
         val endOffset = batch.maxOfOrNull { it.endUtf16 } ?: return
@@ -781,6 +786,7 @@ class TshSyntaxHighlighter(
             val canInvalidate = synchronized(nativeEditLock) {
                 largeSession === active &&
                     generation.get() == active.ticket &&
+                    active.documentRevision.get() == expectedRevision &&
                     active.pendingEditEpoch.get() == active.appliedEditEpoch.get()
             }
             if (!canInvalidate || currentBuffer.length <= 0) return@launch
@@ -873,7 +879,9 @@ class TshSyntaxHighlighter(
                         active.rangeWork[key] === work &&
                         uncoveredViewportRanges(key).isNotEmpty()
                     ) {
-                        invalidateViewportStyles(active, listOf(key))
+                        invalidateViewportStyles(
+                            active, listOf(key), active.documentRevision.get()
+                        )
                     }
                 }
             }
@@ -1029,6 +1037,7 @@ class TshSyntaxHighlighter(
      */
     private fun invalidateEditedStyles(
         active: LargeSession,
+        expectedRevision: Long,
         dirtyRanges: List<Pair<Long, Long>>,
         invalidatedCaptureRanges: List<Pair<Long, Long>>
     ) {
@@ -1039,7 +1048,9 @@ class TshSyntaxHighlighter(
         ranges += invalidatedCaptureRanges
         scope.launch(Dispatchers.Main.immediate) {
             val currentHost = host ?: return@launch
-            if (largeSession !== active || generation.get() != active.ticket) return@launch
+            if (largeSession !== active || generation.get() != active.ticket ||
+                active.documentRevision.get() != expectedRevision ||
+                active.pendingEditEpoch.get() != active.appliedEditEpoch.get()) return@launch
             val buffer = currentHost.buffer
             val length = buffer.length
             if (length <= 0) {
@@ -1187,7 +1198,10 @@ class TshSyntaxHighlighter(
                             }
                         }
                         invalidateEditedStyles(
-                            active, dirtyByteRanges, invalidatedCaptureRanges
+                            active,
+                            active.documentRevision.get(),
+                            dirtyByteRanges,
+                            invalidatedCaptureRanges
                         )
                     }
                 }
