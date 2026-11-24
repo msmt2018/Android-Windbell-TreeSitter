@@ -2366,20 +2366,21 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
 
     NativeHighlightCache::Value cache_value;
     cache_value.spans = std::move(spans);
+    std::vector<HighlightDependencyRange> cache_dependencies =
+        std::move(highlight_dependencies);
 
     // Query dependencies were collected from every possible rooted AST
     // candidate intersecting the evaluated viewport, not merely emitted captures.
-    cache_value.dependencies = std::move(highlight_dependencies);
     // If Query execution was unavailable or did not produce dependency
     // metadata, never cache a partial result under an assumed local scope.
     const bool has_native_query_dependency = std::any_of(
-        cache_value.dependencies.begin(), cache_value.dependencies.end(),
+        cache_dependencies.begin(), cache_dependencies.end(),
         [](const HighlightDependencyRange& dependency) {
             return dependency.source ==
                 static_cast<uint8_t>(HighlightSource::NATIVE_QUERY);
         });
     if (has_enabled_native_query && !has_native_query_dependency) {
-        cache_value.dependencies.push_back({
+        cache_dependencies.push_back({
             0u, static_cast<uint32_t>(total_bytes), UINT32_MAX,
             static_cast<uint8_t>(HighlightSource::NATIVE_QUERY), 0xFFu,
             HIGHLIGHT_DEPENDENCY_DOCUMENT_WIDE
@@ -2391,13 +2392,13 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
     // path returns no ATS envelope; do not invalidate every document partition
     // merely because this grammar contains ATS rules.
     const bool has_ast_selector_dependency = std::any_of(
-        cache_value.dependencies.begin(), cache_value.dependencies.end(),
+        cache_dependencies.begin(), cache_dependencies.end(),
         [](const HighlightDependencyRange& dependency) {
             return dependency.source ==
                 static_cast<uint8_t>(HighlightSource::AST_SELECTOR);
         });
     if (has_enabled_ast_selector && !has_ast_selector_dependency) {
-        cache_value.dependencies.push_back({
+        cache_dependencies.push_back({
             range_start_byte, range_end_byte, UINT32_MAX,
             static_cast<uint8_t>(HighlightSource::AST_SELECTOR), 0xFFu,
             HIGHLIGHT_DEPENDENCY_BOUNDARY_SENSITIVE
@@ -2408,13 +2409,13 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
     // publish checkpoint-based dependencies from the last known delimiter state,
     // so they do not force every cached viewport to become document-wide.
     const bool has_regex_state_dependency = std::any_of(
-        cache_value.dependencies.begin(), cache_value.dependencies.end(),
+        cache_dependencies.begin(), cache_dependencies.end(),
         [](const HighlightDependencyRange& dependency) {
             return dependency.source ==
                 static_cast<uint8_t>(HighlightSource::REGEX_STATE);
         });
     const bool has_document_wide_regex_dependency = std::any_of(
-        cache_value.dependencies.begin(), cache_value.dependencies.end(),
+        cache_dependencies.begin(), cache_dependencies.end(),
         [](const HighlightDependencyRange& dependency) {
             return dependency.source ==
                     static_cast<uint8_t>(HighlightSource::REGEX_STATE) &&
@@ -2459,7 +2460,7 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
         has_uncheckpointed_context_regex &&
         !has_document_wide_regex_dependency;
     if (added_global_regex_dependency) {
-        cache_value.dependencies.push_back({
+        cache_dependencies.push_back({
             0u, static_cast<uint32_t>(total_bytes), UINT32_MAX,
             static_cast<uint8_t>(HighlightSource::REGEX_STATE), 0xFFu,
             HIGHLIGHT_DEPENDENCY_DOCUMENT_WIDE
@@ -2469,7 +2470,7 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
         !has_regex_state_dependency && !added_global_regex_dependency) {
         // If the stateful pipeline did not publish a verified checkpoint
         // envelope, never admit its result under a guessed local dependency.
-        cache_value.dependencies.push_back({
+        cache_dependencies.push_back({
             0u, static_cast<uint32_t>(total_bytes), UINT32_MAX,
             static_cast<uint8_t>(HighlightSource::REGEX_STATE), 0xFFu,
             HIGHLIGHT_DEPENDENCY_DOCUMENT_WIDE
@@ -2497,7 +2498,7 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
         const uint32_t dependency_end = static_cast<uint32_t>(
             std::min<uint64_t>(total_bytes,
                 static_cast<uint64_t>(evaluation_end) + regex_overlap));
-        cache_value.dependencies.push_back({
+        cache_dependencies.push_back({
             dependency_start, dependency_end, UINT32_MAX,
             static_cast<uint8_t>(HighlightSource::ONIG_REGEX), 0xFFu,
             HIGHLIGHT_DEPENDENCY_BOUNDARY_SENSITIVE
@@ -2505,7 +2506,8 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
     }
     std::copy(std::begin(counts), std::end(counts), std::begin(cache_value.match_counts));
     try {
-        document->highlight_cache.put(cache_key, std::move(cache_value));
+        document->highlight_cache.put(
+            cache_key, std::move(cache_value), cache_dependencies);
     } catch (...) {
         // Cache admission is optional. Preserve the complete result even when
         // cache bookkeeping cannot allocate under memory pressure.
