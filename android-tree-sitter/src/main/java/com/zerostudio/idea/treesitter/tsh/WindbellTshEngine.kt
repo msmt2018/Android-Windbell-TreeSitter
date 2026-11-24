@@ -72,6 +72,13 @@ class WindbellTshEngine private constructor() {
     var lastCompileDiagnostics: List<CompileDiagnostic> = emptyList()
         private set
 
+    data class NativeHighlightRange(val startByte: Long, val endByte: Long) {
+        init {
+            require(startByte >= 0L && endByte >= startByte)
+            require((startByte and 1L) == 0L && (endByte and 1L) == 0L)
+        }
+    }
+
     data class HighlightSpan(
         val startByte: Int,
         val endByte: Int,
@@ -866,6 +873,30 @@ class WindbellTshEngine private constructor() {
         documentHandle, diagnostics, startByte, endByte
     )
 
+    /**
+     * Exact viewport keys that the native dependency cache retained after edits.
+     * The editor uses this authoritative set to preserve only Kotlin capture
+     * entries whose native AST/query/Regex dependencies were proven reusable.
+     */
+    fun reusableNativeHighlightRanges(documentHandle: Long): List<NativeHighlightRange> {
+        require(documentHandle != 0L)
+        val encoded = nativeGetReusableHighlightRanges(documentHandle)
+            ?: error("Native reusable highlight range snapshot could not be allocated")
+        require(encoded.isNotEmpty()) { "Native reusable highlight snapshot is missing its range count" }
+        val count = encoded[0]
+        require(count >= 0L && count == (encoded.size - 1L) / 2L &&
+            (encoded.size - 1) % 2 == 0) {
+            "Native reusable highlight range count is malformed"
+        }
+        return ArrayList<NativeHighlightRange>(count.toInt()).also { ranges ->
+            var index = 1
+            repeat(count.toInt()) {
+                ranges += NativeHighlightRange(encoded[index], encoded[index + 1])
+                index += 2
+            }
+        }
+    }
+
     fun closeNativeDocument(documentHandle: Long) {
         if (documentHandle != 0L) nativeCloseDocument(documentHandle)
     }
@@ -893,6 +924,10 @@ class WindbellTshEngine private constructor() {
         rangeStartByte: Long,
         rangeEndByte: Long
     ): IntArray?
+
+    private external fun nativeGetReusableHighlightRanges(
+        documentHandle: Long
+    ): LongArray?
 
     private external fun nativeCloseDocument(documentHandle: Long)
 
