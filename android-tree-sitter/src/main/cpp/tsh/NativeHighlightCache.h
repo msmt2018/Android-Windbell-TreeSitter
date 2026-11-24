@@ -445,10 +445,27 @@ private:
         const Key& key,
         std::vector<DependencyRange> dependencies
     ) noexcept {
-        bool shared_budget_acquired = false;
         size_t pending_shared_bytes = 0;
+        bool shared_budget_acquired = false;
         try {
             const size_t bytes = dependencyWeight(dependencies);
+            if (dependencies.empty() || bytes > kDependencyLedgerBudgetBytes) {
+                forgetDependencies(key);
+                return;
+            }
+
+            // Reserve global memory before evicting any existing proof. The old
+            // ordering evicted local LRU entries first and only then attempted the
+            // shared-budget reservation; if another native subsystem exhausted the
+            // shared budget, admission failed after useful proofs had already been
+            // discarded. That caused avoidable Kotlin token-page invalidation and
+            // recapture after unrelated edits.
+            if (shared_budget_) {
+                if (!shared_budget_->tryAcquire(bytes)) return;
+                shared_budget_acquired = true;
+                pending_shared_bytes = bytes;
+            }
+
             auto existing = dependency_entries_.find(key);
             if (existing != dependency_entries_.end()) {
                 const size_t released = std::min(
@@ -458,8 +475,10 @@ private:
                 dependency_lru_.erase(existing->second.lru);
                 dependency_entries_.erase(existing);
             }
-            if (dependencies.empty() || bytes > kDependencyLedgerBudgetBytes) return;
 
+            // Local capacity eviction happens only after the new proof has a
+            // guaranteed global reservation. Keep the newest proof and evict
+            // only older ledger entries.
             while ((dependency_used_bytes_ > kDependencyLedgerBudgetBytes - bytes ||
                     dependency_entries_.size() >= kDependencyLedgerMaxEntries) &&
                    !dependency_lru_.empty()) {
@@ -474,11 +493,6 @@ private:
                 dependency_entries_.erase(victim);
             }
 
-            if (shared_budget_) {
-                if (!shared_budget_->tryAcquire(bytes)) return;
-                shared_budget_acquired = true;
-                pending_shared_bytes = bytes;
-            }
             dependency_lru_.push_back(key);
             auto lru = std::prev(dependency_lru_.end());
             try {
@@ -486,7 +500,7 @@ private:
                     key, DependencyEntry{std::move(dependencies), bytes, lru});
                 if (!inserted.second) {
                     dependency_lru_.erase(lru);
-                    if (shared_budget_acquired) {
+                    if (shared_budget_acquired && shared_budget_) {
                         shared_budget_->release(pending_shared_bytes);
                         shared_budget_acquired = false;
                     }
