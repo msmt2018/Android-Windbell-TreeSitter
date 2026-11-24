@@ -115,9 +115,9 @@ internal class CaptureIntervalIndex private constructor(
         val shiftedPrefixMaxEnd = IntArray(size)
         var previousPrefixMax = 0L
         for (index in 0 until size) {
-            val start = Integer.toUnsignedLong(starts[index]) + delta
-            val end = Integer.toUnsignedLong(ends[index]) + delta
-            val prefixEnd = Integer.toUnsignedLong(prefixMaxEnd[index]) + delta
+            val start = (starts[index].toLong() and 0xFFFF_FFFFL) + delta
+            val end = (ends[index].toLong() and 0xFFFF_FFFFL) + delta
+            val prefixEnd = (prefixMaxEnd[index].toLong() and 0xFFFF_FFFFL) + delta
             if (start < 0L || end < start || end > 0xFFFF_FFFFL ||
                 prefixEnd < 0L || prefixEnd > 0xFFFF_FFFFL) {
                 return null
