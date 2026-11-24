@@ -2318,6 +2318,11 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
     std::vector<HighlightDependencyRange> highlight_dependencies;
     uint32_t counts[4] = {};
     std::vector<HighlightSpan> spans;
+#ifndef NDEBUG
+    // Measure this document-backed highlight invocation independently from the
+    // legacy contiguous JNI entry point; its timing scope must be local.
+    const auto highlight_core_started = std::chrono::steady_clock::now();
+#endif
     try {
         spans = WindbellEngine::getInstance().highlightHybrid(
             ts_tree_language(document->tree), document->tree, input,
