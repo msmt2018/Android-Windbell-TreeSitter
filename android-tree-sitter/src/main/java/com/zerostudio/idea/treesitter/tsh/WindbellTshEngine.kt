@@ -599,12 +599,6 @@ class WindbellTshEngine private constructor() {
                 visibleStart, visibleEnd, CharacterStyle::class.java
             ).forEach(spannable::removeSpan)
 
-            data class ClippedCapture(
-                val span: HighlightSpan,
-                val sourceIndex: Int,
-                val start: Int,
-                val end: Int
-            )
             // Resolve overlap before creating Android spans. Android's SPAN_PRIORITY
             // field is only eight bits; assigning priorities to hundreds of distinct
             // captures necessarily creates collisions. StyledTextPainter then has no
@@ -646,7 +640,13 @@ class WindbellTshEngine private constructor() {
                     androidPriority shl Spanned.SPAN_PRIORITY_SHIFT
             }
 
-            val captures = ArrayList<ClippedCapture>(spans.size)
+            // Keep clipped captures in primitive parallel arrays. The previous
+            // ClippedCapture wrapper allocated one object per overlapping span on
+            // every line draw, despite the source HighlightSpan being immutable.
+            val captureSourceIndices = IntArray(spans.size)
+            val captureStarts = IntArray(spans.size)
+            val captureEnds = IntArray(spans.size)
+            var captureCount = 0
             for ((sourceIndex, span) in spans.withIndex()) {
                 val globalStart = span.startByteUnsigned ushr 1
                 val globalEnd = span.endByteUnsigned ushr 1
@@ -655,15 +655,16 @@ class WindbellTshEngine private constructor() {
                 val clippedStart = maxOf(localStart, visibleStart.toLong())
                 val clippedEnd = minOf(localEnd, visibleEnd.toLong())
                 if (clippedStart >= clippedEnd) continue
-                captures += ClippedCapture(
-                    span, sourceIndex, clippedStart.toInt(), clippedEnd.toInt()
-                )
+                captureSourceIndices[captureCount] = sourceIndex
+                captureStarts[captureCount] = clippedStart.toInt()
+                captureEnds[captureCount] = clippedEnd.toInt()
+                captureCount++
             }
-            if (captures.isEmpty()) return@synchronized
+            if (captureCount == 0) return@synchronized
 
             val compareCaptureIndices = java.util.Comparator<Int> { left, right ->
                 val order = nativeOrder.compare(
-                    captures[left].span, captures[right].span
+                    spans[captureSourceIndices[left]], spans[captureSourceIndices[right]]
                 )
                 if (order != 0) order else left.compareTo(right)
             }
@@ -672,18 +673,19 @@ class WindbellTshEngine private constructor() {
             val activeFontByBit = Array(5) { java.util.TreeSet(compareCaptureIndices) }
             val fontFlagCounts = IntArray(5)
             var activeFontFlags = 0
-            val captureStyles = arrayOfNulls<StylePalette>(captures.size)
-            val hasForeground = BooleanArray(captures.size)
-            val hasBackground = BooleanArray(captures.size)
-            val captureFontFlags = IntArray(captures.size)
+            val captureStyles = arrayOfNulls<StylePalette>(spans.size)
+            val hasForeground = BooleanArray(captureCount)
+            val hasBackground = BooleanArray(captureCount)
+            val captureFontFlags = IntArray(captureCount)
             // Primitive packed sweep events avoid two heap objects per capture.
-            // Ordering is offset first, then end(0) before start(1), matching the
-            // previous stable comparator. The capture index is the remaining key.
-            val events = LongArray(captures.size * 2)
+            // Ordering is offset first, then end(0) before start(1), then capture index.
+            val events = LongArray(captureCount * 2)
             var eventWrite = 0
-            captures.forEachIndexed { index, capture ->
-                val style = palette[capture.span.styleId]
-                captureStyles[index] = style
+            for (index in 0 until captureCount) {
+                val sourceIndex = captureSourceIndices[index]
+                val span = spans[sourceIndex]
+                val style = palette[span.styleId]
+                captureStyles[sourceIndex] = style
                 // Resolve each appearance independently, but never let an
                 // omitted dark/light override fall through to the editor's base
                 // TextPaint color. That fallback is unrelated to the TSH style and
@@ -699,9 +701,9 @@ class WindbellTshEngine private constructor() {
                 } else {
                     style?.lightFontFlags ?: 0
                 }
-                captureFontFlags[index] = capture.span.fontFlags or schemeFlags
-                events[eventWrite++] = packBoundaryEvent(capture.start, index, starts = true)
-                events[eventWrite++] = packBoundaryEvent(capture.end, index, starts = false)
+                captureFontFlags[index] = span.fontFlags or schemeFlags
+                events[eventWrite++] = packBoundaryEvent(captureStarts[index], index, starts = true)
+                events[eventWrite++] = packBoundaryEvent(captureEnds[index], index, starts = false)
             }
             events.sort()
 
@@ -716,7 +718,8 @@ class WindbellTshEngine private constructor() {
                 if (runStart >= runEnd) return
                 val flags = Spannable.SPAN_EXCLUSIVE_EXCLUSIVE
                 backgroundIndex?.let { index ->
-                    val style = captureStyles[index] ?: return@let
+                    val sourceIndex = captureSourceIndices[index]
+                    val style = captureStyles[sourceIndex] ?: return@let
                     val background = when {
                         darkMode && style.hasDarkBackground -> style.darkBackground
                         style.hasLightBackground -> style.lightBackground
@@ -725,11 +728,12 @@ class WindbellTshEngine private constructor() {
                     }
                     spannable.setSpan(
                         BackgroundColorSpan(background), runStart, runEnd,
-                        flags or capturePriorityFlags[captures[index].sourceIndex]
+                        flags or capturePriorityFlags[sourceIndex]
                     )
                 }
                 foregroundIndex?.let { index ->
-                    val style = captureStyles[index] ?: return@let
+                    val sourceIndex = captureSourceIndices[index]
+                    val style = captureStyles[sourceIndex] ?: return@let
                     val color = when {
                         darkMode && style.hasDarkColor -> style.darkColor
                         style.hasLightColor -> style.lightColor
@@ -738,7 +742,7 @@ class WindbellTshEngine private constructor() {
                     }
                     spannable.setSpan(
                         ForegroundColorSpan(color), runStart, runEnd,
-                        flags or capturePriorityFlags[captures[index].sourceIndex]
+                        flags or capturePriorityFlags[sourceIndex]
                     )
                 }
                 if ((fontFlags and 0x01) != 0) {
@@ -826,7 +830,7 @@ class WindbellTshEngine private constructor() {
                 var packedFontPriorities = 0L
                 for (bitIndex in 0 until 4) {
                     val winner = activeFontByBit[bitIndex].firstOrNull() ?: continue
-                    val priority = (capturePriorityFlags[captures[winner].sourceIndex] ushr
+                    val priority = (capturePriorityFlags[captureSourceIndices[winner]] ushr
                         Spanned.SPAN_PRIORITY_SHIFT) and 0xFF
                     packedFontPriorities = packedFontPriorities or
                         (priority.toLong() shl (bitIndex * 8))
