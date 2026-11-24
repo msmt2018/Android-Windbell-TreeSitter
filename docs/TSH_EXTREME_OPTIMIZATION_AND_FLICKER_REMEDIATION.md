@@ -96,3 +96,29 @@ This follow-up is source-committed on `integration/all-open-prs`. It is not yet 
 - Native predicate evaluation still constructs temporary expected/actual containers and converts immutable query literals during match execution. The next optimization should move immutable operand decoding into compile-time metadata and reuse per-query execution storage, without changing predicate quantifier semantics.
 - Native Regex still materializes a complete per-window result array. A resumable Native Regex cursor and end-to-end MatchSet continuation remain outstanding.
 - CI device tests are intentionally disabled in the current workflow. Local/native test success is not device verification.
+
+
+## 2026-11-24 CI #1782 follow-up: cache API and editor adapter drift
+
+CI run #1782 (45397495706, commit ba406d463389fab4d83dad532676146d823e9c35) supplied a more complete validation result than the earlier compile-only attempt:
+
+- The document-backed JNI timing-scope fix compiled: Build host JNI library for local tests passed.
+- Run native TSH cache tests failed to compile because NativeHighlightCache::Value no longer owns dependency ranges and put now requires dependency ranges as its third argument. The tests were still written against the removed embedded Value.dependencies field and the former two-argument API.
+- Release Kotlin compilation exposed adapter drift: CaptureDisplayRebaser called nonexistent CaptureIntervalIndex.mapSpans and obsolete unsigned-offset properties; TshSyntaxHighlighter referenced an unbound viewport session and the removed Position.line property.
+- The same Release log also reported Kotlin metadata mismatch: stdlib 2.4.21 metadata was rejected by a compiler expecting 2.2.0. This is a separate toolchain-resolution problem and remains open until the next CI run identifies the actual compiler/plugin version and the project is made consistent.
+
+### Corrective source commits after #1782
+
+- c33962d06dc5668e1b72d1ff2915c0e25a14db34: add packed-array CaptureIntervalIndex.rebaseEdit. It transforms byte ranges in primitive arrays, drops captures crossing replaced text or insertion points, shifts captures after the edit, and rebuilds the prefix-max-end index without allocating one Kotlin span object per capture.
+- 44a4b81cb79cf59537ad10c71cdfd4bf2a7f9feb: route CaptureDisplayRebaser through the packed rebase API rather than a nonexistent object-mapping API.
+- b4dedb8300536f21c8dce0d4504d2db9ae37b51b: capture the active large-document session before dispatching the viewport worker and use the current Position.lineNumber contract.
+- f8f5be8e7575894c7e9cb9feda7ad3e7c72879ee: migrate native cache tests to the separate dependency-ledger API. Tests now supply dependency proofs to put and validate retained viewport keys through snapshotRanges; dependency metadata is no longer duplicated inside the cached span payload.
+
+These corrections are source-committed but not yet verified. CI run #1786 (45403054212) was queued/in progress at the time this section was written. Do not close these build issues until that run and any subsequent retry pass.
+
+### Remaining predicate and performance work
+
+- The any-eq? / any-not-eq? missing-capture regression is still not closed. The TSH evaluator's source branch already computes missing-capture acceptance from predicate polarity, so the next diagnostic must establish the actual pattern_index, per-pattern predicate metadata, and capture IDs produced for each OR alternative. Do not make another polarity-only code change without that evidence.
+- Predicate execution still reconstructs expected literal vectors and converts immutable UTF-8 query literals to UTF-16 during match execution. Move immutable decoding to compilation and reuse bounded per-query execution storage.
+- Regex window execution still materializes complete per-window result arrays; resumable cursor/continuation semantics remain open.
+- Device rendering and 100–300 MiB end-to-end tests remain separate acceptance gates; current workflow's device matrix is skipped.
