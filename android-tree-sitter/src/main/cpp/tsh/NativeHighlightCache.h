@@ -6,6 +6,7 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <iterator>
 #include <list>
 #include <unordered_map>
 #include <utility>
@@ -450,7 +451,16 @@ private:
         const Key& key,
         const std::vector<DependencyRange>& dependencies
     ) noexcept {
-        if (dependencies.empty()) return;
+        if (dependencies.empty()) {
+            auto existing = dependency_entries_.find(key);
+            if (existing != dependency_entries_.end()) {
+                dependency_used_bytes_ -= std::min(
+                    dependency_used_bytes_, existing->second.bytes);
+                dependency_lru_.erase(existing->second.lru);
+                dependency_entries_.erase(existing);
+            }
+            return;
+        }
         try {
             std::vector<DependencyRange> copy = dependencies;
             const size_t bytes = dependencyWeight(copy);
