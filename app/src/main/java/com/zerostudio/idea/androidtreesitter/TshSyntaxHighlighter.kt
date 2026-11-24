@@ -897,6 +897,125 @@ class TshSyntaxHighlighter(
         return work.state == RangeWorkState.SUCCEEDED
     }
 
+    /**
+     * Mirrors NativeHighlightCache::rebaseAfterEdit for the requested viewport.
+     * The native cache remains the authority for dependency safety; this transform
+     * only maps a retained viewport's UTF-16LE coordinates through the same edits.
+     */
+    private fun transformCachedByteRange(
+        startByte: Long,
+        endByte: Long,
+        edit: NativeEdit
+    ): Pair<Long, Long>? {
+        if (startByte < 0L || endByte < startByte) return null
+        val editStart = edit.startByte
+        val oldEditEnd = edit.oldEndByte
+        if (oldEditEnd < editStart) return null
+        val insertedBytes = edit.insertedUtf16Le.size.toLong()
+        val delta = insertedBytes - (oldEditEnd - editStart)
+
+        if (oldEditEnd > editStart &&
+            startByte < oldEditEnd && editStart < endByte) return null
+        if (oldEditEnd == editStart &&
+            startByte < editStart && endByte > editStart) return null
+        if (endByte <= editStart) return startByte to endByte
+        if (startByte >= oldEditEnd) {
+            val shiftedStart = startByte + delta
+            val shiftedEnd = endByte + delta
+            if (shiftedStart < 0L || shiftedEnd < shiftedStart ||
+                shiftedEnd > 0xFFFF_FFFFL) return null
+            return shiftedStart to shiftedEnd
+        }
+        return null
+    }
+
+    private fun rebaseCachedEntry(
+        key: CaptureRangeKey,
+        index: CaptureIntervalIndex,
+        edits: List<NativeEdit>,
+        reusableNativeRanges: Set<Pair<Long, Long>>
+    ): Pair<CaptureRangeKey, CaptureIntervalIndex>? {
+        val originalStart = key.startUtf16.toLong() * 2L
+        val originalEnd = key.endUtf16.toLong() * 2L
+        var startByte = originalStart
+        var endByte = originalEnd
+        for (edit in edits) {
+            val transformed = transformCachedByteRange(startByte, endByte, edit) ?: return null
+            startByte = transformed.first
+            endByte = transformed.second
+        }
+        if ((startByte and 1L) != 0L || (endByte and 1L) != 0L ||
+            startByte > endByte || endByte > 0xFFFF_FFFFL ||
+            startByte / 2L > Int.MAX_VALUE.toLong() ||
+            endByte / 2L > Int.MAX_VALUE.toLong() ||
+            (startByte to endByte) !in reusableNativeRanges) return null
+
+        val delta = startByte - originalStart
+        val rebasedIndex = if (delta == 0L) index else {
+            var valid = true
+            val mapped = index.mapSpans { span ->
+                val shiftedStart = span.startByteUnsigned + delta
+                val shiftedEnd = span.endByteUnsigned + delta
+                if (shiftedStart < 0L || shiftedEnd < shiftedStart ||
+                    shiftedEnd > 0xFFFF_FFFFL) {
+                    valid = false
+                    null
+                } else {
+                    span.copy(
+                        startByte = shiftedStart.toInt(),
+                        endByte = shiftedEnd.toInt()
+                    )
+                }
+            }
+            if (!valid || mapped.size != index.size) return null
+            mapped
+        }
+        return CaptureRangeKey(
+            key.sessionId, (startByte / 2L).toInt(), (endByte / 2L).toInt()
+        ) to rebasedIndex
+    }
+
+    /**
+     * Preserve only Kotlin capture/display entries whose exact rebased viewport
+     * still exists in NativeHighlightCache. The native cache has already evaluated
+     * each entry's AST/Query/Regex dependency envelope against this edit transaction.
+     */
+    private fun rebaseCaptureCaches(
+        sessionId: Long,
+        edits: List<NativeEdit>,
+        reusableNativeRanges: Set<Pair<Long, Long>>
+    ) {
+        val captureEntries = captureCache.snapshotMostRecentEntries(
+            { key, _ -> key.sessionId == sessionId }, Int.MAX_VALUE
+        )
+        val displayEntries = synchronized(displayCacheLock) {
+            displayCache.snapshotMostRecentEntries(
+                { key, _ -> key.sessionId == sessionId }, Int.MAX_VALUE
+            )
+        }
+        val rebased = HashMap<CaptureRangeKey, Pair<CaptureRangeKey, CaptureIntervalIndex>?>()
+        for ((key, index) in captureEntries + displayEntries) {
+            if (!rebased.containsKey(key)) {
+                rebased[key] = rebaseCachedEntry(key, index, edits, reusableNativeRanges)
+            }
+        }
+
+        captureCache.invalidate { key, _ -> key.sessionId == sessionId }
+        for ((key, _) in captureEntries) {
+            rebased[key]?.let { (nextKey, nextIndex) ->
+                captureCache.put(nextKey, nextIndex)
+            }
+        }
+        synchronized(displayCacheLock) {
+            displayCache.invalidate { key, _ -> key.sessionId == sessionId }
+            for ((key, _) in displayEntries) {
+                rebased[key]?.let { (nextKey, nextIndex) ->
+                    displayCache.put(nextKey, nextIndex)
+                }
+            }
+        }
+    }
+
     private fun applyNativeEdits(active: LargeSession, edits: List<NativeEdit>, editEpoch: Long) {
         // Atomically append this transaction to the per-document edit chain.
         // Reading the previous job and publishing the new one in separate critical
@@ -936,27 +1055,29 @@ class TshSyntaxHighlighter(
                         "Native dirty snapshot committed: version=${dirtySnapshot.documentVersion} " +
                             "edits=${edits.size} dirtyLines=${dirtySnapshot.ranges.size}"
                     )
-                    // Lexical state can flow to EOF. Invalidate downstream captures
-                    // and failed-work markers only after the edit transaction completes.
+                    // Native cache rebasing has already retained only viewports whose
+                    // AST/Query/Regex dependency envelopes survived every edit. Reuse that
+                    // exact retained-key set to rebase the Kotlin interval/display caches;
+                    // do not clear every token when one local region changes.
+                    val reusableNativeRanges = engine.reusableNativeHighlightRanges(
+                        active.nativeHandle
+                    ).mapTo(HashSet()) { it.startByte to it.endByte }
                     active.documentRevision.incrementAndGet()
-                    // Query matches can depend on ancestors, siblings and predicates
-                    // outside their emitted captures. Until the native result carries a
-                    // proven dependency envelope, no prefix viewport can be certified
-                    // reusable from byte/line overlap alone. Match the native cache's
-                    // conservative policy and invalidate every cached viewport for this
-                    // document revision.
+                    rebaseCaptureCaches(active.cacheSessionId, edits, reusableNativeRanges)
+                    active.rangeWork.clear()
+                    synchronized(viewportRequestLock) {
+                        pendingViewportRanges.clear()
+                        queuedViewportRanges = emptyList()
+                    }
                     val dirtyStartByte = dirtySnapshot.byteRanges.minOfOrNull { it.startByte }
                     val dirtyStartLine = dirtySnapshot.ranges.minOfOrNull { it.startLine }
-                    captureCache.invalidate { key, _ ->
-                        key.sessionId == active.cacheSessionId
-                    }
-                    active.rangeWork.clear()
                     Log.v(
                         TAG,
                         "Native dirty snapshot applied: version=${dirtySnapshot.documentVersion} " +
                             "byteRanges=${dirtySnapshot.byteRanges.size} lineRanges=${dirtySnapshot.ranges.size} " +
                             "firstDirtyByte=$dirtyStartByte firstDirtyLine=$dirtyStartLine " +
-                            "captureCache=cleared reason=query-dependency-envelope-unavailable"
+                            "reusableNativeViewports=${reusableNativeRanges.size} " +
+                            "captureCacheEntries=${captureCache.size}"
                     )
                     // Publish the new revision only after its stale cache entries are gone.
                     active.appliedEditEpoch.set(editEpoch)
