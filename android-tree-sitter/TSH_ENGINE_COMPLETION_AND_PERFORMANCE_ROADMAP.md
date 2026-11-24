@@ -832,3 +832,15 @@ Static call-site review found the native document parser already separately trac
 - 未匹配 optional capture 仍保留既有 `(-1, -1)` 表示，不受影响。
 
 没有执行测试、编译、构建、CI、设备验证或基准测试。
+
+## 2026-11-24 JNI 增量编辑 Parser 回退事务原子性修复（源码已提交，验证暂缓）
+
+静态审查发现：增量解析失败后，全量回退解析一旦成功，旧实现会立即删除当前文档 Parser 并安装回退 Parser；但此后仍需分配和映射 changed ranges、构建待提交脏区间。这些后续步骤可能失败并使编辑返回失败，造成 Source/Tree/索引仍属于旧版本，而 Parser 已经属于候选版本的半提交状态。
+
+修复：
+- 将全量回退 Parser 保留为局部事务候选，不再在回退解析成功时提前替换 live Parser。
+- 只有候选语法树、行索引及所有待提交脏区间均准备成功后，才在 Source/Tree 提交点同步替换 Parser。
+- 若脏区间准备或映射失败，销毁候选 Parser，并重置曾被中断的原 Parser，确保下一次编辑不会继承失败增量解析的内部恢复状态。
+- 候选 Parser 使用 RAII 所有权，覆盖提前返回路径，避免失败分支泄漏。
+
+本次仅完成静态源码修改；没有执行测试、编译、构建、CI、设备验证或基准测试。
