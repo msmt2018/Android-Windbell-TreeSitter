@@ -1230,7 +1230,11 @@ void WindbellEngine::matchBlockRecursive(
     uint32_t output_start_byte,
     uint32_t output_end_byte,
     std::vector<HighlightSpan>& out_spans,
-    uint32_t* regex_match_count
+    uint32_t* regex_match_count,
+    std::vector<RegexBlockCheckpoint>* block_checkpoints,
+    uint64_t grammar_revision,
+    uint64_t source_version,
+    uint64_t partition_version
 ) {
     struct RegionOwner {
         OnigRegion* value;
@@ -1239,11 +1243,82 @@ void WindbellEngine::matchBlockRecursive(
     if (!start_owner.value || !end_owner.value) throw std::bad_alloc();
     OnigRegion* start_region = start_owner.value;
     OnigRegion* end_region = end_owner.value;
-    // Recover an active block at the viewport boundary with a reverse
-    // delimiter search. This avoids scanning the whole document prefix on each
-    // render while retaining the original block state.
-    const UChar* curr = range_start;
-    if (search_floor < range_start) {
+
+    constexpr uint32_t kNoActiveBlock = UINT32_MAX;
+    const uint32_t viewport_start_byte =
+        static_cast<uint32_t>(range_start - text_start);
+    uint32_t active_start_byte = kNoActiveBlock;
+    bool recovered_from_checkpoint = false;
+
+    // Top-level BLOCK rules retain the state at prior viewport boundaries.
+    // When the viewport advances, scan only the newly crossed interval for
+    // delimiter transitions instead of reverse-searching back to document byte 0.
+    if (block_checkpoints && search_floor == text_start) {
+        const RegexBlockCheckpoint* nearest = nullptr;
+        for (const auto& checkpoint : *block_checkpoints) {
+            if (checkpoint.rule == &rule &&
+                checkpoint.grammar_revision == grammar_revision &&
+                checkpoint.source_version == source_version &&
+                checkpoint.partition_version == partition_version &&
+                checkpoint.byte_offset <= viewport_start_byte &&
+                (!nearest || checkpoint.byte_offset > nearest->byte_offset)) {
+                nearest = &checkpoint;
+            }
+        }
+        if (nearest) {
+            active_start_byte = nearest->active_start_byte;
+            const UChar* scan = text_start + nearest->byte_offset;
+            while (scan < range_start) {
+                const int start_hit = onig_search(
+                    rule.onig_start, text_start, text_end,
+                    scan, range_start, start_region, ONIG_OPTION_NONE);
+                const int end_hit = onig_search(
+                    rule.onig_end, text_start, text_end,
+                    scan, range_start, end_region, ONIG_OPTION_NONE);
+                if (start_hit < 0 && start_hit != ONIG_MISMATCH) {
+                    throw std::runtime_error("Oniguruma block checkpoint start scan failed with status " +
+                        std::to_string(start_hit));
+                }
+                if (end_hit < 0 && end_hit != ONIG_MISMATCH) {
+                    throw std::runtime_error("Oniguruma block checkpoint end scan failed with status " +
+                        std::to_string(end_hit));
+                }
+                if (start_hit == ONIG_MISMATCH && end_hit == ONIG_MISMATCH) break;
+                if (start_hit >= 0 &&
+                    (start_region->beg[0] < 0 || start_region->end[0] < start_region->beg[0])) {
+                    throw std::runtime_error("Oniguruma returned an invalid checkpoint block start");
+                }
+                if (end_hit >= 0 &&
+                    (end_region->beg[0] < 0 || end_region->end[0] < end_region->beg[0])) {
+                    throw std::runtime_error("Oniguruma returned an invalid checkpoint block end");
+                }
+
+                const bool start_precedes_end = start_hit >= 0 &&
+                    (end_hit == ONIG_MISMATCH ||
+                     start_region->beg[0] < end_region->beg[0]);
+                const int64_t event_start = start_precedes_end
+                    ? start_region->beg[0] : end_region->beg[0];
+                const int64_t event_end = start_precedes_end
+                    ? start_region->end[0] : end_region->end[0];
+                // A delimiter beginning at or crossing the viewport boundary
+                // belongs to the viewport execution, not the preceding state.
+                if (event_start >= viewport_start_byte ||
+                    event_end > viewport_start_byte) break;
+                active_start_byte = start_precedes_end
+                    ? static_cast<uint32_t>(event_start) : kNoActiveBlock;
+
+                const UChar* next = text_start + event_end;
+                if (next <= scan) next = advanceOneUtf16CodePoint(scan, text_end);
+                if (next <= scan || next > range_start) break;
+                scan = next;
+            }
+            recovered_from_checkpoint = true;
+        }
+    }
+
+    // The first viewport (or a backward jump before all retained checkpoints)
+    // performs the authoritative reverse recovery once and seeds future viewports.
+    if (!recovered_from_checkpoint && search_floor < range_start) {
         RegionOwner previous_start_owner{onig_region_new()};
         RegionOwner previous_end_owner{onig_region_new()};
         if (!previous_start_owner.value || !previous_end_owner.value) throw std::bad_alloc();
@@ -1274,9 +1349,41 @@ void WindbellEngine::matchBlockRecursive(
         if (start_hit >= 0 &&
             (end_hit == ONIG_MISMATCH ||
              previous_start->beg[0] > previous_end->beg[0])) {
-            curr = text_start + previous_start->beg[0];
+            active_start_byte = static_cast<uint32_t>(previous_start->beg[0]);
         }
     }
+
+    if (block_checkpoints && search_floor == text_start) {
+        auto existing = std::find_if(
+            block_checkpoints->begin(), block_checkpoints->end(),
+            [&](const RegexBlockCheckpoint& checkpoint) {
+                return checkpoint.rule == &rule &&
+                    checkpoint.byte_offset == viewport_start_byte &&
+                    checkpoint.grammar_revision == grammar_revision &&
+                    checkpoint.source_version == source_version &&
+                    checkpoint.partition_version == partition_version;
+            });
+        const RegexBlockCheckpoint checkpoint{
+            &rule, viewport_start_byte, active_start_byte,
+            grammar_revision, source_version, partition_version
+        };
+        if (existing != block_checkpoints->end()) {
+            *existing = checkpoint;
+        } else {
+            block_checkpoints->push_back(checkpoint);
+        }
+        constexpr size_t kMaxBlockCheckpoints = 512;
+        if (block_checkpoints->size() > kMaxBlockCheckpoints) {
+            block_checkpoints->erase(
+                block_checkpoints->begin(),
+                block_checkpoints->begin() +
+                    static_cast<ptrdiff_t>(block_checkpoints->size() - kMaxBlockCheckpoints));
+        }
+    }
+
+    const UChar* curr = active_start_byte != kNoActiveBlock
+        ? text_start + active_start_byte
+        : range_start;
 
     while (curr < range_end) {
         int hit_start = onig_search(
