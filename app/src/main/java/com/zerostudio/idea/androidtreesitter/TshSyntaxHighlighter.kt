@@ -159,6 +159,7 @@ class TshSyntaxHighlighter(
 
     override fun onDetached() {
         generation.incrementAndGet()
+        structureRefreshPending.set(false)
         parseJob?.cancel(CancellationException("TSH highlighter detached"))
         parseJob = null
         largeSession?.let(::disposeSession)
@@ -451,6 +452,7 @@ class TshSyntaxHighlighter(
         // native pipeline never calls getText() or snapshot.toString() for the
         // complete document, regardless of its size.
         val snapshot = buffer.createTextSnapshot()
+        structureRefreshPending.set(false)
         synchronized(nativeEditLock) { pendingNativeEdits.clear() }
         val ticket = generation.incrementAndGet()
         parseJob?.cancel(CancellationException("Superseded by newer document snapshot"))
