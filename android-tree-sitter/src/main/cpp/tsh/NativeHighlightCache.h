@@ -91,6 +91,7 @@ public:
         size_t dependency_budget_rejected = 0;
         size_t payload_without_proof = 0;
         bool reset_for_invalid_edit = false;
+        bool reset_due_shared_budget = false;
         bool reset_after_allocation_failure = false;
     };
 
@@ -336,6 +337,8 @@ public:
             if (rebased_dependency_bytes > previous_dependency_bytes) {
                 const size_t additional = rebased_dependency_bytes - previous_dependency_bytes;
                 if (shared_budget_ && !shared_budget_->tryAcquire(additional)) {
+                    stats.reset_due_shared_budget = true;
+                    stats.dependency_budget_rejected += rebased_dependencies.size();
                     dependency_entries_.clear();
                     dependency_lru_.clear();
                     dependency_used_bytes_ = 0;
