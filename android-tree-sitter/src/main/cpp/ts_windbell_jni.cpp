@@ -2549,7 +2549,8 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeGetReusableHighl
             WindbellEngine::getInstance().getGrammarByExtension(document->extension);
         if (!grammar) return env->NewLongArray(1);
         const auto ranges = document->highlight_cache.snapshotRanges(
-            false, grammar->revision);
+            false, grammar->revision, document->version,
+            document->source->version(), document->partition_index.version());
         if (ranges.size() >
             (static_cast<size_t>(std::numeric_limits<jsize>::max()) - 1u) / 2u) {
             throwNativeAllocationFailure(
