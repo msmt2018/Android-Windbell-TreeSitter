@@ -952,11 +952,29 @@ class TshSyntaxHighlighter(
             if (active.rangeWork.putIfAbsent(key, initial) != null) return emptyList()
             initial.also { trimRangeWork(active) }
         } else {
-            if (existing.state != RangeWorkState.FAILED || System.nanoTime() < existing.retryAfterNanos) return emptyList()
-            val retry = RangeWork(existing.attempt + 1)
-            if (!active.rangeWork.replace(key, existing, retry)) return emptyList()
-            trimRangeWork(active)
-            retry
+            when (existing.state) {
+                RangeWorkState.FAILED -> {
+                    if (System.nanoTime() < existing.retryAfterNanos) return emptyList()
+                    val retry = RangeWork(existing.attempt + 1)
+                    if (!active.rangeWork.replace(key, existing, retry)) return emptyList()
+                    trimRangeWork(active)
+                    retry
+                }
+                RangeWorkState.SUCCEEDED, RangeWorkState.CANCELLED -> {
+                    // SUCCEEDED records completion of a capture attempt, not
+                    // permanent ownership of its result. The byte-budget LRU can
+                    // evict that page later (or reject admission under pressure).
+                    // Since uncoveredViewportRanges() above proved that data is
+                    // missing now, a stale SUCCEEDED marker must not suppress the
+                    // recapture forever. Likewise, a cancelled request may be
+                    // resubmitted when its viewport is visible again.
+                    val retry = RangeWork(existing.attempt)
+                    if (!active.rangeWork.replace(key, existing, retry)) return emptyList()
+                    trimRangeWork(active)
+                    retry
+                }
+                RangeWorkState.QUEUED, RangeWorkState.RUNNING -> return emptyList()
+            }
         }
         val requestedRevision = active.documentRevision.get()
         val capturedRanges = ArrayList<CaptureRangeKey>()
