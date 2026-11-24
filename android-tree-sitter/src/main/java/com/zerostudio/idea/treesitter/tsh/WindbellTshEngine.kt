@@ -638,7 +638,7 @@ class WindbellTshEngine private constructor() {
                 }
                 val androidPriority = (255 - rank).coerceAtLeast(1)
                 capturePriorityFlags[index] =
-                    androidPriority shl Spannable.SPAN_PRIORITY_SHIFT
+                    androidPriority shl Spanned.SPAN_PRIORITY_SHIFT
             }
 
             val captures = ArrayList<ClippedCapture>(spans.size)
@@ -664,7 +664,7 @@ class WindbellTshEngine private constructor() {
             }
             val activeForeground = java.util.TreeSet(compareCaptureIndices)
             val activeBackground = java.util.TreeSet(compareCaptureIndices)
-            val activeFontCaptures = java.util.TreeSet(compareCaptureIndices)
+            val activeFontByBit = Array(5) { java.util.TreeSet(compareCaptureIndices) }
             val fontFlagCounts = IntArray(5)
             var activeFontFlags = 0
             val captureStyles = arrayOfNulls<StylePalette>(captures.size)
@@ -705,7 +705,7 @@ class WindbellTshEngine private constructor() {
                 foregroundIndex: Int?,
                 backgroundIndex: Int?,
                 fontFlags: Int,
-                fontPriorityFlags: Int
+                packedFontPriorities: Long
             ) {
                 if (runStart >= runEnd) return
                 val flags = Spannable.SPAN_EXCLUSIVE_EXCLUSIVE
@@ -738,23 +738,29 @@ class WindbellTshEngine private constructor() {
                 if ((fontFlags and 0x01) != 0) {
                     spannable.setSpan(
                         StyleSpan(android.graphics.Typeface.BOLD), runStart, runEnd,
-                        flags or fontPriorityFlags
+                        flags or (((packedFontPriorities ushr 0) and 0xFFL).toInt()
+                            shl Spanned.SPAN_PRIORITY_SHIFT)
                     )
                 }
                 if ((fontFlags and 0x02) != 0) {
                     spannable.setSpan(
                         StyleSpan(android.graphics.Typeface.ITALIC), runStart, runEnd,
-                        flags or fontPriorityFlags
+                        flags or (((packedFontPriorities ushr 8) and 0xFFL).toInt()
+                            shl Spanned.SPAN_PRIORITY_SHIFT)
                     )
                 }
                 if ((fontFlags and 0x04) != 0) {
                     spannable.setSpan(
-                        UnderlineSpan(), runStart, runEnd, flags or fontPriorityFlags
+                        UnderlineSpan(), runStart, runEnd,
+                        flags or (((packedFontPriorities ushr 16) and 0xFFL).toInt()
+                            shl Spanned.SPAN_PRIORITY_SHIFT)
                     )
                 }
                 if ((fontFlags and 0x08) != 0) {
                     spannable.setSpan(
-                        StrikethroughSpan(), runStart, runEnd, flags or fontPriorityFlags
+                        StrikethroughSpan(), runStart, runEnd,
+                        flags or (((packedFontPriorities ushr 24) and 0xFFL).toInt()
+                            shl Spanned.SPAN_PRIORITY_SHIFT)
                     )
                 }
                 if ((fontFlags and 0x10) != 0) {
@@ -768,13 +774,11 @@ class WindbellTshEngine private constructor() {
 
             fun updateActiveFontFlags(index: Int, adding: Boolean) {
                 val flags = captureFontFlags[index]
-                if (flags != 0) {
-                    if (adding) activeFontCaptures.add(index)
-                    else activeFontCaptures.remove(index)
-                }
                 for (bitIndex in 0 until 5) {
                     val bit = 1 shl bitIndex
                     if ((flags and bit) == 0) continue
+                    if (adding) activeFontByBit[bitIndex].add(index)
+                    else activeFontByBit[bitIndex].remove(index)
                     if (adding) {
                         fontFlagCounts[bitIndex]++
                         activeFontFlags = activeFontFlags or bit
@@ -792,7 +796,7 @@ class WindbellTshEngine private constructor() {
             var pendingForeground: Int? = null
             var pendingBackground: Int? = null
             var pendingFontFlags = 0
-            var pendingFontPriorityFlags = 0
+            var pendingFontPriorityFlags = 0L
             fun flushPendingRun() {
                 if (pendingStart >= 0) {
                     paintRun(
@@ -813,13 +817,19 @@ class WindbellTshEngine private constructor() {
                 val foreground = activeForeground.firstOrNull()
                 val background = activeBackground.firstOrNull()
                 val fontFlags = activeFontFlags
-                val fontPriorityFlags = activeFontCaptures.firstOrNull()
-                    ?.let { capturePriorityFlags[captures[it].sourceIndex] } ?: 0
+                var packedFontPriorities = 0L
+                for (bitIndex in 0 until 4) {
+                    val winner = activeFontByBit[bitIndex].firstOrNull() ?: continue
+                    val priority = (capturePriorityFlags[captures[winner].sourceIndex] ushr
+                        Spanned.SPAN_PRIORITY_SHIFT) and 0xFF
+                    packedFontPriorities = packedFontPriorities or
+                        (priority.toLong() shl (bitIndex * 8))
+                }
                 if (pendingStart >= 0 && pendingEnd == startOffset &&
                     pendingForeground == foreground &&
                     pendingBackground == background &&
                     pendingFontFlags == fontFlags &&
-                    pendingFontPriorityFlags == fontPriorityFlags) {
+                    pendingFontPriorityFlags == packedFontPriorities) {
                     pendingEnd = endOffset
                 } else {
                     flushPendingRun()
@@ -828,7 +838,7 @@ class WindbellTshEngine private constructor() {
                     pendingForeground = foreground
                     pendingBackground = background
                     pendingFontFlags = fontFlags
-                    pendingFontPriorityFlags = fontPriorityFlags
+                    pendingFontPriorityFlags = packedFontPriorities
                 }
             }
 
