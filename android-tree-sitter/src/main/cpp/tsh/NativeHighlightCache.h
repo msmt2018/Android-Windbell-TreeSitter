@@ -101,6 +101,23 @@ public:
         return &found->second.value;
     }
 
+    // Snapshot exact viewport keys retained after dependency-aware edit rebasing.
+    // The document owner serializes this read with highlight/edit cache mutation.
+    std::vector<std::pair<uint32_t, uint32_t>> snapshotRanges(
+        bool diagnostics
+    ) const {
+        std::vector<std::pair<uint32_t, uint32_t>> ranges;
+        ranges.reserve(entries_.size());
+        for (const auto& item : entries_) {
+            if (item.first.diagnostics == diagnostics) {
+                ranges.emplace_back(item.first.start_byte, item.first.end_byte);
+            }
+        }
+        std::sort(ranges.begin(), ranges.end());
+        ranges.erase(std::unique(ranges.begin(), ranges.end()), ranges.end());
+        return ranges;
+    }
+
     void put(Key key, Value value) {
         constexpr size_t kEntryOverhead =
             sizeof(Value) + sizeof(Key) + 5u * sizeof(void *);
