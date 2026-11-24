@@ -1813,10 +1813,20 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeApplyDocumentEdi
 
     NativeDocumentInput payload{next_source.get(), false};
     TSInput input{&payload, nativeDocumentRead, TSInputEncodingUTF16LE, nullptr};
+    const auto incremental_parse_started = std::chrono::steady_clock::now();
     TSTree *next_tree = ts_parser_parse(document->parser, edited_tree, input);
+    const auto incremental_parse_finished = std::chrono::steady_clock::now();
+    const auto elapsed_parse_ms = [](auto start, auto end) noexcept {
+        return std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+    };
+    const int64_t incremental_parse_ms =
+        elapsed_parse_ms(incremental_parse_started, incremental_parse_finished);
     const bool incremental_parse_complete = next_tree && !payload.read_failed &&
         nativeTreeIsValidForDocument(next_tree, next_source->sizeBytes());
+    bool used_full_parse_fallback = false;
+    int64_t full_parse_fallback_ms = 0;
     if (!incremental_parse_complete) {
+        used_full_parse_fallback = true;
         // Incremental reuse is an optimization, never a correctness boundary.
         // If a reused subtree or edit-coordinate interaction yields a partial
         // root, discard that candidate and retry against the complete candidate
@@ -1845,7 +1855,12 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeApplyDocumentEdi
         NativeDocumentInput fallback_payload{next_source.get(), false};
         TSInput fallback_input{
             &fallback_payload, nativeDocumentRead, TSInputEncodingUTF16LE, nullptr};
-        TSTree *fallback_tree = ts_parser_parse(replacement_parser.get(), nullptr, fallback_input);
+        const auto fallback_parse_started = std::chrono::steady_clock::now();
+        TSTree *fallback_tree = ts_parser_parse(
+            replacement_parser.get(), nullptr, fallback_input);
+        const auto fallback_parse_finished = std::chrono::steady_clock::now();
+        full_parse_fallback_ms =
+            elapsed_parse_ms(fallback_parse_started, fallback_parse_finished);
         if (!fallback_tree || fallback_payload.read_failed ||
             !nativeTreeIsValidForDocument(fallback_tree, next_source->sizeBytes())) {
             uint32_t fallback_start = 0;
@@ -1869,6 +1884,17 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeApplyDocumentEdi
             return JNI_FALSE;
         }
         next_tree = fallback_tree;
+    }
+    if (old_size >= 10u * 1024u * 1024u ||
+        used_full_parse_fallback || incremental_parse_ms >= 5) {
+        LOGI("TSHPerf",
+             "nativeApplyDocumentEdit bytes=%llu incrementalParseMs=%lld "
+             "fullParseFallback=%d fallbackParseMs=%lld dirtyRangesPending=%zu",
+             static_cast<unsigned long long>(old_size),
+             static_cast<long long>(incremental_parse_ms),
+             used_full_parse_fallback ? 1 : 0,
+             static_cast<long long>(full_parse_fallback_ms),
+             document->dirty_byte_intervals.size());
     }
 
     // Prepare syntax invalidation before committing any candidate document state.
