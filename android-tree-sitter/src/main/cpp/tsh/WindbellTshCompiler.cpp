@@ -3793,6 +3793,11 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
         }
     };
     for (const AstSelectorRule& rule : grammar->ast_selector_rules) {
+        // Target selectors also use the reverse index for the final runtime
+        // check after compile-time candidate dispatch. Without this entry a
+        // supertype target is dispatched to its subtypes, then rejected by the
+        // exact-symbol fast path.
+        index_relation_supertype(rule.target_symbol);
         index_relation_supertype(rule.parent_symbol);
         index_relation_supertype(rule.ancestor_symbol);
         index_relation_supertype(rule.child_symbol);
