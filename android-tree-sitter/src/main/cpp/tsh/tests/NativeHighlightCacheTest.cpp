@@ -72,7 +72,10 @@ void testSimpleRootAnalyzer() {
 void testUnrelatedEditKeepsAndRebasesEntry() {
     NativeHighlightCache cache;
     cache.put(key(1, 400, 500), value(420, 430), dependencies(410, 450));
-    cache.rebaseAfterEdit(2, 2, 2, 100, 110, 4, {{100, 104}});
+    const auto stats = cache.rebaseAfterEdit(2, 2, 2, 100, 110, 4, {{100, 104}});
+    assert(stats.payload_before == 1 && stats.payload_after == 1);
+    assert(stats.dependencies_before == 1 && stats.dependencies_after == 1);
+    assert(stats.viewport_intersects_edit == 0 && stats.dirty_range_invalidated == 0);
     const auto *rebased = cache.find(key(2, 394, 494));
     assert(rebased && rebased->spans[0].start_byte == 414);
     assert(rebased->spans[0].end_byte == 424);
@@ -90,7 +93,10 @@ void testEditInsideDependencyEvictsEntry() {
 void testChangedTreeRangeEvictsDependency() {
     NativeHighlightCache cache;
     cache.put(key(1, 100, 200), value(120, 130), dependencies(110, 150));
-    cache.rebaseAfterEdit(2, 2, 2, 400, 402, 2, {{400, 402}, {135, 145}});
+    const auto stats =
+        cache.rebaseAfterEdit(2, 2, 2, 400, 402, 2, {{400, 402}, {135, 145}});
+    assert(stats.dirty_range_invalidated == 1);
+    assert(stats.payload_before == 1 && stats.payload_after == 0);
     assert(cache.size() == 0);
 }
 
@@ -102,7 +108,9 @@ void testMissingDependencyIsNeverReused() {
     span.end_byte = 30;
     no_proof.spans.push_back(span);
     cache.put(key(1, 10, 40), std::move(no_proof), {});
-    cache.rebaseAfterEdit(2, 2, 2, 100, 100, 2, {{100, 102}});
+    const auto stats = cache.rebaseAfterEdit(2, 2, 2, 100, 100, 2, {{100, 102}});
+    assert(stats.missing_dependency_proof == 1);
+    assert(stats.payload_without_proof == 1);
     assert(cache.size() == 0);
 }
 
@@ -128,7 +136,9 @@ void testDocumentWideDependencyInvalidatesBoundaryInsertion() {
     cache.put(key(1, 10, 40), value(20, 30), dependencies(
         0, 100, static_cast<uint8_t>(HighlightSource::NATIVE_QUERY),
         HIGHLIGHT_DEPENDENCY_DOCUMENT_WIDE));
-    cache.rebaseAfterEdit(2, 2, 2, 0, 0, 2, {{0, 2}});
+    const auto stats = cache.rebaseAfterEdit(2, 2, 2, 0, 0, 2, {{0, 2}});
+    assert(stats.document_wide_dependency == 1);
+    assert(stats.payload_before == 1 && stats.payload_after == 0);
     assert(cache.size() == 0);
 }
 
