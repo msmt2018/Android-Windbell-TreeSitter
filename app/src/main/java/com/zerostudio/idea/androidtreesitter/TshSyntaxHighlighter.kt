@@ -1064,12 +1064,11 @@ class TshSyntaxHighlighter(
             }
 
             if (lineRanges.isEmpty()) {
-                // A deletion can leave an empty post-edit byte interval. If no
-                // cached viewport described it, fall back to the exact dirty
-                // document envelope rather than invalidating every row.
+                // An empty document still has one drawable line.
                 currentHost.invalidateStyles(1, 1)
             } else {
                 val sorted = lineRanges.sortedBy { it.first }
+                val mergedRanges = ArrayList<Pair<Int, Int>>()
                 var first = sorted.first().first
                 var last = sorted.first().second
                 for (index in 1 until sorted.size) {
@@ -1077,12 +1076,13 @@ class TshSyntaxHighlighter(
                     if (next.first <= last + 1) {
                         last = maxOf(last, next.second)
                     } else {
-                        currentHost.invalidateStyles(first, last)
+                        mergedRanges += first to last
                         first = next.first
                         last = next.second
                     }
                 }
-                currentHost.invalidateStyles(first, last)
+                mergedRanges += first to last
+                currentHost.invalidateStyles(mergedRanges)
             }
             currentHost.invalidateStructure()
         }
