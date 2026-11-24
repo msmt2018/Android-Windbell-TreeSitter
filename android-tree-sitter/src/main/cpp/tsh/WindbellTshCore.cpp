@@ -2978,70 +2978,86 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                     }
                 }
 
-                // Child indexes require a parent-list scan, but adjacent siblings
-                // are already exposed by Tree-sitter in O(1). Keep those paths
-                // independent: sibling-only selectors must not scan every child
-                // or rediscover the current node by comparing copied TSNode values.
+                // Resolve position and both adjacent siblings in one cursor pass.
+                // ts_node_prev_sibling/next_sibling each perform their own tree walk;
+                // using both independently repeats work. A TreeCursor visits the
+                // parent's visible children once and preserves anonymous-node order.
                 const bool needs_child_position =
                     ast_rule.child_index != UINT32_MAX ||
                     ast_rule.named_child_index != UINT32_MAX ||
                     ast_rule.first_child >= 0 ||
                     ast_rule.last_child >= 0;
-                const bool needs_sibling_constraints =
+                const bool needs_previous_sibling =
                     ast_rule.previous_sibling_symbol != 0 ||
-                    !ast_rule.previous_sibling_type.empty() ||
+                    !ast_rule.previous_sibling_type.empty();
+                const bool needs_next_sibling =
                     ast_rule.next_sibling_symbol != 0 ||
                     !ast_rule.next_sibling_type.empty();
-                if (needs_child_position || needs_sibling_constraints) {
+                if (needs_child_position || needs_previous_sibling || needs_next_sibling) {
                     append_ast_dependency(parent);
                     if (ts_node_is_null(parent)) continue;
 
                     uint32_t sibling_count = 0;
                     uint32_t current_index = UINT32_MAX;
                     uint32_t current_named_index = UINT32_MAX;
-                    if (needs_child_position) {
-                        sibling_count = ts_node_child_count(parent);
-                        uint32_t named_seen = 0;
-                        for (uint32_t sibling_index = 0;
-                             sibling_index < sibling_count; ++sibling_index) {
-                            const TSNode sibling = ts_node_child(parent, sibling_index);
+                    uint32_t named_seen = 0;
+                    TSNode previous{};
+                    TSNode next{};
+                    bool found_current = false;
+                    TSTreeCursor sibling_cursor = ts_tree_cursor_new(parent);
+                    if (ts_tree_cursor_goto_first_child(&sibling_cursor)) {
+                        do {
+                            const TSNode sibling =
+                                ts_tree_cursor_current_node(&sibling_cursor);
                             if (ts_node_eq(sibling, node)) {
-                                current_index = sibling_index;
+                                found_current = true;
+                                current_index = sibling_count;
                                 if (ts_node_is_named(sibling)) {
                                     current_named_index = named_seen;
                                 }
+                                if (needs_next_sibling &&
+                                    ts_tree_cursor_goto_next_sibling(&sibling_cursor)) {
+                                    next = ts_tree_cursor_current_node(&sibling_cursor);
+                                }
                                 break;
                             }
+                            previous = sibling;
+                            ++sibling_count;
                             if (ts_node_is_named(sibling)) ++named_seen;
-                        }
-                        if (current_index == UINT32_MAX) continue;
+                        } while (ts_tree_cursor_goto_next_sibling(&sibling_cursor));
+                    }
+                    ts_tree_cursor_delete(&sibling_cursor);
+                    if (!found_current) continue;
+
+                    ++sibling_count;
+                    if (needs_child_position) {
+                        // Continue from the current index to determine whether it is
+                        // the final child without rescanning the prefix.
                         if (ast_rule.child_index != UINT32_MAX &&
                             current_index != ast_rule.child_index) continue;
                         if (ast_rule.named_child_index != UINT32_MAX &&
                             current_named_index != ast_rule.named_child_index) continue;
                         if (ast_rule.first_child >= 0 &&
                             (current_index == 0u) != (ast_rule.first_child != 0)) continue;
-                        if (ast_rule.last_child >= 0 &&
-                            (current_index + 1u == sibling_count) !=
-                                (ast_rule.last_child != 0)) continue;
+                        if (ast_rule.last_child >= 0) {
+                            const bool is_last = !ts_node_is_null(next) ||
+                                !needs_next_sibling
+                                    ? (ts_node_is_null(next) &&
+                                       current_index + 1u == ts_node_child_count(parent))
+                                    : false;
+                            if (is_last != (ast_rule.last_child != 0)) continue;
+                        }
                     }
-
-                    if (ast_rule.previous_sibling_symbol != 0 ||
-                        !ast_rule.previous_sibling_type.empty()) {
-                        const TSNode previous = ts_node_prev_sibling(node);
-                        if (!tshAstNodeMatchesSelector(
-                                *grammar, previous,
-                                ast_rule.previous_sibling_symbol,
-                                ast_rule.previous_sibling_type)) continue;
-                    }
-                    if (ast_rule.next_sibling_symbol != 0 ||
-                        !ast_rule.next_sibling_type.empty()) {
-                        const TSNode next = ts_node_next_sibling(node);
-                        if (!tshAstNodeMatchesSelector(
-                                *grammar, next,
-                                ast_rule.next_sibling_symbol,
-                                ast_rule.next_sibling_type)) continue;
-                    }
+                    if (needs_previous_sibling &&
+                        !tshAstNodeMatchesSelector(
+                            *grammar, previous,
+                            ast_rule.previous_sibling_symbol,
+                            ast_rule.previous_sibling_type)) continue;
+                    if (needs_next_sibling &&
+                        !tshAstNodeMatchesSelector(
+                            *grammar, next,
+                            ast_rule.next_sibling_symbol,
+                            ast_rule.next_sibling_type)) continue;
                 }
 
                 if (diagnostic_match_counts) tshIncrementDiagnostic(&diagnostic_match_counts[2]);
