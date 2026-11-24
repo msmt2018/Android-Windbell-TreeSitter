@@ -667,9 +667,13 @@ class WindbellTshEngine private constructor() {
                         (if (darkMode) style.hasDarkBackground else style.hasLightBackground)) {
                         backgroundStyle = style
                     }
-                    if (fontFlags == 0 && style != null) {
-                        val candidateFlags = capture.fontFlags or
-                            (if (darkMode) style.darkFontFlags else style.lightFontFlags)
+                    if (fontFlags == 0) {
+                        val schemeFlags = if (darkMode) {
+                            style?.darkFontFlags ?: 0
+                        } else {
+                            style?.lightFontFlags ?: 0
+                        }
+                        val candidateFlags = capture.fontFlags or schemeFlags
                         if (candidateFlags != 0) fontFlags = candidateFlags
                     }
                     if (foregroundStyle != null && backgroundStyle != null && fontFlags != 0) {
