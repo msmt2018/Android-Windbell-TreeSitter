@@ -11,6 +11,7 @@
     <activity
       android:name="com.zerostudio.idea.androidtreesitter.MainActivity"
       android:exported="true"
+      android:configChanges="uiMode"
       android:theme="@style/Theme.AndroidTreeSitter"
       android:windowSoftInputMode="adjustResize">
       <intent-filter>
