@@ -605,24 +605,60 @@ class WindbellTshEngine private constructor() {
             // deterministic way to choose the intended foreground/background.
             // A sweep-line produces disjoint runs, so the renderer never has to arbitrate
             // between overlapping TSH styles and the full native ordering is preserved.
-            val nativeOrder = compareByDescending<HighlightSpan> { it.priority }
-                .thenBy { it.declarationOrder }
-                .thenBy { it.startByteUnsigned }
-                .thenByDescending { it.endByteUnsigned }
-                .thenBy { it.source }
-                .thenBy { it.styleId }
-                .thenBy { it.fontFlags }
-
-            // Convert the full native ordering into Android's 8-bit span
-            // priority domain once per projection. Equal (priority, declaration)
-            // pairs deliberately share a rank; lower-ranked captures receive
-            // smaller Android priorities. The sweep still resolves overlaps, so
-            // priority metadata is not relied upon to choose paint runs.
-            val rankedIndices = spans.indices.toMutableList()
-            rankedIndices.sortWith { left, right ->
-                val order = nativeOrder.compare(spans[left], spans[right])
-                if (order != 0) order else left.compareTo(right)
+            // Rank native captures without a boxed MutableList<Int> or comparator
+            // object. The ordering is byte-for-byte equivalent to the former
+            // compareByDescending/thenBy chain, with source index as final tie-break.
+            fun compareCaptureOrder(leftIndex: Int, rightIndex: Int): Int {
+                val left = spans[leftIndex]
+                val right = spans[rightIndex]
+                var order = right.priority.compareTo(left.priority)
+                if (order != 0) return order
+                order = left.declarationOrder.compareTo(right.declarationOrder)
+                if (order != 0) return order
+                order = java.lang.Long.compare(left.startByteUnsigned, right.startByteUnsigned)
+                if (order != 0) return order
+                order = java.lang.Long.compare(right.endByteUnsigned, left.endByteUnsigned)
+                if (order != 0) return order
+                order = left.source.compareTo(right.source)
+                if (order != 0) return order
+                order = left.styleId.compareTo(right.styleId)
+                if (order != 0) return order
+                order = left.fontFlags.compareTo(right.fontFlags)
+                if (order != 0) return order
+                return leftIndex.compareTo(rightIndex)
             }
+
+            val rankedIndices = IntArray(spans.size) { it }
+            fun siftRankedDown(rootIndex: Int, limit: Int) {
+                var root = rootIndex
+                while (true) {
+                    val leftChild = root * 2 + 1
+                    if (leftChild >= limit) return
+                    val rightChild = leftChild + 1
+                    var largest = leftChild
+                    if (rightChild < limit &&
+                        compareCaptureOrder(rankedIndices[rightChild], rankedIndices[leftChild]) > 0) {
+                        largest = rightChild
+                    }
+                    if (compareCaptureOrder(rankedIndices[largest], rankedIndices[root]) <= 0) return
+                    val swap = rankedIndices[root]
+                    rankedIndices[root] = rankedIndices[largest]
+                    rankedIndices[largest] = swap
+                    root = largest
+                }
+            }
+
+            // In-place heapsort yields ascending native precedence order.
+            for (root in (rankedIndices.size ushr 1) - 1 downTo 0) {
+                siftRankedDown(root, rankedIndices.size)
+            }
+            for (limit in rankedIndices.size - 1 downTo 1) {
+                val swap = rankedIndices[0]
+                rankedIndices[0] = rankedIndices[limit]
+                rankedIndices[limit] = swap
+                siftRankedDown(0, limit)
+            }
+
             val capturePriorityFlags = IntArray(spans.size)
             var rank = -1
             var previousPriority: Int? = null
