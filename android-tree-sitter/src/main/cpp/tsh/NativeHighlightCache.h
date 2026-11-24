@@ -128,12 +128,12 @@ public:
     void put(
         Key key,
         Value value,
-        const std::vector<DependencyRange>& dependencies
+        std::vector<DependencyRange> dependencies
     ) {
         // Dependency proofs have one owner: the compact ledger. They survive
         // independently of this larger span-payload LRU and are not duplicated
         // in every cached value.
-        rememberDependencies(key, dependencies);
+        rememberDependencies(key, std::move(dependencies));
         constexpr size_t kEntryOverhead =
             sizeof(Value) + sizeof(Key) + 5u * sizeof(void *);
         const size_t span_capacity = value.spans.capacity();
@@ -432,13 +432,12 @@ private:
 
     void rememberDependencies(
         const Key& key,
-        const std::vector<DependencyRange>& dependencies
+        std::vector<DependencyRange> dependencies
     ) noexcept {
         bool shared_budget_acquired = false;
         size_t pending_shared_bytes = 0;
         try {
-            std::vector<DependencyRange> copy = dependencies;
-            const size_t bytes = dependencyWeight(copy);
+            const size_t bytes = dependencyWeight(dependencies);
             auto existing = dependency_entries_.find(key);
             if (existing != dependency_entries_.end()) {
                 const size_t released = std::min(
@@ -473,7 +472,7 @@ private:
             auto lru = std::prev(dependency_lru_.end());
             try {
                 auto inserted = dependency_entries_.emplace(
-                    key, DependencyEntry{std::move(copy), bytes, lru});
+                    key, DependencyEntry{std::move(dependencies), bytes, lru});
                 if (!inserted.second) {
                     dependency_lru_.erase(lru);
                     if (shared_budget_acquired) {
