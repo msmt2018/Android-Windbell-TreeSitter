@@ -594,28 +594,29 @@ class TshSyntaxHighlighter(
         startUtf16: Int,
         endUtf16: Int
     ): List<WindbellTshEngine.HighlightSpan>? {
-        val captureKeys = captureRangeIndex.findOverlappingRanges(
+        val captureEntries = ArrayList<Pair<CaptureRangeKey, CaptureIntervalIndex>>()
+        for (cachedKey in captureRangeIndex.findOverlappingRanges(
             key.sessionId, startUtf16, endUtf16
-        ).filter { cachedKey ->
-            if (captureCache.get(cachedKey) != null) true
-            else {
-                captureRangeIndex.remove(cachedKey)
-                false
-            }
+        )) {
+            val index = captureCache.get(cachedKey)
+            if (index != null) captureEntries += cachedKey to index
+            else captureRangeIndex.remove(cachedKey)
         }
-        val displayKeys = synchronized(displayCacheLock) {
-            displayRangeIndex.findOverlappingRanges(
+        val displayEntries = synchronized(displayCacheLock) {
+            val entries = ArrayList<Pair<CaptureRangeKey, CaptureIntervalIndex>>()
+            for (cachedKey in displayRangeIndex.findOverlappingRanges(
                 key.sessionId, startUtf16, endUtf16
-            ).filter { cachedKey ->
-                if (displayCache.get(cachedKey) != null) true
-                else {
-                    displayRangeIndex.remove(cachedKey)
-                    false
-                }
+            )) {
+                val index = displayCache.get(cachedKey)
+                if (index != null) entries += cachedKey to index
+                else displayRangeIndex.remove(cachedKey)
             }
+            entries
         }
-        val allKeys = (captureKeys + displayKeys).distinct()
-            .sortedWith(compareBy<CaptureRangeKey> { it.startUtf16 }.thenBy { it.endUtf16 })
+        val allKeys = (captureEntries.map { it.first } + displayEntries.map { it.first })
+            .distinct().sortedWith(
+                compareBy<CaptureRangeKey> { it.startUtf16 }.thenBy { it.endUtf16 }
+            )
         var coveredUntil = startUtf16
         for (cachedKey in allKeys) {
             if (cachedKey.startUtf16 > coveredUntil) return null
@@ -625,13 +626,11 @@ class TshSyntaxHighlighter(
         if (coveredUntil < endUtf16) return null
 
         val spans = LinkedHashSet<WindbellTshEngine.HighlightSpan>()
-        for (cachedKey in captureKeys) {
-            captureCache.get(cachedKey)?.appendQuery(startUtf16, endUtf16, spans)
+        for ((_, index) in captureEntries) {
+            index.appendQuery(startUtf16, endUtf16, spans)
         }
-        synchronized(displayCacheLock) {
-            for (cachedKey in displayKeys) {
-                displayCache.get(cachedKey)?.appendQuery(startUtf16, endUtf16, spans)
-            }
+        for ((_, index) in displayEntries) {
+            index.appendQuery(startUtf16, endUtf16, spans)
         }
         return spans.toList()
     }
@@ -858,17 +857,19 @@ class TshSyntaxHighlighter(
                     ) ?: throw IllegalStateException("Native viewport TSH returned null for visible range")
                 }
                 val spans = decodeNativeSpans(flat)
-                synchronized(nativeEditLock) {
+                val admitted = synchronized(nativeEditLock) {
                     if (generation.get() == active.ticket && largeSession === active &&
                         active.documentRevision.get() == requestedRevision &&
                         active.pendingEditEpoch.get() == active.appliedEditEpoch.get()) {
                         val index = CaptureIntervalIndex(spans)
                         captureCache.put(missingKey, index)
                         publishDisplayCaptureRange(missingKey, index)
-                    } else {
-                        work.state = RangeWorkState.CANCELLED
-                        break
-                    }
+                        true
+                    } else false
+                }
+                if (!admitted) {
+                    work.state = RangeWorkState.CANCELLED
+                    break
                 }
             }
             if (work.state != RangeWorkState.CANCELLED) {
