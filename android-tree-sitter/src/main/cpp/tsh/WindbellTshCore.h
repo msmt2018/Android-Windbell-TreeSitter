@@ -465,7 +465,7 @@ struct RegexStateCheckpoint {
  * earlier viewport instead of reverse-scanning the document prefix each time.
  */
 struct RegexBlockCheckpoint {
-    const CompiledRegexRule* rule = nullptr;
+    uint32_t declaration_order = 0;
     uint32_t byte_offset = 0;
     uint32_t active_start_byte = UINT32_MAX;
     uint64_t grammar_revision = 0;
