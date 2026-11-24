@@ -565,24 +565,35 @@ class ByteBudgetLruCache<K : Any, V : Any>(
         val retainedValues = IdentityHashMap<V, Boolean>()
         transformed.values.forEach { retainedValues[it.value] = true }
 
-        val previousEntries = LinkedHashMap(entries)
+        // Collect only callback deltas while the old map is still intact. The
+        // previous implementation copied the entire access-ordered map into
+        // previousEntries after already constructing transformed, temporarily
+        // retaining three full map structures during a single local edit.
+        // Cache callbacks are applied after the replacement map is published.
+        val removedEntries = ArrayList<Pair<K, V>>()
+        val addedEntries = ArrayList<Pair<K, V>>()
+        val evictedValues = IdentityHashMap<V, Boolean>()
+        for ((oldKey, oldEntry) in entries) {
+            if (!transformed.containsKey(oldKey)) {
+                removedEntries += oldKey to oldEntry.value
+            }
+            if (!retainedValues.containsKey(oldEntry.value)) {
+                evictedValues[oldEntry.value] = true
+            }
+        }
+        for ((newKey, newEntry) in transformed) {
+            if (!entries.containsKey(newKey)) {
+                addedEntries += newKey to newEntry.value
+            }
+        }
+
         entries.clear()
         entries.putAll(transformed)
         usedBytes = nextBytes
 
-        for ((oldKey, oldEntry) in previousEntries) {
-            if (!entries.containsKey(oldKey)) {
-                onEntryRemoved(oldKey, oldEntry.value)
-            }
-            if (!retainedValues.containsKey(oldEntry.value)) {
-                onEvict(oldEntry.value)
-            }
-        }
-        for ((newKey, newEntry) in entries) {
-            if (!previousEntries.containsKey(newKey)) {
-                onEntryAdded(newKey, newEntry.value)
-            }
-        }
+        removedEntries.forEach { (key, value) -> onEntryRemoved(key, value) }
+        evictedValues.keys.forEach(onEvict)
+        addedEntries.forEach { (key, value) -> onEntryAdded(key, value) }
         createdValues.keys.forEach { value ->
             if (!retainedValues.containsKey(value)) onEvict(value)
         }
