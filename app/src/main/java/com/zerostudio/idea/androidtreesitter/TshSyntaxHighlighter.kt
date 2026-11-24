@@ -217,7 +217,9 @@ class TshSyntaxHighlighter(
                 insertedChars = inserted.length,
                 deletedChars = change.deletedTextLength
             )
-            largeSession?.let { invalidateDisplayCacheForEdit(it.cacheSessionId) }
+            // Keep immutable display captures until the native edit transaction
+            // reports which viewport dependencies remain reusable. While the edit is
+            // pending, styleLine refuses to read the old revision.
             pendingNativeEdits += edit
         }
     }
@@ -678,19 +680,6 @@ class TshSyntaxHighlighter(
         synchronized(displayCacheLock) {
             // A new viewport adds coverage; it must not erase previously rendered intervals.
             displayCache.put(key, index)
-        }
-    }
-
-    /**
-     * Decoded Kotlin spans do not carry native query dependency envelopes. Moving
-     * their offsets after an edit can therefore preserve a match whose ancestor,
-     * sibling, predicate or lexical context changed. Drop this presentation cache
-     * synchronously; the native cache independently retains only dependency-safe
-     * entries, and current-revision viewport results repopulate the display cache.
-     */
-    private fun invalidateDisplayCacheForEdit(sessionId: Long) {
-        synchronized(displayCacheLock) {
-            displayCache.invalidate { key, _ -> key.sessionId == sessionId }
         }
     }
 
