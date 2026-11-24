@@ -701,7 +701,7 @@ class WindbellTshLinkageTest {
             null, code, "nested-state",
             viewportStart.toLong() * 2L,
             viewportEnd.toLong() * 2L
-        ).filter { it.source == 1 }
+        ).filter { it.source == 1 && it.styleId == identifierId }
         val expected = full.filter {
             it.endByte > viewportStart * 2 && it.startByte < viewportEnd * 2
         }.map { listOf(it.startByte, it.endByte, it.styleId, it.priority, it.declarationOrder) }
