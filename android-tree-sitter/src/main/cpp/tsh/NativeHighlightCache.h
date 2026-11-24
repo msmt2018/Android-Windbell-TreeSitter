@@ -96,6 +96,12 @@ public:
         auto found = entries_.find(key);
         if (found == entries_.end()) return nullptr;
         touch(&found->second);
+        auto dependency = dependency_entries_.find(key);
+        if (dependency != dependency_entries_.end()) {
+            dependency_lru_.splice(
+                dependency_lru_.end(), dependency_lru_, dependency->second.lru);
+            dependency->second.lru = std::prev(dependency_lru_.end());
+        }
         return &found->second.value;
     }
 
