@@ -668,12 +668,51 @@ class WindbellTshEngine private constructor() {
                 )
                 if (order != 0) order else left.compareTo(right)
             }
-            // Seven primitive min-heaps replace boxed TreeSet nodes: foreground,
-            // background, and one winner queue for each independent font attribute.
-            // End events mark a capture inactive; stale heap roots are discarded lazily.
-            // Each capture has one interval, so it is inserted at most once per heap.
+            val hasForeground = BooleanArray(captureCount)
+            val hasBackground = BooleanArray(captureCount)
+            val captureFontFlags = IntArray(captureCount)
+            // Primitive packed sweep events avoid two heap objects per capture.
+            // Ordering is offset first, then end(0) before start(1), then capture index.
+            val events = LongArray(captureCount * 2)
+            val activeHeapCapacities = IntArray(7)
+            var eventWrite = 0
+            for (index in 0 until captureCount) {
+                val sourceIndex = captureSourceIndices[index]
+                val span = spans[sourceIndex]
+                val style = palette[span.styleId]
+                // Resolve each appearance independently, but never let an
+                // omitted dark/light override fall through to the editor's base
+                // TextPaint color. That fallback is unrelated to the TSH style and
+                // can make a configured yellow annotation appear green in dark mode.
+                // An explicitly supplied color for the active appearance wins;
+                // otherwise inherit the other appearance's value.
+                hasForeground[index] = style != null &&
+                    (style.hasDarkColor || style.hasLightColor)
+                hasBackground[index] = style != null &&
+                    (style.hasDarkBackground || style.hasLightBackground)
+                val schemeFlags = if (darkMode) {
+                    style?.darkFontFlags ?: 0
+                } else {
+                    style?.lightFontFlags ?: 0
+                }
+                captureFontFlags[index] = span.fontFlags or schemeFlags
+                if (hasForeground[index]) activeHeapCapacities[0]++
+                if (hasBackground[index]) activeHeapCapacities[1]++
+                for (bitIndex in 0 until 5) {
+                    if ((captureFontFlags[index] and (1 shl bitIndex)) != 0) {
+                        activeHeapCapacities[bitIndex + 2]++
+                    }
+                }
+                events[eventWrite++] = packBoundaryEvent(captureStarts[index], index, starts = true)
+                events[eventWrite++] = packBoundaryEvent(captureEnds[index], index, starts = false)
+            }
+            events.sort()
+
+            // Allocate each heap to the exact number of captures that can enter it,
+            // rather than seven full captureCount-sized arrays. This keeps the
+            // primitive replacement memory-proportional to actual active attributes.
             val activeCaptures = BooleanArray(captureCount)
-            val activeHeaps = Array(7) { IntArray(captureCount) }
+            val activeHeaps = Array(7) { IntArray(activeHeapCapacities[it]) }
             val activeHeapSizes = IntArray(7)
 
             fun siftDown(heapIndex: Int, startIndex: Int) {
@@ -730,38 +769,6 @@ class WindbellTshEngine private constructor() {
                 }
                 return false
             }
-
-            val hasForeground = BooleanArray(captureCount)
-            val hasBackground = BooleanArray(captureCount)
-            val captureFontFlags = IntArray(captureCount)
-            // Primitive packed sweep events avoid two heap objects per capture.
-            // Ordering is offset first, then end(0) before start(1), then capture index.
-            val events = LongArray(captureCount * 2)
-            var eventWrite = 0
-            for (index in 0 until captureCount) {
-                val sourceIndex = captureSourceIndices[index]
-                val span = spans[sourceIndex]
-                val style = palette[span.styleId]
-                // Resolve each appearance independently, but never let an
-                // omitted dark/light override fall through to the editor's base
-                // TextPaint color. That fallback is unrelated to the TSH style and
-                // can make a configured yellow annotation appear green in dark mode.
-                // An explicitly supplied color for the active appearance wins;
-                // otherwise inherit the other appearance's value.
-                hasForeground[index] = style != null &&
-                    (style.hasDarkColor || style.hasLightColor)
-                hasBackground[index] = style != null &&
-                    (style.hasDarkBackground || style.hasLightBackground)
-                val schemeFlags = if (darkMode) {
-                    style?.darkFontFlags ?: 0
-                } else {
-                    style?.lightFontFlags ?: 0
-                }
-                captureFontFlags[index] = span.fontFlags or schemeFlags
-                events[eventWrite++] = packBoundaryEvent(captureStarts[index], index, starts = true)
-                events[eventWrite++] = packBoundaryEvent(captureEnds[index], index, starts = false)
-            }
-            events.sort()
 
             fun paintRun(
                 runStart: Int,
