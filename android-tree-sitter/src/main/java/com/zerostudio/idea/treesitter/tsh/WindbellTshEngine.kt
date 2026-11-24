@@ -629,14 +629,32 @@ class WindbellTshEngine private constructor() {
             }
             if (captures.isEmpty()) return@synchronized
 
-            val active = java.util.TreeSet<Int> { left, right ->
+            val compareCaptureIndices = java.util.Comparator<Int> { left, right ->
                 val order = nativeOrder.compare(
                     captures[left].span, captures[right].span
                 )
                 if (order != 0) order else left.compareTo(right)
             }
-            val events = ArrayList<BoundaryEvent>(captures.size * 2)
+            val activeForeground = java.util.TreeSet(compareCaptureIndices)
+            val activeBackground = java.util.TreeSet(compareCaptureIndices)
+            val activeFont = java.util.TreeSet(compareCaptureIndices)
+            val captureStyles = arrayOfNulls<StylePalette>(captures.size)
+            val hasForeground = BooleanArray(captures.size)
+            val hasBackground = BooleanArray(captures.size)
+            val captureFontFlags = IntArray(captures.size)
             captures.forEachIndexed { index, capture ->
+                val style = palette[capture.span.styleId]
+                captureStyles[index] = style
+                hasForeground[index] = style != null &&
+                    (if (darkMode) style.hasDarkColor else style.hasLightColor)
+                hasBackground[index] = style != null &&
+                    (if (darkMode) style.hasDarkBackground else style.hasLightBackground)
+                val schemeFlags = if (darkMode) {
+                    style?.darkFontFlags ?: 0
+                } else {
+                    style?.lightFontFlags ?: 0
+                }
+                captureFontFlags[index] = capture.span.fontFlags or schemeFlags
                 events += BoundaryEvent(capture.start, index, true)
                 events += BoundaryEvent(capture.end, index, false)
             }
@@ -645,54 +663,30 @@ class WindbellTshEngine private constructor() {
                     .thenBy { it.starts }
             )
 
-            fun paintRun(runStart: Int, runEnd: Int) {
-                if (runStart >= runEnd || active.isEmpty()) return
+            fun paintRun(
+                runStart: Int,
+                runEnd: Int,
+                foregroundIndex: Int?,
+                backgroundIndex: Int?,
+                fontIndex: Int?
+            ) {
+                if (runStart >= runEnd) return
                 val flags = Spannable.SPAN_EXCLUSIVE_EXCLUSIVE
-                var foregroundStyle: StylePalette? = null
-                var backgroundStyle: StylePalette? = null
-                var fontFlags = 0
-
-                // Resolve each independently-defined visual channel from the first
-                // highest-precedence capture that actually declares that channel.
-                // A higher capture that only declares bold, for example, must not
-                // erase a lower capture's explicit foreground color.
-                for (captureIndex in active) {
-                    val capture = captures[captureIndex].span
-                    val style = palette[capture.styleId]
-                    if (foregroundStyle == null && style != null &&
-                        (if (darkMode) style.hasDarkColor else style.hasLightColor)) {
-                        foregroundStyle = style
-                    }
-                    if (backgroundStyle == null && style != null &&
-                        (if (darkMode) style.hasDarkBackground else style.hasLightBackground)) {
-                        backgroundStyle = style
-                    }
-                    if (fontFlags == 0) {
-                        val schemeFlags = if (darkMode) {
-                            style?.darkFontFlags ?: 0
-                        } else {
-                            style?.lightFontFlags ?: 0
-                        }
-                        val candidateFlags = capture.fontFlags or schemeFlags
-                        if (candidateFlags != 0) fontFlags = candidateFlags
-                    }
-                    if (foregroundStyle != null && backgroundStyle != null && fontFlags != 0) {
-                        break
-                    }
-                }
-
-                backgroundStyle?.let { style ->
+                backgroundIndex?.let { index ->
+                    val style = captureStyles[index] ?: return@let
                     val background = if (darkMode) style.darkBackground else style.lightBackground
                     spannable.setSpan(
                         BackgroundColorSpan(background), runStart, runEnd, flags
                     )
                 }
-                foregroundStyle?.let { style ->
+                foregroundIndex?.let { index ->
+                    val style = captureStyles[index] ?: return@let
                     val color = if (darkMode) style.darkColor else style.lightColor
                     spannable.setSpan(
                         ForegroundColorSpan(color), runStart, runEnd, flags
                     )
                 }
+                val fontFlags = fontIndex?.let { captureFontFlags[it] } ?: 0
                 if ((fontFlags and 0x01) != 0) {
                     spannable.setSpan(
                         StyleSpan(android.graphics.Typeface.BOLD), runStart, runEnd, flags
@@ -724,25 +718,45 @@ class WindbellTshEngine private constructor() {
             var cursor = visibleStart
             while (eventIndex < events.size) {
                 val boundary = events[eventIndex].offset
-                if (cursor < boundary && active.isNotEmpty()) {
-                    paintRun(cursor, boundary)
+                if (cursor < boundary &&
+                    (activeForeground.isNotEmpty() || activeBackground.isNotEmpty() ||
+                        activeFont.isNotEmpty())) {
+                    paintRun(
+                        cursor, boundary,
+                        activeForeground.firstOrNull(),
+                        activeBackground.firstOrNull(),
+                        activeFont.firstOrNull()
+                    )
                 }
                 while (eventIndex < events.size &&
                     events[eventIndex].offset == boundary &&
                     !events[eventIndex].starts) {
-                    active.remove(events[eventIndex].captureIndex)
+                    val index = events[eventIndex].captureIndex
+                    if (hasForeground[index]) activeForeground.remove(index)
+                    if (hasBackground[index]) activeBackground.remove(index)
+                    if (captureFontFlags[index] != 0) activeFont.remove(index)
                     eventIndex++
                 }
                 while (eventIndex < events.size &&
                     events[eventIndex].offset == boundary &&
                     events[eventIndex].starts) {
-                    active.add(events[eventIndex].captureIndex)
+                    val index = events[eventIndex].captureIndex
+                    if (hasForeground[index]) activeForeground.add(index)
+                    if (hasBackground[index]) activeBackground.add(index)
+                    if (captureFontFlags[index] != 0) activeFont.add(index)
                     eventIndex++
                 }
                 cursor = boundary
             }
-            if (cursor < visibleEnd && active.isNotEmpty()) {
-                paintRun(cursor, visibleEnd)
+            if (cursor < visibleEnd &&
+                (activeForeground.isNotEmpty() || activeBackground.isNotEmpty() ||
+                    activeFont.isNotEmpty())) {
+                paintRun(
+                    cursor, visibleEnd,
+                    activeForeground.firstOrNull(),
+                    activeBackground.firstOrNull(),
+                    activeFont.firstOrNull()
+                )
             }
         }
     }
