@@ -48,23 +48,16 @@ class TshSyntaxHighlighter(
 
     companion object {
         private const val TAG = "WindbellTSH"
-        // Semantic captures and temporary display captures share a strict 32 MiB budget.
-        private const val CAPTURE_CACHE_BYTES = 24L * 1024L * 1024L
-        private const val DISPLAY_CACHE_BYTES = 8L * 1024L * 1024L
+        // One immutable interval payload is shared by scope lookups and drawing.
+        // Keeping duplicate semantic/display LRUs charged the same payload twice
+        // and doubled index maintenance without providing an independent lifetime.
+        private const val CAPTURE_CACHE_BYTES = 32L * 1024L * 1024L
         // Failed viewport attempts are retained only for retry backoff. Keep their
         // bookkeeping bounded when a broken grammar/native call is hit while scrolling
         // through many distinct regions of a very large document.
         private const val MAX_RANGE_WORK_ENTRIES = 256
         private val nextSessionId = AtomicLong(1L)
         private val captureRangeIndex = CaptureRangeLookupIndex()
-        private val displayRangeIndex = CaptureRangeLookupIndex()
-        private val displayCacheLock = Any()
-        private val displayCache = ByteBudgetLruCache<CaptureRangeKey, CaptureIntervalIndex>(
-            DISPLAY_CACHE_BYTES,
-            { index -> 96L + index.size.toLong() * 96L },
-            onEntryAdded = { key, _ -> displayRangeIndex.add(key) },
-            onEntryRemoved = { key, _ -> displayRangeIndex.remove(key) }
-        )
         private val captureCache = ByteBudgetLruCache<CaptureRangeKey, CaptureIntervalIndex>(
             CAPTURE_CACHE_BYTES,
             { index -> 96L + index.size.toLong() * 96L },
@@ -565,9 +558,6 @@ class TshSyntaxHighlighter(
             if (nativeHandle != 0L) engine.closeNativeDocument(nativeHandle)
             if (cacheSessionId != 0L) {
                 captureCache.invalidate { key, _ -> key.sessionId == cacheSessionId }
-                synchronized(displayCacheLock) {
-                    displayCache.invalidate { key, _ -> key.sessionId == cacheSessionId }
-                }
             }
         }
     }
@@ -584,48 +574,34 @@ class TshSyntaxHighlighter(
         return buffer.getEOL().length
     }
 
-    private fun findContainingDisplayRange(key: CaptureRangeKey): CaptureIntervalIndex? =
-        synchronized(displayCacheLock) {
-            val cachedKey = displayRangeIndex.findContaining(
-                key.sessionId, key.startUtf16, key.endUtf16
-            ) ?: return@synchronized null
-            displayCache.get(cachedKey)
-        }
-
     /**
      * Read a requested viewport from the union of semantic and display cache entries.
      * Entries may overlap or abut; no single entry has to contain the entire viewport.
+     */
+    /**
+     * Read a requested viewport from the single immutable capture cache.
+     * The former display cache held the exact same CaptureIntervalIndex objects
+     * under a second LRU/index and was merged back with LinkedHashSet on every
+     * line draw. That duplicated accounting and lookup work without adding data.
      */
     private fun queryCachedCaptures(
         key: CaptureRangeKey,
         startUtf16: Int,
         endUtf16: Int
     ): List<WindbellTshEngine.HighlightSpan>? {
-        val captureEntries = ArrayList<Pair<CaptureRangeKey, CaptureIntervalIndex>>()
+        val entries = ArrayList<CaptureIntervalIndex>()
         for (cachedKey in captureRangeIndex.findOverlappingRanges(
             key.sessionId, startUtf16, endUtf16
         )) {
             val index = captureCache.get(cachedKey)
-            if (index != null) captureEntries += cachedKey to index
+            if (index != null) entries += index
             else captureRangeIndex.remove(cachedKey)
         }
-        val displayEntries = synchronized(displayCacheLock) {
-            val entries = ArrayList<Pair<CaptureRangeKey, CaptureIntervalIndex>>()
-            for (cachedKey in displayRangeIndex.findOverlappingRanges(
-                key.sessionId, startUtf16, endUtf16
-            )) {
-                val index = displayCache.get(cachedKey)
-                if (index != null) entries += cachedKey to index
-                else displayRangeIndex.remove(cachedKey)
-            }
-            entries
-        }
-        val allKeys = (captureEntries.map { it.first } + displayEntries.map { it.first })
-            .distinct().sortedWith(
-                compareBy<CaptureRangeKey> { it.startUtf16 }.thenBy { it.endUtf16 }
-            )
+        val keys = captureRangeIndex.findOverlappingRanges(
+            key.sessionId, startUtf16, endUtf16
+        )
         var coveredUntil = startUtf16
-        for (cachedKey in allKeys) {
+        for (cachedKey in keys) {
             if (cachedKey.startUtf16 > coveredUntil) return null
             coveredUntil = maxOf(coveredUntil, cachedKey.endUtf16)
             if (coveredUntil >= endUtf16) break
@@ -633,16 +609,12 @@ class TshSyntaxHighlighter(
         if (coveredUntil < endUtf16) return null
 
         val spans = LinkedHashSet<WindbellTshEngine.HighlightSpan>()
-        for ((_, index) in captureEntries) {
-            index.appendQuery(startUtf16, endUtf16, spans)
-        }
-        for ((_, index) in displayEntries) {
-            index.appendQuery(startUtf16, endUtf16, spans)
-        }
+        entries.forEach { it.appendQuery(startUtf16, endUtf16, spans) }
         return spans.toList()
     }
 
     /** Source intervals already represented by either bounded cache. */
+    /** Source intervals already represented by the capture cache. */
     private fun cachedRanges(key: CaptureRangeKey): List<Pair<Int, Int>> {
         val ranges = ArrayList<Pair<Int, Int>>()
         for (cachedKey in captureRangeIndex.findOverlappingRanges(
@@ -651,15 +623,6 @@ class TshSyntaxHighlighter(
             if (captureCache.get(cachedKey) != null) {
                 ranges += cachedKey.startUtf16 to cachedKey.endUtf16
             } else captureRangeIndex.remove(cachedKey)
-        }
-        synchronized(displayCacheLock) {
-            for (cachedKey in displayRangeIndex.findOverlappingRanges(
-                key.sessionId, key.startUtf16, key.endUtf16
-            )) {
-                if (displayCache.get(cachedKey) != null) {
-                    ranges += cachedKey.startUtf16 to cachedKey.endUtf16
-                } else displayRangeIndex.remove(cachedKey)
-            }
         }
         return ranges.sortedBy { it.first }
     }
@@ -681,26 +644,6 @@ class TshSyntaxHighlighter(
 
     private fun hasCachedCoverage(key: CaptureRangeKey): Boolean =
         uncoveredViewportRanges(key).isEmpty()
-
-    /** Store decoded presentation spans only for the current native document revision. */
-    private fun publishDisplayCaptureRange(key: CaptureRangeKey, index: CaptureIntervalIndex) {
-        synchronized(displayCacheLock) {
-            // A new viewport adds coverage; it must not erase previously rendered intervals.
-            displayCache.put(key, index)
-        }
-    }
-
-    private fun findContainingCaptureRange(key: CaptureRangeKey): CaptureIntervalIndex? {
-        val cachedKey = captureRangeIndex.findContaining(
-            key.sessionId, key.startUtf16, key.endUtf16
-        ) ?: return null
-        // Touch the selected LRU entry after leaving the interval-index lock. An
-        // eviction racing this lookup simply becomes a cache miss, never stale data.
-        return captureCache.get(cachedKey) ?: run {
-            captureRangeIndex.remove(cachedKey)
-            null
-        }
-    }
 
     private fun enqueueViewportRange(key: CaptureRangeKey) {
         if (key.startUtf16 >= key.endUtf16) return
@@ -892,7 +835,6 @@ class TshSyntaxHighlighter(
                         active.pendingEditEpoch.get() == active.appliedEditEpoch.get()) {
                         val index = CaptureIntervalIndex(spans)
                         captureCache.put(missingKey, index)
-                        publishDisplayCaptureRange(missingKey, index)
                         true
                     } else false
                 }
@@ -1030,30 +972,15 @@ class TshSyntaxHighlighter(
         val captureEntries = captureCache.snapshotMostRecentEntries(
             { key, _ -> key.sessionId == sessionId }, Int.MAX_VALUE
         )
-        val displayEntries = synchronized(displayCacheLock) {
-            displayCache.snapshotMostRecentEntries(
-                { key, _ -> key.sessionId == sessionId }, Int.MAX_VALUE
-            )
-        }
         val rebased = HashMap<CaptureRangeKey, Pair<CaptureRangeKey, CaptureIntervalIndex>?>()
-        for ((key, index) in captureEntries + displayEntries) {
-            if (!rebased.containsKey(key)) {
-                rebased[key] = rebaseCachedEntry(key, index, edits, reusableNativeRanges)
-            }
+        for ((key, index) in captureEntries) {
+            rebased[key] = rebaseCachedEntry(key, index, edits, reusableNativeRanges)
         }
 
         captureCache.invalidate { key, _ -> key.sessionId == sessionId }
         for ((key, _) in captureEntries) {
             rebased[key]?.let { (nextKey, nextIndex) ->
                 captureCache.put(nextKey, nextIndex)
-            }
-        }
-        synchronized(displayCacheLock) {
-            displayCache.invalidate { key, _ -> key.sessionId == sessionId }
-            for ((key, _) in displayEntries) {
-                rebased[key]?.let { (nextKey, nextIndex) ->
-                    displayCache.put(nextKey, nextIndex)
-                }
             }
         }
     }
@@ -1209,9 +1136,6 @@ class TshSyntaxHighlighter(
                 }
             }.onFailure { Log.w(TAG, "Failed to close native TSH document", it) }
             captureCache.invalidate { key, _ -> key.sessionId == active.cacheSessionId }
-            synchronized(displayCacheLock) {
-                displayCache.invalidate { key, _ -> key.sessionId == active.cacheSessionId }
-            }
         }
     }
 }
