@@ -787,8 +787,6 @@ class TshSyntaxHighlighter(
         expectedRevision: Long
     ) {
         if (batch.isEmpty()) return
-        val startOffset = batch.minOfOrNull { it.startUtf16 } ?: return
-        val endOffset = batch.maxOfOrNull { it.endUtf16 } ?: return
         scope.launch(Dispatchers.Main.immediate) {
             val currentHost = host ?: return@launch
             val currentBuffer = currentHost.buffer
@@ -799,13 +797,42 @@ class TshSyntaxHighlighter(
                     active.pendingEditEpoch.get() == active.appliedEditEpoch.get()
             }
             if (!canInvalidate || currentBuffer.length <= 0) return@launch
-            val safeStart = startOffset.coerceIn(0, currentBuffer.length - 1)
-            val safeEnd = (endOffset - 1).coerceIn(safeStart, currentBuffer.length - 1)
-            val firstLine = currentBuffer.getPositionAt(safeStart).line
-            val lastLine = currentBuffer.getPositionAt(safeEnd).line
-            if (firstLine > 0 && lastLine >= firstLine) {
-                currentHost.invalidateStyles(firstLine, lastLine)
+
+            // A batch may contain disjoint viewport requests. Collapsing them to
+            // min(start)..max(end) invalidated every row between distant ranges,
+            // causing unrelated ATS rows to be re-recorded and their cache misses
+            // to trigger another native query. Keep the invalidation set sparse.
+            val lineRanges = ArrayList<Pair<Int, Int>>(batch.size)
+            for (range in batch) {
+                if (range.startUtf16 >= range.endUtf16) continue
+                val safeStart = range.startUtf16.coerceIn(0, currentBuffer.length - 1)
+                val safeEnd = (range.endUtf16 - 1).coerceIn(
+                    safeStart, currentBuffer.length - 1
+                )
+                val firstLine = currentBuffer.getPositionAt(safeStart).line
+                val lastLine = currentBuffer.getPositionAt(safeEnd).line
+                if (firstLine > 0 && lastLine >= firstLine) {
+                    lineRanges += firstLine to lastLine
+                }
             }
+            if (lineRanges.isEmpty()) return@launch
+
+            val sorted = lineRanges.sortedBy { it.first }
+            val merged = ArrayList<Pair<Int, Int>>(sorted.size)
+            var first = sorted.first().first
+            var last = sorted.first().second
+            for (index in 1 until sorted.size) {
+                val next = sorted[index]
+                if (next.first <= last + 1) {
+                    last = maxOf(last, next.second)
+                } else {
+                    merged += first to last
+                    first = next.first
+                    last = next.second
+                }
+            }
+            merged += first to last
+            currentHost.invalidateStyles(merged)
         }
     }
 
