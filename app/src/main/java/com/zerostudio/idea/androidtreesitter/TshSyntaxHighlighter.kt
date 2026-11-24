@@ -112,6 +112,9 @@ class TshSyntaxHighlighter(
 
     private val nativeEditLock = Any()
     private val pendingNativeEdits = ArrayList<NativeEdit>()
+    // Display-only snapshots of edits not yet committed to the native tree. They
+    // let unchanged rows keep their old captures while semantic caches are rebased.
+    private val pendingDisplayEdits = ArrayList<CaptureDisplayRebaser.PendingEdit>()
     private var nativeEditJob: Job? = null
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -174,7 +177,10 @@ class TshSyntaxHighlighter(
         largeSession?.let(::disposeSession)
         largeSession = null
         parsing = false
-        synchronized(nativeEditLock) { pendingNativeEdits.clear() }
+        synchronized(nativeEditLock) {
+            pendingNativeEdits.clear()
+            pendingDisplayEdits.clear()
+        }
         synchronized(viewportRequestLock) {
             pendingViewportRanges.clear()
             queuedViewportRanges = emptyList()
@@ -216,7 +222,6 @@ class TshSyntaxHighlighter(
             // Session publication and edit draining use this same lock. If a large
             // session became active while the inserted slice was encoded, queueing
             // here still makes onEditFinished apply it to that newly-published tree.
-            largeSession?.pendingEditEpoch?.incrementAndGet()
             val edit = NativeEdit(
                 startByte = change.rangeOffset.toLong() * 2L,
                 oldEndByte = (change.rangeOffset.toLong() + change.deletedTextLength) * 2L,
@@ -224,9 +229,17 @@ class TshSyntaxHighlighter(
                 insertedChars = inserted.length,
                 deletedChars = change.deletedTextLength
             )
-            // Keep immutable display captures until the native edit transaction
-            // reports which viewport dependencies remain reusable. While the edit is
-            // pending, styleLine refuses to read the old revision.
+            // Keep the edit in the native replay queue. If a published document
+            // exists, also retain a display-only coordinate transform so unaffected
+            // captures can remain painted while semantic invalidation is in flight.
+            largeSession?.let { active ->
+                active.pendingEditEpoch.incrementAndGet()
+                pendingDisplayEdits += CaptureDisplayRebaser.PendingEdit(
+                    startUtf16 = change.rangeOffset,
+                    deletedChars = change.deletedTextLength,
+                    insertedChars = inserted.length
+                )
+            }
             pendingNativeEdits += edit
         }
     }
@@ -298,9 +311,41 @@ class TshSyntaxHighlighter(
             else {
                 val requested = CaptureRangeKey(
                     active.cacheSessionId, boundedStart.toInt(), boundedEnd.toInt())
-                val cached = if (editPending) null else queryCachedCaptures(
-                    requested, boundedStart.toInt(), boundedEnd.toInt()
-                )
+                val cached = if (editPending) {
+                    // Do not blank every visible row while one local edit is waiting
+                    // for native parsing. Map untouched current ranges back to the
+                    // previous cache coordinate space, then shift only captures that
+                    // are wholly outside every replaced/inserted interval.
+                    val displayEdits = pendingDisplayEdits.toList()
+                    val original = CaptureDisplayRebaser.mapCurrentRangeToOriginal(
+                        boundedStart.toInt(), boundedEnd.toInt(), displayEdits
+                    )
+                    if (original == null) null else {
+                        val oldKey = CaptureRangeKey(
+                            active.cacheSessionId, original.startUtf16, original.endUtf16
+                        )
+                        queryCachedCaptures(
+                            oldKey, original.startUtf16, original.endUtf16
+                        )?.let { old ->
+                            CaptureQueryResult(
+                                spans = old.spans.mapNotNull { span ->
+                                    val mapped = CaptureDisplayRebaser.mapOriginalCaptureToCurrent(
+                                        span.startByte / 2, span.endByte / 2, displayEdits
+                                    ) ?: return@mapNotNull null
+                                    span.copy(
+                                        startByte = mapped.startUtf16 * 2,
+                                        endByte = mapped.endUtf16 * 2
+                                    )
+                                },
+                                // These captures are visual continuity only. The
+                                // renderer must retry after the native revision commits.
+                                complete = false
+                            )
+                        }
+                    }
+                } else {
+                    queryCachedCaptures(requested, boundedStart.toInt(), boundedEnd.toInt())
+                }
                 if (!editPending && cached?.complete != true) {
                     enqueueViewportRange(requested)
                 }
@@ -464,7 +509,10 @@ class TshSyntaxHighlighter(
         // complete document, regardless of its size.
         val snapshot = buffer.createTextSnapshot()
         structureRefreshPending.set(false)
-        synchronized(nativeEditLock) { pendingNativeEdits.clear() }
+        synchronized(nativeEditLock) {
+            pendingNativeEdits.clear()
+            pendingDisplayEdits.clear()
+        }
         val ticket = generation.incrementAndGet()
         parseJob?.cancel(CancellationException("Superseded by newer document snapshot"))
         largeSession?.let(::disposeSession)
@@ -1198,10 +1246,20 @@ class TshSyntaxHighlighter(
                     val reusableNativeRanges = engine.reusableNativeHighlightRanges(
                         active.nativeHandle
                     ).mapTo(HashSet()) { it.startByte to it.endByte }
-                    active.documentRevision.incrementAndGet()
-                    val invalidatedCaptureRanges = rebaseCaptureCaches(
-                        active.cacheSessionId, edits, reusableNativeRanges
-                    )
+                    // Publish cache rebasing and the matching edit epoch atomically
+                    // with styleLine's cache reads. Remove only this committed batch:
+                    // newer edits may already be queued against the resulting revision.
+                    val invalidatedCaptureRanges = synchronized(nativeEditLock) {
+                        active.documentRevision.incrementAndGet()
+                        val invalidated = rebaseCaptureCaches(
+                            active.cacheSessionId, edits, reusableNativeRanges
+                        )
+                        repeat(edits.size) {
+                            if (pendingDisplayEdits.isNotEmpty()) pendingDisplayEdits.removeAt(0)
+                        }
+                        active.appliedEditEpoch.set(editEpoch)
+                        invalidated
+                    }
                     active.rangeWork.clear()
                     synchronized(viewportRequestLock) {
                         pendingViewportRanges.clear()
@@ -1217,8 +1275,8 @@ class TshSyntaxHighlighter(
                             "reusableNativeViewports=${reusableNativeRanges.size} " +
                             "captureCacheEntries=${captureCache.size}"
                     )
-                    // Publish the new revision only after its stale cache entries are gone.
-                    active.appliedEditEpoch.set(editEpoch)
+                    // The current edit epoch is now committed; any later queued edit
+                    // remains pending and retains its own display transform.
                     if (generation.get() == active.ticket && largeSession === active) {
                         val documentBytes = active.lengthChars.get() * 2L
                         val dirtyByteRanges = dirtySnapshot.byteRanges.map { range ->
