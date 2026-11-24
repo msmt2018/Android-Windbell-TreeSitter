@@ -336,14 +336,12 @@ public:
                 }
 
                 if (!reusable) {
+                    forgetDependencies(next_key);
                     erase(found);
                     entry = next;
                     continue;
                 }
 
-                next_key.version = newVersion;
-                next_key.source_version = newSourceVersion;
-                next_key.partition_version = newPartitionVersion;
                 auto node = entries_.extract(found);
                 node.key() = next_key;
                 auto inserted = rebased.insert(std::move(node));
@@ -497,6 +495,17 @@ private:
             // Dependency metadata is an optimization. If it cannot be retained,
             // the range will be conservatively invalidated on the next edit.
         }
+    }
+
+    void forgetDependencies(const Key& key) noexcept {
+        auto found = dependency_entries_.find(key);
+        if (found == dependency_entries_.end()) return;
+        const size_t released = std::min(
+            dependency_used_bytes_, found->second.bytes);
+        dependency_used_bytes_ -= released;
+        if (shared_budget_) shared_budget_->release(released);
+        dependency_lru_.erase(found->second.lru);
+        dependency_entries_.erase(found);
     }
 
     using Iterator = typename std::unordered_map<Key, Entry, KeyHash>::iterator;
