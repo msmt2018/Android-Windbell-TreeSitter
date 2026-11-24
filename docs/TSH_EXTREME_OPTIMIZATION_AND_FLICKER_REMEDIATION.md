@@ -333,7 +333,7 @@ These reports remain open until the exact runtime and device acceptance gates be
 
 ### Updated open optimization targets
 
-- The painter still builds a boxed `MutableList<Int>` to rank all source spans for Android's 8-bit span priority metadata. A primitive index sort is a candidate next step, but it must preserve the full comparator and equal (priority, declarationOrder) rank grouping.
+- The boxed `MutableList<Int>` native-priority ranking was subsequently removed by commit `3a6b0f2b2543aa2a6f01f9eed2160e0c0fed4e3a`, which uses primitive `IntArray` heapsort while preserving the complete comparator and equal `(priority, declarationOrder)` rank grouping.
 - `CaptureIntervalIndex.appendQuery` still materializes one `HighlightSpan` data object per overlapping capture. The next architectural step is a primitive capture batch contract shared by the interval index and painter, rather than a lazy list whose getters recreate objects. Any batch must be immutable for the duration of painting and must not escape the cache entry's revision lifetime.
 - Cache eviction remains a storage event, not semantic invalidation. Do not introduce a second unaccounted capture copy while adding the primitive batch path; charge retained payloads to the existing shared budget and keep precise edit/dependency invalidation.
 
