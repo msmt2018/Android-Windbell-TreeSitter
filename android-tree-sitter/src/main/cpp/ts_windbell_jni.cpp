@@ -1873,6 +1873,10 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeApplyDocumentEdi
     } catch (...) {
         ts_tree_delete(next_tree);
         ts_tree_delete(edited_tree);
+        if (replacement_parser) {
+            replacement_parser.reset();
+            ts_parser_reset(document->parser);
+        }
         throw_illegal_state(env, "Unable to allocate native dirty-range transaction");
         return JNI_FALSE;
     }
