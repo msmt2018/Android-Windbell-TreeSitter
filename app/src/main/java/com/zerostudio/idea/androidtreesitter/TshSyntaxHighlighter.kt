@@ -1308,6 +1308,9 @@ class TshSyntaxHighlighter(
                             "firstDirtyByte=$dirtyStartByte firstDirtyLine=$dirtyStartLine " +
                             "reusableNativeViewports=${reusableNativeRanges.size} " +
                             "captureCacheEntries=$captureCacheEntriesBefore->${captureCache.size} " +
+                            "captureCacheBytes=${captureCache.bytesUsed} " +
+                            "captureCacheEvictions=${captureCache.evictionCount} " +
+                            "captureCacheRejected=${captureCache.rejectedAdmissionCount} " +
                             "invalidatedCaptureRanges=${invalidatedCaptureRanges.size} " +
                             "deferredDisplayRanges=${readyDisplayRanges.size} " +
                             "pendingDisplayEdits=${synchronized(nativeEditLock) { pendingDisplayEdits.size }}"
