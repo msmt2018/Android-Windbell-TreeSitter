@@ -149,6 +149,68 @@ internal class CaptureIntervalIndex private constructor(
         )
     }
 
+    /**
+     * Rebase packed captures across one UTF-16LE edit without materializing
+     * HighlightSpan objects. Captures intersecting replaced text (or crossing
+     * an insertion point) are dropped; captures after the edit are shifted.
+     * The input and output remain sorted by unsigned byte offset.
+     */
+    fun rebaseEdit(
+        editStartByte: Long,
+        oldEndByte: Long,
+        deltaBytes: Long
+    ): CaptureIntervalIndex? {
+        if (editStartByte < 0L || oldEndByte < editStartByte ||
+            oldEndByte > 0xFFFF_FFFFL) return null
+        if (deltaBytes == 0L && oldEndByte == editStartByte) return this
+
+        val nextStarts = IntArray(size)
+        val nextEnds = IntArray(size)
+        val nextPrefixMaxEnd = IntArray(size)
+        var outputSize = 0
+        var maximumEnd = 0L
+
+        for (index in 0 until size) {
+            val start = starts[index].toLong() and 0xFFFF_FFFFL
+            val end = ends[index].toLong() and 0xFFFF_FFFFL
+            val mappedStart: Long
+            val mappedEnd: Long
+
+            when {
+                end <= editStartByte -> {
+                    mappedStart = start
+                    mappedEnd = end
+                }
+                start >= oldEndByte -> {
+                    mappedStart = start + deltaBytes
+                    mappedEnd = end + deltaBytes
+                }
+                else -> continue
+            }
+
+            if (mappedStart < 0L || mappedEnd <= mappedStart ||
+                mappedEnd > 0xFFFF_FFFFL) return null
+
+            nextStarts[outputSize] = mappedStart.toInt()
+            nextEnds[outputSize] = mappedEnd.toInt()
+            if (mappedEnd > maximumEnd) maximumEnd = mappedEnd
+            nextPrefixMaxEnd[outputSize] = maximumEnd.toInt()
+            outputSize++
+        }
+
+        return CaptureIntervalIndex(
+            nextStarts.copyOf(outputSize),
+            nextEnds.copyOf(outputSize),
+            styleIds.copyOf(outputSize),
+            fontFlags.copyOf(outputSize),
+            priorities.copyOf(outputSize),
+            declarationOrders.copyOf(outputSize),
+            sources.copyOf(outputSize),
+            nextPrefixMaxEnd.copyOf(outputSize),
+            outputSize
+        )
+    }
+
     companion object {
         private const val NATIVE_CAPTURE_STRIDE = 6
 
