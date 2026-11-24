@@ -2978,54 +2978,57 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                     }
                 }
 
-                // Resolve positional and adjacent-sibling constraints from one
-                // parent child-list snapshot. This keeps both neighbor checks tied to
-                // the same current-node identity and preserves anonymous child positions.
+                // Child indexes require a parent-list scan, but adjacent siblings
+                // are already exposed by Tree-sitter in O(1). Keep those paths
+                // independent: sibling-only selectors must not scan every child
+                // or rediscover the current node by comparing copied TSNode values.
                 const bool needs_child_position =
                     ast_rule.child_index != UINT32_MAX ||
                     ast_rule.named_child_index != UINT32_MAX ||
                     ast_rule.first_child >= 0 ||
-                    ast_rule.last_child >= 0 ||
+                    ast_rule.last_child >= 0;
+                const bool needs_sibling_constraints =
                     ast_rule.previous_sibling_symbol != 0 ||
                     !ast_rule.previous_sibling_type.empty() ||
                     ast_rule.next_sibling_symbol != 0 ||
                     !ast_rule.next_sibling_type.empty();
-                if (needs_child_position) {
-                    // Child positions and adjacent siblings are properties of the
-                    // complete parent child-list, not just of the selected token.
+                if (needs_child_position || needs_sibling_constraints) {
                     append_ast_dependency(parent);
                     if (ts_node_is_null(parent)) continue;
-                    const uint32_t sibling_count = ts_node_child_count(parent);
+
+                    uint32_t sibling_count = 0;
                     uint32_t current_index = UINT32_MAX;
                     uint32_t current_named_index = UINT32_MAX;
-                    uint32_t named_seen = 0;
-                    for (uint32_t sibling_index = 0;
-                         sibling_index < sibling_count; ++sibling_index) {
-                        const TSNode sibling = ts_node_child(parent, sibling_index);
-                        if (ts_node_eq(sibling, node)) {
-                            current_index = sibling_index;
-                            if (ts_node_is_named(sibling)) {
-                                current_named_index = named_seen;
+                    if (needs_child_position) {
+                        sibling_count = ts_node_child_count(parent);
+                        uint32_t named_seen = 0;
+                        for (uint32_t sibling_index = 0;
+                             sibling_index < sibling_count; ++sibling_index) {
+                            const TSNode sibling = ts_node_child(parent, sibling_index);
+                            if (ts_node_eq(sibling, node)) {
+                                current_index = sibling_index;
+                                if (ts_node_is_named(sibling)) {
+                                    current_named_index = named_seen;
+                                }
+                                break;
                             }
-                            break;
+                            if (ts_node_is_named(sibling)) ++named_seen;
                         }
-                        if (ts_node_is_named(sibling)) ++named_seen;
+                        if (current_index == UINT32_MAX) continue;
+                        if (ast_rule.child_index != UINT32_MAX &&
+                            current_index != ast_rule.child_index) continue;
+                        if (ast_rule.named_child_index != UINT32_MAX &&
+                            current_named_index != ast_rule.named_child_index) continue;
+                        if (ast_rule.first_child >= 0 &&
+                            (current_index == 0u) != (ast_rule.first_child != 0)) continue;
+                        if (ast_rule.last_child >= 0 &&
+                            (current_index + 1u == sibling_count) !=
+                                (ast_rule.last_child != 0)) continue;
                     }
-                    if (current_index == UINT32_MAX) continue;
-                    if (ast_rule.child_index != UINT32_MAX &&
-                        current_index != ast_rule.child_index) continue;
-                    if (ast_rule.named_child_index != UINT32_MAX &&
-                        current_named_index != ast_rule.named_child_index) continue;
-                    if (ast_rule.first_child >= 0 &&
-                        (current_index == 0u) != (ast_rule.first_child != 0)) continue;
-                    if (ast_rule.last_child >= 0 &&
-                        (current_index + 1u == sibling_count) !=
-                            (ast_rule.last_child != 0)) continue;
 
                     if (ast_rule.previous_sibling_symbol != 0 ||
                         !ast_rule.previous_sibling_type.empty()) {
-                        if (current_index == 0u) continue;
-                        const TSNode previous = ts_node_child(parent, current_index - 1u);
+                        const TSNode previous = ts_node_prev_sibling(node);
                         if (!tshAstNodeMatchesSelector(
                                 *grammar, previous,
                                 ast_rule.previous_sibling_symbol,
@@ -3033,8 +3036,7 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                     }
                     if (ast_rule.next_sibling_symbol != 0 ||
                         !ast_rule.next_sibling_type.empty()) {
-                        if (current_index + 1u >= sibling_count) continue;
-                        const TSNode next = ts_node_child(parent, current_index + 1u);
+                        const TSNode next = ts_node_next_sibling(node);
                         if (!tshAstNodeMatchesSelector(
                                 *grammar, next,
                                 ast_rule.next_sibling_symbol,
