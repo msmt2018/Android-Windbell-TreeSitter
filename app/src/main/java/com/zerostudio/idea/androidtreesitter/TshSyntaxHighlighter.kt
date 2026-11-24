@@ -1005,34 +1005,26 @@ class TshSyntaxHighlighter(
         edits: List<NativeEdit>,
         reusableNativeRanges: Set<Pair<Long, Long>>
     ): List<Pair<Long, Long>> {
-        val captureEntries = captureCache.snapshotMostRecentEntries(
-            { key, _ -> key.sessionId == sessionId }, Int.MAX_VALUE
-        )
-        val rebased = HashMap<CaptureRangeKey, Pair<CaptureRangeKey, CaptureIntervalIndex>?>()
         val invalidatedRanges = ArrayList<Pair<Long, Long>>()
-        for ((key, index) in captureEntries) {
-            val next = rebaseCachedEntry(key, index, edits, reusableNativeRanges)
-            rebased[key] = next
-            if (next == null) {
-                var startByte = key.startUtf16.toLong() * 2L
-                var endByte = key.endUtf16.toLong() * 2L
-                for (edit in edits) {
-                    val mapped = transformViewportRangeForInvalidation(
-                        startByte, endByte, edit
-                    )
-                    startByte = mapped.first
-                    endByte = mapped.second
+        captureCache.transformEntries(
+            predicate = { key, _ -> key.sessionId == sessionId },
+            transform = { key, index ->
+                val next = rebaseCachedEntry(key, index, edits, reusableNativeRanges)
+                if (next == null) {
+                    var startByte = key.startUtf16.toLong() * 2L
+                    var endByte = key.endUtf16.toLong() * 2L
+                    for (edit in edits) {
+                        val mapped = transformViewportRangeForInvalidation(
+                            startByte, endByte, edit
+                        )
+                        startByte = mapped.first
+                        endByte = mapped.second
+                    }
+                    if (startByte < endByte) invalidatedRanges += startByte to endByte
                 }
-                if (startByte < endByte) invalidatedRanges += startByte to endByte
+                next
             }
-        }
-
-        captureCache.invalidate { key, _ -> key.sessionId == sessionId }
-        for ((key, _) in captureEntries) {
-            rebased[key]?.let { (nextKey, nextIndex) ->
-                captureCache.put(nextKey, nextIndex)
-            }
-        }
+        )
         return invalidatedRanges
     }
 
@@ -1170,13 +1162,29 @@ class TshSyntaxHighlighter(
                     // Publish the new revision only after its stale cache entries are gone.
                     active.appliedEditEpoch.set(editEpoch)
                     if (generation.get() == active.ticket && largeSession === active) {
+                        val documentBytes = active.lengthChars.get() * 2L
                         val dirtyByteRanges = dirtySnapshot.byteRanges.map { range ->
-                            val end = if (range.endByte > range.startByte) {
-                                range.endByte
+                            if (range.endByte > range.startByte) {
+                                range.startByte to range.endByte
+                            } else if (range.startByte < documentBytes) {
+                                range.startByte to minOf(documentBytes, range.startByte + 2L)
                             } else {
-                                minOf(active.lengthChars.get() * 2L, range.startByte + 2L)
+                                maxOf(0L, range.startByte - 2L) to range.startByte
                             }
-                            range.startByte to end
+                        }.ifEmpty {
+                            // Preserve a correct local redraw even if the native
+                            // parser reports no byte interval for a boundary-only edit.
+                            edits.map { edit ->
+                                val insertedBytes = edit.insertedUtf16Le.size.toLong()
+                                when {
+                                    insertedBytes > 0L ->
+                                        edit.startByte to (edit.startByte + insertedBytes)
+                                    edit.startByte > 0L ->
+                                        (edit.startByte - 2L) to edit.startByte
+                                    else ->
+                                        0L to minOf(documentBytes, 2L)
+                                }
+                            }
                         }
                         invalidateEditedStyles(
                             active, dirtyByteRanges, invalidatedCaptureRanges
