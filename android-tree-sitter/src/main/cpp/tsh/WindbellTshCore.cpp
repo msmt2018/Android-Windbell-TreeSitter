@@ -1256,7 +1256,7 @@ void WindbellEngine::matchBlockRecursive(
     if (block_checkpoints && search_floor == text_start) {
         const RegexBlockCheckpoint* nearest = nullptr;
         for (const auto& checkpoint : *block_checkpoints) {
-            if (checkpoint.rule == &rule &&
+            if (checkpoint.declaration_order == rule.declaration_order &&
                 checkpoint.grammar_revision == grammar_revision &&
                 checkpoint.source_version == source_version &&
                 checkpoint.partition_version == partition_version &&
@@ -1357,14 +1357,14 @@ void WindbellEngine::matchBlockRecursive(
         auto existing = std::find_if(
             block_checkpoints->begin(), block_checkpoints->end(),
             [&](const RegexBlockCheckpoint& checkpoint) {
-                return checkpoint.rule == &rule &&
+                return checkpoint.declaration_order == rule.declaration_order &&
                     checkpoint.byte_offset == viewport_start_byte &&
                     checkpoint.grammar_revision == grammar_revision &&
                     checkpoint.source_version == source_version &&
                     checkpoint.partition_version == partition_version;
             });
         const RegexBlockCheckpoint checkpoint{
-            &rule, viewport_start_byte, active_start_byte,
+            rule.declaration_order, viewport_start_byte, active_start_byte,
             grammar_revision, source_version, partition_version
         };
         if (existing != block_checkpoints->end()) {
