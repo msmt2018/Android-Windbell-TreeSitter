@@ -82,9 +82,11 @@ internal class CaptureRangeLookupIndex {
     ): List<CaptureRangeKey> {
         if (sessionId < 0L || startUtf16 < 0 || endUtf16 <= startUtf16) return emptyList()
         return synchronized(lock) {
+            // collectOverlapping performs an in-order traversal of this BST, so
+            // results are already ordered by (sessionId, startUtf16, endUtf16).
+            // Sorting here repeated O(k log k) work on every viewport/cache probe.
             ArrayList<CaptureRangeKey>().also { output ->
                 collectOverlapping(root, sessionId, startUtf16, endUtf16, output)
-                output.sortWith(compareBy<CaptureRangeKey> { it.startUtf16 }.thenBy { it.endUtf16 })
             }
         }
     }
@@ -121,13 +123,25 @@ internal class CaptureRangeLookupIndex {
     ) {
         if (node == null || node.maxEnd <= start ||
             sessionId < node.minSession || sessionId > node.maxSession) return
-        collectOverlapping(node.left, sessionId, start, end, output)
         val key = node.key
+
+        // The tree is ordered by (sessionId, startUtf16, endUtf16). A left
+        // subtree cannot contain the requested session when this node belongs
+        // to an earlier session. Likewise, once this node is beyond the
+        // requested session/range, its entire right subtree is beyond it too.
+        // Keep maxEnd pruning above for long/nested intervals that begin earlier
+        // but still overlap the requested viewport.
+        if (key.sessionId >= sessionId) {
+            collectOverlapping(node.left, sessionId, start, end, output)
+        }
         if (key.sessionId == sessionId &&
             key.startUtf16 < end && key.endUtf16 > start) {
             output += key
         }
-        collectOverlapping(node.right, sessionId, start, end, output)
+        if (key.sessionId < sessionId ||
+            (key.sessionId == sessionId && key.startUtf16 < end)) {
+            collectOverlapping(node.right, sessionId, start, end, output)
+        }
     }
 
     private fun find(node: Node?, sessionId: Long, start: Int, end: Int): CaptureRangeKey? {
