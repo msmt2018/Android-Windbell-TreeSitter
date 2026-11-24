@@ -352,9 +352,7 @@ class TshSyntaxHighlighter(
             if (boundedStart >= boundedEnd) return@synchronized true
             val key = CaptureRangeKey(
                 active.cacheSessionId, boundedStart.toInt(), boundedEnd.toInt())
-            if (!editPending && queryCachedCaptures(
-                    key, boundedStart.toInt(), boundedEnd.toInt()
-                ) != null) {
+            if (!editPending && hasCachedCoverage(key)) {
                 return@synchronized true
             }
             if (!editPending) enqueueViewportRange(key)
