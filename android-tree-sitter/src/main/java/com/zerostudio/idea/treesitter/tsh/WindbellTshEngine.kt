@@ -590,6 +590,7 @@ class WindbellTshEngine private constructor() {
 
             data class ClippedCapture(
                 val span: HighlightSpan,
+                val sourceIndex: Int,
                 val start: Int,
                 val end: Int
             )
@@ -613,8 +614,35 @@ class WindbellTshEngine private constructor() {
                 .thenBy { it.styleId }
                 .thenBy { it.fontFlags }
 
+            // Convert the full native ordering into Android's 8-bit span
+            // priority domain once per projection. Equal (priority, declaration)
+            // pairs deliberately share a rank; lower-ranked captures receive
+            // smaller Android priorities. The sweep still resolves overlaps, so
+            // priority metadata is not relied upon to choose paint runs.
+            val rankedIndices = spans.indices.toMutableList()
+            rankedIndices.sortWith { left, right ->
+                val order = nativeOrder.compare(spans[left], spans[right])
+                if (order != 0) order else left.compareTo(right)
+            }
+            val capturePriorityFlags = IntArray(spans.size)
+            var rank = -1
+            var previousPriority: Int? = null
+            var previousDeclaration: Int? = null
+            for (index in rankedIndices) {
+                val span = spans[index]
+                if (previousPriority != span.priority ||
+                    previousDeclaration != span.declarationOrder) {
+                    rank++
+                    previousPriority = span.priority
+                    previousDeclaration = span.declarationOrder
+                }
+                val androidPriority = (255 - rank).coerceAtLeast(1)
+                capturePriorityFlags[index] =
+                    androidPriority shl Spannable.SPAN_PRIORITY_SHIFT
+            }
+
             val captures = ArrayList<ClippedCapture>(spans.size)
-            for (span in spans) {
+            for ((sourceIndex, span) in spans.withIndex()) {
                 val globalStart = span.startByteUnsigned ushr 1
                 val globalEnd = span.endByteUnsigned ushr 1
                 val localStart = globalStart - documentOffset.toLong()
@@ -623,7 +651,7 @@ class WindbellTshEngine private constructor() {
                 val clippedEnd = minOf(localEnd, visibleEnd.toLong())
                 if (clippedStart >= clippedEnd) continue
                 captures += ClippedCapture(
-                    span, clippedStart.toInt(), clippedEnd.toInt()
+                    span, sourceIndex, clippedStart.toInt(), clippedEnd.toInt()
                 )
             }
             if (captures.isEmpty()) return@synchronized
@@ -636,6 +664,7 @@ class WindbellTshEngine private constructor() {
             }
             val activeForeground = java.util.TreeSet(compareCaptureIndices)
             val activeBackground = java.util.TreeSet(compareCaptureIndices)
+            val activeFontCaptures = java.util.TreeSet(compareCaptureIndices)
             val fontFlagCounts = IntArray(5)
             var activeFontFlags = 0
             val captureStyles = arrayOfNulls<StylePalette>(captures.size)
@@ -675,7 +704,8 @@ class WindbellTshEngine private constructor() {
                 runEnd: Int,
                 foregroundIndex: Int?,
                 backgroundIndex: Int?,
-                fontFlags: Int
+                fontFlags: Int,
+                fontPriorityFlags: Int
             ) {
                 if (runStart >= runEnd) return
                 val flags = Spannable.SPAN_EXCLUSIVE_EXCLUSIVE
@@ -688,7 +718,8 @@ class WindbellTshEngine private constructor() {
                         else -> return@let
                     }
                     spannable.setSpan(
-                        BackgroundColorSpan(background), runStart, runEnd, flags
+                        BackgroundColorSpan(background), runStart, runEnd,
+                        flags or capturePriorityFlags[captures[index].sourceIndex]
                     )
                 }
                 foregroundIndex?.let { index ->
@@ -700,25 +731,30 @@ class WindbellTshEngine private constructor() {
                         else -> return@let
                     }
                     spannable.setSpan(
-                        ForegroundColorSpan(color), runStart, runEnd, flags
+                        ForegroundColorSpan(color), runStart, runEnd,
+                        flags or capturePriorityFlags[captures[index].sourceIndex]
                     )
                 }
                 if ((fontFlags and 0x01) != 0) {
                     spannable.setSpan(
-                        StyleSpan(android.graphics.Typeface.BOLD), runStart, runEnd, flags
+                        StyleSpan(android.graphics.Typeface.BOLD), runStart, runEnd,
+                        flags or fontPriorityFlags
                     )
                 }
                 if ((fontFlags and 0x02) != 0) {
                     spannable.setSpan(
-                        StyleSpan(android.graphics.Typeface.ITALIC), runStart, runEnd, flags
+                        StyleSpan(android.graphics.Typeface.ITALIC), runStart, runEnd,
+                        flags or fontPriorityFlags
                     )
                 }
                 if ((fontFlags and 0x04) != 0) {
-                    spannable.setSpan(UnderlineSpan(), runStart, runEnd, flags)
+                    spannable.setSpan(
+                        UnderlineSpan(), runStart, runEnd, flags or fontPriorityFlags
+                    )
                 }
                 if ((fontFlags and 0x08) != 0) {
                     spannable.setSpan(
-                        StrikethroughSpan(), runStart, runEnd, flags
+                        StrikethroughSpan(), runStart, runEnd, flags or fontPriorityFlags
                     )
                 }
                 if ((fontFlags and 0x10) != 0) {
@@ -730,7 +766,12 @@ class WindbellTshEngine private constructor() {
                 }
             }
 
-            fun updateActiveFontFlags(flags: Int, adding: Boolean) {
+            fun updateActiveFontFlags(index: Int, adding: Boolean) {
+                val flags = captureFontFlags[index]
+                if (flags != 0) {
+                    if (adding) activeFontCaptures.add(index)
+                    else activeFontCaptures.remove(index)
+                }
                 for (bitIndex in 0 until 5) {
                     val bit = 1 shl bitIndex
                     if ((flags and bit) == 0) continue
@@ -751,11 +792,13 @@ class WindbellTshEngine private constructor() {
             var pendingForeground: Int? = null
             var pendingBackground: Int? = null
             var pendingFontFlags = 0
+            var pendingFontPriorityFlags = 0
             fun flushPendingRun() {
                 if (pendingStart >= 0) {
                     paintRun(
                         pendingStart, pendingEnd,
-                        pendingForeground, pendingBackground, pendingFontFlags
+                        pendingForeground, pendingBackground,
+                        pendingFontFlags, pendingFontPriorityFlags
                     )
                 }
                 pendingStart = -1
@@ -763,16 +806,20 @@ class WindbellTshEngine private constructor() {
                 pendingForeground = null
                 pendingBackground = null
                 pendingFontFlags = 0
+                pendingFontPriorityFlags = 0
             }
             fun appendResolvedRun(startOffset: Int, endOffset: Int) {
                 if (startOffset >= endOffset) return
                 val foreground = activeForeground.firstOrNull()
                 val background = activeBackground.firstOrNull()
                 val fontFlags = activeFontFlags
+                val fontPriorityFlags = activeFontCaptures.firstOrNull()
+                    ?.let { capturePriorityFlags[captures[it].sourceIndex] } ?: 0
                 if (pendingStart >= 0 && pendingEnd == startOffset &&
                     pendingForeground == foreground &&
                     pendingBackground == background &&
-                    pendingFontFlags == fontFlags) {
+                    pendingFontFlags == fontFlags &&
+                    pendingFontPriorityFlags == fontPriorityFlags) {
                     pendingEnd = endOffset
                 } else {
                     flushPendingRun()
@@ -781,6 +828,7 @@ class WindbellTshEngine private constructor() {
                     pendingForeground = foreground
                     pendingBackground = background
                     pendingFontFlags = fontFlags
+                    pendingFontPriorityFlags = fontPriorityFlags
                 }
             }
 
@@ -801,7 +849,7 @@ class WindbellTshEngine private constructor() {
                     val index = events[eventIndex].captureIndex
                     if (hasForeground[index]) activeForeground.remove(index)
                     if (hasBackground[index]) activeBackground.remove(index)
-                    updateActiveFontFlags(captureFontFlags[index], adding = false)
+                    updateActiveFontFlags(index, adding = false)
                     eventIndex++
                 }
                 while (eventIndex < events.size &&
@@ -810,7 +858,7 @@ class WindbellTshEngine private constructor() {
                     val index = events[eventIndex].captureIndex
                     if (hasForeground[index]) activeForeground.add(index)
                     if (hasBackground[index]) activeBackground.add(index)
-                    updateActiveFontFlags(captureFontFlags[index], adding = true)
+                    updateActiveFontFlags(index, adding = true)
                     eventIndex++
                 }
                 cursor = boundary
