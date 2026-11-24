@@ -306,3 +306,17 @@ These reports remain open until the exact runtime and device acceptance gates be
 
 - Workflow #1845 (run ID `45507572731`) was queued for head `0706804d169b5c89beea5a34cdca3889b2023ca5`; it does not include the primitive-event commits above and cannot validate them.
 - The current PR head after primitive-event implementation and regression test is `0e30312114519d8e7c0d0705040816412e9ae741`. A new workflow result for this exact head is required before marking this optimization verified. Earlier queued/cancelled workflow results must not be reused as evidence.
+
+
+## 2026-11-25: remove per-capture clipped wrapper allocation
+
+- The painter's packed boundary-event change removed the two event objects per capture, but inspection showed that it still built a `ClippedCapture` data object for every capture intersecting the line. This wrapper existed only to retain the source-span index and clipped start/end offsets; it carried no independent semantic state.
+- Commit `fcd07e09e22dd5e4bc6b47af93f1bea6b3d1a687` replaces the wrapper list with three primitive parallel arrays: source capture indices, clipped starts, and clipped ends, plus an explicit valid-entry count. The active ordered sets continue to store compact indices, and native precedence is resolved against the original immutable `HighlightSpan` list.
+- Commit `397d58415e5cdb70b890d40fca05f2bfeee35f8b` removes an additional per-line palette-style reference array; the painter resolves the palette entry from the original source capture when it emits a foreground/background run. This trades a small number of palette lookups per emitted run for one fewer array allocation and initialization per line.
+- These changes remove per-capture wrapper-object allocation and one per-span reference-array allocation from the line paint path. The three primitive arrays are still allocated per invocation and sized to the incoming span list; this is bounded by the current viewport query result, but reuse or scratch-buffer pooling is not introduced because it would require explicit concurrency and memory-accounting rules.
+- Existing native ordering, dark/light color fallback, and packed end-before-start boundary ordering are retained. The adjacent red/green boundary regression remains the key no-bleed test. Verification is pending on the exact current head; do not infer performance percentages without allocation profiling and same-device timing.
+
+### Follow-up optimization targets
+
+- The painter still allocates a boxed `MutableList<Int>` for native-priority ranking and boxed indices in five `TreeSet` instances. These are now the next obvious allocation sources, but replacing them requires preserving exact total ordering and per-font-attribute winner selection. Do not replace them with a single shared winner because bold/italic/underline/strike-through may have different native winners.
+- The Kotlin capture projection still materializes `HighlightSpan` objects from the interval index. A future compact capture view should avoid object-per-capture materialization without lazy getters that allocate on every access, and must keep immutable revision identity and byte accounting.
