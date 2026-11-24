@@ -587,28 +587,32 @@ class TshSyntaxHighlighter(
         startUtf16: Int,
         endUtf16: Int
     ): List<WindbellTshEngine.HighlightSpan>? {
-        val entries = ArrayList<CaptureIntervalIndex>()
-        for (cachedKey in captureRangeIndex.findOverlappingRanges(
-            key.sessionId, startUtf16, endUtf16
-        )) {
-            val index = captureCache.get(cachedKey)
-            if (index != null) entries += index
-            else captureRangeIndex.remove(cachedKey)
-        }
         val keys = captureRangeIndex.findOverlappingRanges(
             key.sessionId, startUtf16, endUtf16
         )
+        if (keys.isEmpty()) return null
+
+        val entries = ArrayList<CaptureIntervalIndex>(keys.size)
         var coveredUntil = startUtf16
         for (cachedKey in keys) {
             if (cachedKey.startUtf16 > coveredUntil) return null
+            val index = captureCache.get(cachedKey)
+            if (index == null) {
+                captureRangeIndex.remove(cachedKey)
+                continue
+            }
+            entries += index
             coveredUntil = maxOf(coveredUntil, cachedKey.endUtf16)
             if (coveredUntil >= endUtf16) break
         }
         if (coveredUntil < endUtf16) return null
 
-        val spans = LinkedHashSet<WindbellTshEngine.HighlightSpan>()
+        // Cache admission stores only uncovered, half-open gaps and every native
+        // result is clipped to that gap. Therefore entries cannot duplicate the
+        // same capture; append directly instead of allocating a LinkedHashSet.
+        val spans = ArrayList<WindbellTshEngine.HighlightSpan>()
         entries.forEach { it.appendQuery(startUtf16, endUtf16, spans) }
-        return spans.toList()
+        return spans
     }
 
     /** Source intervals already represented by the capture cache. */
