@@ -2937,7 +2937,9 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                                             }
                                             if (structural) {
                                                 operands.expected_types.emplace_back(literal, literal_length);
-                                            } else {
+                                            } else if (!regex_match) {
+                                                // Regex text is owned by its compiled Oniguruma object;
+                                                // retaining a second UTF-16 copy would only waste memory.
                                                 std::vector<uint16_t> decoded;
                                                 if (!decodePatternUtf8ToUtf16(
                                                         std::string(literal, literal_length), decoded)) {
