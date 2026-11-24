@@ -268,6 +268,69 @@ class TshEditorPipelineRenderingTest {
     }
 
     @Test
+    fun packedPainterEventsKeepAdjacentCaptureBoundariesDisjoint() {
+        val engine = WindbellTshEngine.instance
+        val extension = "packed-boundary-events"
+        val dsl = """
+            tsh 2 {
+                language { id: "packed-boundary-events" extensions: [".pbe"] }
+                styles {
+                    first { scope: "keyword.control" }
+                    second { scope: "string.quoted" }
+                }
+                schemes {
+                    plain {
+                        light [ first: #FFFF0000, second: #FF00FF00 ]
+                        dark [ first: #FFFF0000, second: #FF00FF00 ]
+                    }
+                }
+                defaultScheme: "plain"
+            }
+        """.trimIndent()
+        assertTrue("Adjacent-boundary fixture must compile: ${engine.lastCompileDiagnostics}",
+            engine.loadTshSource(extension, dsl, null))
+        assertTrue(engine.ensurePalette(extension))
+        engine.setAppearance(extension, false)
+        try {
+            val catalog = engine.getStyleCatalog(extension)
+            val firstId = catalog.first { it.name == "first" }.styleId
+            val secondId = catalog.first { it.name == "second" }.styleId
+            val source = "AB"
+            val captures = listOf(
+                WindbellTshEngine.HighlightSpan(
+                    startByte = 0, endByte = 2, styleId = firstId, fontFlags = 0,
+                    priority = 10, declarationOrder = 0, source = 0
+                ),
+                WindbellTshEngine.HighlightSpan(
+                    startByte = 2, endByte = 4, styleId = secondId, fontFlags = 0,
+                    priority = 10, declarationOrder = 1, source = 0
+                )
+            )
+            val styled = SpannableStringBuilder(source)
+            engine.applyHighlightSpansToSpannable(
+                spans = captures,
+                documentOffset = 0,
+                text = source,
+                extension = extension,
+                spannable = styled
+            )
+            val foreground = styled.getSpans(
+                0, source.length, ForegroundColorSpan::class.java
+            )
+            val first = foreground.single {
+                styled.getSpanStart(it) == 0 && styled.getSpanEnd(it) == 1
+            }
+            val second = foreground.single {
+                styled.getSpanStart(it) == 1 && styled.getSpanEnd(it) == 2
+            }
+            assertEquals(0xFFFF0000.toInt(), first.foregroundColor)
+            assertEquals(0xFF00FF00.toInt(), second.foregroundColor)
+        } finally {
+            engine.clearAppearanceOverride(extension)
+        }
+    }
+
+    @Test
     fun nestedTshCapturePriorityReachesFinalCanvasColor() {
         val engine = WindbellTshEngine.instance
         val dsl = """
