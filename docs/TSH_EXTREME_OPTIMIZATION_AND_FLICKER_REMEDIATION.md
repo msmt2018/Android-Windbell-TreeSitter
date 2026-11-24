@@ -231,3 +231,10 @@ These reports remain open until the exact runtime and device acceptance gates be
 - The per-match evaluator reads precompiled operations and operand arrays instead of allocating nested vectors and retranscoding identical literals for every AST match.
 - Existing equality, membership, contains, structural, and regex predicate evaluation branches remain in place. This changes operand preparation, not predicate semantics.
 - Verification pending: native host tests, JVM tests, Release build, and Android API 26/30/35 rendering tests. No speedup multiplier is claimed without same-device measurements.
+
+### 2026-11-25 cache-churn and viewport-latency observability
+
+- TshSyntaxHighlighter now emits a rate-limited pipelineMetrics record with styled-line calls/time, capture-cache hit/miss counts, native range count, native mutex wait time, native query time, Kotlin capture-cache bytes/entries, LRU evictions, and rejected admissions.
+- These counters are diagnostic only and do not alter cache admission, invalidation, query scheduling, or rendering decisions.
+- Use the record to distinguish repeated native query work, Kotlin cache pressure/eviction, lock contention, and repeated line-span projection work. Correlate with native TSHCache editRebase logs to separate semantic invalidation from capacity loss.
+- The metrics are cumulative for the highlighter instance except process-global capture-cache size/eviction/rejection counters. Compare deltas over controlled cold-open, scroll-away/back, and theme-switch runs.
