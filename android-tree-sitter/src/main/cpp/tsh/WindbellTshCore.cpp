@@ -3206,7 +3206,6 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
             // full-sized capture vector. Any incomplete candidate-root traversal
             // rolls the entire block back before the result can be published.
             const size_t query_span_checkpoint = macro_spans.size();
-            uint64_t match_order = 0;
             uint64_t accepted_match_count = 0;
             bool query_incomplete = false;
             for (TSNode execution_root : execution_roots) {
@@ -3228,7 +3227,6 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                         !pattern_metadata->second.enabled) {
                         continue;
                     }
-                    const uint64_t current_order = match_order++;
                     // PieceTree-backed documents expose no contiguous UTF-16
                     // pointer. Predicate helpers must read their bounded source
                     // windows rather than dereference the non-contiguous sentinel.
@@ -3269,8 +3267,14 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                         span.priority = pattern_priority;
                         span.allow_overlap = pattern_metadata != native_query.pattern_metadata.end() &&
                             pattern_metadata->second.allow_overlap ? 1u : 0u;
-                        const uint64_t order = static_cast<uint64_t>(native_query.declaration_order) +
-                            pattern_order + current_order + capture_index;
+                        // Declaration precedence is a property of the compiled
+                        // query/pattern/capture, not of how many earlier matches
+                        // happened to fall inside this viewport. Using match order
+                        // made the same capture receive different precedence in
+                        // full-document and partial-range execution.
+                        const uint64_t order =
+                            static_cast<uint64_t>(native_query.declaration_order) +
+                            pattern_order + capture_index;
                         span.declaration_order = static_cast<uint32_t>(
                             std::min<uint64_t>(order, UINT32_MAX));
                         macro_spans.push_back(span);
