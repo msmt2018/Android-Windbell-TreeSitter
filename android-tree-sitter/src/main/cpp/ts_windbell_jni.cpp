@@ -2371,9 +2371,10 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
             HIGHLIGHT_DEPENDENCY_BOUNDARY_SENSITIVE
         });
     }
-    // Stateful and document-context Regex can propagate lexical state beyond
-    // the viewport. Keep one global dependency when the core did not
-    // already publish a verified document-wide envelope.
+    // Uncheckpointed stateful/context-dependent Regex can propagate lexical
+    // state beyond a verified viewport envelope. Bounded BLOCK delimiters now
+    // publish checkpoint-based dependencies from the last known delimiter state,
+    // so they do not force every cached viewport to become document-wide.
     const bool has_regex_state_dependency = std::any_of(
         cache_value.dependencies.begin(), cache_value.dependencies.end(),
         [](const HighlightDependencyRange& dependency) {
@@ -2481,7 +2482,7 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
         LOGV("TSHPerf",
              "nativeHighlightDocument cache=miss range=%u..%u documentBytes=%llu "
              "spans=%zu regexSnapshotMs=%lld coreMs=%lld encodeMs=%lld totalMs=%lld "
-             "cacheEntries=%zu cacheBytes=%llu",
+             "cacheEntries=%zu cacheBytes=%llu blockCheckpoints=%zu",
              requested_start, requested_end,
              static_cast<unsigned long long>(total_bytes), highlight_span_count,
              static_cast<long long>(regex_snapshot_ms),
@@ -2489,7 +2490,8 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
              static_cast<long long>(elapsed_ms(encode_started, encode_finished)),
              static_cast<long long>(elapsed_ms(native_highlight_started, native_highlight_finished)),
              document->highlight_cache.size(),
-             static_cast<unsigned long long>(document->highlight_cache.usedBytes()));
+             static_cast<unsigned long long>(document->highlight_cache.usedBytes()),
+             document->regex_block_checkpoints.size());
     }
 #endif
     return encoded;
