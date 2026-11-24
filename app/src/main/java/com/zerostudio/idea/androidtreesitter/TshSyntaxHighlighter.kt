@@ -602,9 +602,10 @@ class TshSyntaxHighlighter(
         )
         if (keys.isEmpty()) return null
 
-        val entries = ArrayList<CaptureIntervalIndex>(keys.size)
         var coveredUntil = startUtf16
         var complete = true
+        var foundEntry = false
+        val spans = ArrayList<WindbellTshEngine.HighlightSpan>()
         for (cachedKey in keys) {
             if (cachedKey.startUtf16 > coveredUntil) complete = false
             val index = captureCache.get(cachedKey)
@@ -612,22 +613,21 @@ class TshSyntaxHighlighter(
                 captureRangeIndex.remove(cachedKey)
                 continue
             }
-            entries += index
+            foundEntry = true
+            index.appendQuery(startUtf16, endUtf16, spans)
             if (cachedKey.endUtf16 > coveredUntil) {
                 coveredUntil = cachedKey.endUtf16
             }
             if (coveredUntil >= endUtf16) break
         }
         if (coveredUntil < endUtf16) complete = false
-        if (entries.isEmpty()) return null
+        if (!foundEntry) return null
 
         // A partial cache hit is still useful: preserve and paint the captures
         // already known for this line while the missing gaps are processed. Treat
         // incomplete coverage as not-ready for structure queries, but never turn
         // previously captured colors into a plain-text line just because another
         // part of the same viewport is still being captured.
-        val spans = ArrayList<WindbellTshEngine.HighlightSpan>()
-        entries.forEach { it.appendQuery(startUtf16, endUtf16, spans) }
         return CaptureQueryResult(spans, complete)
     }
 
