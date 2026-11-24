@@ -345,27 +345,41 @@ public:
                 else rebased_dependency_lru.erase(lru);
             }
             const size_t previous_dependency_bytes = dependency_used_bytes_;
-            if (rebased_dependency_bytes > previous_dependency_bytes) {
+            bool additional_shared_budget_acquired = false;
+            if (rebased_dependency_bytes > previous_dependency_bytes && shared_budget_) {
                 const size_t additional = rebased_dependency_bytes - previous_dependency_bytes;
-                if (shared_budget_ && !shared_budget_->tryAcquire(additional)) {
-                    stats.reset_due_shared_budget = true;
-                    stats.dependency_budget_rejected += rebased_dependencies.size();
-                    dependency_entries_.clear();
-                    dependency_lru_.clear();
-                    dependency_used_bytes_ = 0;
-                    shared_budget_->release(previous_dependency_bytes);
-                } else {
-                    dependency_entries_.swap(rebased_dependencies);
-                    dependency_lru_.swap(rebased_dependency_lru);
-                    dependency_used_bytes_ = rebased_dependency_bytes;
+                additional_shared_budget_acquired = shared_budget_->tryAcquire(additional);
+                if (!additional_shared_budget_acquired) {
+                    // Rebase temporarily holds both the old and new maps. Requiring
+                    // the shared budget to reserve the entire duplicate would turn
+                    // transient peak pressure into a full dependency-ledger reset.
+                    // Keep the hottest rebased proofs that fit within the old
+                    // reservation instead: the list is oldest-first, so evict only
+                    // its front until the replacement can reuse the existing bytes.
+                    while (rebased_dependency_bytes > previous_dependency_bytes &&
+                           !rebased_dependency_lru.empty()) {
+                        const Key oldest = rebased_dependency_lru.front();
+                        rebased_dependency_lru.pop_front();
+                        auto victim = rebased_dependencies.find(oldest);
+                        if (victim == rebased_dependencies.end()) continue;
+                        const size_t released = std::min(
+                            rebased_dependency_bytes, victim->second.bytes);
+                        rebased_dependency_bytes -= released;
+                        rebased_dependencies.erase(victim);
+                        ++stats.dependency_budget_rejected;
+                    }
                 }
-            } else {
-                dependency_entries_.swap(rebased_dependencies);
-                dependency_lru_.swap(rebased_dependency_lru);
-                dependency_used_bytes_ = rebased_dependency_bytes;
-                if (shared_budget_) {
-                    shared_budget_->release(previous_dependency_bytes - rebased_dependency_bytes);
-                }
+            }
+
+            dependency_entries_.swap(rebased_dependencies);
+            dependency_lru_.swap(rebased_dependency_lru);
+            dependency_used_bytes_ = rebased_dependency_bytes;
+            if (shared_budget_ && !additional_shared_budget_acquired) {
+                // No additional reservation was needed (or available). Reuse the
+                // previous reservation and release only the bytes no longer retained.
+                shared_budget_->release(
+                    previous_dependency_bytes - std::min(
+                        previous_dependency_bytes, rebased_dependency_bytes));
             }
 
             rebased.reserve(entries_.size());
