@@ -2203,29 +2203,54 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
         return std::any_of(rule.nested_rules.begin(), rule.nested_rules.end(),
             [&](const CompiledRegexRule &nested) { return self(self, nested); });
     };
-    const bool has_regex_state = !grammar->regex_states.empty();
-    const bool source_has_regex = grammar &&
-        (!grammar->regex_rules.empty() || has_regex_state ||
-         std::any_of(grammar->native_queries.begin(), grammar->native_queries.end(),
-            [](const NativeQueryProgram &query) { return !query.predicate_regexes.empty(); }) ||
-         std::any_of(grammar->ast_selector_rules.begin(), grammar->ast_selector_rules.end(),
-            [](const AstSelectorRule &rule) { return rule.has_text_regex; }));
-    const bool source_requires_contiguous_regex = grammar &&
+    const auto has_enabled_regex_rule =
+        [](const auto &self, const CompiledRegexRule &rule) -> bool {
+            if (!rule.enabled) return false;
+            if (rule.onig_start != nullptr) return true;
+            return std::any_of(rule.nested_rules.begin(), rule.nested_rules.end(),
+                [&](const CompiledRegexRule &nested) { return self(self, nested); });
+        };
+    const bool has_regex_state = std::any_of(
+        grammar->regex_states.begin(), grammar->regex_states.end(),
+        [](const RegexStateRule &rule) { return rule.enabled; });
+    const bool has_enabled_native_query = std::any_of(
+        grammar->native_queries.begin(), grammar->native_queries.end(),
+        [](const NativeQueryProgram &query) { return query.enabled; });
+    const bool has_enabled_ast_selector = std::any_of(
+        grammar->ast_selector_rules.begin(), grammar->ast_selector_rules.end(),
+        [](const AstSelectorRule &rule) { return rule.enabled; });
+    const bool source_has_regex = has_regex_state ||
         std::any_of(grammar->regex_rules.begin(), grammar->regex_rules.end(),
-            [&](const CompiledRegexRule &rule) { return has_context_rule(has_context_rule, rule); }) ||
-        (grammar && has_regex_state && !grammar->regex_state_graph_bounded) ||
-        (grammar && std::any_of(grammar->native_queries.begin(), grammar->native_queries.end(),
+            [&](const CompiledRegexRule &rule) {
+                return has_enabled_regex_rule(has_enabled_regex_rule, rule);
+            }) ||
+        std::any_of(grammar->native_queries.begin(), grammar->native_queries.end(),
             [](const NativeQueryProgram &query) {
-                return std::any_of(query.predicate_regexes.begin(), query.predicate_regexes.end(),
-                    [](const NativeQueryProgram::PredicateRegex &predicate) {
-                        return predicate.execution_capability ==
-                            RegexExecutionCapability::DOCUMENT_CONTEXT_REQUIRED;
-                    });
-            })) ||
-        (grammar && std::any_of(grammar->ast_selector_rules.begin(), grammar->ast_selector_rules.end(),
+                return query.enabled && !query.predicate_regexes.empty();
+            }) ||
+        std::any_of(grammar->ast_selector_rules.begin(), grammar->ast_selector_rules.end(),
             [](const AstSelectorRule &rule) {
-                return rule.has_text_regex && !rule.text_regex_bounded;
-            }));
+                return rule.enabled && rule.has_text_regex;
+            });
+    const bool source_requires_contiguous_regex =
+        std::any_of(grammar->regex_rules.begin(), grammar->regex_rules.end(),
+            [&](const CompiledRegexRule &rule) {
+                return rule.enabled && has_context_rule(has_context_rule, rule);
+            }) ||
+        (has_regex_state && !grammar->regex_state_graph_bounded) ||
+        std::any_of(grammar->native_queries.begin(), grammar->native_queries.end(),
+            [](const NativeQueryProgram &query) {
+                return query.enabled &&
+                    std::any_of(query.predicate_regexes.begin(), query.predicate_regexes.end(),
+                        [](const NativeQueryProgram::PredicateRegex &predicate) {
+                            return predicate.execution_capability ==
+                                RegexExecutionCapability::DOCUMENT_CONTEXT_REQUIRED;
+                        });
+            }) ||
+        std::any_of(grammar->ast_selector_rules.begin(), grammar->ast_selector_rules.end(),
+            [](const AstSelectorRule &rule) {
+                return rule.enabled && rule.has_text_regex && !rule.text_regex_bounded;
+            });
     const bool source_native_ast_only = grammar && !source_has_regex;
     const windbell::largefile::TextSource *highlight_source = document->source.get();
 #ifndef NDEBUG
@@ -2353,7 +2378,7 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
             return dependency.source ==
                 static_cast<uint8_t>(HighlightSource::NATIVE_QUERY);
         });
-    if (!grammar->native_queries.empty() && !has_native_query_dependency) {
+    if (has_enabled_native_query && !has_native_query_dependency) {
         cache_value.dependencies.push_back({
             0u, static_cast<uint32_t>(total_bytes), UINT32_MAX,
             static_cast<uint8_t>(HighlightSource::NATIVE_QUERY), 0xFFu,
@@ -2371,7 +2396,7 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
             return dependency.source ==
                 static_cast<uint8_t>(HighlightSource::AST_SELECTOR);
         });
-    if (!grammar->ast_selector_rules.empty() && !has_ast_selector_dependency) {
+    if (has_enabled_ast_selector && !has_ast_selector_dependency) {
         cache_value.dependencies.push_back({
             range_start_byte, range_end_byte, UINT32_MAX,
             static_cast<uint8_t>(HighlightSource::AST_SELECTOR), 0xFFu,
@@ -2418,7 +2443,8 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
             }) ||
         std::any_of(grammar->native_queries.begin(), grammar->native_queries.end(),
             [](const NativeQueryProgram &query) {
-                return std::any_of(query.predicate_regexes.begin(),
+                return query.enabled &&
+                    std::any_of(query.predicate_regexes.begin(),
                     query.predicate_regexes.end(),
                     [](const NativeQueryProgram::PredicateRegex &predicate) {
                         return predicate.execution_capability ==
@@ -2427,7 +2453,7 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
             }) ||
         std::any_of(grammar->ast_selector_rules.begin(), grammar->ast_selector_rules.end(),
             [](const AstSelectorRule &rule) {
-                return rule.has_text_regex && !rule.text_regex_bounded;
+                return rule.enabled && rule.has_text_regex && !rule.text_regex_bounded;
             });
     const bool added_global_regex_dependency =
         has_uncheckpointed_context_regex &&
@@ -2439,7 +2465,7 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
             HIGHLIGHT_DEPENDENCY_DOCUMENT_WIDE
         });
     }
-    if (!grammar->regex_states.empty() &&
+    if (has_regex_state &&
         !has_regex_state_dependency && !added_global_regex_dependency) {
         // If the stateful pipeline did not publish a verified checkpoint
         // envelope, never admit its result under a guessed local dependency.
@@ -2461,6 +2487,7 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
             regex_overlap = std::max(regex_overlap,
                 rule.maximum_match_bytes >= 2u ? rule.maximum_match_bytes - 2u : 0u);
         }
+        if (!rule.enabled) return;
         for (const auto &nested : rule.nested_rules) self(self, nested);
     };
     for (const auto &rule : grammar->regex_rules) include_width(include_width, rule);
