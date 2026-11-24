@@ -1002,25 +1002,7 @@ class TshSyntaxHighlighter(
             (startByte to endByte) !in reusableNativeRanges) return null
 
         val delta = startByte - originalStart
-        val rebasedIndex = if (delta == 0L) index else {
-            var valid = true
-            val mapped = index.mapSpans { span ->
-                val shiftedStart = span.startByteUnsigned + delta
-                val shiftedEnd = span.endByteUnsigned + delta
-                if (shiftedStart < 0L || shiftedEnd < shiftedStart ||
-                    shiftedEnd > 0xFFFF_FFFFL) {
-                    valid = false
-                    null
-                } else {
-                    span.copy(
-                        startByte = shiftedStart.toInt(),
-                        endByte = shiftedEnd.toInt()
-                    )
-                }
-            }
-            if (!valid || mapped.size != index.size) return null
-            mapped
-        }
+        val rebasedIndex = index.shiftBytes(delta) ?: return null
         return CaptureRangeKey(
             key.sessionId, (startByte / 2L).toInt(), (endByte / 2L).toInt()
         ) to rebasedIndex
