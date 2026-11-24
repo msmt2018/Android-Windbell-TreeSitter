@@ -2851,6 +2851,7 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                                 }
                             }
                             program.predicates_by_pattern.resize(compiled_pattern_count);
+                            program.compiled_predicates_by_pattern.resize(compiled_pattern_count);
                             for (uint32_t pattern = 0;
                                  pattern < compiled_pattern_count; ++pattern) {
                                 uint32_t step_count = 0;
@@ -2910,6 +2911,50 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                                         g_tsh_last_error_detail = supported
                                             ? "invalid native query predicate arguments"
                                             : "unsupported native query predicate: " + op;
+                                        release_predicate_regexes();
+                                        ts_query_delete(program.query);
+                                        program.query = nullptr;
+                                        return nullptr;
+                                    }
+                                    // Decode immutable query operands once rather than once per AST match.
+                                    NativeQueryProgram::CompiledPredicateOperands operands;
+                                    operands.operation = op;
+                                    if (!operands.operation.empty() && operands.operation.front() == '#')
+                                        operands.operation.erase(operands.operation.begin());
+                                    try {
+                                        for (size_t arg = 2; arg < predicate.size(); ++arg) {
+                                            if (predicate[arg].type == TSQueryPredicateStepTypeCapture && equality)
+                                                continue;
+                                            uint32_t literal_length = 0;
+                                            const char* literal = ts_query_string_value_for_id(
+                                                program.query, predicate[arg].value_id, &literal_length);
+                                            if (!literal) {
+                                                g_tsh_last_error_detail = "invalid native query predicate literal";
+                                                release_predicate_regexes();
+                                                ts_query_delete(program.query);
+                                                program.query = nullptr;
+                                                return nullptr;
+                                            }
+                                            if (structural) {
+                                                operands.expected_types.emplace_back(literal, literal_length);
+                                            } else {
+                                                std::vector<uint16_t> decoded;
+                                                if (!decodePatternUtf8ToUtf16(
+                                                        std::string(literal, literal_length), decoded)) {
+                                                    g_tsh_last_error_detail =
+                                                        "invalid UTF-8 in native query predicate literal";
+                                                    release_predicate_regexes();
+                                                    ts_query_delete(program.query);
+                                                    program.query = nullptr;
+                                                    return nullptr;
+                                                }
+                                                operands.expected_utf16.emplace_back(decoded.begin(), decoded.end());
+                                            }
+                                        }
+                                        program.compiled_predicates_by_pattern[pattern].push_back(std::move(operands));
+                                    } catch (const std::bad_alloc&) {
+                                        g_tsh_last_error_detail =
+                                            "out of memory compiling native query predicate operands";
                                         release_predicate_regexes();
                                         ts_query_delete(program.query);
                                         program.query = nullptr;
