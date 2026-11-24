@@ -767,10 +767,13 @@ static TshPredicateResult tshEvaluateNativePredicates(const NativeQueryProgram& 
     const TSQueryMatch& match, const UChar* utf16_source,
     const windbell::largefile::TextSource* text_source, uint32_t source_bytes,
     TshRegexExecutionWorkspace& regex_workspace) {
-    const TSQuery* query = program.query;
-    if (match.pattern_index >= program.predicates_by_pattern.size()) return TshPredicateResult::REJECT;
+    if (match.pattern_index >= program.predicates_by_pattern.size() ||
+        match.pattern_index >= program.compiled_predicates_by_pattern.size())
+        return TshPredicateResult::REJECT;
     const auto& predicates = program.predicates_by_pattern[match.pattern_index];
+    const auto& compiled_predicates = program.compiled_predicates_by_pattern[match.pattern_index];
     if (predicates.empty()) return TshPredicateResult::ACCEPT;
+    if (compiled_predicates.size() != predicates.size()) return TshPredicateResult::ERROR;
     uint32_t predicate_index = 0;
     for (const auto& predicate : predicates) {
         // Tree-sitter predicate metadata terminates each expression with a
@@ -780,23 +783,14 @@ static TshPredicateResult tshEvaluateNativePredicates(const NativeQueryProgram& 
             (!predicate.empty() && predicate.back().type == TSQueryPredicateStepTypeDone ? 1u : 0u);
         if (predicate.empty() || predicate[0].type != TSQueryPredicateStepTypeString) return TshPredicateResult::REJECT;
 
-        uint32_t op_length = 0;
-        const char* op_text = ts_query_string_value_for_id(query, predicate[0].value_id, &op_length);
-        if (!op_text || predicate_size < 3 ||
-            predicate[1].type != TSQueryPredicateStepTypeCapture) return TshPredicateResult::REJECT;
-        // Query string storage is owned by the immutable TSQuery. Keep a
-        // non-owning view here: constructing std::string for every match was
-        // an avoidable allocation on the hottest predicate path.
-        std::string_view op(op_text, op_length);
-        if (!op.empty() && op.front() == '#') op.remove_prefix(1);
-
-        std::vector<std::vector<UChar>> expected;
-        std::vector<std::string> expected_types;
-        std::vector<std::vector<UChar>> actual;
-        // Predicate arity is fixed by the immutable query program. Reserve once
-        // for this evaluation to avoid geometric growth while decoding literals.
-        expected.reserve(predicate_size > 2 ? predicate_size - 2 : 0);
-        expected_types.reserve(predicate_size > 2 ? predicate_size - 2 : 0);
+        if (predicate_size < 3 ||
+            predicate[1].type != TSQueryPredicateStepTypeCapture ||
+            predicate_index >= compiled_predicates.size())
+            return TshPredicateResult::REJECT;
+        const auto& operands = compiled_predicates[predicate_index];
+        const std::string_view op(operands.operation);
+        const auto& expected = operands.expected_utf16;
+        const auto& expected_types = operands.expected_types;
         const bool contains_operator = op == "contains?" || op == "not-contains?" ||
             op == "any-contains?" || op == "any-not-contains?";
         const bool ancestry_operator = op == "has-ancestor?" || op == "not-has-ancestor?" ||
@@ -806,28 +800,6 @@ static TshPredicateResult tshEvaluateNativePredicates(const NativeQueryProgram& 
         const bool kind_operator = op == "kind-eq?" || op == "not-kind-eq?" ||
             op == "any-kind-eq?" || op == "any-not-kind-eq?";
         const bool structural_operator = ancestry_operator || parent_operator || kind_operator;
-        try {
-            for (size_t i = 2; i < predicate_size; ++i) {
-                if (predicate[i].type == TSQueryPredicateStepTypeCapture &&
-                    (op == "eq?" || op == "not-eq?" ||
-                     op == "any-eq?" || op == "any-not-eq?")) continue;
-                if (predicate[i].type != TSQueryPredicateStepTypeString)
-                    return TshPredicateResult::REJECT;
-                uint32_t length = 0;
-                const char* value = ts_query_string_value_for_id(query, predicate[i].value_id, &length);
-                if (!value) return TshPredicateResult::REJECT;
-                if (structural_operator) {
-                    expected_types.emplace_back(value, length);
-                } else {
-                    std::vector<UChar> converted;
-                    if (!tshUtf8ToUtf16(std::string_view(value, length), converted))
-                        return TshPredicateResult::REJECT;
-                    expected.push_back(std::move(converted));
-                }
-            }
-        } catch (const std::bad_alloc&) {
-            return TshPredicateResult::ERROR;
-        }
 
         bool accepted = false;
         const bool equality_predicate = op == "eq?" || op == "not-eq?" ||
