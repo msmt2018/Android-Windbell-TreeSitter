@@ -14,6 +14,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.SdkSuppress
 import androidx.test.platform.app.InstrumentationRegistry
 import com.zerostudio.idea.treesitter.TreeSitter
+import com.zerostudio.idea.treesitter.TSParser
 import com.zerostudio.idea.treesitter.java.TSLanguageJava
 import com.zerostudio.idea.treesitter.tsh.WindbellTshEngine
 import com.zerostudio.idea.piecetable.PieceTreeTextBufferBuilder
@@ -37,6 +38,127 @@ import kotlin.math.abs
 @RunWith(AndroidJUnit4::class)
 class TshEditorPipelineRenderingTest {
 
+
+    @Test
+    fun darkAppearanceKeepsConfiguredLightAnnotationColorWhenDarkOverrideIsAbsent() {
+        val engine = WindbellTshEngine.instance
+        val extension = "dark-annotation-fallback"
+        val language = TSLanguageJava.getInstance()
+        val dsl = """
+            tsh 2 {
+                language { id: "dark-annotation-fallback" extensions: [".dann"] }
+                styles {
+                    annotation { scope: "storage.type.annotation", tags: ["annotation"] }
+                }
+                schemes {
+                    plain {
+                        light [ annotation: #FFFF00 ]
+                    }
+                }
+                defaultScheme: "plain"
+                treeSitter {
+                    queries: [
+                        {
+                            id: "annotation-marker"
+                            priority: 120
+                            source: `(marker_annotation "@" @marker)`
+                            captures: { marker: annotation }
+                        }
+                    ]
+                }
+            }
+        """.trimIndent()
+        assertTrue("Annotation marker TSH must compile: ${engine.lastCompileDiagnostics}",
+            engine.loadTshSource(extension, dsl, language))
+
+        val parser = TSParser.create().apply { setLanguage(language) }
+        val source = "class Demo { @Override void run() {} }"
+        val tree = parser.parseString(source)
+        try {
+            assertNotNull("Java source must parse", tree)
+            val captures = engine.computeHighlights(tree, source, extension)
+            val annotationId = engine.getStyleCatalog(extension)
+                .first { it.name == "annotation" }.styleId
+            val markerOffset = source.indexOf('@')
+            assertTrue(
+                "The native Tree-sitter Query must capture the literal @ marker",
+                captures.any {
+                    it.styleId == annotationId &&
+                        it.startByte == markerOffset * 2 &&
+                        it.endByte == (markerOffset + 1) * 2
+                }
+            )
+
+            val palette = engine.getStylePalette(extension, "annotation")
+            assertTrue("The configured light yellow must be present", palette?.hasLightColor == true)
+            assertFalse("This fixture deliberately omits a dark override", palette?.hasDarkColor == true)
+            engine.setAppearance(extension, true)
+
+            val styled = SpannableStringBuilder(source)
+            engine.applyHighlightSpansToSpannable(
+                spans = captures,
+                documentOffset = 0,
+                text = source,
+                extension = extension,
+                spannable = styled
+            )
+            val markerSpan = styled.getSpans(
+                markerOffset, markerOffset + 1, ForegroundColorSpan::class.java
+            ).firstOrNull {
+                styled.getSpanStart(it) <= markerOffset &&
+                    styled.getSpanEnd(it) >= markerOffset + 1
+            }
+            assertEquals(
+                "Missing dark color must inherit the explicitly configured TSH yellow, " +
+                    "not fall through to the editor's green base TextPaint",
+                0xFFFFFF00.toInt(),
+                markerSpan?.foregroundColor
+            )
+
+            val bitmap = Bitmap.createBitmap(420, 88, Bitmap.Config.ARGB_8888)
+            try {
+                val canvas = Canvas(bitmap).apply { drawColor(Color.BLACK) }
+                val basePaint = android.text.TextPaint(android.text.TextPaint.ANTI_ALIAS_FLAG).apply {
+                    color = Color.GREEN
+                    textSize = 48f
+                }
+                val glyphX = 8f + basePaint.measureText(source.substring(0, markerOffset))
+                StyledTextPainter().draw(
+                    canvas = canvas,
+                    text = source,
+                    spans = styled,
+                    start = markerOffset,
+                    end = markerOffset + 1,
+                    x = glyphX,
+                    baseline = 60f,
+                    rowTop = 0f,
+                    rowBottom = 88f,
+                    basePaint = basePaint
+                )
+                var yellowPixels = 0
+                val left = glyphX.toInt().coerceAtLeast(0)
+                val right = (glyphX + basePaint.measureText("@")).toInt().coerceAtMost(bitmap.width)
+                for (y in 0 until bitmap.height) {
+                    for (x in left until right) {
+                        val pixel = bitmap.getPixel(x, y)
+                        if (Color.red(pixel) > 180 &&
+                            Color.green(pixel) > 180 &&
+                            Color.blue(pixel) < 100) yellowPixels++
+                    }
+                }
+                assertTrue(
+                    "The final Canvas must render the TSH yellow instead of the green base color",
+                    yellowPixels > 0
+                )
+            } finally {
+                bitmap.recycle()
+            }
+        } finally {
+            tree?.close()
+            parser.close()
+            engine.clearAppearanceOverride(extension)
+        }
+    }
 
     @Test
     fun nestedTshCapturePriorityReachesFinalCanvasColor() {
