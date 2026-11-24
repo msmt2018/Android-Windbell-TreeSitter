@@ -2022,6 +2022,21 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeApplyDocumentEdi
     }
     if (checkpoints_copied) document->regex_state_checkpoints.swap(retained);
     else document->regex_state_checkpoints.clear();
+
+    // A block-state checkpoint before the edit remains valid in the unchanged
+    // prefix. Any checkpoint after the edit may summarize a delimiter state that
+    // changed, so discard only that suffix and let the next viewport rebuild it.
+    document->regex_block_checkpoints.erase(
+        std::remove_if(
+            document->regex_block_checkpoints.begin(),
+            document->regex_block_checkpoints.end(),
+            [&](RegexBlockCheckpoint& checkpoint) {
+                if (checkpoint.byte_offset > static_cast<uint32_t>(start_byte)) return true;
+                checkpoint.source_version = new_source_version;
+                checkpoint.partition_version = new_partition_version;
+                return false;
+            }),
+        document->regex_block_checkpoints.end());
     return JNI_TRUE;
 }
 
@@ -2275,7 +2290,8 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
             evaluation_start,
             evaluation_end, highlight_source,
             &document->regex_state_checkpoints, document->source->version(),
-            document->partition_index.version(), &highlight_dependencies);
+            document->partition_index.version(), &highlight_dependencies,
+            &document->regex_block_checkpoints);
         if (diagnostics == JNI_TRUE) spans = std::move(candidates);
         if (requested_start == requested_end) {
             spans.clear();
