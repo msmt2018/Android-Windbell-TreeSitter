@@ -112,6 +112,8 @@ struct NativeTshDocument {
     NativeHighlightCache highlight_cache{4u * 1024u * 1024u, nativeHighlightBudget()};
     windbell::largefile::TextPartitionIndex partition_index{256};
     std::vector<RegexStateCheckpoint> regex_state_checkpoints;
+    // Bounded per-document delimiter-state checkpoints for top-level BLOCK rules.
+    std::vector<RegexBlockCheckpoint> regex_block_checkpoints;
     // Pending dirty byte intervals are always rebased into the current
     // document version. Keeping byte coordinates avoids losing earlier edits
     // when later edits insert/delete lines before an unconsumed dirty range.
