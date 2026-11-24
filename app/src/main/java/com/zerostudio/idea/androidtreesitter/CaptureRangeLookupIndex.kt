@@ -48,6 +48,88 @@ internal class CaptureRangeLookupIndex {
         return synchronized(lock) { find(root, sessionId, startUtf16, endUtf16) }
     }
 
+    /**
+     * Returns cached intervals whose union fully covers the requested range.
+     * Partial overlap is useful: viewport movement must not force already-captured
+     * source bytes to be queried again merely because no single entry contains them.
+     */
+    fun findCoveringRanges(
+        sessionId: Long,
+        startUtf16: Int,
+        endUtf16: Int
+    ): List<CaptureRangeKey>? {
+        if (sessionId < 0L || startUtf16 < 0 || endUtf16 <= startUtf16) return null
+        val overlapping = findOverlappingRanges(sessionId, startUtf16, endUtf16)
+        if (overlapping.isEmpty()) return null
+        var coveredUntil = startUtf16
+        val covering = ArrayList<CaptureRangeKey>()
+        for (key in overlapping) {
+            if (key.startUtf16 > coveredUntil) return null
+            if (key.endUtf16 > coveredUntil) {
+                covering += key
+                coveredUntil = key.endUtf16
+            }
+            if (coveredUntil >= endUtf16) return covering
+        }
+        return null
+    }
+
+    /** Returns every indexed interval that intersects the requested range, sorted by start. */
+    fun findOverlappingRanges(
+        sessionId: Long,
+        startUtf16: Int,
+        endUtf16: Int
+    ): List<CaptureRangeKey> {
+        if (sessionId < 0L || startUtf16 < 0 || endUtf16 <= startUtf16) return emptyList()
+        return synchronized(lock) {
+            ArrayList<CaptureRangeKey>().also { output ->
+                collectOverlapping(root, sessionId, startUtf16, endUtf16, output)
+                output.sortWith(compareBy<CaptureRangeKey> { it.startUtf16 }.thenBy { it.endUtf16 })
+            }
+        }
+    }
+
+    /** Returns only the source gaps not represented by any cached interval. */
+    fun findUncoveredRanges(
+        sessionId: Long,
+        startUtf16: Int,
+        endUtf16: Int
+    ): List<IntRange> {
+        if (sessionId < 0L || startUtf16 < 0 || endUtf16 <= startUtf16) return emptyList()
+        val overlapping = findOverlappingRanges(sessionId, startUtf16, endUtf16)
+        if (overlapping.isEmpty()) return listOf(startUtf16 until endUtf16)
+        val gaps = ArrayList<IntRange>()
+        var cursor = startUtf16
+        for (key in overlapping) {
+            if (key.endUtf16 <= cursor) continue
+            if (key.startUtf16 > cursor) {
+                gaps += cursor until minOf(key.startUtf16, endUtf16)
+            }
+            cursor = maxOf(cursor, key.endUtf16)
+            if (cursor >= endUtf16) break
+        }
+        if (cursor < endUtf16) gaps += cursor until endUtf16
+        return gaps
+    }
+
+    private fun collectOverlapping(
+        node: Node?,
+        sessionId: Long,
+        start: Int,
+        end: Int,
+        output: MutableList<CaptureRangeKey>
+    ) {
+        if (node == null || node.maxEnd <= start ||
+            sessionId < node.minSession || sessionId > node.maxSession) return
+        collectOverlapping(node.left, sessionId, start, end, output)
+        val key = node.key
+        if (key.sessionId == sessionId &&
+            key.startUtf16 < end && key.endUtf16 > start) {
+            output += key
+        }
+        collectOverlapping(node.right, sessionId, start, end, output)
+    }
+
     private fun find(node: Node?, sessionId: Long, start: Int, end: Int): CaptureRangeKey? {
         if (node == null || node.maxEnd < end ||
             sessionId < node.minSession || sessionId > node.maxSession) return null
