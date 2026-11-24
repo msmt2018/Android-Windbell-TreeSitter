@@ -2197,6 +2197,7 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
     // Only context-dependent Regex requires a whole-document mmap snapshot.
     // Finite-width Regex continues through its bounded TextSource window path.
     const auto has_context_rule = [](const auto &self, const CompiledRegexRule &rule) -> bool {
+        if (!rule.enabled) return false;
         if (rule.execution_capability == RegexExecutionCapability::DOCUMENT_CONTEXT_REQUIRED)
             return true;
         return std::any_of(rule.nested_rules.begin(), rule.nested_rules.end(),
@@ -2396,6 +2397,7 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
         });
     const auto has_uncheckpointed_context_rule =
         [](const auto &self, const CompiledRegexRule &rule) -> bool {
+            if (!rule.enabled) return false;
             if (rule.execution_capability ==
                     RegexExecutionCapability::DOCUMENT_CONTEXT_REQUIRED &&
                 (rule.type != RegexRuleType::BLOCK ||
