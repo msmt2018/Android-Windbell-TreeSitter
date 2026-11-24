@@ -1248,6 +1248,7 @@ void WindbellEngine::matchBlockRecursive(
     const uint32_t viewport_start_byte =
         static_cast<uint32_t>(range_start - text_start);
     uint32_t active_start_byte = kNoActiveBlock;
+    uint32_t checkpoint_byte_offset = viewport_start_byte;
     bool recovered_from_checkpoint = false;
 
     // Top-level BLOCK rules retain the state at prior viewport boundaries.
@@ -1303,7 +1304,12 @@ void WindbellEngine::matchBlockRecursive(
                 // A delimiter beginning at or crossing the viewport boundary
                 // belongs to the viewport execution, not the preceding state.
                 if (event_start >= viewport_start_byte ||
-                    event_end > viewport_start_byte) break;
+                    event_end > viewport_start_byte) {
+                    // Keep the checkpoint before a delimiter that crosses the
+                    // boundary; the next viewport must see and finish that event.
+                    checkpoint_byte_offset = static_cast<uint32_t>(event_start);
+                    break;
+                }
                 active_start_byte = start_precedes_end
                     ? static_cast<uint32_t>(event_start) : kNoActiveBlock;
 
@@ -1358,13 +1364,13 @@ void WindbellEngine::matchBlockRecursive(
             block_checkpoints->begin(), block_checkpoints->end(),
             [&](const RegexBlockCheckpoint& checkpoint) {
                 return checkpoint.declaration_order == rule.declaration_order &&
-                    checkpoint.byte_offset == viewport_start_byte &&
+                    checkpoint.byte_offset == checkpoint_byte_offset &&
                     checkpoint.grammar_revision == grammar_revision &&
                     checkpoint.source_version == source_version &&
                     checkpoint.partition_version == partition_version;
             });
         const RegexBlockCheckpoint checkpoint{
-            rule.declaration_order, viewport_start_byte, active_start_byte,
+            rule.declaration_order, checkpoint_byte_offset, active_start_byte,
             grammar_revision, source_version, partition_version
         };
         if (existing != block_checkpoints->end()) {
