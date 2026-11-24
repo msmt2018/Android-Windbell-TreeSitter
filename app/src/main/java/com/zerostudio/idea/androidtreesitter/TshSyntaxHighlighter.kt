@@ -304,10 +304,10 @@ class TshSyntaxHighlighter(
             return null
         }
         val active = largeSession ?: return null
-        // Serialize revision observation and cache reads with edit admission. The
-        // edit callback increments pendingEditEpoch and invalidates display spans
-        // under this same lock, so a renderer cannot read a pre-edit cache entry
-        // after the editor has already moved to the new document coordinates.
+        // Serialize revision observation, pending-edit coordinate mapping and
+        // cache reads. While a native edit is pending, only unchanged display
+        // captures are mapped from the old revision; semantic consumers never see
+        // these provisional spans.
         val spans = synchronized(nativeEditLock) {
             if (largeSession !== active || generation.get() != active.ticket) {
                 return@synchronized emptyList()
@@ -1290,6 +1290,10 @@ class TshSyntaxHighlighter(
                             active.appliedEditEpoch.set(editEpoch)
                             invalidated to ready
                         }
+                    // Failed-range retry jobs retain their session closure until
+                    // their delay expires. An edit invalidates their old coordinates,
+                    // so cancel them before dropping the failed-work records.
+                    active.rangeWork.values.forEach { it.retryWakeJob?.cancel() }
                     active.rangeWork.clear()
                     synchronized(viewportRequestLock) {
                         pendingViewportRanges.clear()
