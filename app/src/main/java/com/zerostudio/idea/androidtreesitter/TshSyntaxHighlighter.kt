@@ -123,6 +123,17 @@ class TshSyntaxHighlighter(
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val generation = AtomicLong()
     private val firstStyleCallLogged = AtomicBoolean(false)
+    // Lightweight stage counters distinguish cache churn from actual native
+    // work. They are sampled at a low rate and never drive cache validity.
+    private val styleLineCalls = AtomicLong()
+    private val styleLineNanos = AtomicLong()
+    private val cachedCaptureHits = AtomicLong()
+    private val cachedCaptureMisses = AtomicLong()
+    private val nativeRangeQueries = AtomicLong()
+    private val nativeRangeWaitNanos = AtomicLong()
+    private val nativeRangeQueryNanos = AtomicLong()
+    private val lastPipelineMetricsLogNanos = AtomicLong()
+
     // Structure is invalidated only when a lexical-scope lookup (bracket/auto-pair)
     // was waiting for this viewport's captures. Ordinary syntax capture completion
     // must not rebuild editor structure for every scroll frame.
@@ -289,6 +300,7 @@ class TshSyntaxHighlighter(
         start: Int,
         end: Int
     ): Spanned? {
+        val styleStartedNanos = System.nanoTime()
         val visibleStart = start.coerceIn(0, text.length)
         val visibleEnd = end.coerceIn(visibleStart, text.length)
         if (visibleStart >= visibleEnd || lineStartOffset < 0) return null
@@ -397,6 +409,9 @@ class TshSyntaxHighlighter(
             Log.w(TAG, "No Android CharacterStyle applied: extension=.$extension line=$bufferLine captures=${spans.size}")
             return null
         }
+        styleLineCalls.incrementAndGet()
+        styleLineNanos.addAndGet(System.nanoTime() - styleStartedNanos)
+        logPipelineMetricsIfDue()
         return styled
     }
 
@@ -670,6 +685,23 @@ class TshSyntaxHighlighter(
      * under a second LRU/index and was merged back with LinkedHashSet on every
      * line draw. That duplicated accounting and lookup work without adding data.
      */
+    private fun logPipelineMetricsIfDue() {
+        val now = System.nanoTime()
+        val previous = lastPipelineMetricsLogNanos.get()
+        if (now - previous < 5_000_000_000L ||
+            !lastPipelineMetricsLogNanos.compareAndSet(previous, now)) return
+        Log.i(
+            TAG,
+            "pipelineMetrics extension=.$extension " +
+                "styleLineCalls=${styleLineCalls.get()} styleLineMs=${styleLineNanos.get() / 1_000_000L} " +
+                "captureCacheHits=${cachedCaptureHits.get()} captureCacheMisses=${cachedCaptureMisses.get()} " +
+                "nativeRanges=${nativeRangeQueries.get()} nativeLockWaitMs=${nativeRangeWaitNanos.get() / 1_000_000L} " +
+                "nativeQueryMs=${nativeRangeQueryNanos.get() / 1_000_000L} " +
+                "cacheEntries=${captureCache.size} cacheBytes=${captureCache.bytesUsed} " +
+                "cacheEvictions=${captureCache.evictionCount} cacheRejected=${captureCache.rejectedAdmissionCount}"
+        )
+    }
+
     private fun queryCachedCaptures(
         key: CaptureRangeKey,
         startUtf16: Int,
@@ -678,7 +710,11 @@ class TshSyntaxHighlighter(
         val keys = captureRangeIndex.findOverlappingRanges(
             key.sessionId, startUtf16, endUtf16
         )
-        if (keys.isEmpty()) return null
+        if (keys.isEmpty()) {
+            cachedCaptureMisses.incrementAndGet()
+            logPipelineMetricsIfDue()
+            return null
+        }
 
         var coveredUntil = startUtf16
         var complete = true
@@ -699,7 +735,13 @@ class TshSyntaxHighlighter(
             if (coveredUntil >= endUtf16) break
         }
         if (coveredUntil < endUtf16) complete = false
-        if (!foundEntry) return null
+        if (!foundEntry) {
+            cachedCaptureMisses.incrementAndGet()
+            logPipelineMetricsIfDue()
+            return null
+        }
+        cachedCaptureHits.incrementAndGet()
+        logPipelineMetricsIfDue()
 
         // A partial cache hit is still useful: preserve and paint the captures
         // already known for this line while the missing gaps are processed. Treat
@@ -988,17 +1030,26 @@ class TshSyntaxHighlighter(
             for ((missingStart, missingEnd) in missingRanges) {
                 currentCoroutineContext().ensureActive()
                 val missingKey = CaptureRangeKey(key.sessionId, missingStart, missingEnd)
+                val lockWaitStarted = System.nanoTime()
                 val flat = active.nativeMutex.withLock {
+                    nativeRangeWaitNanos.addAndGet(System.nanoTime() - lockWaitStarted)
                     currentCoroutineContext().ensureActive()
                     if (generation.get() != active.ticket || largeSession !== active ||
                         active.documentRevision.get() != requestedRevision) {
                         throw CancellationException("Stale native viewport request")
                     }
-                    engine.highlightNativeDocument(
-                        documentHandle = active.nativeHandle,
-                        startByte = missingStart.toLong() * 2L,
-                        endByte = missingEnd.toLong() * 2L
-                    ) ?: throw IllegalStateException("Native viewport TSH returned null for visible range")
+                    val queryStarted = System.nanoTime()
+                    try {
+                        engine.highlightNativeDocument(
+                            documentHandle = active.nativeHandle,
+                            startByte = missingStart.toLong() * 2L,
+                            endByte = missingEnd.toLong() * 2L
+                        ) ?: throw IllegalStateException("Native viewport TSH returned null for visible range")
+                    } finally {
+                        nativeRangeQueries.incrementAndGet()
+                        nativeRangeQueryNanos.addAndGet(System.nanoTime() - queryStarted)
+                        logPipelineMetricsIfDue()
+                    }
                 }
                 // Pack the six-int JNI ABI directly into primitive arrays.
                 // Avoid allocating one HighlightSpan object per native capture and
