@@ -52,7 +52,7 @@ class WindbellTshEngine private constructor() {
     private fun packBoundaryEvent(offset: Int, captureIndex: Int, starts: Boolean): Long {
         require(offset >= 0 && captureIndex >= 0)
         return (offset.toLong() shl 32) or
-            (if (starts) (1L shl 31) else 0L) or captureIndex.toLong()
+            (if (starts) (1L shl 31) else 0L) or (captureIndex.toLong() and 0x7FFF_FFFFL)
     }
 
     private fun boundaryEventOffset(event: Long): Int = (event ushr 32).toInt()
