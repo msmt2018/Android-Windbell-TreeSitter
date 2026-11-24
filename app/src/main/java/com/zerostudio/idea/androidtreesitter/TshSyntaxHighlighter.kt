@@ -965,11 +965,6 @@ class TshSyntaxHighlighter(
     }
 
     /**
-     * Preserve only Kotlin capture/display entries whose exact rebased viewport
-     * still exists in NativeHighlightCache. The native cache has already evaluated
-     * each entry's AST/Query/Regex dependency envelope against this edit transaction.
-     */
-    /**
      * Maps a previously painted viewport through an edit even when its captures
      * cannot be reused. The resulting range tells the renderer exactly which old
      * rows must be re-recorded; a viewport intersecting the edit expands around
@@ -987,7 +982,7 @@ class TshSyntaxHighlighter(
         val delta = insertedBytes - (oldEditEnd - editStart)
 
         if (endByte <= editStart) return startByte to endByte
-        if (startByte >= oldEditEnd && !(oldEditEnd == editStart && startByte < editStart)) {
+        if (startByte >= oldEditEnd) {
             return (startByte + delta) to (endByte + delta)
         }
 
@@ -1054,7 +1049,6 @@ class TshSyntaxHighlighter(
             }
 
             val lineRanges = ArrayList<Pair<Int, Int>>()
-            val documentBytes = length.toLong() * 2L
             for ((startByte, endByte) in ranges) {
                 if (startByte < 0L || endByte < startByte) continue
                 val startUtf16 = (startByte / 2L).coerceIn(0L, length.toLong()).toInt()
@@ -1174,9 +1168,9 @@ class TshSyntaxHighlighter(
                         }.ifEmpty {
                             // Preserve a correct local redraw even if the native
                             // parser reports no byte interval for a boundary-only edit.
-                            edits.map { edit ->
+                            edits.mapIndexed { index, edit ->
                                 val insertedBytes = edit.insertedUtf16Le.size.toLong()
-                                when {
+                                var range = when {
                                     insertedBytes > 0L ->
                                         edit.startByte to (edit.startByte + insertedBytes)
                                     edit.startByte > 0L ->
@@ -1184,6 +1178,12 @@ class TshSyntaxHighlighter(
                                     else ->
                                         0L to minOf(documentBytes, 2L)
                                 }
+                                for (later in edits.drop(index + 1)) {
+                                    range = transformViewportRangeForInvalidation(
+                                        range.first, range.second, later
+                                    )
+                                }
+                                range
                             }
                         }
                         invalidateEditedStyles(
