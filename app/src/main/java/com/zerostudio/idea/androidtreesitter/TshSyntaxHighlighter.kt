@@ -719,7 +719,9 @@ class TshSyntaxHighlighter(
                 ranges += cachedKey.startUtf16 to cachedKey.endUtf16
             } else captureRangeIndex.remove(cachedKey)
         }
-        return ranges.sortedBy { it.first }
+        // findOverlappingRanges is already returned in BST in-order
+        // (start/end) order. Do not sort the same viewport ranges a second time.
+        return ranges
     }
 
     /** Computes only the gaps that have not already been captured and cached. */
