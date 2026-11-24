@@ -1129,7 +1129,7 @@ class TshSyntaxHighlighter(
                     )
                     // Native cache rebasing has already retained only viewports whose
                     // AST/Query/Regex dependency envelopes survived every edit. Reuse that
-                    // exact retained-key set to rebase the Kotlin interval/display caches;
+                    // exact retained-key set to rebase the Kotlin capture cache;
                     // do not clear every token when one local region changes.
                     val reusableNativeRanges = engine.reusableNativeHighlightRanges(
                         active.nativeHandle
