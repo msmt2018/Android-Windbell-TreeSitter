@@ -189,3 +189,36 @@ The following are still open and must not be marked complete:
 ### Active remediation baseline
 
 Use #1795 head 56fe94434e9c4df648abbd9165002cab400556aa as the regression baseline. Do not reopen the fixes above without a new failing test or reproducible runtime evidence. Prioritize immutable Predicate operand compilation next, then Regex continuation, then JNI transfer and device-level memory/performance validation.
+
+## 2026-11-25 user-reported regression baseline: annotation color, cache churn, first-open latency
+
+These reports remain open until the exact runtime and device acceptance gates below pass.
+
+### User-observed measurements
+
+- A 33.7 MiB document's full Tree-sitter AST parse was measured at approximately 148–153 ms.
+- This is only the parse-stage baseline. First-open TSH token/capture preparation and visible color rendering are separate stages and have been reported as roughly 5–10 times slower than the parse baseline on some inputs, with larger files taking tens of seconds and occasionally 1–2 minutes.
+- The user requests an eventual 100x-or-greater improvement. Treat this as an optimization objective, not a claim or a reason to omit AST nodes, captures, predicates, viewport coverage, or visual semantics. Report per-stage median/p95 before claiming any multiplier.
+
+### Three required regressions
+
+1. **Dark-mode annotation marker color:** the literal `@` capture must preserve the exact ARGB value authored by the active `.tsh` scheme through native palette export, Kotlin palette decoding/fallback, `ForegroundColorSpan`, `StyledTextPainter`, and final Canvas pixels. Test both an explicit dark yellow override and a missing-dark-override fallback. A green base TextPaint must never replace an authored yellow TSH color.
+2. **Large-file first-open and query performance:** measure snapshot acquisition, full AST parse, native viewport highlight, Regex/state restoration, ATS/Tree-sitter Query execution, JNI encoding/transfer, Kotlin capture packing/indexing/cache admission, span generation, and final Canvas drawing separately. Full AST parse time is not a proxy for first-visible-color latency.
+3. **Stable rendered ATS symbols:** a cache eviction is not a semantic invalidation. An unchanged document revision and unchanged dependency proof must not cause a previously successful viewport request to become permanently suppressed or force unrelated ranges to be recaptured. Only reopen/replacement, intersecting edits, proven dependency invalidation, grammar/style-rule changes, or explicit semantic invalidation may require recapture. Theme-only changes repaint from retained captures and must not rerun parsing/query.
+
+### Confirmed code-path findings and source changes
+
+- `TshSyntaxHighlighter` has a process-global 32 MiB capture LRU. Native documents each have a 4 MiB payload cache, with a 32 MiB process-wide Native cache budget and a separate per-document dependency ledger. These are capacity policies, not semantic validity rules.
+- A concrete retry-state defect was found: `executeNativeRangeNow` treated `RangeWorkState.SUCCEEDED` as permanent even after the corresponding LRU capture page had been evicted. The method already proved that the requested range was uncovered, but the stale success marker returned early and blocked recapture until range-work bookkeeping was eventually trimmed. The current fix permits a visible uncovered range to retry a previously succeeded or cancelled request; failed requests retain their retry backoff.
+- `CaptureRangeLookupIndex.findOverlappingRanges` performed a redundant sort after an in-order AVL traversal and traversed right subtrees even after the BST key had passed the requested session/range. The lookup now relies on in-order output and prunes impossible left/right subtrees. `TshSyntaxHighlighter.cachedRanges` no longer sorts the already ordered result a second time.
+- Source commits: `79fb08798e0a394d2248ae7cf9c47e3759a8ff33`, `992f1a5affd83c9e042fd91bae6f55abe7ce9db4`, `fd4ab07d0bd7f78b47a75fede362b44831b9c979`, `4f6e1502977ba3a888348aca4472234d73737c23`, `985b4958c22bd7561fd75b68a627df3fdcf98e2d`, `d6629a4907c1174a8a7eedb56e52d64699315646`.
+- Added ordered-range lookup regression coverage and an Android instrumentation regression that asserts an explicit dark-scheme yellow annotation marker remains yellow in the final Canvas, in addition to the existing missing-dark-override fallback test.
+- Android device tests were re-enabled for API 26, 30 and 35 because Canvas-level color correctness and render flicker cannot be closed by JVM/native-only tests. Current validation run for head `d6629a4907c1174a8a7eedb56e52d64699315646` is tracked as run `45469265449`; its result must be recorded before these changes are marked validated.
+
+### Remaining acceptance work
+
+- Profile a cold open and warm reopen on the same 33.7 MiB and 50 MiB datasets, then 100 MiB low-density and high-density Java fixtures. Record parse and first-visible-color separately.
+- Record capture-cache hits, misses, evictions, rejected admissions, native cache hits/misses/evictions, dependency-proof retention, range-work retries, and actual re-query counts. A cache eviction must not be counted as a semantic invalidation.
+- Exercise repeated scroll-away/scroll-back, theme switching, insertion/deletion before and inside ATS dependencies, and multiple edits before one render frame. Already-painted unaffected symbols must remain visually stable.
+- If a range cannot be retained under cache pressure, use explicit page/batch continuation or bounded retry with diagnostics; do not silently report a successful cache operation when no page was retained.
+- Do not close the flicker or color issue until the API 26/30/35 Canvas/device tests and repeated-edit/scroll scenarios pass. Do not claim a 100x speedup without same-device, same-input, same-output measurements.
