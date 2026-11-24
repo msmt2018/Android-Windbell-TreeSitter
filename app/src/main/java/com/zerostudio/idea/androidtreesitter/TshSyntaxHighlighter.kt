@@ -741,7 +741,13 @@ class TshSyntaxHighlighter(
                         // interrupts the remainder of the batch.
                         if (batchUpdated) {
                             invalidateViewportStyles(active, completedRanges, batchRevision)
-                            if (structureRefreshPending.getAndSet(false)) {
+                            val canRefreshStructure =
+                                largeSession === active &&
+                                    generation.get() == active.ticket &&
+                                    active.documentRevision.get() == batchRevision &&
+                                    active.pendingEditEpoch.get() == active.appliedEditEpoch.get()
+                            if (canRefreshStructure &&
+                                structureRefreshPending.compareAndSet(true, false)) {
                                 host?.invalidateStructure()
                             }
                         }
