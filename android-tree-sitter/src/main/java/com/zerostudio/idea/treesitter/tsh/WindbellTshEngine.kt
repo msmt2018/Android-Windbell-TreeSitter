@@ -612,6 +612,7 @@ class WindbellTshEngine private constructor() {
                 .thenByDescending { it.endByteUnsigned }
                 .thenBy { it.source }
                 .thenBy { it.styleId }
+                .thenBy { it.fontFlags }
 
             val captures = ArrayList<ClippedCapture>(spans.size)
             for (span in spans) {
