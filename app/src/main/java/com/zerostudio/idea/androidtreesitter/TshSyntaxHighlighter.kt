@@ -732,9 +732,10 @@ class TshSyntaxHighlighter(
                                 queuedViewportRanges.isNotEmpty()
                             }
                             if (superseded) break
-                            if (executeNativeRangeNow(key)) {
+                            val capturedRanges = executeNativeRangeNow(key)
+                            if (capturedRanges.isNotEmpty()) {
                                 batchUpdated = true
-                                completedRanges += key
+                                completedRanges += capturedRanges
                             }
                         }
                     } finally {
@@ -836,27 +837,30 @@ class TshSyntaxHighlighter(
         }
     }
 
-    private suspend fun executeNativeRangeNow(key: CaptureRangeKey): Boolean {
-        val active = largeSession ?: return false
+    private suspend fun executeNativeRangeNow(
+        key: CaptureRangeKey
+    ): List<CaptureRangeKey> {
+        val active = largeSession ?: return emptyList()
         if (generation.get() != active.ticket || active.cacheSessionId != key.sessionId ||
-            uncoveredViewportRanges(key).isEmpty()) return false
+            uncoveredViewportRanges(key).isEmpty()) return emptyList()
         val existing = active.rangeWork[key]
         val work = if (existing == null) {
             val initial = RangeWork()
-            if (active.rangeWork.putIfAbsent(key, initial) != null) return false
+            if (active.rangeWork.putIfAbsent(key, initial) != null) return emptyList()
             initial.also { trimRangeWork(active) }
         } else {
-            if (existing.state != RangeWorkState.FAILED || System.nanoTime() < existing.retryAfterNanos) return false
+            if (existing.state != RangeWorkState.FAILED || System.nanoTime() < existing.retryAfterNanos) return emptyList()
             val retry = RangeWork(existing.attempt + 1)
-            if (!active.rangeWork.replace(key, existing, retry)) return false
+            if (!active.rangeWork.replace(key, existing, retry)) return emptyList()
             trimRangeWork(active)
             retry
         }
         val requestedRevision = active.documentRevision.get()
+        val capturedRanges = ArrayList<CaptureRangeKey>()
         try {
             if (generation.get() != active.ticket || largeSession !== active) {
                 work.state = RangeWorkState.CANCELLED
-                return false
+                return emptyList()
             }
             work.state = RangeWorkState.RUNNING
             val missingRanges = uncoveredViewportRanges(key)
@@ -889,6 +893,7 @@ class TshSyntaxHighlighter(
                     work.state = RangeWorkState.CANCELLED
                     break
                 }
+                capturedRanges += missingKey
             }
             if (work.state != RangeWorkState.CANCELLED) {
                 work.state = RangeWorkState.SUCCEEDED
@@ -927,7 +932,7 @@ class TshSyntaxHighlighter(
                 active.rangeWork.remove(key, work)
             }
         }
-        return work.state == RangeWorkState.SUCCEEDED
+        return capturedRanges
     }
 
     /**
