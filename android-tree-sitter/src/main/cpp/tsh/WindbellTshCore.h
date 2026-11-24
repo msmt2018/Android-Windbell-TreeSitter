@@ -195,6 +195,15 @@ struct NativeQueryProgram {
     // Parsed once at grammar compilation; the hot match loop must not rebuild
     // predicate-step vectors for every match in large documents.
     std::vector<std::vector<std::vector<TSQueryPredicateStep>>> predicates_by_pattern;
+    // Immutable predicate operands are decoded once with the query. The match
+    // hot path must not allocate vectors or transcode the same UTF-8 literals
+    // for every AST match in a large document.
+    struct CompiledPredicateOperands {
+        std::string operation;
+        std::vector<std::vector<UChar>> expected_utf16;
+        std::vector<std::string> expected_types;
+    };
+    std::vector<std::vector<CompiledPredicateOperands>> compiled_predicates_by_pattern;
 };
 
 // std::map's transparent comparator provides heterogeneous string_view lookup
