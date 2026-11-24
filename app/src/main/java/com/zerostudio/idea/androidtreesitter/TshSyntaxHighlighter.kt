@@ -577,10 +577,6 @@ class TshSyntaxHighlighter(
     }
 
     /**
-     * Read a requested viewport from the union of semantic and display cache entries.
-     * Entries may overlap or abut; no single entry has to contain the entire viewport.
-     */
-    /**
      * Read a requested viewport from the single immutable capture cache.
      * The former display cache held the exact same CaptureIntervalIndex objects
      * under a second LRU/index and was merged back with LinkedHashSet on every
@@ -615,7 +611,6 @@ class TshSyntaxHighlighter(
         return spans.toList()
     }
 
-    /** Source intervals already represented by either bounded cache. */
     /** Source intervals already represented by the capture cache. */
     private fun cachedRanges(key: CaptureRangeKey): List<Pair<Int, Int>> {
         val ranges = ArrayList<Pair<Int, Int>>()
@@ -870,7 +865,7 @@ class TshSyntaxHighlighter(
                         active.rangeWork[key] === work &&
                         uncoveredViewportRanges(key).isNotEmpty()
                     ) {
-                        host?.invalidateStyles()
+                        invalidateViewportStyles(active, listOf(key))
                     }
                 }
             }
