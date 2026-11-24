@@ -2023,13 +2023,13 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeApplyDocumentEdi
         static_cast<uint32_t>(inserted_size), next_dirty_byte_ranges);
     if (cache_rebase.payload_before != cache_rebase.payload_after ||
         cache_rebase.dependencies_before != cache_rebase.dependencies_after ||
-        cache_rebase.reset_for_invalid_edit ||
+        cache_rebase.reset_for_invalid_edit || cache_rebase.reset_due_shared_budget ||
         cache_rebase.reset_after_allocation_failure) {
         LOGI("TSHCache",
              "editRebase payload=%zu->%zu dependencies=%zu->%zu "
              "missingProof=%zu viewportEdit=%zu documentWide=%zu checkpoint=%zu "
              "boundary=%zu dirty=%zu inserted=%zu budgetRejected=%zu "
-             "payloadWithoutProof=%zu resetInvalid=%d resetAllocation=%d "
+             "payloadWithoutProof=%zu resetInvalid=%d resetSharedBudget=%d resetAllocation=%d "
              "dirtyRanges=%zu editBytes=%lld..%lld insertedBytes=%d",
              cache_rebase.payload_before, cache_rebase.payload_after,
              cache_rebase.dependencies_before, cache_rebase.dependencies_after,
@@ -2043,6 +2043,7 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeApplyDocumentEdi
              cache_rebase.dependency_budget_rejected,
              cache_rebase.payload_without_proof,
              cache_rebase.reset_for_invalid_edit ? 1 : 0,
+             cache_rebase.reset_due_shared_budget ? 1 : 0,
              cache_rebase.reset_after_allocation_failure ? 1 : 0,
              next_dirty_byte_ranges.size(),
              static_cast<long long>(start_byte),
