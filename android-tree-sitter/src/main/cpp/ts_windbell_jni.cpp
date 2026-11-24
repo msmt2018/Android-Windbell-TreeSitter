@@ -2212,7 +2212,11 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
         };
     const bool has_regex_state = std::any_of(
         grammar->regex_states.begin(), grammar->regex_states.end(),
-        [](const RegexStateRule &rule) { return rule.enabled; });
+        [](const auto &state_entry) {
+            return std::any_of(
+                state_entry.second.begin(), state_entry.second.end(),
+                [](const RegexStateRule &rule) { return rule.enabled; });
+        });
     const bool has_enabled_native_query = std::any_of(
         grammar->native_queries.begin(), grammar->native_queries.end(),
         [](const NativeQueryProgram &query) { return query.enabled; });
