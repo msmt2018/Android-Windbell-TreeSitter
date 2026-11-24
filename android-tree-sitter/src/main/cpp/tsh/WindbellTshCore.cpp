@@ -1702,18 +1702,15 @@ static void appendQueryPatternDependencies(
     std::vector<std::pair<uint32_t, uint32_t>> root_ranges;
     std::unordered_set<TSSymbol> found_symbols;
     found_symbols.reserve(root_symbols.size());
-    if (!collectQueryRootRanges(
-            tree, root_symbols, range_start, range_end, total_bytes,
-            &root_ranges, &found_symbols)) {
-        // A missing candidate root is not proof that an edit elsewhere
-        // cannot create a root covering this viewport.
-        output->push_back({
-            0u, total_bytes, UINT32_MAX,
-            static_cast<uint8_t>(HighlightSource::NATIVE_QUERY), 0xFFu,
-            HIGHLIGHT_DEPENDENCY_DOCUMENT_WIDE
-        });
-        return;
-    }
+    // A rooted-local query only starts matches at nodes intersecting the
+    // requested viewport. Missing one of the program's root symbols in this
+    // viewport means that pattern currently has no candidate here; it does not
+    // make every byte in the document a dependency. The viewport envelope below
+    // covers candidate creation/removal in this partition, while each existing
+    // candidate contributes its complete root-node range.
+    collectQueryRootRanges(
+        tree, root_symbols, range_start, range_end, total_bytes,
+        &root_ranges, &found_symbols);
 
     std::sort(root_ranges.begin(), root_ranges.end());
     size_t merged_count = 0;
