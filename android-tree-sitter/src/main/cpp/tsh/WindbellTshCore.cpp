@@ -2990,9 +2990,11 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                 const bool needs_previous_sibling =
                     ast_rule.previous_sibling_symbol != 0 ||
                     !ast_rule.previous_sibling_type.empty();
-                const bool needs_next_sibling =
+                const bool match_next_sibling =
                     ast_rule.next_sibling_symbol != 0 ||
                     !ast_rule.next_sibling_type.empty();
+                const bool needs_next_sibling =
+                    match_next_sibling || ast_rule.last_child >= 0;
                 if (needs_child_position || needs_previous_sibling || needs_next_sibling) {
                     append_ast_dependency(parent);
                     if (ts_node_is_null(parent)) continue;
@@ -3040,11 +3042,7 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                         if (ast_rule.first_child >= 0 &&
                             (current_index == 0u) != (ast_rule.first_child != 0)) continue;
                         if (ast_rule.last_child >= 0) {
-                            const bool is_last = !ts_node_is_null(next) ||
-                                !needs_next_sibling
-                                    ? (ts_node_is_null(next) &&
-                                       current_index + 1u == ts_node_child_count(parent))
-                                    : false;
+                            const bool is_last = ts_node_is_null(next);
                             if (is_last != (ast_rule.last_child != 0)) continue;
                         }
                     }
@@ -3053,7 +3051,7 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                             *grammar, previous,
                             ast_rule.previous_sibling_symbol,
                             ast_rule.previous_sibling_type)) continue;
-                    if (needs_next_sibling &&
+                    if (match_next_sibling &&
                         !tshAstNodeMatchesSelector(
                             *grammar, next,
                             ast_rule.next_sibling_symbol,
