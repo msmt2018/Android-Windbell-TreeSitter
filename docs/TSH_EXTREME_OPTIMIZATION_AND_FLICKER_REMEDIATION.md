@@ -336,3 +336,17 @@ These reports remain open until the exact runtime and device acceptance gates be
 - The painter still builds a boxed `MutableList<Int>` to rank all source spans for Android's 8-bit span priority metadata. A primitive index sort is a candidate next step, but it must preserve the full comparator and equal (priority, declarationOrder) rank grouping.
 - `CaptureIntervalIndex.appendQuery` still materializes one `HighlightSpan` data object per overlapping capture. The next architectural step is a primitive capture batch contract shared by the interval index and painter, rather than a lazy list whose getters recreate objects. Any batch must be immutable for the duration of painting and must not escape the cache entry's revision lifetime.
 - Cache eviction remains a storage event, not semantic invalidation. Do not introduce a second unaccounted capture copy while adding the primitive batch path; charge retained payloads to the existing shared budget and keep precise edit/dependency invalidation.
+
+
+## 2026-11-25: primitive native-precedence ranking
+
+- The painter still allocated `spans.indices.toMutableList()`, boxing every capture index, and sorted it through a chained Kotlin comparator before assigning Android's 8-bit span priority metadata.
+- Commit `3a6b0f2b2543aa2a6f01f9eed2160e0c0fed4e3a` replaces that path with an `IntArray` initialized with source indices and an in-place heapsort. The primitive comparator preserves the previous exact ordering: priority descending, declaration order ascending, unsigned start ascending, unsigned end descending, source/style/font flags ascending, then source index as deterministic final tie-break.
+- Android priority rank grouping remains based only on (native priority, declaration order), as before. The additional tie-breakers determine deterministic ordering among captures in the same group but do not split their Android priority rank.
+- Existing instrumentation `nestedTshCapturePriorityReachesFinalCanvasColor` independently derives the expected Android priority from distinct native (priority, declarationOrder) pairs and checks the emitted StyleSpan metadata. It therefore exercises the rank semantics across the primitive sort.
+- This removes the boxed index list and comparator-chain sorting from every paint projection. It does not reduce the number of output Android spans and has not yet been measured on-device; CI and allocation profiling are required before assigning a speedup.
+
+### Validation status update
+
+- Before this commit, workflow #1857 (run ID `45509008770`) was running against head `655d48a4a9de493d19fb28e2663eac76d0100e93`. That run cannot validate commit `3a6b0f2`; a new workflow for the new exact head is required.
+- All open findings remain open until exact-head CI and the relevant API 26/30/35 rendering tests pass. The dark-palette pixel regression, nested span precedence regression, adjacent-boundary regression, and independent font-winner regression must all remain in the test matrix.
