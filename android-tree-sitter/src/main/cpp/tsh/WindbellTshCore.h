@@ -459,6 +459,20 @@ struct RegexStateCheckpoint {
     std::vector<std::string> state_stack;
 };
 
+/**
+ * Last-known block delimiter state at a source offset. These checkpoints let
+ * successive viewport requests advance lexical block state from the nearest
+ * earlier viewport instead of reverse-scanning the document prefix each time.
+ */
+struct RegexBlockCheckpoint {
+    const CompiledRegexRule* rule = nullptr;
+    uint32_t byte_offset = 0;
+    uint32_t active_start_byte = UINT32_MAX;
+    uint64_t grammar_revision = 0;
+    uint64_t source_version = 0;
+    uint64_t partition_version = 0;
+};
+
 class WindbellEngine {
 public:
     static WindbellEngine& getInstance() {
@@ -484,7 +498,8 @@ public:
         std::vector<RegexStateCheckpoint>* regex_state_checkpoints = nullptr,
         uint64_t source_version = 0,
         uint64_t partition_version = 0,
-        std::vector<HighlightDependencyRange>* dependency_ranges = nullptr
+        std::vector<HighlightDependencyRange>* dependency_ranges = nullptr,
+        std::vector<RegexBlockCheckpoint>* block_checkpoints = nullptr
     );
 
 private:
@@ -501,7 +516,11 @@ private:
         uint32_t output_start_byte,
         uint32_t output_end_byte,
         std::vector<HighlightSpan>& out_spans,
-        uint32_t* regex_match_count = nullptr
+        uint32_t* regex_match_count = nullptr,
+        std::vector<RegexBlockCheckpoint>* block_checkpoints = nullptr,
+        uint64_t grammar_revision = 0,
+        uint64_t source_version = 0,
+        uint64_t partition_version = 0
     );
 
     std::mutex registry_lock_;
