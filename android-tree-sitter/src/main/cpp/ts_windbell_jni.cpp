@@ -2517,7 +2517,8 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
         LOGV("TSHPerf",
              "nativeHighlightDocument cache=miss range=%u..%u documentBytes=%llu "
              "spans=%zu regexSnapshotMs=%lld coreMs=%lld encodeMs=%lld totalMs=%lld "
-             "cacheEntries=%zu cacheBytes=%llu blockCheckpoints=%zu",
+             "cacheEntries=%zu cacheBytes=%llu dependencyLedgerBytes=%llu "
+             "blockCheckpoints=%zu",
              requested_start, requested_end,
              static_cast<unsigned long long>(total_bytes), highlight_span_count,
              static_cast<long long>(regex_snapshot_ms),
@@ -2526,6 +2527,7 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
              static_cast<long long>(elapsed_ms(native_highlight_started, native_highlight_finished)),
              document->highlight_cache.size(),
              static_cast<unsigned long long>(document->highlight_cache.usedBytes()),
+             static_cast<unsigned long long>(document->highlight_cache.dependencyBytesUsed()),
              document->regex_block_checkpoints.size());
     }
 #endif
