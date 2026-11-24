@@ -469,11 +469,17 @@ class ByteBudgetLruCache<K : Any, V : Any>(
     private val lock = ReentrantReadWriteLock()
     private val entries = LinkedHashMap<K, Entry<V>>(16, 0.75f, true)
     private var usedBytes = 0L
+    private var evictionCountValue = 0L
+    private var rejectedAdmissionCountValue = 0L
 
     init { require(maxBytes >= 0L) }
 
     val size: Int get() = lock.read { entries.size }
     val bytesUsed: Long get() = lock.read { usedBytes }
+    /** Cumulative LRU removals caused by capacity pressure (not explicit invalidation). */
+    val evictionCount: Long get() = lock.read { evictionCountValue }
+    /** Cumulative entries rejected because one payload or the available budget was too large. */
+    val rejectedAdmissionCount: Long get() = lock.read { rejectedAdmissionCountValue }
 
     fun get(key: K): V? = lock.write { entries[key]?.value }
 
@@ -530,7 +536,10 @@ class ByteBudgetLruCache<K : Any, V : Any>(
                 } else {
                     weigh(nextValue).coerceAtLeast(0L)
                 }
-                if (weight > maxBytes || maxBytes == 0L) continue
+                if (weight > maxBytes || maxBytes == 0L) {
+                    rejectedAdmissionCountValue++
+                    continue
+                }
                 transformed[nextKey] = Entry(nextValue, weight)
             }
         } catch (error: Throwable) {
@@ -551,6 +560,7 @@ class ByteBudgetLruCache<K : Any, V : Any>(
         while (overBudget && iterator.hasNext()) {
             iterator.next()
             iterator.remove()
+            evictionCountValue++
             nextBytes = 0L
             overBudget = false
             for (entry in transformed.values) {
@@ -618,6 +628,7 @@ class ByteBudgetLruCache<K : Any, V : Any>(
             if (previous.value !== value) onEvict(previous.value)
         }
         if (weight > maxBytes || maxBytes == 0L) {
+            rejectedAdmissionCountValue++
             onEvict(value)
             return@write
         }
@@ -631,8 +642,10 @@ class ByteBudgetLruCache<K : Any, V : Any>(
             usedBytes -= eldest.weight
             onEntryRemoved(eldestEntry.key, eldest.value)
             onEvict(eldest.value)
+            evictionCountValue++
         }
         if (weight > maxBytes - usedBytes) {
+            rejectedAdmissionCountValue++
             onEvict(value)
             return@write
         }
