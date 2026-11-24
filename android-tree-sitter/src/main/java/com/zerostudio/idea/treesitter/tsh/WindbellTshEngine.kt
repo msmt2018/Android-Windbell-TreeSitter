@@ -642,6 +642,7 @@ class WindbellTshEngine private constructor() {
             val hasForeground = BooleanArray(captures.size)
             val hasBackground = BooleanArray(captures.size)
             val captureFontFlags = IntArray(captures.size)
+            val events = ArrayList<BoundaryEvent>(captures.size * 2)
             captures.forEachIndexed { index, capture ->
                 val style = palette[capture.span.styleId]
                 captureStyles[index] = style
