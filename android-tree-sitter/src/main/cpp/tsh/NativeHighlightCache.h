@@ -389,8 +389,14 @@ public:
                 // The dependency ledger is the single source of truth for whether
                 // this viewport survived the edit. A payload without a retained
                 // proof is conservatively discarded.
-                reusable = reusable &&
-                    dependency_entries_.find(next_key) != dependency_entries_.end();
+                const auto retained_proof = dependency_entries_.find(next_key);
+                if (retained_proof == dependency_entries_.end()) {
+                    // Count the actual payload-without-proof case here. Empty
+                    // dependency vectors are not admitted to the ledger, so
+                    // they can only be observed while validating the payload.
+                    ++stats.missing_dependency_proof;
+                }
+                reusable = reusable && retained_proof != dependency_entries_.end();
 
                 for (auto &span : entry->value.spans) {
                     if (!reusable) break;
