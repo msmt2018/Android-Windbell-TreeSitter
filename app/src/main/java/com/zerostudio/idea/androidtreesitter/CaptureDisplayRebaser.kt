@@ -46,26 +46,11 @@ internal object CaptureDisplayRebaser {
         val editStartByte = editStart * 2L
         val oldEndByte = oldEnd * 2L
         val deltaBytes = delta * 2L
-        val rebased = index.mapSpans { span ->
-            val start = span.startByteUnsigned
-            val end = span.endByteUnsigned
-            val mappedSpanStart: Long
-            val mappedSpanEnd: Long
-            when {
-                end <= editStartByte -> {
-                    mappedSpanStart = start
-                    mappedSpanEnd = end
-                }
-                start >= oldEndByte -> {
-                    mappedSpanStart = start + deltaBytes
-                    mappedSpanEnd = end + deltaBytes
-                }
-                else -> return@mapSpans null
-            }
-            if (mappedSpanStart < 0L || mappedSpanEnd <= mappedSpanStart ||
-                mappedSpanEnd > 0xFFFF_FFFFL) return@mapSpans null
-            span.copy(startByte = mappedSpanStart.toInt(), endByte = mappedSpanEnd.toInt())
-        }
+        val rebased = index.rebaseEdit(
+            editStartByte = editStartByte,
+            oldEndByte = oldEndByte,
+            deltaBytes = deltaBytes
+        ) ?: return null
         return Result(CaptureRangeKey(key.sessionId, mappedStart.toInt(), mappedEnd.toInt()), rebased)
     }
 }
