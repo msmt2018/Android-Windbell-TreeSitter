@@ -152,3 +152,40 @@ The corrections above are source-committed after #1787 and have not yet been val
 - Native predicate evaluation still allocates expected/actual containers and decodes immutable UTF-8 string literals to UTF-16 for each match. Compile immutable operands once and reuse bounded per-query execution storage; do not add a global unbounded cache.
 - Regex execution still needs a resumable result cursor/continuation to avoid materializing complete per-window result arrays.
 - Device rendering and 100–300 MiB end-to-end memory/latency validation remain open; CI's Android device matrix is skipped.
+
+## 2026-11-25 CI #1795: completed validation of the CI #1787 remediation batch
+
+CI run #1795 (run ID 45427572294, tested head 56fe94434e9c4df648abbd9165002cab400556aa) completed after the earlier #1794 run was cancelled before validation.
+
+### Verified gates
+
+- Build Release APK: passed, including Release assembly and artifact upload.
+- Run local tests: passed.
+- Gradle HTML reports: 843 JVM tests passed across modules (android-tree-sitter 206, editor 331, piecetable 294, app 12); no failures in these reports.
+- Native large-file storage tests with ASan/UBSan: passed.
+- Host JNI library build: passed.
+- Native TSH cache tests: passed.
+- Android device test matrix: skipped by workflow configuration. This is not device validation.
+
+### Source corrections included in the tested head
+
+- 2e454e0a30f0e9f2372f879592ba3274dbe94e42: preserve packed capture metadata when rebasing edits; exact-size two-pass compaction also reduces temporary memory.
+- de19cf1ae5a69032c1df2a6273dd7c8c2760c81a: use validated uint32 viewport byte ranges in the JNI fallback dependency path.
+- 0d43ccc066ba0a3ca234f212e6a1e670d60250fd and d0ddbddd08e8a6fdbc9a4b6a7efeb7a3a5107c89: correct query predicate grouping and constrain Monarch assertions to identifier-style spans.
+- cb743324aee660e958a91f871ff8899bb486ee83: make query capture precedence independent of viewport-local match enumeration.
+- fd99db73574e961f612ff1f17840a170729b1956 plus 56fe94434e9c4df648abbd9165002cab400556aa: use the precomputed reverse supertype selector index at runtime and ensure target supertype selectors are inserted into that index.
+
+### Closure status
+
+The above fixes are validated by CI #1795's Release and local-test jobs. The earlier report's statement that the any-eq? / any-not-eq? missing-capture polarity regression was unverified is superseded by the passing #1787 regression test and its debug evidence; retain that test as a guard.
+
+The following are still open and must not be marked complete:
+
+- Predicate hot-path optimization: compile immutable string operands (including UTF-16 representations) once and eliminate per-match expected/actual container construction where semantics permit. The current evaluator still constructs expected/expected_types/actual containers and converts query literals during match execution.
+- Regex resumability: current window execution still materializes complete per-window result arrays; a resumable cursor/continuation and MatchSet continuation are not implemented.
+- JNI result transfer: audit and reduce duplicate large Capture/Highlight arrays across Native/JNI/Kotlin boundaries.
+- Device and large-file end-to-end acceptance: add/run Android device tests for 100–300 MiB parse/highlight/viewport/edit workloads, recording latency, peak RSS/native heap, memory-pressure fallback and visual correctness. The #1795 device matrix was skipped, so no device-level closure is claimed.
+
+### Active remediation baseline
+
+Use #1795 head 56fe94434e9c4df648abbd9165002cab400556aa as the regression baseline. Do not reopen the fixes above without a new failing test or reproducible runtime evidence. Prioritize immutable Predicate operand compilation next, then Regex continuation, then JNI transfer and device-level memory/performance validation.
