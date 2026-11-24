@@ -756,8 +756,23 @@ class TshEditorPipelineRenderingTest {
             }
             assertFalse("EditorView initial text-size relayout did not finish", editor.isLayoutBusy())
 
+            // The layout coordinator can briefly reject edits while a platform-
+            // scheduled relayout/zoom handoff is being published. isLayoutBusy()
+            // becoming false and runEdit() becoming available are separate events;
+            // retry only the documented non-mutating "refused" result.
+            val setTextDeadline = SystemClock.uptimeMillis() + 10_000L
+            var textAccepted = false
+            while (!textAccepted && SystemClock.uptimeMillis() < setTextDeadline) {
+                InstrumentationRegistry.getInstrumentation().runOnMainSync {
+                    textAccepted = editor.setText(source)
+                }
+                if (!textAccepted) SystemClock.sleep(10L)
+            }
+            assertTrue(
+                "EditorView must accept text once its layout coordinator becomes idle",
+                textAccepted
+            )
             InstrumentationRegistry.getInstrumentation().runOnMainSync {
-                assertTrue("EditorView must accept text after its initial layout settles", editor.setText(source))
                 editor.setSyntaxHighlighter(highlighter)
                 editor.measure(
                     View.MeasureSpec.makeMeasureSpec(bitmap.width, View.MeasureSpec.EXACTLY),
