@@ -675,7 +675,14 @@ class WindbellTshEngine private constructor() {
                 // bold/italic/underline/opacity can leak through a higher-priority
                 // nested capture even while its text color is correctly resolved.
                 val precedence = ruleOrder[
-                    SpanPriorityKey(span.priority, span.declarationOrder, span.source, span.styleId)
+                    SpanPriorityKey(
+                        span.priority,
+                        span.declarationOrder,
+                        span.startByteUnsigned,
+                        span.endByteUnsigned,
+                        span.source,
+                        span.styleId
+                    )
                 ] ?: 1
                 val spanFlags = Spannable.SPAN_EXCLUSIVE_EXCLUSIVE or
                     (precedence shl Spanned.SPAN_PRIORITY_SHIFT)
