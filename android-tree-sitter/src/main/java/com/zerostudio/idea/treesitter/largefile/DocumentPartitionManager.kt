@@ -539,18 +539,27 @@ class ByteBudgetLruCache<K : Any, V : Any>(
         }
 
         var nextBytes = 0L
+        var overBudget = false
         for (entry in transformed.values) {
-            nextBytes = if (Long.MAX_VALUE - nextBytes < entry.weight) {
-                Long.MAX_VALUE
-            } else {
-                nextBytes + entry.weight
+            if (entry.weight > maxBytes - nextBytes) {
+                overBudget = true
+                break
             }
+            nextBytes += entry.weight
         }
         val iterator = transformed.entries.iterator()
-        while (nextBytes > maxBytes && iterator.hasNext()) {
-            val eldest = iterator.next()
-            nextBytes -= eldest.value.weight
+        while (overBudget && iterator.hasNext()) {
+            iterator.next()
             iterator.remove()
+            nextBytes = 0L
+            overBudget = false
+            for (entry in transformed.values) {
+                if (entry.weight > maxBytes - nextBytes) {
+                    overBudget = true
+                    break
+                }
+                nextBytes += entry.weight
+            }
         }
 
         val retainedValues = IdentityHashMap<V, Boolean>()
