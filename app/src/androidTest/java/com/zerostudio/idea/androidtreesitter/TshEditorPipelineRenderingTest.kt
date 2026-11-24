@@ -331,6 +331,67 @@ class TshEditorPipelineRenderingTest {
     }
 
     @Test
+    fun primitivePainterHeapsKeepIndependentFontAttributeWinners() {
+        val engine = WindbellTshEngine.instance
+        val extension = "primitive-font-heaps"
+        val dsl = """
+            tsh 2 {
+                language { id: "primitive-font-heaps" extensions: [".pfh"] }
+                styles {
+                    boldStyle { scope: "keyword.control" }
+                    italicStyle { scope: "string.quoted" }
+                }
+                schemes {
+                    plain {
+                        light [ boldStyle: #FFFF0000, italicStyle: #FF00FF00 ]
+                        dark [ boldStyle: #FFFF0000, italicStyle: #FF00FF00 ]
+                    }
+                }
+                defaultScheme: "plain"
+            }
+        """.trimIndent()
+        assertTrue("Font heap fixture must compile: ${engine.lastCompileDiagnostics}",
+            engine.loadTshSource(extension, dsl, null))
+        assertTrue(engine.ensurePalette(extension))
+        engine.setAppearance(extension, false)
+        try {
+            val catalog = engine.getStyleCatalog(extension)
+            val boldId = catalog.first { it.name == "boldStyle" }.styleId
+            val italicId = catalog.first { it.name == "italicStyle" }.styleId
+            val source = "AB"
+            val captures = listOf(
+                WindbellTshEngine.HighlightSpan(
+                    startByte = 0, endByte = 4, styleId = boldId, fontFlags = 0x01,
+                    priority = 20, declarationOrder = 0, source = 0
+                ),
+                WindbellTshEngine.HighlightSpan(
+                    startByte = 0, endByte = 4, styleId = italicId, fontFlags = 0x02,
+                    priority = 10, declarationOrder = 1, source = 0
+                )
+            )
+            val styled = SpannableStringBuilder(source)
+            engine.applyHighlightSpansToSpannable(
+                spans = captures,
+                documentOffset = 0,
+                text = source,
+                extension = extension,
+                spannable = styled
+            )
+            val fontSpans = styled.getSpans(0, source.length, StyleSpan::class.java)
+            assertTrue("Bold winner must be emitted independently", fontSpans.any {
+                it.style == android.graphics.Typeface.BOLD &&
+                    styled.getSpanStart(it) == 0 && styled.getSpanEnd(it) == source.length
+            })
+            assertTrue("Italic winner must be emitted independently", fontSpans.any {
+                it.style == android.graphics.Typeface.ITALIC &&
+                    styled.getSpanStart(it) == 0 && styled.getSpanEnd(it) == source.length
+            })
+        } finally {
+            engine.clearAppearanceOverride(extension)
+        }
+    }
+
+    @Test
     fun nestedTshCapturePriorityReachesFinalCanvasColor() {
         val engine = WindbellTshEngine.instance
         val dsl = """
