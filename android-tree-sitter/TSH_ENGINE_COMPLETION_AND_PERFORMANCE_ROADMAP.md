@@ -867,8 +867,12 @@ Static call-site review found the native document parser already separately trac
 - 普通高亮捕获不再触发结构刷新；只有括号/自动配对作用域查询确实等待了捕获结果时，才刷新结构。
 - 失败重试唤醒同样只刷新失败范围，不再触发全局重绘。
 - 只对本批真正完成的范围失效，快速滚动时未执行的过期范围不再被误标记为已完成。
+- 新增 Host 多区间 invalidateStyles(ranges) 契约；EditorView 对多个不连续脏行范围只提升一次 styles generation，并仅使这些行的 RenderNode 样式失效，避免一个编辑事务的多个局部区间反复全局更新 generation。
 
-源码：app/src/main/java/com/zerostudio/idea/androidtreesitter/TshSyntaxHighlighter.kt
+源码：
+- app/src/main/java/com/zerostudio/idea/androidtreesitter/TshSyntaxHighlighter.kt
+- editor/src/main/java/x/github/module/editor/highlight/SyntaxHighlighter.kt
+- editor/src/main/java/x/github/module/editor/view/EditorView.kt
 
 ### C. 移除重复的 Kotlin 捕获缓存
 
