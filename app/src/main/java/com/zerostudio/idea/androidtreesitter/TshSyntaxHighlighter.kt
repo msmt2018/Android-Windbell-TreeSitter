@@ -723,6 +723,16 @@ class TshSyntaxHighlighter(
     }
 
     private fun startViewportWorker() {
+        // Capture the session before dispatching. The worker must never resolve
+        // an unbound/stale session from mutable state while publishing results.
+        val active = largeSession ?: run {
+            synchronized(viewportRequestLock) { viewportWorkerActive = false }
+            return
+        }
+        if (generation.get() != active.ticket) {
+            synchronized(viewportRequestLock) { viewportWorkerActive = false }
+            return
+        }
         scope.launch(Dispatchers.IO) {
             var drainedNormally = false
             try {
@@ -828,8 +838,8 @@ class TshSyntaxHighlighter(
                 val safeEnd = (range.endUtf16 - 1).coerceIn(
                     safeStart, currentBuffer.length - 1
                 )
-                val firstLine = currentBuffer.getPositionAt(safeStart).line
-                val lastLine = currentBuffer.getPositionAt(safeEnd).line
+                val firstLine = currentBuffer.getPositionAt(safeStart).lineNumber
+                val lastLine = currentBuffer.getPositionAt(safeEnd).lineNumber
                 if (firstLine > 0 && lastLine >= firstLine) {
                     lineRanges += firstLine to lastLine
                 }
@@ -1110,8 +1120,8 @@ class TshSyntaxHighlighter(
                 val safeStart = startUtf16.coerceAtMost(length - 1)
                 val safeEnd = (if (endUtf16 > startUtf16) endUtf16 - 1 else safeStart)
                     .coerceIn(safeStart, length - 1)
-                val firstLine = buffer.getPositionAt(safeStart).line
-                val lastLine = buffer.getPositionAt(safeEnd).line
+                val firstLine = buffer.getPositionAt(safeStart).lineNumber
+                val lastLine = buffer.getPositionAt(safeEnd).lineNumber
                 if (firstLine > 0 && lastLine >= firstLine) {
                     lineRanges += firstLine to lastLine
                 }
