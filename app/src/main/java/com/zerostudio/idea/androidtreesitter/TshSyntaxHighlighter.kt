@@ -1419,13 +1419,20 @@ class TshSyntaxHighlighter(
                                 range
                             }
                         }
+                        // readyDisplayRanges were painted from old-revision captures
+                        // only to bridge the edit transaction. The native dependency
+                        // rebase above is already the authoritative validity decision:
+                        // retained ranges remain drawable, while rejected ranges are
+                        // present in invalidatedCaptureRanges. Invalidating every
+                        // display bridge again here caused unchanged rows to lose their
+                        // colors and immediately recapture after each local edit.
+                        // Incomplete retained coverage is handled by styleLine's normal
+                        // gap scheduler without blanking the captures that survived.
                         invalidateEditedStyles(
                             active,
                             active.documentRevision.get(),
                             dirtyByteRanges,
-                            invalidatedCaptureRanges + readyDisplayRanges.map { range ->
-                                range.startUtf16.toLong() * 2L to range.endUtf16.toLong() * 2L
-                            }
+                            invalidatedCaptureRanges
                         )
                     }
                 }
