@@ -2531,7 +2531,8 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
              "nativeHighlightDocument cache=miss range=%u..%u documentBytes=%llu "
              "spans=%zu regexSnapshotMs=%lld coreMs=%lld encodeMs=%lld totalMs=%lld "
              "cacheEntries=%zu cacheBytes=%llu dependencyLedgerBytes=%llu "
-             "blockCheckpoints=%zu",
+             "blockCheckpoints=%zu requiresSnapshot=%d sourceHasRegex=%d "
+             "activeNativeQuery=%d activeAstSelector=%d regexState=%d",
              requested_start, requested_end,
              static_cast<unsigned long long>(total_bytes), highlight_span_count,
              static_cast<long long>(regex_snapshot_ms),
@@ -2541,7 +2542,12 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
              document->highlight_cache.size(),
              static_cast<unsigned long long>(document->highlight_cache.usedBytes()),
              static_cast<unsigned long long>(document->highlight_cache.dependencyBytesUsed()),
-             document->regex_block_checkpoints.size());
+             document->regex_block_checkpoints.size(),
+             source_requires_contiguous_regex ? 1 : 0,
+             source_has_regex ? 1 : 0,
+             has_enabled_native_query ? 1 : 0,
+             has_enabled_ast_selector ? 1 : 0,
+             has_regex_state ? 1 : 0);
     }
 #endif
     return encoded;
