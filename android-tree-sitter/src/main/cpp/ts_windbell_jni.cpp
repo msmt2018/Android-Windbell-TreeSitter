@@ -2507,7 +2507,7 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
     std::copy(std::begin(counts), std::end(counts), std::begin(cache_value.match_counts));
     try {
         document->highlight_cache.put(
-            cache_key, std::move(cache_value), cache_dependencies);
+            cache_key, std::move(cache_value), std::move(cache_dependencies));
     } catch (...) {
         // Cache admission is optional. Preserve the complete result even when
         // cache bookkeeping cannot allocate under memory pressure.
