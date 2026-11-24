@@ -892,12 +892,14 @@ class TshSyntaxHighlighter(
                         endByte = missingEnd.toLong() * 2L
                     ) ?: throw IllegalStateException("Native viewport TSH returned null for visible range")
                 }
-                val spans = decodeNativeSpans(flat)
+                // Pack the six-int JNI ABI directly into primitive arrays.
+                // Avoid allocating one HighlightSpan object per native capture and
+                // then copying those objects into the cache's compact representation.
+                val index = CaptureIntervalIndex(flat)
                 val admitted = synchronized(nativeEditLock) {
                     if (generation.get() == active.ticket && largeSession === active &&
                         active.documentRevision.get() == requestedRevision &&
                         active.pendingEditEpoch.get() == active.appliedEditEpoch.get()) {
-                        val index = CaptureIntervalIndex(spans)
                         captureCache.put(missingKey, index)
                         true
                     } else false
@@ -1284,26 +1286,6 @@ class TshSyntaxHighlighter(
                     entry.value.retryWakeJob?.cancel()
                 }
             }
-    }
-
-    private fun decodeNativeSpans(flat: IntArray): List<WindbellTshEngine.HighlightSpan> {
-        val count = flat.size / 6
-        if (count == 0) return emptyList()
-        return ArrayList<WindbellTshEngine.HighlightSpan>(count).also { spans ->
-            for (index in 0 until count) {
-                val offset = index * 6
-                val packed = flat[offset + 2]
-                spans += WindbellTshEngine.HighlightSpan(
-                    startByte = flat[offset],
-                    endByte = flat[offset + 1],
-                    styleId = packed and 0xFFFF,
-                    fontFlags = (packed ushr 16) and 0xFFFF,
-                    priority = flat[offset + 3],
-                    declarationOrder = flat[offset + 4],
-                    source = flat[offset + 5]
-                )
-            }
-        }
     }
 
     private fun disposeSession(active: LargeSession) {
