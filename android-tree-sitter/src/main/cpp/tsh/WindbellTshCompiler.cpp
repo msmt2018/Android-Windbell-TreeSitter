@@ -2851,7 +2851,6 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                                 }
                             }
                             program.predicates_by_pattern.resize(compiled_pattern_count);
-                            program.predicate_operands_by_pattern.resize(compiled_pattern_count);
                             for (uint32_t pattern = 0;
                                  pattern < compiled_pattern_count; ++pattern) {
                                 uint32_t step_count = 0;
@@ -2961,47 +2960,10 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                                             throw;
                                         }
                                     }
-                                    // Decode immutable string operands once. This moves UTF
-                                    // validation and UTF-16 conversion out of the per-match hot path.
-                                    NativeQueryProgram::PredicateOperands operands;
-                                    if (!regex_match) {
-                                        for (size_t arg = 2; arg < predicate.size(); ++arg) {
-                                            if (predicate[arg].type == TSQueryPredicateStepTypeCapture) {
-                                                continue; // eq? capture-to-capture comparison
-                                            }
-                                            uint32_t value_length = 0;
-                                            const char* value = ts_query_string_value_for_id(
-                                                program.query, predicate[arg].value_id, &value_length);
-                                            if (!value) {
-                                                g_tsh_last_error_detail =
-                                                    "invalid native query predicate string operand";
-                                                release_predicate_regexes();
-                                                ts_query_delete(program.query);
-                                                program.query = nullptr;
-                                                return nullptr;
-                                            }
-                                            if (structural) {
-                                                operands.type_values.emplace_back(value, value_length);
-                                            } else {
-                                                std::vector<UChar> decoded;
-                                                if (!tshUtf8ToUtf16(
-                                                        std::string_view(value, value_length), decoded)) {
-                                                    g_tsh_last_error_detail =
-                                                        "native query predicate operand is not valid UTF-8";
-                                                    release_predicate_regexes();
-                                                    ts_query_delete(program.query);
-                                                    program.query = nullptr;
-                                                    return nullptr;
-                                                }
-                                                operands.string_values.push_back(std::move(decoded));
-                                            }
-                                        }
-                                    }
-                                    // Keep immutable predicate steps and decoded operands
-                                    // in matching [pattern][predicate] slots.
+                                    // Keep immutable predicate steps with the query.
+                                    // The execution hot path reuses these instead of
+                                    // allocating/copying a vector for every match.
                                     program.predicates_by_pattern[pattern].push_back(std::move(predicate));
-                                    program.predicate_operands_by_pattern[pattern].push_back(
-                                        std::move(operands));
                                     ++predicate_index;
                                 }
                             }
