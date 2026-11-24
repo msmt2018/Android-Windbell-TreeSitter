@@ -126,9 +126,10 @@ public:
                 item.first.source_version == sourceVersion &&
                 item.first.partition_version == partitionVersion) {
                 ranges.emplace_back(item.first.start_byte, item.first.end_byte);
-                dependency_lru_.splice(
-                    dependency_lru_.end(), dependency_lru_, item.second.lru);
-                item.second.lru = std::prev(dependency_lru_.end());
+                // Snapshotting all reusable keys for an edit is not a cache hit.
+                // Promoting every entry here rewrote LRU recency in unordered_map
+                // iteration order and could evict genuinely hot dependency proofs
+                // on the next admission. Only find()/explicit use may touch recency.
             }
         }
         std::sort(ranges.begin(), ranges.end());
