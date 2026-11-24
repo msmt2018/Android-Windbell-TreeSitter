@@ -1942,6 +1942,13 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeApplyDocumentEdi
     ts_tree_delete(edited_tree);
     if (!dirty_ranges_ok) {
         ts_tree_delete(next_tree);
+        // The incremental parser may have been interrupted before the full
+        // fallback succeeded. If the candidate transaction is still uncommitted,
+        // discard its parser and reset the original parser for the next edit.
+        if (replacement_parser) {
+            replacement_parser.reset();
+            ts_parser_reset(document->parser);
+        }
         throw_illegal_state(env, "Unable to map Tree-sitter changed ranges into native line intervals");
         return JNI_FALSE;
     }
