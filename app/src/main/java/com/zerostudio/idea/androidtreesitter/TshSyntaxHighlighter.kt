@@ -358,9 +358,12 @@ class TshSyntaxHighlighter(
                                 // renderer must retry after the native revision commits.
                                 complete = false
                             ).also {
-                                pendingDisplayRanges += CaptureDisplayRebaser.SourceRange(
+                                val displayRange = CaptureDisplayRebaser.SourceRange(
                                     boundedStart.toInt(), boundedEnd.toInt()
                                 )
+                                if (displayRange !in pendingDisplayRanges) {
+                                    pendingDisplayRanges += displayRange
+                                }
                             }
                         }
                     }
