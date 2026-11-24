@@ -1851,10 +1851,10 @@ static bool hasMatchingQueryRootAncestor(
 static void appendQueryPatternDependencies(
     const TshGrammar& grammar,
     const TSLanguage* language,
-    TSTree* tree,
     uint32_t range_start,
     uint32_t range_end,
     uint32_t total_bytes,
+    const std::vector<TshQueryRootCandidate>& candidates,
     std::vector<HighlightDependencyRange>* output
 ) {
     if (!output) return;
@@ -1888,26 +1888,36 @@ static void appendQueryPatternDependencies(
         return;
     }
 
-    // All fixed-root patterns share one source-ordered AST traversal. The
-    // union of root intervals is sufficient for cache invalidation and avoids
-    // repeating the same viewport walk once per distinct node symbol.
+    // Reuse the candidate-root traversal already required by Query execution.
+    // The previous implementation performed a second full viewport AST walk
+    // solely to reconstruct the same root intervals for cache dependencies.
     std::vector<std::pair<uint32_t, uint32_t>> root_ranges;
-    std::unordered_set<TSSymbol> found_symbols;
-    found_symbols.reserve(root_symbols.size());
-    // A rooted-local query only starts matches at nodes intersecting the
-    // requested viewport. Missing one of the program's root symbols in this
-    // viewport means that pattern currently has no candidate here; it does not
-    // make every byte in the document a dependency. The viewport envelope below
-    // covers candidate creation/removal in this partition, while each existing
-    // candidate contributes its complete root-node range.
-    collectQueryRootRanges(
-        grammar, tree, root_symbols, range_start, range_end, total_bytes,
-        &root_ranges, &found_symbols);
+    root_ranges.reserve(candidates.size());
+    for (const auto& candidate : candidates) {
+        const bool relevant = std::any_of(
+            candidate.matching_symbols.begin(), candidate.matching_symbols.end(),
+            [&](TSSymbol symbol) {
+                return root_symbols.find(symbol) != root_symbols.end();
+            });
+        if (!relevant) continue;
+        const uint32_t start = ts_node_start_byte(candidate.node);
+        const uint32_t end = ts_node_end_byte(candidate.node);
+        if (start > end || end > total_bytes || (start & 1u) || (end & 1u)) continue;
+        uint32_t dependency_start = start;
+        uint32_t dependency_end = end;
+        if (dependency_start == dependency_end) {
+            dependency_start = dependency_start >= 2u ? dependency_start - 2u : 0u;
+            dependency_end = static_cast<uint32_t>(std::min<uint64_t>(
+                total_bytes, static_cast<uint64_t>(dependency_end) + 2u));
+        }
+        root_ranges.emplace_back(dependency_start, dependency_end);
+    }
 
     std::sort(root_ranges.begin(), root_ranges.end());
     size_t merged_count = 0;
     for (const auto& range : root_ranges) {
-        if (merged_count != 0 && range.first <= root_ranges[merged_count - 1u].second) {
+        if (merged_count != 0 &&
+            range.first <= root_ranges[merged_count - 1u].second) {
             root_ranges[merged_count - 1u].second =
                 std::max(root_ranges[merged_count - 1u].second, range.second);
         } else {
@@ -3174,13 +3184,9 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
     }
     const size_t native_query_span_begin = macro_spans.size();
     if (tree && tree_source_valid && !grammar->native_queries.empty()) {
-        appendQueryPatternDependencies(
-            *grammar, language, tree, range_start_byte, range_end_byte,
-            total_bytes, dependency_ranges);
         // Build one viewport-local candidate-root set for every rooted-local
-        // query program. The Tree-sitter byte-range option filters captures but
-        // does not prune its AST walk; candidate roots let each local program
-        // start below unrelated document subtrees.
+        // query program. The same traversal also supplies dependency envelopes,
+        // avoiding a second walk of the viewport AST.
         std::unordered_set<TSSymbol> local_query_root_symbols;
         for (const auto& program : grammar->native_queries) {
             if (!program.enabled || !program.query) continue;
@@ -3200,6 +3206,9 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                 *grammar, tree, local_query_root_symbols,
                 range_start_byte, range_end_byte, &query_root_candidates);
         }
+        appendQueryPatternDependencies(
+            *grammar, language, range_start_byte, range_end_byte,
+            total_bytes, query_root_candidates, dependency_ranges);
 
         // Each .tsh query block keeps its own TSQuery and capture namespace.
         // Non-local, unrooted, unknown-root, or ancestor-context patterns retain
