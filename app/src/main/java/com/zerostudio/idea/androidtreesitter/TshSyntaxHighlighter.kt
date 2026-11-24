@@ -115,6 +115,9 @@ class TshSyntaxHighlighter(
     // Display-only snapshots of edits not yet committed to the native tree. They
     // let unchanged rows keep their old captures while semantic caches are rebased.
     private val pendingDisplayEdits = ArrayList<CaptureDisplayRebaser.PendingEdit>()
+    // Ranges temporarily drawn from old captures while edits are pending. They are
+    // invalidated once the final queued native revision is committed and ready.
+    private val pendingDisplayRanges = ArrayList<CaptureDisplayRebaser.SourceRange>()
     private var nativeEditJob: Job? = null
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -180,6 +183,7 @@ class TshSyntaxHighlighter(
         synchronized(nativeEditLock) {
             pendingNativeEdits.clear()
             pendingDisplayEdits.clear()
+            pendingDisplayRanges.clear()
         }
         synchronized(viewportRequestLock) {
             pendingViewportRanges.clear()
@@ -234,11 +238,22 @@ class TshSyntaxHighlighter(
             // captures can remain painted while semantic invalidation is in flight.
             largeSession?.let { active ->
                 active.pendingEditEpoch.incrementAndGet()
-                pendingDisplayEdits += CaptureDisplayRebaser.PendingEdit(
+                val displayEdit = CaptureDisplayRebaser.PendingEdit(
                     startUtf16 = change.rangeOffset,
                     deletedChars = change.deletedTextLength,
                     insertedChars = inserted.length
                 )
+                // Move any previously deferred viewport ranges through this next
+                // edit. Ranges touched by it are dropped; their rows are covered by
+                // the native dirty interval for the edit itself.
+                val shiftedDisplayRanges = pendingDisplayRanges.mapNotNull { range ->
+                    CaptureDisplayRebaser.mapOriginalCaptureToCurrent(
+                        range.startUtf16, range.endUtf16, listOf(displayEdit)
+                    )
+                }
+                pendingDisplayRanges.clear()
+                pendingDisplayRanges.addAll(shiftedDisplayRanges)
+                pendingDisplayEdits += displayEdit
             }
             pendingNativeEdits += edit
         }
@@ -330,7 +345,9 @@ class TshSyntaxHighlighter(
                             CaptureQueryResult(
                                 spans = old.spans.mapNotNull { span ->
                                     val mapped = CaptureDisplayRebaser.mapOriginalCaptureToCurrent(
-                                        span.startByte / 2, span.endByte / 2, displayEdits
+                                        ((span.startByte.toLong() and 0xFFFF_FFFFL) / 2L).toInt(),
+                                        ((span.endByte.toLong() and 0xFFFF_FFFFL) / 2L).toInt(),
+                                        displayEdits
                                     ) ?: return@mapNotNull null
                                     span.copy(
                                         startByte = mapped.startUtf16 * 2,
@@ -340,7 +357,11 @@ class TshSyntaxHighlighter(
                                 // These captures are visual continuity only. The
                                 // renderer must retry after the native revision commits.
                                 complete = false
-                            )
+                            ).also {
+                                pendingDisplayRanges += CaptureDisplayRebaser.SourceRange(
+                                    boundedStart.toInt(), boundedEnd.toInt()
+                                )
+                            }
                         }
                     }
                 } else {
@@ -512,6 +533,7 @@ class TshSyntaxHighlighter(
         synchronized(nativeEditLock) {
             pendingNativeEdits.clear()
             pendingDisplayEdits.clear()
+            pendingDisplayRanges.clear()
         }
         val ticket = generation.incrementAndGet()
         parseJob?.cancel(CancellationException("Superseded by newer document snapshot"))
@@ -1249,17 +1271,21 @@ class TshSyntaxHighlighter(
                     // Publish cache rebasing and the matching edit epoch atomically
                     // with styleLine's cache reads. Remove only this committed batch:
                     // newer edits may already be queued against the resulting revision.
-                    val invalidatedCaptureRanges = synchronized(nativeEditLock) {
-                        active.documentRevision.incrementAndGet()
-                        val invalidated = rebaseCaptureCaches(
-                            active.cacheSessionId, edits, reusableNativeRanges
-                        )
-                        repeat(edits.size) {
-                            if (pendingDisplayEdits.isNotEmpty()) pendingDisplayEdits.removeAt(0)
+                    val (invalidatedCaptureRanges, readyDisplayRanges) =
+                        synchronized(nativeEditLock) {
+                            active.documentRevision.incrementAndGet()
+                            val invalidated = rebaseCaptureCaches(
+                                active.cacheSessionId, edits, reusableNativeRanges
+                            )
+                            repeat(edits.size) {
+                                if (pendingDisplayEdits.isNotEmpty()) pendingDisplayEdits.removeAt(0)
+                            }
+                            val ready = if (pendingDisplayEdits.isEmpty()) {
+                                pendingDisplayRanges.toList().also { pendingDisplayRanges.clear() }
+                            } else emptyList()
+                            active.appliedEditEpoch.set(editEpoch)
+                            invalidated to ready
                         }
-                        active.appliedEditEpoch.set(editEpoch)
-                        invalidated
-                    }
                     active.rangeWork.clear()
                     synchronized(viewportRequestLock) {
                         pendingViewportRanges.clear()
@@ -1312,7 +1338,9 @@ class TshSyntaxHighlighter(
                             active,
                             active.documentRevision.get(),
                             dirtyByteRanges,
-                            invalidatedCaptureRanges
+                            invalidatedCaptureRanges + readyDisplayRanges.map { range ->
+                                range.startUtf16.toLong() * 2L to range.endUtf16.toLong() * 2L
+                            }
                         )
                     }
                 }
