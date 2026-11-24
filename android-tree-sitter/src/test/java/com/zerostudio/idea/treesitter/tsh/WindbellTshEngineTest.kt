@@ -801,6 +801,7 @@ class WindbellTshLinkageTest {
                 styles {
                     type { scope: "entity.name.type" }
                     method { scope: "entity.name.function" }
+                    emojiString { scope: "string.emoji" }
                 }
                 treeSitter {
                     queries: [
@@ -818,6 +819,11 @@ class WindbellTshLinkageTest {
                             id: "allowed-method"
                             priority: 40
                             source: `(method_declaration name: (identifier) @method (#any-of? @method "run" "start"))`
+                        },
+                        {
+                            id: "unicode-contains"
+                            priority: 41
+                            source: `(string_literal) @emojiString (#contains? @emojiString "👨‍👩‍👧‍👦")`
                         }
                     ]
                 }
@@ -826,7 +832,7 @@ class WindbellTshLinkageTest {
 
         assertTrue(engine.loadTshSource("java-query-predicates", source, language))
         val parser = TSParser.create().apply { setLanguage(language) }
-        val code = "// 😀 prefix\nclass Demo { void run() {} void skip() {} void other() {} }"
+        val code = "// 😀 prefix\nclass Demo { void run() {} void skip() {} void other() {} String family = \"👨‍👩‍👧‍👦\"; }"
         val tree = parser.parseString(code)
         val spans = engine.computeHighlights(tree, code, "java-query-predicates")
         val catalog = engine.getStyleCatalog("java-query-predicates")
@@ -836,6 +842,9 @@ class WindbellTshLinkageTest {
         assertTrue(spans.any { it.styleId == typeId && it.priority == 20 })
         assertTrue(spans.any { it.styleId == methodId && it.priority == 30 })
         assertTrue(spans.any { it.styleId == methodId && it.priority == 40 })
+        val emojiStringId = catalog.first { it.name == "emojiString" }.styleId
+        val emojiStringOffset = code.indexOf("\"👨‍👩‍👧‍👦\"") * 2
+        assertTrue(spans.any { it.styleId == emojiStringId && it.startByte == emojiStringOffset })
         val skipOffset = code.indexOf("skip") * 2
         val otherOffset = code.indexOf("other") * 2
         assertFalse(spans.any { it.styleId == methodId && it.startByte == skipOffset })
