@@ -320,3 +320,19 @@ These reports remain open until the exact runtime and device acceptance gates be
 
 - The painter still allocates a boxed `MutableList<Int>` for native-priority ranking and boxed indices in five `TreeSet` instances. These are now the next obvious allocation sources, but replacing them requires preserving exact total ordering and per-font-attribute winner selection. Do not replace them with a single shared winner because bold/italic/underline/strike-through may have different native winners.
 - The Kotlin capture projection still materializes `HighlightSpan` objects from the interval index. A future compact capture view should avoid object-per-capture materialization without lazy getters that allocate on every access, and must keep immutable revision identity and byte accounting.
+
+
+## 2026-11-25: primitive active-winner heaps for the painter
+
+- The previous sweep used seven `TreeSet<Int>` instances (foreground, background, and five independent font attributes). Every insertion boxed an index and allocated a tree node; each end event removed the node. This was a high-frequency per-line allocation source even after boundary events and clipped-capture wrappers had been made primitive.
+- Commits `1edab5e82b370e982c82db54a42caa7789878ef3` and `1cf51bea794d9e2c628a410e273f39a9b1e4f152` replace those sets with seven primitive `IntArray` min-heaps. The heaps use the same native-order comparator; ending a capture marks its index inactive, and inactive roots are lazily discarded. A capture is inserted at most once into each applicable heap because every capture has one start/end pair.
+- Heap capacity is counted from the actual active foreground/background/font attributes before allocation. Each heap is sized to the number of captures that can enter it, rather than allocating seven full-size arrays for every line. This avoids a fixed 7x capture-count scratch allocation for grammars that use only a subset of style attributes.
+- Bold, italic, underline, strike-through, and dim/alpha remain independent winner queues. Do not collapse them into one font winner: nested captures may contribute different font attributes with different native precedence.
+- Added instrumentation regression `primitivePainterHeapsKeepIndependentFontAttributeWinners`, which supplies overlapping captures with independent bold and italic attributes and asserts that both spans survive on the final Spannable. Existing nested-priority and adjacent-boundary tests continue to cover foreground/background precedence and boundary ordering.
+- This removes boxed TreeSet nodes and per-event tree removals from the paint sweep. The heap still uses bounded primitive scratch arrays and comparator calls; no device-level speedup is claimed until CI and allocation profiling complete.
+
+### Updated open optimization targets
+
+- The painter still builds a boxed `MutableList<Int>` to rank all source spans for Android's 8-bit span priority metadata. A primitive index sort is a candidate next step, but it must preserve the full comparator and equal (priority, declarationOrder) rank grouping.
+- `CaptureIntervalIndex.appendQuery` still materializes one `HighlightSpan` data object per overlapping capture. The next architectural step is a primitive capture batch contract shared by the interval index and painter, rather than a lazy list whose getters recreate objects. Any batch must be immutable for the duration of painting and must not escape the cache entry's revision lifetime.
+- Cache eviction remains a storage event, not semantic invalidation. Do not introduce a second unaccounted capture copy while adding the primitive batch path; charge retained payloads to the existing shared budget and keep precise edit/dependency invalidation.
