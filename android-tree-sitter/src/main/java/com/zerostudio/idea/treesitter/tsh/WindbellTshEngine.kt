@@ -612,16 +612,35 @@ class WindbellTshEngine private constructor() {
             data class SpanPriorityKey(
                 val priority: Int,
                 val declarationOrder: Int,
+                val startByte: Long,
+                val endByte: Long,
                 val source: Int,
                 val styleId: Int
             )
+            // Match WindbellTshCore's total capture ordering exactly. In particular,
+            // ranges must be compared before producer/style identity: a whole-token
+            // capture and a nested capture emitted by the same rule can have equal
+            // priority/declaration/source but different styles. Sorting styleId first
+            // made the palette winner depend on the numeric style allocation order
+            // (for example, an annotation's yellow could be painted green).
             val precedenceComparator =
                 compareByDescending<SpanPriorityKey> { it.priority }
                     .thenBy { it.declarationOrder }
+                    .thenBy { it.startByte }
+                    .thenByDescending { it.endByte }
                     .thenBy { it.source }
                     .thenBy { it.styleId }
             val ruleOrder = spans.asSequence()
-                .map { SpanPriorityKey(it.priority, it.declarationOrder, it.source, it.styleId) }
+                .map {
+                    SpanPriorityKey(
+                        it.priority,
+                        it.declarationOrder,
+                        it.startByteUnsigned,
+                        it.endByteUnsigned,
+                        it.source,
+                        it.styleId
+                    )
+                }
                 .distinct()
                 .sortedWith(precedenceComparator)
                 .mapIndexed { index, key -> key to (255 - index).coerceAtLeast(1) }
@@ -633,10 +652,10 @@ class WindbellTshEngine private constructor() {
             val orderedSpans = spans.sortedWith(
                 compareByDescending<HighlightSpan> { it.priority }
                     .thenBy { it.declarationOrder }
-                    .thenBy { it.source }
-                    .thenBy { it.styleId }
                     .thenBy { it.startByteUnsigned }
                     .thenByDescending { it.endByteUnsigned }
+                    .thenBy { it.source }
+                    .thenBy { it.styleId }
             )
 
             for (span in orderedSpans) {
