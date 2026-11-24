@@ -2387,6 +2387,55 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
     return encoded;
 }
 
+JNIEXPORT jlongArray JNICALL
+Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeGetReusableHighlightRanges(
+    JNIEnv *env, jobject, jlong document_pointer
+) {
+    auto document = nativeDocumentRegistry().acquire(document_pointer);
+    if (!document) {
+        throw_npe(env, "Native document handle cannot be null");
+        return nullptr;
+    }
+    std::lock_guard<std::mutex> lock(document->mutex);
+    try {
+        const auto ranges = document->highlight_cache.snapshotRanges(false);
+        if (ranges.size() >
+            (static_cast<size_t>(std::numeric_limits<jsize>::max()) - 1u) / 2u) {
+            throwNativeAllocationFailure(
+                env, "Reusable native highlight range snapshot exceeds JNI array limits");
+            return nullptr;
+        }
+        const jsize length = static_cast<jsize>(1u + ranges.size() * 2u);
+        jlongArray result = env->NewLongArray(length);
+        if (!result) return nullptr;
+        std::vector<jlong> encoded_ranges;
+        encoded_ranges.reserve(static_cast<size_t>(length));
+        encoded_ranges.push_back(static_cast<jlong>(ranges.size()));
+        for (const auto& range : ranges) {
+            encoded_ranges.push_back(static_cast<jlong>(range.first));
+            encoded_ranges.push_back(static_cast<jlong>(range.second));
+        }
+        if (!encoded_ranges.empty()) {
+            env->SetLongArrayRegion(
+                result, 0, length, encoded_ranges.data());
+        }
+        if (env->ExceptionCheck()) {
+            env->DeleteLocalRef(result);
+            return nullptr;
+        }
+        return result;
+    } catch (const std::bad_alloc&) {
+        throwNativeAllocationFailure(
+            env, "Unable to allocate reusable native highlight range snapshot");
+    } catch (const std::exception& error) {
+        throwNativeHighlightFailure(env, error.what());
+    } catch (...) {
+        throwNativeHighlightFailure(
+            env, "Unknown reusable native highlight range snapshot failure");
+    }
+    return nullptr;
+}
+
 JNIEXPORT void JNICALL
 Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeCloseDocument(
     JNIEnv *, jobject, jlong document_pointer
