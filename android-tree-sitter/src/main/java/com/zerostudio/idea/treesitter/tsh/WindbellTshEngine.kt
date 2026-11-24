@@ -715,6 +715,44 @@ class WindbellTshEngine private constructor() {
                 }
             }
 
+            var pendingStart = -1
+            var pendingEnd = -1
+            var pendingForeground: Int? = null
+            var pendingBackground: Int? = null
+            var pendingFont: Int? = null
+            fun flushPendingRun() {
+                if (pendingStart >= 0) {
+                    paintRun(
+                        pendingStart, pendingEnd,
+                        pendingForeground, pendingBackground, pendingFont
+                    )
+                }
+                pendingStart = -1
+                pendingEnd = -1
+                pendingForeground = null
+                pendingBackground = null
+                pendingFont = null
+            }
+            fun appendResolvedRun(startOffset: Int, endOffset: Int) {
+                if (startOffset >= endOffset) return
+                val foreground = activeForeground.firstOrNull()
+                val background = activeBackground.firstOrNull()
+                val font = activeFont.firstOrNull()
+                if (pendingStart >= 0 && pendingEnd == startOffset &&
+                    pendingForeground == foreground &&
+                    pendingBackground == background &&
+                    pendingFont == font) {
+                    pendingEnd = endOffset
+                } else {
+                    flushPendingRun()
+                    pendingStart = startOffset
+                    pendingEnd = endOffset
+                    pendingForeground = foreground
+                    pendingBackground = background
+                    pendingFont = font
+                }
+            }
+
             var eventIndex = 0
             var cursor = visibleStart
             while (eventIndex < events.size) {
@@ -722,12 +760,9 @@ class WindbellTshEngine private constructor() {
                 if (cursor < boundary &&
                     (activeForeground.isNotEmpty() || activeBackground.isNotEmpty() ||
                         activeFont.isNotEmpty())) {
-                    paintRun(
-                        cursor, boundary,
-                        activeForeground.firstOrNull(),
-                        activeBackground.firstOrNull(),
-                        activeFont.firstOrNull()
-                    )
+                    appendResolvedRun(cursor, boundary)
+                } else if (cursor < boundary) {
+                    flushPendingRun()
                 }
                 while (eventIndex < events.size &&
                     events[eventIndex].offset == boundary &&
@@ -752,13 +787,9 @@ class WindbellTshEngine private constructor() {
             if (cursor < visibleEnd &&
                 (activeForeground.isNotEmpty() || activeBackground.isNotEmpty() ||
                     activeFont.isNotEmpty())) {
-                paintRun(
-                    cursor, visibleEnd,
-                    activeForeground.firstOrNull(),
-                    activeBackground.firstOrNull(),
-                    activeFont.firstOrNull()
-                )
+                appendResolvedRun(cursor, visibleEnd)
             }
+            flushPendingRun()
         }
     }
 
