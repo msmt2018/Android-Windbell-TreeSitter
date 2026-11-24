@@ -6,6 +6,7 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <list>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -101,14 +102,15 @@ public:
         return &found->second.value;
     }
 
-    // Snapshot exact viewport keys retained after dependency-aware edit rebasing.
-    // The document owner serializes this read with highlight/edit cache mutation.
+    // Snapshot viewport keys whose dependency metadata survived edit rebasing.
+    // This ledger is deliberately independent from the span-payload LRU: Kotlin
+    // may still own a compact capture page after the native payload was evicted.
     std::vector<std::pair<uint32_t, uint32_t>> snapshotRanges(
         bool diagnostics
     ) const {
         std::vector<std::pair<uint32_t, uint32_t>> ranges;
-        ranges.reserve(entries_.size());
-        for (const auto& item : entries_) {
+        ranges.reserve(dependency_entries_.size());
+        for (const auto& item : dependency_entries_) {
             if (item.first.diagnostics == diagnostics) {
                 ranges.emplace_back(item.first.start_byte, item.first.end_byte);
             }
@@ -119,6 +121,11 @@ public:
     }
 
     void put(Key key, Value value) {
+        // Preserve dependency proof even when the larger native span payload
+        // cannot enter the LRU. The Kotlin capture cache may still retain that
+        // immutable result and must not lose edit-reuse eligibility just because
+        // this second payload copy was evicted.
+        rememberDependencies(key, value.dependencies);
         constexpr size_t kEntryOverhead =
             sizeof(Value) + sizeof(Key) + 5u * sizeof(void *);
         const size_t span_capacity = value.spans.capacity();
@@ -205,8 +212,78 @@ public:
             return false;
         };
 
+        std::unordered_map<Key, DependencyEntry, KeyHash> rebased_dependencies;
+        std::list<Key> rebased_dependency_lru;
+        size_t rebased_dependency_bytes = 0;
         std::unordered_map<Key, Entry, KeyHash> rebased;
         try {
+            // Rebase the compact dependency ledger independently of the span
+            // payload LRU. It contains every admitted viewport proof, including
+            // proofs whose native span vectors have already been evicted.
+            rebased_dependencies.reserve(dependency_entries_.size());
+            for (const Key& old_key : dependency_lru_) {
+                auto found = dependency_entries_.find(old_key);
+                if (found == dependency_entries_.end()) continue;
+                Key next_key = old_key;
+                auto dependencies = found->second.ranges;
+                bool reusable = !dependencies.empty();
+                reusable = reusable && transformRange(
+                    &next_key.start_byte, &next_key.end_byte);
+                for (auto &dependency : dependencies) {
+                    if (!reusable) break;
+                    if ((dependency.flags & HIGHLIGHT_DEPENDENCY_DOCUMENT_WIDE) != 0) {
+                        reusable = false;
+                        break;
+                    }
+                    if ((dependency.flags & HIGHLIGHT_DEPENDENCY_CHECKPOINT_BASED) != 0 &&
+                        editStart <= dependency.start_byte) {
+                        reusable = false;
+                        break;
+                    }
+                    if ((dependency.flags & HIGHLIGHT_DEPENDENCY_BOUNDARY_SENSITIVE) != 0 &&
+                        editStart <= dependency.end_byte &&
+                        oldEditEnd >= dependency.start_byte) {
+                        reusable = false;
+                        break;
+                    }
+                    reusable = transformRange(
+                        &dependency.start_byte, &dependency.end_byte);
+                    if (!reusable) break;
+                    if (insertedBytes != 0 &&
+                        overlaps(dependency.start_byte, dependency.end_byte,
+                                 editStart, insertedEnd)) {
+                        reusable = false;
+                        break;
+                    }
+                    for (const auto &dirty : dirtyRanges) {
+                        if (dirty.first < dirty.second &&
+                            overlaps(dependency.start_byte, dependency.end_byte,
+                                     dirty.first, dirty.second)) {
+                            reusable = false;
+                            break;
+                        }
+                    }
+                }
+                if (!reusable) continue;
+                next_key.version = newVersion;
+                next_key.source_version = newSourceVersion;
+                next_key.partition_version = newPartitionVersion;
+                const size_t bytes = dependencyWeight(dependencies);
+                if (bytes > kDependencyLedgerBudgetBytes ||
+                    bytes > kDependencyLedgerBudgetBytes - rebased_dependency_bytes) {
+                    continue;
+                }
+                rebased_dependency_lru.push_back(next_key);
+                auto lru = std::prev(rebased_dependency_lru.end());
+                auto inserted = rebased_dependencies.emplace(
+                    next_key, DependencyEntry{std::move(dependencies), bytes, lru});
+                if (inserted.second) rebased_dependency_bytes += bytes;
+                else rebased_dependency_lru.erase(lru);
+            }
+            dependency_entries_.swap(rebased_dependencies);
+            dependency_lru_.swap(rebased_dependency_lru);
+            dependency_used_bytes_ = rebased_dependency_bytes;
+
             rebased.reserve(entries_.size());
             Entry *entry = head_;
             while (entry) {
@@ -313,9 +390,13 @@ public:
         head_ = nullptr;
         tail_ = nullptr;
         used_bytes_ = 0;
+        dependency_entries_.clear();
+        dependency_lru_.clear();
+        dependency_used_bytes_ = 0;
     }
 
     size_t usedBytes() const noexcept { return used_bytes_; }
+    size_t dependencyBytesUsed() const noexcept { return dependency_used_bytes_; }
     size_t budgetBytes() const noexcept { return budget_bytes_; }
     size_t size() const noexcept { return entries_.size(); }
 
@@ -344,6 +425,75 @@ private:
         Entry *next = nullptr;
         size_t bytes = 0;
     };
+
+    struct DependencyEntry {
+        std::vector<DependencyRange> ranges;
+        size_t bytes = 0;
+        std::list<Key>::iterator lru;
+    };
+
+    static constexpr size_t kDependencyLedgerBudgetBytes = 2u * 1024u * 1024u;
+    static constexpr size_t kDependencyLedgerMaxEntries = 32768u;
+
+    static size_t dependencyWeight(
+        const std::vector<DependencyRange>& ranges
+    ) noexcept {
+        constexpr size_t overhead = sizeof(Key) + sizeof(DependencyEntry) + 48u;
+        if (ranges.capacity() >
+            (static_cast<size_t>(-1) - overhead) / sizeof(DependencyRange)) {
+            return static_cast<size_t>(-1);
+        }
+        return overhead + ranges.capacity() * sizeof(DependencyRange);
+    }
+
+    void rememberDependencies(
+        const Key& key,
+        const std::vector<DependencyRange>& dependencies
+    ) noexcept {
+        if (dependencies.empty()) return;
+        try {
+            std::vector<DependencyRange> copy = dependencies;
+            const size_t bytes = dependencyWeight(copy);
+            if (bytes > kDependencyLedgerBudgetBytes) return;
+
+            auto existing = dependency_entries_.find(key);
+            if (existing != dependency_entries_.end()) {
+                dependency_used_bytes_ -= std::min(
+                    dependency_used_bytes_, existing->second.bytes);
+                dependency_lru_.erase(existing->second.lru);
+                dependency_entries_.erase(existing);
+            }
+            while ((dependency_used_bytes_ > kDependencyLedgerBudgetBytes - bytes ||
+                    dependency_entries_.size() >= kDependencyLedgerMaxEntries) &&
+                   !dependency_lru_.empty()) {
+                const Key oldest = dependency_lru_.front();
+                dependency_lru_.pop_front();
+                auto victim = dependency_entries_.find(oldest);
+                if (victim == dependency_entries_.end()) continue;
+                dependency_used_bytes_ -= std::min(
+                    dependency_used_bytes_, victim->second.bytes);
+                dependency_entries_.erase(victim);
+            }
+
+            dependency_lru_.push_back(key);
+            auto lru = std::prev(dependency_lru_.end());
+            try {
+                auto inserted = dependency_entries_.emplace(
+                    key, DependencyEntry{std::move(copy), bytes, lru});
+                if (!inserted.second) {
+                    dependency_lru_.erase(lru);
+                    return;
+                }
+            } catch (...) {
+                dependency_lru_.erase(lru);
+                throw;
+            }
+            dependency_used_bytes_ += bytes;
+        } catch (...) {
+            // Dependency metadata is an optimization. If it cannot be retained,
+            // the range will be conservatively invalidated on the next edit.
+        }
+    }
 
     using Iterator = typename std::unordered_map<Key, Entry, KeyHash>::iterator;
 
@@ -385,6 +535,9 @@ private:
     Entry *head_ = nullptr;
     Entry *tail_ = nullptr;
     std::unordered_map<Key, Entry, KeyHash> entries_;
+    std::unordered_map<Key, DependencyEntry, KeyHash> dependency_entries_;
+    std::list<Key> dependency_lru_;
+    size_t dependency_used_bytes_ = 0;
 };
 
 } // namespace windbell::tsh
