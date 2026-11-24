@@ -668,11 +668,69 @@ class WindbellTshEngine private constructor() {
                 )
                 if (order != 0) order else left.compareTo(right)
             }
-            val activeForeground = java.util.TreeSet(compareCaptureIndices)
-            val activeBackground = java.util.TreeSet(compareCaptureIndices)
-            val activeFontByBit = Array(5) { java.util.TreeSet(compareCaptureIndices) }
-            val fontFlagCounts = IntArray(5)
-            var activeFontFlags = 0
+            // Seven primitive min-heaps replace boxed TreeSet nodes: foreground,
+            // background, and one winner queue for each independent font attribute.
+            // End events mark a capture inactive; stale heap roots are discarded lazily.
+            // Each capture has one interval, so it is inserted at most once per heap.
+            val activeCaptures = BooleanArray(captureCount)
+            val activeHeaps = Array(7) { IntArray(captureCount) }
+            val activeHeapSizes = IntArray(7)
+
+            fun siftDown(heapIndex: Int, startIndex: Int) {
+                val heap = activeHeaps[heapIndex]
+                val size = activeHeapSizes[heapIndex]
+                var parent = startIndex
+                while (true) {
+                    val left = parent * 2 + 1
+                    if (left >= size) break
+                    val right = left + 1
+                    var best = left
+                    if (right < size &&
+                        compareCaptureIndices.compare(heap[right], heap[left]) < 0) best = right
+                    if (compareCaptureIndices.compare(heap[best], heap[parent]) >= 0) break
+                    val swap = heap[parent]
+                    heap[parent] = heap[best]
+                    heap[best] = swap
+                    parent = best
+                }
+            }
+
+            fun addToHeap(heapIndex: Int, captureIndex: Int) {
+                val heap = activeHeaps[heapIndex]
+                var position = activeHeapSizes[heapIndex]
+                activeHeapSizes[heapIndex] = position + 1
+                heap[position] = captureIndex
+                while (position > 0) {
+                    val parent = (position - 1) ushr 1
+                    if (compareCaptureIndices.compare(heap[position], heap[parent]) >= 0) break
+                    val swap = heap[parent]
+                    heap[parent] = heap[position]
+                    heap[position] = swap
+                    position = parent
+                }
+            }
+
+            fun activeWinner(heapIndex: Int): Int? {
+                val heap = activeHeaps[heapIndex]
+                while (activeHeapSizes[heapIndex] > 0 && !activeCaptures[heap[0]]) {
+                    val nextSize = activeHeapSizes[heapIndex] - 1
+                    activeHeapSizes[heapIndex] = nextSize
+                    if (nextSize > 0) {
+                        heap[0] = heap[nextSize]
+                        siftDown(heapIndex, 0)
+                    }
+                }
+                return if (activeHeapSizes[heapIndex] > 0) heap[0] else null
+            }
+
+            fun hasActiveStyles(): Boolean {
+                if (activeWinner(0) != null || activeWinner(1) != null) return true
+                for (bitIndex in 0 until 5) {
+                    if (activeWinner(bitIndex + 2) != null) return true
+                }
+                return false
+            }
+
             val hasForeground = BooleanArray(captureCount)
             val hasBackground = BooleanArray(captureCount)
             val captureFontFlags = IntArray(captureCount)
@@ -780,22 +838,14 @@ class WindbellTshEngine private constructor() {
                 }
             }
 
-            fun updateActiveFontFlags(index: Int, adding: Boolean) {
+            fun setCaptureActive(index: Int, active: Boolean) {
+                activeCaptures[index] = active
+                if (!active) return
+                if (hasForeground[index]) addToHeap(0, index)
+                if (hasBackground[index]) addToHeap(1, index)
                 val flags = captureFontFlags[index]
                 for (bitIndex in 0 until 5) {
-                    val bit = 1 shl bitIndex
-                    if ((flags and bit) == 0) continue
-                    if (adding) activeFontByBit[bitIndex].add(index)
-                    else activeFontByBit[bitIndex].remove(index)
-                    if (adding) {
-                        fontFlagCounts[bitIndex]++
-                        activeFontFlags = activeFontFlags or bit
-                    } else if (fontFlagCounts[bitIndex] > 0) {
-                        fontFlagCounts[bitIndex]--
-                        if (fontFlagCounts[bitIndex] == 0) {
-                            activeFontFlags = activeFontFlags and bit.inv()
-                        }
-                    }
+                    if ((flags and (1 shl bitIndex)) != 0) addToHeap(bitIndex + 2, index)
                 }
             }
 
@@ -822,16 +872,19 @@ class WindbellTshEngine private constructor() {
             }
             fun appendResolvedRun(startOffset: Int, endOffset: Int) {
                 if (startOffset >= endOffset) return
-                val foreground = activeForeground.firstOrNull()
-                val background = activeBackground.firstOrNull()
-                val fontFlags = activeFontFlags
+                val foreground = activeWinner(0)
+                val background = activeWinner(1)
+                var fontFlags = 0
                 var packedFontPriorities = 0L
-                for (bitIndex in 0 until 4) {
-                    val winner = activeFontByBit[bitIndex].firstOrNull() ?: continue
-                    val priority = (capturePriorityFlags[captureSourceIndices[winner]] ushr
-                        Spanned.SPAN_PRIORITY_SHIFT) and 0xFF
-                    packedFontPriorities = packedFontPriorities or
-                        (priority.toLong() shl (bitIndex * 8))
+                for (bitIndex in 0 until 5) {
+                    val winner = activeWinner(bitIndex + 2) ?: continue
+                    fontFlags = fontFlags or (1 shl bitIndex)
+                    if (bitIndex < 4) {
+                        val priority = (capturePriorityFlags[captureSourceIndices[winner]] ushr
+                            Spanned.SPAN_PRIORITY_SHIFT) and 0xFF
+                        packedFontPriorities = packedFontPriorities or
+                            (priority.toLong() shl (bitIndex * 8))
+                    }
                 }
                 if (pendingStart >= 0 && pendingEnd == startOffset &&
                     pendingForeground == foreground &&
@@ -855,8 +908,7 @@ class WindbellTshEngine private constructor() {
             while (eventIndex < events.size) {
                 val boundary = boundaryEventOffset(events[eventIndex])
                 if (cursor < boundary &&
-                    (activeForeground.isNotEmpty() || activeBackground.isNotEmpty() ||
-                        activeFontFlags != 0)) {
+                    hasActiveStyles()) {
                     appendResolvedRun(cursor, boundary)
                 } else if (cursor < boundary) {
                     flushPendingRun()
@@ -865,25 +917,20 @@ class WindbellTshEngine private constructor() {
                     boundaryEventOffset(events[eventIndex]) == boundary &&
                     !boundaryEventStarts(events[eventIndex])) {
                     val index = boundaryEventCaptureIndex(events[eventIndex])
-                    if (hasForeground[index]) activeForeground.remove(index)
-                    if (hasBackground[index]) activeBackground.remove(index)
-                    updateActiveFontFlags(index, adding = false)
+                    setCaptureActive(index, active = false)
                     eventIndex++
                 }
                 while (eventIndex < events.size &&
                     boundaryEventOffset(events[eventIndex]) == boundary &&
                     boundaryEventStarts(events[eventIndex])) {
                     val index = boundaryEventCaptureIndex(events[eventIndex])
-                    if (hasForeground[index]) activeForeground.add(index)
-                    if (hasBackground[index]) activeBackground.add(index)
-                    updateActiveFontFlags(index, adding = true)
+                    setCaptureActive(index, active = true)
                     eventIndex++
                 }
                 cursor = boundary
             }
             if (cursor < visibleEnd &&
-                (activeForeground.isNotEmpty() || activeBackground.isNotEmpty() ||
-                    activeFontFlags != 0)) {
+                hasActiveStyles()) {
                 appendResolvedRun(cursor, visibleEnd)
             }
             flushPendingRun()
