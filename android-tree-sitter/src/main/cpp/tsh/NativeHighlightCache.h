@@ -283,9 +283,27 @@ public:
                 if (inserted.second) rebased_dependency_bytes += bytes;
                 else rebased_dependency_lru.erase(lru);
             }
-            dependency_entries_.swap(rebased_dependencies);
-            dependency_lru_.swap(rebased_dependency_lru);
-            dependency_used_bytes_ = rebased_dependency_bytes;
+            const size_t previous_dependency_bytes = dependency_used_bytes_;
+            if (rebased_dependency_bytes > previous_dependency_bytes) {
+                const size_t additional = rebased_dependency_bytes - previous_dependency_bytes;
+                if (shared_budget_ && !shared_budget_->tryAcquire(additional)) {
+                    dependency_entries_.clear();
+                    dependency_lru_.clear();
+                    dependency_used_bytes_ = 0;
+                    shared_budget_->release(previous_dependency_bytes);
+                } else {
+                    dependency_entries_.swap(rebased_dependencies);
+                    dependency_lru_.swap(rebased_dependency_lru);
+                    dependency_used_bytes_ = rebased_dependency_bytes;
+                }
+            } else {
+                dependency_entries_.swap(rebased_dependencies);
+                dependency_lru_.swap(rebased_dependency_lru);
+                dependency_used_bytes_ = rebased_dependency_bytes;
+                if (shared_budget_) {
+                    shared_budget_->release(previous_dependency_bytes - rebased_dependency_bytes);
+                }
+            }
 
             rebased.reserve(entries_.size());
             Entry *entry = head_;
@@ -395,6 +413,9 @@ public:
         used_bytes_ = 0;
         dependency_entries_.clear();
         dependency_lru_.clear();
+        if (shared_budget_ && dependency_used_bytes_ != 0) {
+            shared_budget_->release(dependency_used_bytes_);
+        }
         dependency_used_bytes_ = 0;
     }
 
@@ -453,36 +474,22 @@ private:
         const Key& key,
         const std::vector<DependencyRange>& dependencies
     ) noexcept {
-        if (dependencies.empty()) {
-            auto existing = dependency_entries_.find(key);
-            if (existing != dependency_entries_.end()) {
-                dependency_used_bytes_ -= std::min(
-                    dependency_used_bytes_, existing->second.bytes);
-                dependency_lru_.erase(existing->second.lru);
-                dependency_entries_.erase(existing);
-            }
-            return;
-        }
+        bool shared_budget_acquired = false;
+        size_t pending_shared_bytes = 0;
         try {
             std::vector<DependencyRange> copy = dependencies;
             const size_t bytes = dependencyWeight(copy);
             auto existing = dependency_entries_.find(key);
-            if (bytes > kDependencyLedgerBudgetBytes) {
-                if (existing != dependency_entries_.end()) {
-                    dependency_used_bytes_ -= std::min(
-                        dependency_used_bytes_, existing->second.bytes);
-                    dependency_lru_.erase(existing->second.lru);
-                    dependency_entries_.erase(existing);
-                }
-                return;
-            }
-
             if (existing != dependency_entries_.end()) {
-                dependency_used_bytes_ -= std::min(
+                const size_t released = std::min(
                     dependency_used_bytes_, existing->second.bytes);
+                dependency_used_bytes_ -= released;
+                if (shared_budget_) shared_budget_->release(released);
                 dependency_lru_.erase(existing->second.lru);
                 dependency_entries_.erase(existing);
             }
+            if (dependencies.empty() || bytes > kDependencyLedgerBudgetBytes) return;
+
             while ((dependency_used_bytes_ > kDependencyLedgerBudgetBytes - bytes ||
                     dependency_entries_.size() >= kDependencyLedgerMaxEntries) &&
                    !dependency_lru_.empty()) {
@@ -490,11 +497,18 @@ private:
                 dependency_lru_.pop_front();
                 auto victim = dependency_entries_.find(oldest);
                 if (victim == dependency_entries_.end()) continue;
-                dependency_used_bytes_ -= std::min(
+                const size_t released = std::min(
                     dependency_used_bytes_, victim->second.bytes);
+                dependency_used_bytes_ -= released;
+                if (shared_budget_) shared_budget_->release(released);
                 dependency_entries_.erase(victim);
             }
 
+            if (shared_budget_) {
+                if (!shared_budget_->tryAcquire(bytes)) return;
+                shared_budget_acquired = true;
+                pending_shared_bytes = bytes;
+            }
             dependency_lru_.push_back(key);
             auto lru = std::prev(dependency_lru_.end());
             try {
@@ -502,6 +516,10 @@ private:
                     key, DependencyEntry{std::move(copy), bytes, lru});
                 if (!inserted.second) {
                     dependency_lru_.erase(lru);
+                    if (shared_budget_acquired) {
+                        shared_budget_->release(pending_shared_bytes);
+                        shared_budget_acquired = false;
+                    }
                     return;
                 }
             } catch (...) {
@@ -509,7 +527,11 @@ private:
                 throw;
             }
             dependency_used_bytes_ += bytes;
+            shared_budget_acquired = false;
         } catch (...) {
+            if (shared_budget_acquired && shared_budget_) {
+                shared_budget_->release(pending_shared_bytes);
+            }
             // Dependency metadata is an optimization. If it cannot be retained,
             // the range will be conservatively invalidated on the next edit.
         }
