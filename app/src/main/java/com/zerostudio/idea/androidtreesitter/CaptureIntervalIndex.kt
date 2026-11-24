@@ -47,6 +47,14 @@ internal class CaptureIntervalIndex private constructor(
 
     constructor(captures: List<WindbellTshEngine.HighlightSpan>) : this(pack(captures))
 
+    /**
+     * Consumes the native six-int capture ABI directly. The normal JNI path is
+     * already ordered by start byte, so it avoids both per-capture Kotlin objects
+     * and a temporary boxed sort index. The defensive sort is retained for any
+     * producer that violates that ordering contract.
+     */
+    constructor(nativeFlat: IntArray) : this(packNative(nativeFlat))
+
     fun query(startUtf16: Int, endUtf16: Int): List<WindbellTshEngine.HighlightSpan> {
         if (startUtf16 < 0 || endUtf16 <= startUtf16 || size == 0) return emptyList()
         val result = ArrayList<WindbellTshEngine.HighlightSpan>()
@@ -142,6 +150,62 @@ internal class CaptureIntervalIndex private constructor(
     }
 
     companion object {
+        private const val NATIVE_CAPTURE_STRIDE = 6
+
+        private fun packNative(flat: IntArray): PackedArrays {
+            require(flat.size % NATIVE_CAPTURE_STRIDE == 0) {
+                "Native capture payload must contain six integers per capture"
+            }
+            val count = flat.size / NATIVE_CAPTURE_STRIDE
+            var sorted = true
+            for (index in 1 until count) {
+                val previous = flat[(index - 1) * NATIVE_CAPTURE_STRIDE]
+                val current = flat[index * NATIVE_CAPTURE_STRIDE]
+                if (Integer.compareUnsigned(previous, current) > 0) {
+                    sorted = false
+                    break
+                }
+            }
+            val order: Array<Int>? = if (sorted) null else
+                Array(count) { it }.also { indices ->
+                    indices.sortWith(Comparator { left, right ->
+                        Integer.compareUnsigned(
+                            flat[left * NATIVE_CAPTURE_STRIDE],
+                            flat[right * NATIVE_CAPTURE_STRIDE]
+                        )
+                    })
+                }
+
+            val starts = IntArray(count)
+            val ends = IntArray(count)
+            val styleIds = ShortArray(count)
+            val fontFlags = ShortArray(count)
+            val priorities = IntArray(count)
+            val declarationOrders = IntArray(count)
+            val sources = ByteArray(count)
+            val prefixMaxEnd = IntArray(count)
+            var maximumEnd = 0
+            for (index in 0 until count) {
+                val sourceIndex = order?.get(index) ?: index
+                val offset = sourceIndex * NATIVE_CAPTURE_STRIDE
+                val start = flat[offset]
+                val end = flat[offset + 1]
+                val packedStyle = flat[offset + 2]
+                starts[index] = start
+                ends[index] = end
+                styleIds[index] = (packedStyle and 0xFFFF).toShort()
+                fontFlags[index] = ((packedStyle ushr 16) and 0xFFFF).toShort()
+                priorities[index] = flat[offset + 3]
+                declarationOrders[index] = flat[offset + 4]
+                sources[index] = flat[offset + 5].toByte()
+                if (Integer.compareUnsigned(end, maximumEnd) > 0) maximumEnd = end
+                prefixMaxEnd[index] = maximumEnd
+            }
+            return PackedArrays(
+                starts, ends, styleIds, fontFlags, priorities,
+                declarationOrders, sources, prefixMaxEnd, count
+            )
+        }
         private fun pack(
             captures: List<WindbellTshEngine.HighlightSpan>
         ): PackedArrays {
