@@ -50,8 +50,10 @@ private:
  * Per-document bounded native highlight result cache.
  *
  * Keys include document/source/partition/grammar versions and the exact
- * UTF-16LE viewport. Immutable snapshots carry explicit dependency envelopes;
- * edits rebase only snapshots whose captures and dependencies remain valid.
+ * UTF-16LE viewport. Span payloads live in a bounded LRU; compact dependency
+ * proofs live in a separately bounded ledger so payload eviction cannot erase
+ * the validity proof needed by Kotlin's capture cache. Edits rebase only ranges
+ * whose captures and dependency envelopes remain valid.
  */
 class NativeHighlightCache final {
 public:
