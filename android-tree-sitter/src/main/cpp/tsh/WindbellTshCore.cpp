@@ -1505,6 +1505,7 @@ void WindbellEngine::matchBlockRecursive(
 }
 
 static bool collectQueryRootRanges(
+    const TshGrammar& grammar,
     TSTree* tree,
     const std::unordered_set<TSSymbol>& root_symbols,
     uint32_t range_start,
@@ -1533,9 +1534,14 @@ static bool collectQueryRootRanges(
                 ? (start >= range_start && start <= range_end)
                 : (start < range_end && end > range_start);
             if (intersects) {
-                const TSSymbol symbol = ts_node_symbol(node);
-                if (root_symbols.find(symbol) != root_symbols.end() &&
-                    start <= end && end <= total_bytes &&
+                bool matches_query_root = false;
+                for (TSSymbol selector : root_symbols) {
+                    if (tshAstSymbolMatchesNode(grammar, node, selector)) {
+                        found_symbols->insert(selector);
+                        matches_query_root = true;
+                    }
+                }
+                if (matches_query_root && start <= end && end <= total_bytes &&
                     (start & 1u) == 0 && (end & 1u) == 0) {
                     uint32_t dependency_start = start;
                     uint32_t dependency_end = end;
@@ -1548,7 +1554,6 @@ static bool collectQueryRootRanges(
                             total_bytes, static_cast<uint64_t>(dependency_end) + 2u));
                     }
                     ranges->emplace_back(dependency_start, dependency_end);
-                    found_symbols->insert(symbol);
                 }
 
                 // Jump directly to the first child that contains or follows
@@ -1709,7 +1714,7 @@ static void appendQueryPatternDependencies(
     // covers candidate creation/removal in this partition, while each existing
     // candidate contributes its complete root-node range.
     collectQueryRootRanges(
-        tree, root_symbols, range_start, range_end, total_bytes,
+        grammar, tree, root_symbols, range_start, range_end, total_bytes,
         &root_ranges, &found_symbols);
 
     std::sort(root_ranges.begin(), root_ranges.end());
