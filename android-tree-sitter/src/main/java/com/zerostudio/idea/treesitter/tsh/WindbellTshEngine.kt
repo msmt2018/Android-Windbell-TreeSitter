@@ -49,6 +49,17 @@ fun interface NativeTextWindowReader {
  * Provides the dual-backend highlighting bridge and DSL-backed style rendering.
  */
 class WindbellTshEngine private constructor() {
+    private fun packBoundaryEvent(offset: Int, captureIndex: Int, starts: Boolean): Long {
+        require(offset >= 0 && captureIndex >= 0)
+        return (offset.toLong() shl 32) or
+            ((captureIndex.toLong() and 0x7FFF_FFFFL) shl 1) or
+            if (starts) 1L else 0L
+    }
+
+    private fun boundaryEventOffset(event: Long): Int = (event ushr 32).toInt()
+    private fun boundaryEventCaptureIndex(event: Long): Int =
+        ((event ushr 1) and 0x7FFF_FFFFL).toInt()
+    private fun boundaryEventStarts(event: Long): Boolean = (event and 1L) != 0L
 
     data class LanguageMetadata(
         val id: String = "",
@@ -594,12 +605,6 @@ class WindbellTshEngine private constructor() {
                 val start: Int,
                 val end: Int
             )
-            data class BoundaryEvent(
-                val offset: Int,
-                val captureIndex: Int,
-                val starts: Boolean
-            )
-
             // Resolve overlap before creating Android spans. Android's SPAN_PRIORITY
             // field is only eight bits; assigning priorities to hundreds of distinct
             // captures necessarily creates collisions. StyledTextPainter then has no
@@ -671,7 +676,11 @@ class WindbellTshEngine private constructor() {
             val hasForeground = BooleanArray(captures.size)
             val hasBackground = BooleanArray(captures.size)
             val captureFontFlags = IntArray(captures.size)
-            val events = ArrayList<BoundaryEvent>(captures.size * 2)
+            // Primitive packed sweep events avoid two heap objects per capture.
+            // Ordering is offset first, then end(0) before start(1), matching the
+            // previous stable comparator. The capture index is the remaining key.
+            val events = LongArray(captures.size * 2)
+            var eventWrite = 0
             captures.forEachIndexed { index, capture ->
                 val style = palette[capture.span.styleId]
                 captureStyles[index] = style
@@ -691,13 +700,10 @@ class WindbellTshEngine private constructor() {
                     style?.lightFontFlags ?: 0
                 }
                 captureFontFlags[index] = capture.span.fontFlags or schemeFlags
-                events += BoundaryEvent(capture.start, index, true)
-                events += BoundaryEvent(capture.end, index, false)
+                events[eventWrite++] = packBoundaryEvent(capture.start, index, starts = true)
+                events[eventWrite++] = packBoundaryEvent(capture.end, index, starts = false)
             }
-            events.sortWith(
-                compareBy<BoundaryEvent> { it.offset }
-                    .thenBy { it.starts }
-            )
+            events.sort()
 
             fun paintRun(
                 runStart: Int,
@@ -845,7 +851,7 @@ class WindbellTshEngine private constructor() {
             var eventIndex = 0
             var cursor = visibleStart
             while (eventIndex < events.size) {
-                val boundary = events[eventIndex].offset
+                val boundary = boundaryEventOffset(events[eventIndex])
                 if (cursor < boundary &&
                     (activeForeground.isNotEmpty() || activeBackground.isNotEmpty() ||
                         activeFontFlags != 0)) {
@@ -854,18 +860,18 @@ class WindbellTshEngine private constructor() {
                     flushPendingRun()
                 }
                 while (eventIndex < events.size &&
-                    events[eventIndex].offset == boundary &&
-                    !events[eventIndex].starts) {
-                    val index = events[eventIndex].captureIndex
+                    boundaryEventOffset(events[eventIndex]) == boundary &&
+                    !boundaryEventStarts(events[eventIndex])) {
+                    val index = boundaryEventCaptureIndex(events[eventIndex])
                     if (hasForeground[index]) activeForeground.remove(index)
                     if (hasBackground[index]) activeBackground.remove(index)
                     updateActiveFontFlags(index, adding = false)
                     eventIndex++
                 }
                 while (eventIndex < events.size &&
-                    events[eventIndex].offset == boundary &&
-                    events[eventIndex].starts) {
-                    val index = events[eventIndex].captureIndex
+                    boundaryEventOffset(events[eventIndex]) == boundary &&
+                    boundaryEventStarts(events[eventIndex])) {
+                    val index = boundaryEventCaptureIndex(events[eventIndex])
                     if (hasForeground[index]) activeForeground.add(index)
                     if (hasBackground[index]) activeBackground.add(index)
                     updateActiveFontFlags(index, adding = true)
