@@ -126,19 +126,19 @@ class WindbellTshLinkageTest {
                             id: "large-comment-not-equal"
                             priority: 25
                             patterns: [{ index: 0 overlap: allow }]
-                            source: `(block_comment) @comment (#not-eq? @comment "x")`
+                            source: `((block_comment) @comment (#not-eq? @comment "x"))`
                         },
                         {
                             id: "large-comment-bounded-regex"
                             priority: 26
                             patterns: [{ index: 0 overlap: allow }]
-                            source: `(block_comment) @regexComment (#match? @regexComment "az")`
+                            source: `((block_comment) @regexComment (#match? @regexComment "az"))`
                         },
                         {
                             id: "large-comment-context-regex"
                             priority: 27
                             patterns: [{ index: 0 overlap: allow }]
-                            source: `(block_comment) @contextRegex (#match? @contextRegex "\\A/")`
+                            source: `((block_comment) @contextRegex (#match? @contextRegex "\\A/"))`
                         }
                     ]
                 }
@@ -688,8 +688,10 @@ class WindbellTshLinkageTest {
 
         val tokens = (0 until 4096).map { "identifier_$it" }
         val code = tokens.joinToString(" ")
+        val identifierId = engine.getStyleCatalog("nested-state")
+            .first { it.name == "identifier.nested" }.styleId
         val full = engine.computeHighlights(null, code, "nested-state")
-            .filter { it.source == 1 }
+            .filter { it.source == 1 && it.styleId == identifierId }
         assertEquals(tokens.size, full.size,
             "Nested include-state traversal must emit each identifier exactly once")
 
