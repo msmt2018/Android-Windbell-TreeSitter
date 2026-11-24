@@ -1882,7 +1882,8 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
     std::vector<RegexStateCheckpoint>* regex_state_checkpoints,
     uint64_t source_version,
     uint64_t partition_version,
-    std::vector<HighlightDependencyRange>* dependency_ranges
+    std::vector<HighlightDependencyRange>* dependency_ranges,
+    std::vector<RegexBlockCheckpoint>* block_checkpoints
 ) {
     std::vector<HighlightSpan> final_spans;
     TshRegexExecutionWorkspace regex_workspace;
@@ -2144,7 +2145,8 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                 rule, text_start, text_end,
                 text_start + range_start_byte, text_start + range_end_byte, text_start,
                 range_start_byte, range_end_byte, micro_spans,
-                diagnostic_match_counts ? &diagnostic_match_counts[0] : nullptr);
+                diagnostic_match_counts ? &diagnostic_match_counts[0] : nullptr,
+                block_checkpoints, grammar->revision, source_version, partition_version);
             retain_requested_range(micro_spans);
             continue;
         }
