@@ -1137,6 +1137,7 @@ class WindbellTshLinkageTest {
                     operatorWithWrongLeft { scope: "keyword.operator.arithmetic.wrong-left" }
                     operatorWithWrongRight { scope: "keyword.operator.arithmetic.wrong-right" }
                     classKeyword { scope: "keyword.declaration.class" }
+                    lastClassBody { scope: "meta.class.body.last-child" }
                     firstClassName { scope: "entity.name.type.first" }
                     methodRunText { scope: "entity.name.function.run" }
                 }
@@ -1236,6 +1237,12 @@ class WindbellTshLinkageTest {
                         priority: 25
                     },
                     {
+                        node: "class_body"
+                        lastChild: true
+                        style: "lastClassBody"
+                        priority: 27
+                    },
+                    {
                         node: "identifier"
                         ancestor: "class_declaration"
                         namedChildIndex: 0
@@ -1278,6 +1285,11 @@ class WindbellTshLinkageTest {
         assertTrue(spans.any {
             it.styleId == styleId && it.startByte == code.indexOf("Demo") * 2 && it.priority == 35
         })
+        val lastClassBodyId = engine.getStyleCatalog("java-ast-node-flags")
+            .first { it.name == "lastClassBody" }.styleId
+        assertTrue(spans.any {
+            it.styleId == lastClassBodyId && it.startByte == code.indexOf("{") * 2
+        }, "ATS lastChild must use the same adjacent-node scan and recognize the final visible child.")
         val aliasId = engine.getStyleCatalog("java-ast-node-flags")
             .first { it.name == "declarationAlias" }.styleId
         assertTrue(spans.any {
