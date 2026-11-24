@@ -2935,104 +2935,167 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
         appendQueryPatternDependencies(
             *grammar, language, tree, range_start_byte, range_end_byte,
             total_bytes, dependency_ranges);
-        // Each .tsh query block has its own native TSQuery and capture namespace.
-        // This preserves per-block priority/order and avoids concatenating query
-        // sources into a synthetic aggregate program.
+        // Build one viewport-local candidate-root set for every rooted-local
+        // query program. The Tree-sitter byte-range option filters captures but
+        // does not prune its AST walk; candidate roots let each local program
+        // start below unrelated document subtrees.
+        std::unordered_set<TSSymbol> local_query_root_symbols;
+        for (const auto& program : grammar->native_queries) {
+            if (!program.enabled || !program.query) continue;
+            for (const auto& item : program.pattern_metadata) {
+                const auto& metadata = item.second;
+                if (metadata.enabled &&
+                    metadata.dependency_scope ==
+                        NativeQueryProgram::QueryDependencyScope::ROOTED_LOCAL &&
+                    metadata.root_node_symbol != 0) {
+                    local_query_root_symbols.insert(metadata.root_node_symbol);
+                }
+            }
+        }
+        std::vector<TshQueryRootCandidate> query_root_candidates;
+        if (!local_query_root_symbols.empty()) {
+            collectQueryRootCandidates(
+                *grammar, tree, local_query_root_symbols,
+                range_start_byte, range_end_byte, &query_root_candidates);
+        }
+
+        // Each .tsh query block keeps its own TSQuery and capture namespace.
+        // Non-local, unrooted, unknown-root, or ancestor-context patterns retain
+        // the original full-tree execution path; only fully-proven rooted-local
+        // programs use viewport candidate roots.
         for (const auto& native_query : grammar->native_queries) {
             if (!native_query.enabled || !native_query.query) continue;
 #if defined(TSH_TREE_SITTER_HAS_QUERY_CURSOR_OPTIONS)
+            bool has_active_pattern = false;
+            bool rooted_local = true;
+            std::unordered_set<TSSymbol> query_root_symbols;
+            for (const auto& item : native_query.pattern_metadata) {
+                const auto& metadata = item.second;
+                if (!metadata.enabled) continue;
+                has_active_pattern = true;
+                if (metadata.dependency_scope !=
+                        NativeQueryProgram::QueryDependencyScope::ROOTED_LOCAL ||
+                    metadata.root_node_symbol == 0) {
+                    rooted_local = false;
+                    break;
+                }
+                query_root_symbols.insert(metadata.root_node_symbol);
+            }
+            if (!has_active_pattern) continue;
+
+            std::vector<TSNode> execution_roots;
+            if (rooted_local) {
+                std::unordered_set<const void*> seen_root_nodes;
+                for (const auto& candidate : query_root_candidates) {
+                    const bool relevant = std::any_of(
+                        candidate.matching_symbols.begin(),
+                        candidate.matching_symbols.end(),
+                        [&](TSSymbol symbol) {
+                            return query_root_symbols.find(symbol) != query_root_symbols.end();
+                        });
+                    if (!relevant || hasMatchingQueryRootAncestor(
+                            *grammar, candidate.node, query_root_symbols)) {
+                        continue;
+                    }
+                    if (seen_root_nodes.insert(candidate.node.id).second) {
+                        execution_roots.push_back(candidate.node);
+                    }
+                }
+            } else {
+                execution_roots.push_back(ts_tree_root_node(tree));
+            }
+            if (execution_roots.empty()) continue;
+
             std::unique_ptr<TSQueryCursor, decltype(&ts_query_cursor_delete)> q_cursor(
                 ts_query_cursor_new(), &ts_query_cursor_delete);
             if (!q_cursor) throw std::bad_alloc();
             TSQueryCursor* cursor = q_cursor.get();
 
-            // Restrict query traversal to the requested range while retaining the
-            // complete document AST and absolute node coordinates. A fixed match
-            // limit or artificial progress timeout would remove valid captures
-            // from dense files, so use the maximum representable pending capacity.
-            if (!ts_query_cursor_set_byte_range(cursor, range_start_byte, range_end_byte)) {
-                throw std::runtime_error(
-                    "TSH could not apply the requested byte range to a Tree-sitter query cursor");
-            }
-            ts_query_cursor_set_match_limit(cursor, UINT32_MAX);
-            ts_query_cursor_exec(cursor, native_query.query, ts_tree_root_node(tree));
-
             // Keep each query block transactional without staging a second
-            // full-sized capture vector. Record a checkpoint in the shared macro
-            // output, append captures directly, and roll back this block if the
-            // cursor reports an incomplete traversal. This halves the transient
-            // storage attributable to the per-block capture staging vector while
-            // preserving all-or-nothing publication semantics.
+            // full-sized capture vector. Any incomplete candidate-root traversal
+            // rolls the entire block back before the result can be published.
             const size_t query_span_checkpoint = macro_spans.size();
-            TSQueryMatch match;
             uint64_t match_order = 0;
             uint64_t accepted_match_count = 0;
-            // Reuse the highlight-pass Regex workspace for every Query match.
-            while (ts_query_cursor_next_match(cursor, &match)) {
-                const uint64_t current_order = match_order++;
-                auto pattern_metadata = native_query.pattern_metadata.find(match.pattern_index);
-                if (pattern_metadata != native_query.pattern_metadata.end() &&
-                    !pattern_metadata->second.enabled) {
-                    continue;
-                }
-                // text_start is a sentinel pointer when a PieceTree/TextSource
-                // is non-contiguous. Never pass that sentinel as readable UTF-16
-                // memory to predicate helpers; let them use the TextSource window API.
-                const TshPredicateResult predicate_result = tshEvaluateNativePredicates(
-                    native_query, match,
-                    has_contiguous_text ? text_start : nullptr,
-                    has_contiguous_text ? nullptr : text_source, total_bytes,
-                    regex_workspace);
-                if (predicate_result == TshPredicateResult::ERROR) {
+            bool query_incomplete = false;
+            for (TSNode execution_root : execution_roots) {
+                if (!ts_query_cursor_set_byte_range(
+                        cursor, range_start_byte, range_end_byte)) {
                     throw std::runtime_error(
-                        "TSH native query predicate evaluation failed while reading capture text");
+                        "TSH could not apply the requested byte range to a Tree-sitter query cursor");
                 }
-                if (predicate_result == TshPredicateResult::REJECT) continue;
-                ++accepted_match_count;
-                const int32_t pattern_priority =
-                    pattern_metadata != native_query.pattern_metadata.end() &&
-                    pattern_metadata->second.has_priority
-                        ? pattern_metadata->second.priority : native_query.priority;
-                const uint32_t pattern_order =
-                    pattern_metadata != native_query.pattern_metadata.end()
-                        ? pattern_metadata->second.declaration_order : 0;
-                for (uint32_t capture_index = 0; capture_index < match.capture_count; ++capture_index) {
-                    const TSQueryCapture& capture = match.captures[capture_index];
-                    if (capture.index >= native_query.capture_style_ids_by_index.size()) continue;
-                    const int32_t style_id =
-                        native_query.capture_style_ids_by_index[capture.index];
-                    if (style_id < 0) continue;
-                    HighlightSpan span;
-                    const uint32_t capture_start = ts_node_start_byte(capture.node);
-                    const uint32_t capture_end = ts_node_end_byte(capture.node);
-                    if (capture_start > capture_end || capture_end > total_bytes ||
-                        (capture_start & 1u) || (capture_end & 1u)) continue;
-                    span.start_byte = capture_start;
-                    span.end_byte = capture_end;
-                    span.style_id = static_cast<uint16_t>(style_id);
-                    span.flags = 0;
-                    span.priority = pattern_priority;
-                    span.allow_overlap = pattern_metadata != native_query.pattern_metadata.end() &&
-                        pattern_metadata->second.allow_overlap ? 1u : 0u;
-                    const uint64_t order = static_cast<uint64_t>(native_query.declaration_order) +
-                        pattern_order + current_order + capture_index;
-                    span.declaration_order = static_cast<uint32_t>(
-                        std::min<uint64_t>(order, UINT32_MAX));
-                    macro_spans.push_back(span);
+                // Keep the existing unbounded match capacity: dense valid queries
+                // must not silently lose captures because of an arbitrary limit.
+                ts_query_cursor_set_match_limit(cursor, UINT32_MAX);
+                ts_query_cursor_exec(cursor, native_query.query, execution_root);
+
+                TSQueryMatch match;
+                while (ts_query_cursor_next_match(cursor, &match)) {
+                    auto pattern_metadata =
+                        native_query.pattern_metadata.find(match.pattern_index);
+                    if (pattern_metadata != native_query.pattern_metadata.end() &&
+                        !pattern_metadata->second.enabled) {
+                        continue;
+                    }
+                    const uint64_t current_order = match_order++;
+                    // PieceTree-backed documents expose no contiguous UTF-16
+                    // pointer. Predicate helpers must read their bounded source
+                    // windows rather than dereference the non-contiguous sentinel.
+                    const TshPredicateResult predicate_result = tshEvaluateNativePredicates(
+                        native_query, match,
+                        has_contiguous_text ? text_start : nullptr,
+                        has_contiguous_text ? nullptr : text_source, total_bytes,
+                        regex_workspace);
+                    if (predicate_result == TshPredicateResult::ERROR) {
+                        throw std::runtime_error(
+                            "TSH native query predicate evaluation failed while reading capture text");
+                    }
+                    if (predicate_result == TshPredicateResult::REJECT) continue;
+                    ++accepted_match_count;
+                    const int32_t pattern_priority =
+                        pattern_metadata != native_query.pattern_metadata.end() &&
+                        pattern_metadata->second.has_priority
+                            ? pattern_metadata->second.priority : native_query.priority;
+                    const uint32_t pattern_order =
+                        pattern_metadata != native_query.pattern_metadata.end()
+                            ? pattern_metadata->second.declaration_order : 0;
+                    for (uint32_t capture_index = 0;
+                         capture_index < match.capture_count; ++capture_index) {
+                        const TSQueryCapture& capture = match.captures[capture_index];
+                        if (capture.index >= native_query.capture_style_ids_by_index.size()) continue;
+                        const int32_t style_id =
+                            native_query.capture_style_ids_by_index[capture.index];
+                        if (style_id < 0) continue;
+                        HighlightSpan span;
+                        const uint32_t capture_start = ts_node_start_byte(capture.node);
+                        const uint32_t capture_end = ts_node_end_byte(capture.node);
+                        if (capture_start > capture_end || capture_end > total_bytes ||
+                            (capture_start & 1u) || (capture_end & 1u)) continue;
+                        span.start_byte = capture_start;
+                        span.end_byte = capture_end;
+                        span.style_id = static_cast<uint16_t>(style_id);
+                        span.flags = 0;
+                        span.priority = pattern_priority;
+                        span.allow_overlap = pattern_metadata != native_query.pattern_metadata.end() &&
+                            pattern_metadata->second.allow_overlap ? 1u : 0u;
+                        const uint64_t order = static_cast<uint64_t>(native_query.declaration_order) +
+                            pattern_order + current_order + capture_index;
+                        span.declaration_order = static_cast<uint32_t>(
+                            std::min<uint64_t>(order, UINT32_MAX));
+                        macro_spans.push_back(span);
+                    }
+                }
+                if (ts_query_cursor_did_exceed_match_limit(cursor)) {
+                    query_incomplete = true;
+                    break;
                 }
             }
-            const bool query_incomplete = ts_query_cursor_did_exceed_match_limit(cursor);
+
             if (!query_incomplete) {
                 if (diagnostic_match_counts) {
                     tshIncrementDiagnostic(&diagnostic_match_counts[3], accepted_match_count);
                 }
             } else {
-                // A Tree-sitter cursor drops the earliest in-progress match when
-                // its capture-list pool is exhausted. Returning the remaining
-                // matches as an ordinary highlight result would therefore make
-                // the output look complete while silently omitting valid
-                // captures. Roll back this block and fail the whole highlight
-                // operation so JNI/Kotlin can report the incomplete execution.
                 macro_spans.resize(query_span_checkpoint);
                 throw std::runtime_error(
                     "TSH native query '" + native_query.id +
