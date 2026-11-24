@@ -2545,7 +2545,11 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeGetReusableHighl
     }
     std::lock_guard<std::mutex> lock(document->mutex);
     try {
-        const auto ranges = document->highlight_cache.snapshotRanges(false);
+        const auto grammar =
+            WindbellEngine::getInstance().getGrammarByExtension(document->extension);
+        if (!grammar) return env->NewLongArray(1);
+        const auto ranges = document->highlight_cache.snapshotRanges(
+            false, grammar->revision);
         if (ranges.size() >
             (static_cast<size_t>(std::numeric_limits<jsize>::max()) - 1u) / 2u) {
             throwNativeAllocationFailure(
