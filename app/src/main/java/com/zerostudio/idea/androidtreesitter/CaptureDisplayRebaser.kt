@@ -8,6 +8,83 @@ package com.zerostudio.idea.androidtreesitter
 internal object CaptureDisplayRebaser {
     data class Result(val key: CaptureRangeKey, val index: CaptureIntervalIndex)
 
+    /**
+     * An edit expressed in the document coordinate space immediately before it
+     * was applied. A batch is kept in application order (the editor reports
+     * bottom-up edits), so reverse mapping walks it backwards.
+     */
+    data class PendingEdit(
+        val startUtf16: Int,
+        val deletedChars: Int,
+        val insertedChars: Int
+    ) {
+        init {
+            require(startUtf16 >= 0 && deletedChars >= 0 && insertedChars >= 0)
+        }
+    }
+
+    data class SourceRange(val startUtf16: Int, val endUtf16: Int)
+
+    /**
+     * Maps an unchanged range in the current editor buffer back to the cached
+     * pre-edit document. A range touching inserted/replaced text, or spanning an
+     * insertion boundary, has no safe old representation and returns null.
+     */
+    fun mapCurrentRangeToOriginal(
+        startUtf16: Int,
+        endUtf16: Int,
+        edits: List<PendingEdit>
+    ): SourceRange? {
+        if (startUtf16 < 0 || endUtf16 <= startUtf16) return null
+        var start = startUtf16.toLong()
+        var end = endUtf16.toLong()
+        for (edit in edits.asReversed()) {
+            val editStart = edit.startUtf16.toLong()
+            val insertedEnd = editStart + edit.insertedChars.toLong()
+            val delta = edit.insertedChars.toLong() - edit.deletedChars.toLong()
+            when {
+                end <= editStart -> Unit
+                start >= insertedEnd -> {
+                    start -= delta
+                    end -= delta
+                }
+                else -> return null
+            }
+            if (start < 0L || end <= start || end > Int.MAX_VALUE.toLong()) return null
+        }
+        return SourceRange(start.toInt(), end.toInt())
+    }
+
+    /**
+     * Maps one old capture into the current document. Captures that intersect
+     * replaced text or cross an insertion point are intentionally withheld until
+     * the native parser has produced a fresh semantic result.
+     */
+    fun mapOriginalCaptureToCurrent(
+        startUtf16: Int,
+        endUtf16: Int,
+        edits: List<PendingEdit>
+    ): SourceRange? {
+        if (startUtf16 < 0 || endUtf16 <= startUtf16) return null
+        var start = startUtf16.toLong()
+        var end = endUtf16.toLong()
+        for (edit in edits) {
+            val editStart = edit.startUtf16.toLong()
+            val oldEnd = editStart + edit.deletedChars.toLong()
+            val delta = edit.insertedChars.toLong() - edit.deletedChars.toLong()
+            when {
+                end <= editStart -> Unit
+                start >= oldEnd -> {
+                    start += delta
+                    end += delta
+                }
+                else -> return null
+            }
+            if (start < 0L || end <= start || end > Int.MAX_VALUE.toLong()) return null
+        }
+        return SourceRange(start.toInt(), end.toInt())
+    }
+
     fun rebase(
         key: CaptureRangeKey,
         index: CaptureIntervalIndex,
