@@ -114,7 +114,7 @@ public:
         uint64_t documentVersion,
         uint64_t sourceVersion,
         uint64_t partitionVersion
-    ) const {
+    ) {
         std::vector<std::pair<uint32_t, uint32_t>> ranges;
         ranges.reserve(dependency_entries_.size());
         for (const auto& item : dependency_entries_) {
@@ -124,6 +124,9 @@ public:
                 item.first.source_version == sourceVersion &&
                 item.first.partition_version == partitionVersion) {
                 ranges.emplace_back(item.first.start_byte, item.first.end_byte);
+                dependency_lru_.splice(
+                    dependency_lru_.end(), dependency_lru_, item.second.lru);
+                item.second.lru = std::prev(dependency_lru_.end());
             }
         }
         std::sort(ranges.begin(), ranges.end());
