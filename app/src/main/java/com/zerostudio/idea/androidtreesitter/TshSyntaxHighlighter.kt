@@ -289,15 +289,12 @@ class TshSyntaxHighlighter(
             else {
                 val requested = CaptureRangeKey(
                     active.cacheSessionId, boundedStart.toInt(), boundedEnd.toInt())
-                val semantic = if (editPending) null
-                    else findContainingCaptureRange(requested)
-                if (semantic != null) {
-                    ArrayList<WindbellTshEngine.HighlightSpan>().also {
-                        semantic.appendQuery(boundedStart.toInt(), boundedEnd.toInt(), it)
-                    }
-                } else {
+                val cached = if (editPending) null else queryCachedCaptures(
+                    requested, boundedStart.toInt(), boundedEnd.toInt()
+                )
+                if (cached != null) cached else {
                     if (!editPending) enqueueViewportRange(requested)
-                    queryDisplayCaptures(requested, boundedStart.toInt(), boundedEnd.toInt())
+                    emptyList()
                 }
             }
         }
@@ -355,11 +352,13 @@ class TshSyntaxHighlighter(
             if (boundedStart >= boundedEnd) return@synchronized true
             val key = CaptureRangeKey(
                 active.cacheSessionId, boundedStart.toInt(), boundedEnd.toInt())
-            if (!editPending && findContainingCaptureRange(key) != null) {
+            if (!editPending && queryCachedCaptures(
+                    key, boundedStart.toInt(), boundedEnd.toInt()
+                ) != null) {
                 return@synchronized true
             }
             if (!editPending) enqueueViewportRange(key)
-            findContainingDisplayRange(key) != null
+            false
         }
     }
 
@@ -395,11 +394,9 @@ class TshSyntaxHighlighter(
                 if (offset < 0 || offset.toLong() >= active.lengthChars.get() ||
                     offset == Int.MAX_VALUE) return@synchronized emptyList()
                 val key = CaptureRangeKey(active.cacheSessionId, offset, offset + 1)
-                val cached = findContainingCaptureRange(key)
-                if (cached == null) {
-                    enqueueViewportRange(key)
-                    null
-                } else cached.query(offset, offset + 1)
+                val cached = queryCachedCaptures(key, offset, offset + 1)
+                if (cached == null) enqueueViewportRange(key)
+                cached
             } ?: return true
             resolved
         } else {
@@ -588,24 +585,101 @@ class TshSyntaxHighlighter(
             displayCache.get(cachedKey)
         }
 
-    private fun queryDisplayCaptures(
+    /**
+     * Read a requested viewport from the union of semantic and display cache entries.
+     * Entries may overlap or abut; no single entry has to contain the entire viewport.
+     */
+    private fun queryCachedCaptures(
         key: CaptureRangeKey,
         startUtf16: Int,
         endUtf16: Int
-    ): List<WindbellTshEngine.HighlightSpan> {
-        val index = findContainingDisplayRange(key) ?: return emptyList()
-        return ArrayList<WindbellTshEngine.HighlightSpan>().also {
-            index.appendQuery(startUtf16, endUtf16, it)
+    ): List<WindbellTshEngine.HighlightSpan>? {
+        val captureKeys = captureRangeIndex.findOverlappingRanges(
+            key.sessionId, startUtf16, endUtf16
+        ).filter { cachedKey ->
+            if (captureCache.get(cachedKey) != null) true
+            else {
+                captureRangeIndex.remove(cachedKey)
+                false
+            }
         }
+        val displayKeys = synchronized(displayCacheLock) {
+            displayRangeIndex.findOverlappingRanges(
+                key.sessionId, startUtf16, endUtf16
+            ).filter { cachedKey ->
+                if (displayCache.get(cachedKey) != null) true
+                else {
+                    displayRangeIndex.remove(cachedKey)
+                    false
+                }
+            }
+        }
+        val allKeys = (captureKeys + displayKeys).distinct()
+            .sortedWith(compareBy<CaptureRangeKey> { it.startUtf16 }.thenBy { it.endUtf16 })
+        var coveredUntil = startUtf16
+        for (cachedKey in allKeys) {
+            if (cachedKey.startUtf16 > coveredUntil) return null
+            coveredUntil = maxOf(coveredUntil, cachedKey.endUtf16)
+            if (coveredUntil >= endUtf16) break
+        }
+        if (coveredUntil < endUtf16) return null
+
+        val spans = LinkedHashSet<WindbellTshEngine.HighlightSpan>()
+        for (cachedKey in captureKeys) {
+            captureCache.get(cachedKey)?.appendQuery(startUtf16, endUtf16, spans)
+        }
+        synchronized(displayCacheLock) {
+            for (cachedKey in displayKeys) {
+                displayCache.get(cachedKey)?.appendQuery(startUtf16, endUtf16, spans)
+            }
+        }
+        return spans.toList()
     }
+
+    /** Source intervals already represented by either bounded cache. */
+    private fun cachedRanges(key: CaptureRangeKey): List<Pair<Int, Int>> {
+        val ranges = ArrayList<Pair<Int, Int>>()
+        for (cachedKey in captureRangeIndex.findOverlappingRanges(
+            key.sessionId, key.startUtf16, key.endUtf16
+        )) {
+            if (captureCache.get(cachedKey) != null) {
+                ranges += cachedKey.startUtf16 to cachedKey.endUtf16
+            } else captureRangeIndex.remove(cachedKey)
+        }
+        synchronized(displayCacheLock) {
+            for (cachedKey in displayRangeIndex.findOverlappingRanges(
+                key.sessionId, key.startUtf16, key.endUtf16
+            )) {
+                if (displayCache.get(cachedKey) != null) {
+                    ranges += cachedKey.startUtf16 to cachedKey.endUtf16
+                } else displayRangeIndex.remove(cachedKey)
+            }
+        }
+        return ranges.sortedBy { it.first }
+    }
+
+    /** Computes only the gaps that have not already been captured and cached. */
+    private fun uncoveredViewportRanges(key: CaptureRangeKey): List<Pair<Int, Int>> {
+        val ranges = cachedRanges(key)
+        val gaps = ArrayList<Pair<Int, Int>>()
+        var cursor = key.startUtf16
+        for ((rangeStart, rangeEnd) in ranges) {
+            if (rangeEnd <= cursor) continue
+            if (rangeStart > cursor) gaps += cursor to minOf(rangeStart, key.endUtf16)
+            cursor = maxOf(cursor, rangeEnd)
+            if (cursor >= key.endUtf16) break
+        }
+        if (cursor < key.endUtf16) gaps += cursor to key.endUtf16
+        return gaps
+    }
+
+    private fun hasCachedCoverage(key: CaptureRangeKey): Boolean =
+        uncoveredViewportRanges(key).isEmpty()
 
     /** Store decoded presentation spans only for the current native document revision. */
     private fun publishDisplayCaptureRange(key: CaptureRangeKey, index: CaptureIntervalIndex) {
         synchronized(displayCacheLock) {
-            displayCache.invalidate { cached, _ ->
-                cached.sessionId == key.sessionId &&
-                    cached.startUtf16 < key.endUtf16 && key.startUtf16 < cached.endUtf16
-            }
+            // A new viewport adds coverage; it must not erase previously rendered intervals.
             displayCache.put(key, index)
         }
     }
@@ -639,7 +713,7 @@ class TshSyntaxHighlighter(
         if (key.startUtf16 >= key.endUtf16) return
         val active = largeSession ?: return
         if (generation.get() != active.ticket || active.cacheSessionId != key.sessionId) return
-        if (findContainingCaptureRange(key) != null) return
+        if (hasCachedCoverage(key)) return
         val flushNow = synchronized(viewportRequestLock) {
             if (pendingViewportRanges.none {
                 it.sessionId == key.sessionId && it.startUtf16 <= key.startUtf16 && it.endUtf16 >= key.endUtf16
@@ -747,7 +821,7 @@ class TshSyntaxHighlighter(
     private suspend fun executeNativeRangeNow(key: CaptureRangeKey): Boolean {
         val active = largeSession ?: return false
         if (generation.get() != active.ticket || active.cacheSessionId != key.sessionId ||
-            findContainingCaptureRange(key) != null) return false
+            uncoveredViewportRanges(key).isEmpty()) return false
         val existing = active.rangeWork[key]
         val work = if (existing == null) {
             val initial = RangeWork()
@@ -767,32 +841,38 @@ class TshSyntaxHighlighter(
                 return false
             }
             work.state = RangeWorkState.RUNNING
-            val flat = active.nativeMutex.withLock {
+            val missingRanges = uncoveredViewportRanges(key)
+            for ((missingStart, missingEnd) in missingRanges) {
                 currentCoroutineContext().ensureActive()
-                if (generation.get() != active.ticket || largeSession !== active ||
-                    active.documentRevision.get() != requestedRevision) {
-                    throw CancellationException("Stale native viewport request")
+                val missingKey = CaptureRangeKey(key.sessionId, missingStart, missingEnd)
+                val flat = active.nativeMutex.withLock {
+                    currentCoroutineContext().ensureActive()
+                    if (generation.get() != active.ticket || largeSession !== active ||
+                        active.documentRevision.get() != requestedRevision) {
+                        throw CancellationException("Stale native viewport request")
+                    }
+                    engine.highlightNativeDocument(
+                        documentHandle = active.nativeHandle,
+                        startByte = missingStart.toLong() * 2L,
+                        endByte = missingEnd.toLong() * 2L
+                    ) ?: throw IllegalStateException("Native viewport TSH returned null for visible range")
                 }
-                engine.highlightNativeDocument(
-                    documentHandle = active.nativeHandle,
-                    startByte = key.startUtf16.toLong() * 2L,
-                    endByte = key.endUtf16.toLong() * 2L
-                ) ?: throw IllegalStateException("Native viewport TSH returned null for visible range")
+                val spans = decodeNativeSpans(flat)
+                synchronized(nativeEditLock) {
+                    if (generation.get() == active.ticket && largeSession === active &&
+                        active.documentRevision.get() == requestedRevision &&
+                        active.pendingEditEpoch.get() == active.appliedEditEpoch.get()) {
+                        val index = CaptureIntervalIndex(spans)
+                        captureCache.put(missingKey, index)
+                        publishDisplayCaptureRange(missingKey, index)
+                    } else {
+                        work.state = RangeWorkState.CANCELLED
+                        break
+                    }
+                }
             }
-            val spans = decodeNativeSpans(flat)
-            // Serialize cache admission with onTextChanged. Otherwise an old-revision
-            // viewport result could pass its revision check, race an edit+cache clear,
-            // and be inserted after that clear. The edit callback uses this same lock
-            // before invalidating the display cache.
-            synchronized(nativeEditLock) {
-                if (generation.get() == active.ticket && largeSession === active &&
-                    active.documentRevision.get() == requestedRevision &&
-                    active.pendingEditEpoch.get() == active.appliedEditEpoch.get()) {
-                    val index = CaptureIntervalIndex(spans)
-                    captureCache.put(key, index)
-                    publishDisplayCaptureRange(key, index)
-                    work.state = RangeWorkState.SUCCEEDED
-                } else work.state = RangeWorkState.CANCELLED
+            if (work.state != RangeWorkState.CANCELLED) {
+                work.state = RangeWorkState.SUCCEEDED
             }
         } catch (cancelled: CancellationException) {
             work.state = RangeWorkState.CANCELLED
@@ -814,7 +894,7 @@ class TshSyntaxHighlighter(
                     if (generation.get() == active.ticket && largeSession === active &&
                         work.state == RangeWorkState.FAILED &&
                         active.rangeWork[key] === work &&
-                        findContainingCaptureRange(key) == null
+                        uncoveredViewportRanges(key).isNotEmpty()
                     ) {
                         host?.invalidateStyles()
                     }
