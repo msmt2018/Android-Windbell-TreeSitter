@@ -937,3 +937,43 @@ Native document 创建已有 source transfer/write、backing map/PieceTree、Tre
 - Native Query 缺失依赖元数据时，按 NATIVE_QUERY 来源单独添加 document-wide 保护依赖，不再被同一结果中的 Regex 依赖误掩盖。
 
 以上仍仅完成源码级静态检查，没有执行任何测试或构建流程。
+
+### 2026-11-24 后续根因修复：捕获颜色仲裁、缓存有效性与局部失效
+
+本轮继续以消除重复计算根因、维持已绘制结果稳定为目标，完成以下源码改动：
+
+1. **Android Span 优先级不再承担 TSH 语义仲裁。**
+   - Android 的 SPAN_PRIORITY 只有 8 位，超过 255 个不同捕获层级时不可避免地产生优先级碰撞。
+   - WindbellTshEngine.applyHighlightSpansToSpannable() 改为 sweep-line：先按 Native 捕获顺序建立边界事件，再分别维护 foreground、background、font 的活动优先级集合。
+   - 每个可见区间只发出已确定的颜色/背景/字体样式，不再向 StyledTextPainter 提供相互竞争的重叠样式。
+   - foreground/background 分别选择最高优先级且确实声明该通道的捕获，避免只声明字体属性的高优先级捕获意外抹掉下层显式颜色。
+   - 活动集合使用有序集合，边界处理为 O(n log n)；相邻且解析结果相同的区间合并，减少 Android Span 数量。
+   - 字体、透明度和装饰属性按最高优先级的有效字体捕获确定。
+
+2. **BLOCK delimiter 跨视口起始边界修复。**
+   - 检查点恢复时，若 start delimiter 的起点位于视口之前、结束位置跨过视口边界，原逻辑把检查点保留在 delimiter 起点，却让当前视口的正向扫描从 viewport 起点开始，导致当前视口漏掉这个 start delimiter。
+   - 现在在当前活动 block 尚未打开时，将该跨界 start delimiter 起点作为活动 block 起点，让当前视口正确执行并绘制；检查点仍保留在 delimiter 起点，后续视口可以完整消费该事件。
+
+3. **禁用规则不再强迫完整源快照或 document-wide 依赖。**
+   - Native JNI 对 Regex、Regex State、Native Query predicate Regex、ATS text Regex 的连续源要求和依赖回退，现在只统计 enabled producer。
+   - 全部禁用的规则不再触发完整 mmap Regex Snapshot，也不再仅因禁用的 Query/ATS/State 规则产生 document-wide 依赖。
+   - 这减少无效的首次打开工作，并避免无关规则扩大编辑后的失效范围。
+
+4. **Native 依赖证明与 span payload LRU 分离。**
+   - 旧实现通过 Native span payload LRU 的剩余键判断 Kotlin 捕获结果能否跨编辑复用；Native payload 默认仅 4 MiB，而 Kotlin 捕获缓存为 32 MiB。
+   - Native payload 被 LRU 淘汰时，依赖证明也一起消失；下一次局部编辑会因此把仍在 Kotlin 缓存中的有效捕获误判为不可复用。
+   - 新增独立、受限的依赖证明 ledger：最多 2 MiB / 32768 条，按共享 Native 内存预算记账；即使 span payload 被淘汰，仍保留有效 viewport 的依赖范围。
+   - 编辑时 ledger 独立执行 dependency rebase；只有依赖证明仍有效的范围才返回给 Kotlin。
+   - 可复用范围同时校验 grammar revision、document version、source version 和 partition version，防止跨版本误复用。
+   - 无依赖、无法入账或超预算的范围采取保守失效，不以未知依赖换取错误复用。
+
+5. **减少捕获缓存的常驻内存与编辑峰值内存。**
+   - CaptureIntervalIndex 从每个捕获保留一个 Kotlin data object，改为 primitive parallel arrays；每个捕获的常驻字段压缩到约 25 bytes，缓存权重按 32 bytes/capture 计入。
+   - ByteBudgetLruCache.transformEntries() 移除额外的完整 previousEntries 副本，避免一次局部编辑同时持有三份完整缓存 map。
+   - Native TSH 性能日志增加 dependency ledger 实际记账字节数。
+
+6. **修复不连续视口导致的大范围样式失效。**
+   - 旧 invalidateViewportStyles() 把一个 batch 中所有范围压成 min(start)..max(end)，即使中间存在大量未变化行也全部失效。
+   - 现在分别映射到行范围、合并相邻/重叠范围，再通过 invalidateStyles(ranges) 一次提交；不再清除不连续范围之间的 ATS 行缓存。
+
+以上为源码级改动和静态阅读结论；尚未执行测试、编译、CI、设备验证或 Benchmark。
