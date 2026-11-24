@@ -717,6 +717,7 @@ class TshSyntaxHighlighter(
                         queuedViewportRanges.also { queuedViewportRanges = emptyList() }
                     }
                     var batchUpdated = false
+                    val completedRanges = ArrayList<CaptureRangeKey>(batch.size)
                     try {
                         for (key in batch) {
                             currentCoroutineContext().ensureActive()
@@ -727,7 +728,10 @@ class TshSyntaxHighlighter(
                                 queuedViewportRanges.isNotEmpty()
                             }
                             if (superseded) break
-                            batchUpdated = executeNativeRangeNow(key) || batchUpdated
+                            if (executeNativeRangeNow(key)) {
+                                batchUpdated = true
+                                completedRanges += key
+                            }
                         }
                     } finally {
                         // A viewport may contain several disjoint source ranges. Publish
@@ -735,7 +739,7 @@ class TshSyntaxHighlighter(
                         // one structure invalidation, even if cancellation/supersession
                         // interrupts the remainder of the batch.
                         if (batchUpdated) {
-                            invalidateViewportStyles(active, batch)
+                            invalidateViewportStyles(active, completedRanges)
                             if (structureRefreshPending.getAndSet(false)) {
                                 host?.invalidateStructure()
                             }
