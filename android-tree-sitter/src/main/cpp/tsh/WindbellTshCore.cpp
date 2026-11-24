@@ -971,6 +971,9 @@ static TshPredicateResult tshEvaluateNativePredicates(const NativeQueryProgram& 
                 text_source->contiguousData(&contiguous_source_data, &contiguous_source_bytes) &&
                 contiguous_source_bytes >= source_bytes &&
                 (contiguous_source_data != nullptr || source_bytes == 0);
+            // Keep capture-text scratch local to this uncommon fallback. The
+            // contiguous and bounded-window fast paths never materialize it.
+            std::vector<std::vector<UChar>> actual;
             if (has_contiguous_source) {
                 for (uint32_t i = 0; i < match.capture_count; ++i) {
                     if (match.captures[i].index != predicate[1].value_id) continue;
