@@ -915,7 +915,12 @@ Native document 创建已有 source transfer/write、backing map/PieceTree、Tre
 
 1. 夜间模式 @ 注解颜色：源码已修正 Native/Kotlin 捕获优先级顺序，但最终设备绘制结果尚未验证；不能在验证前宣称颜色 bug 已彻底关闭。
 2. 首次打开大文件：需要结合新增的 nativeCreateDocument 与 nativeHighlightDocument 分段日志，进一步定位源读取/写入、Tree-sitter 全文 parse、Regex/Block、ATS selector、Tree-sitter Query、JNI 编码各自占比。
-3. BLOCK Regex：matchBlockRecursive() 在视口边界通过反向搜索恢复先前 delimiter 状态；对稀疏 delimiter（例如少量 text block/Javadoc）的规则，仍可能在不同视口请求中重复扫描较长文档前缀。当前尚未加入持久化 delimiter-state checkpoint，这是下一项 Native 性能修复重点。
-4. 已绘制 ATS 符号稳定性：本轮已移除滚动捕获触发的全局样式/结构刷新，并使编辑失效范围局部化；仍需继续检查 Renderer 行缓存、缓存淘汰和 Native 依赖 envelope 在极端大文件下是否存在额外失效路径。
+3. BLOCK Regex：已加入每份 Native 文档的 bounded delimiter-state checkpoint。首次遇到某条 BLOCK 规则时仍需从文档前缀恢复一次状态；后续向前滚动时从最近 checkpoint 扫描新增区间，不再每个新视口都反向扫描到文档开头。checkpoint 以规则 declarationOrder、grammar/source/partition version 和 byte offset 区分，最多保留 512 条；增量编辑保留编辑点之前的前缀 checkpoint，丢弃编辑点之后的候选状态。
+   - 编译器分别分析 BLOCK start/end pattern 的有限宽度；只有两端都通过保守宽度分析时才允许 checkpoint dependency。
+   - Native 捕获结果现在附带从最近 checkpoint 到当前视口的 CHECKPOINT_BASED + BOUNDARY_SENSITIVE 依赖区间，并按 delimiter 最大宽度扩展右边界。
+   - 可证明有限宽度的 BLOCK delimiter 不再仅因其需要完整 Oniguruma 字符串上下文而把所有视口缓存标记为 document-wide；无法证明的 delimiter 仍保留全局依赖，优先保证正确性。
+   - 首次视口、向后跳转到所有 checkpoint 之前仍可能执行一次反向前缀恢复；极端大文件的首次打开耗时仍需结合分阶段日志判断。
+4. ATS 依赖元数据：修复 Native Query 缺少依赖元数据时的回退条件。旧逻辑只在整个 dependencies 列表为空时添加 document-wide Query 依赖；当 Regex 已经添加依赖时，会错误地掩盖 Query 依赖缺失。现在按 NATIVE_QUERY source 单独检查，避免 Regex 依赖让 ATS Query 结果被误判为可局部复用。
+5. 已绘制 ATS 符号稳定性：本轮已移除滚动捕获触发的全局样式/结构刷新，并使编辑失效范围局部化；仍需继续检查 Renderer 行缓存、缓存淘汰和 Native 依赖 envelope 在极端大文件下是否存在额外失效路径。
 
 严格遵守当前开发顺序：以上均为源码修改和静态检查；没有运行 Unit/Instrumentation tests、Gradle build/compile、CI、设备验证或 Benchmark。所有验证流程继续冻结，直到用户提出的源码 Bug 修复完成。
