@@ -646,10 +646,16 @@ class WindbellTshEngine private constructor() {
             captures.forEachIndexed { index, capture ->
                 val style = palette[capture.span.styleId]
                 captureStyles[index] = style
+                // Resolve each appearance independently, but never let an
+                // omitted dark/light override fall through to the editor's base
+                // TextPaint color. That fallback is unrelated to the TSH style and
+                // can make a configured yellow annotation appear green in dark mode.
+                // An explicitly supplied color for the active appearance wins;
+                // otherwise inherit the other appearance's value.
                 hasForeground[index] = style != null &&
-                    (if (darkMode) style.hasDarkColor else style.hasLightColor)
+                    (style.hasDarkColor || style.hasLightColor)
                 hasBackground[index] = style != null &&
-                    (if (darkMode) style.hasDarkBackground else style.hasLightBackground)
+                    (style.hasDarkBackground || style.hasLightBackground)
                 val schemeFlags = if (darkMode) {
                     style?.darkFontFlags ?: 0
                 } else {
@@ -675,14 +681,24 @@ class WindbellTshEngine private constructor() {
                 val flags = Spannable.SPAN_EXCLUSIVE_EXCLUSIVE
                 backgroundIndex?.let { index ->
                     val style = captureStyles[index] ?: return@let
-                    val background = if (darkMode) style.darkBackground else style.lightBackground
+                    val background = when {
+                        darkMode && style.hasDarkBackground -> style.darkBackground
+                        style.hasLightBackground -> style.lightBackground
+                        style.hasDarkBackground -> style.darkBackground
+                        else -> return@let
+                    }
                     spannable.setSpan(
                         BackgroundColorSpan(background), runStart, runEnd, flags
                     )
                 }
                 foregroundIndex?.let { index ->
                     val style = captureStyles[index] ?: return@let
-                    val color = if (darkMode) style.darkColor else style.lightColor
+                    val color = when {
+                        darkMode && style.hasDarkColor -> style.darkColor
+                        style.hasLightColor -> style.lightColor
+                        style.hasDarkColor -> style.darkColor
+                        else -> return@let
+                    }
                     spannable.setSpan(
                         ForegroundColorSpan(color), runStart, runEnd, flags
                     )
