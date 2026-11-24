@@ -608,19 +608,31 @@ class WindbellTshEngine private constructor() {
                 val source: Int,
                 val styleId: Int
             )
+            val precedenceComparator =
+                compareByDescending<SpanPriorityKey> { it.priority }
+                    .thenBy { it.declarationOrder }
+                    .thenBy { it.source }
+                    .thenBy { it.styleId }
             val ruleOrder = spans.asSequence()
                 .map { SpanPriorityKey(it.priority, it.declarationOrder, it.source, it.styleId) }
                 .distinct()
-                .sortedWith(
-                    compareByDescending<SpanPriorityKey> { it.priority }
-                        .thenBy { it.declarationOrder }
-                        .thenBy { it.source }
-                        .thenBy { it.styleId }
-                )
+                .sortedWith(precedenceComparator)
                 .mapIndexed { index, key -> key to (255 - index).coerceAtLeast(1) }
                 .toMap()
+            // Android exposes only eight bits for SPAN_PRIORITY. When a grammar has
+            // more than 255 distinct rule layers, equal low priorities must still
+            // preserve the same deterministic first-wins order instead of inheriting
+            // the arbitrary order in which overlapping cache entries were merged.
+            val orderedSpans = spans.sortedWith(
+                compareByDescending<HighlightSpan> { it.priority }
+                    .thenBy { it.declarationOrder }
+                    .thenBy { it.source }
+                    .thenBy { it.styleId }
+                    .thenBy { it.startByteUnsigned }
+                    .thenByDescending { it.endByteUnsigned }
+            )
 
-            for (span in spans) {
+            for (span in orderedSpans) {
                 val globalStart = span.startByteUnsigned ushr 1
                 val globalEnd = span.endByteUnsigned ushr 1
                 val localStart = globalStart - documentOffset.toLong()
