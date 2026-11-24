@@ -40,6 +40,113 @@ class TshEditorPipelineRenderingTest {
 
 
     @Test
+    fun darkAppearancePreservesExplicitYellowAnnotationMarkerThroughCanvas() {
+        val engine = WindbellTshEngine.instance
+        val extension = "dark-annotation-explicit-yellow"
+        val language = TSLanguageJava.getInstance()
+        val dsl = """
+            tsh 2 {
+                language { id: "dark-annotation-explicit-yellow" extensions: [".day"] }
+                styles {
+                    annotation { scope: "storage.type.annotation", tags: ["annotation"] }
+                }
+                schemes {
+                    plain {
+                        light [ annotation: #00FFFF ]
+                        dark [ annotation: #FFFF00 ]
+                    }
+                }
+                defaultScheme: "plain"
+                treeSitter {
+                    queries: [
+                        {
+                            id: "annotation-marker"
+                            priority: 120
+                            source: `(marker_annotation "@" @marker)`
+                            captures: { marker: annotation }
+                        }
+                    ]
+                }
+            }
+        """.trimIndent()
+        assertTrue("Explicit dark-yellow TSH must compile: ${engine.lastCompileDiagnostics}",
+            engine.loadTshSource(extension, dsl, language))
+
+        val parser = TSParser.create().apply { setLanguage(language) }
+        val source = "class Demo { @Override void run() {} }"
+        val tree = parser.parseString(source)
+        try {
+            assertNotNull(tree)
+            val captures = engine.computeHighlights(tree, source, extension)
+            val palette = engine.getStylePalette(extension, "annotation")
+            assertNotNull(palette)
+            assertTrue("The explicit dark override must be present", palette!!.hasDarkColor)
+            assertEquals(0xFFFFFF00.toInt(), palette.darkColor)
+            engine.setAppearance(extension, true)
+
+            val markerOffset = source.indexOf('@')
+            val styled = SpannableStringBuilder(source)
+            engine.applyHighlightSpansToSpannable(
+                spans = captures,
+                documentOffset = 0,
+                text = source,
+                extension = extension,
+                spannable = styled
+            )
+            val markerSpan = styled.getSpans(
+                markerOffset, markerOffset + 1, ForegroundColorSpan::class.java
+            ).firstOrNull {
+                styled.getSpanStart(it) <= markerOffset &&
+                    styled.getSpanEnd(it) >= markerOffset + 1
+            }
+            assertEquals(0xFFFFFF00.toInt(), markerSpan?.foregroundColor)
+
+            val bitmap = Bitmap.createBitmap(420, 88, Bitmap.Config.ARGB_8888)
+            try {
+                val canvas = Canvas(bitmap).apply { drawColor(Color.BLACK) }
+                val basePaint = android.text.TextPaint(android.text.TextPaint.ANTI_ALIAS_FLAG).apply {
+                    color = Color.GREEN
+                    textSize = 48f
+                }
+                val glyphX = 8f + basePaint.measureText(source.substring(0, markerOffset))
+                StyledTextPainter().draw(
+                    canvas = canvas,
+                    text = source,
+                    spans = styled,
+                    start = markerOffset,
+                    end = markerOffset + 1,
+                    x = glyphX,
+                    baseline = 60f,
+                    rowTop = 0f,
+                    rowBottom = 88f,
+                    basePaint = basePaint
+                )
+                var yellowPixels = 0
+                val left = glyphX.toInt().coerceAtLeast(0)
+                val right = (glyphX + basePaint.measureText("@")).toInt().coerceAtMost(bitmap.width)
+                for (y in 0 until bitmap.height) {
+                    for (x in left until right) {
+                        val pixel = bitmap.getPixel(x, y)
+                        if (Color.red(pixel) > 180 &&
+                            Color.green(pixel) > 180 &&
+                            Color.blue(pixel) < 100) yellowPixels++
+                    }
+                }
+                assertTrue(
+                    "Explicit dark TSH yellow must reach Canvas, not inherit the green base paint",
+                    yellowPixels > 0
+                )
+            } finally {
+                bitmap.recycle()
+            }
+        } finally {
+            tree?.close()
+            parser.close()
+            engine.clearAppearanceOverride(extension)
+        }
+    }
+
+    @Test
     fun darkAppearanceKeepsConfiguredLightAnnotationColorWhenDarkOverrideIsAbsent() {
         val engine = WindbellTshEngine.instance
         val extension = "dark-annotation-fallback"
