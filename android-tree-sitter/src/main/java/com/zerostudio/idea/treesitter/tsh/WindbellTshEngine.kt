@@ -574,163 +574,168 @@ class WindbellTshEngine private constructor() {
         start: Int = 0,
         end: Int = spannable.length
     ) {
-        // SpannableStringBuilder is mutable and is not thread-safe. A caller may
-        // schedule rendering from several workers; serialize only mutations of the
-        // same document buffer, never the native tokenizer or unrelated documents.
-        // Rendering may be the first consumer attached after a grammar was
-        // restored/registered. Never silently treat a valid styleId as an
-        // uncoloured token merely because this process-local palette cache is cold.
-        // ensurePalette resolves the selected/default scheme from the compiled
-        // native grammar and populates the immutable palette before drawing.
         ensurePalette(extension)
         synchronized(spannable) {
             val palette = paletteCache[extension].orEmpty()
             val darkMode = isDark(extension)
             val visibleStart = start.coerceIn(0, spannable.length)
             val visibleEnd = end.coerceIn(visibleStart, spannable.length)
+            if (visibleStart >= visibleEnd) return@synchronized
 
-            // Incremental/viewport rendering must not erase styles outside the
-            // requested range. Only spans intersecting this range are invalidated.
-            if (visibleStart < visibleEnd) {
-                val oldSpans = spannable.getSpans(
-                    visibleStart,
-                    visibleEnd,
-                    CharacterStyle::class.java
-                )
-                for (old in oldSpans) spannable.removeSpan(old)
-            }
+            // Remove only the old styles intersecting this render slice. The caller
+            // supplies a fresh line builder, so no document-global span ownership is
+            // involved here.
+            spannable.getSpans(
+                visibleStart, visibleEnd, CharacterStyle::class.java
+            ).forEach(spannable::removeSpan)
 
-            // CaptureIntervalIndex and viewport queries may reorder captures by source
-            // offset. Derive Android priority from the native rule ordering metadata,
-            // never from the incidental order of this particular result list.
-            // Native capture ordering has deterministic tie-breakers beyond rule priority:
-            // declaration order, producer pipeline, then style identity. Collapsing captures
-            // to (priority, declarationOrder) gave distinct foreground styles the same
-            // Android SPAN_PRIORITY; StyledTextPainter then selected whichever span happened
-            // to be returned first, allowing an annotation's yellow to be replaced by an
-            // unrelated overlapping Regex/ATS style.
-            data class SpanPriorityKey(
-                val priority: Int,
-                val declarationOrder: Int,
-                val startByte: Long,
-                val endByte: Long,
-                val source: Int,
-                val styleId: Int
+            data class ClippedCapture(
+                val span: HighlightSpan,
+                val start: Int,
+                val end: Int
             )
-            // Match WindbellTshCore's total capture ordering exactly. In particular,
-            // ranges must be compared before producer/style identity: a whole-token
-            // capture and a nested capture emitted by the same rule can have equal
-            // priority/declaration/source but different styles. Sorting styleId first
-            // made the palette winner depend on the numeric style allocation order
-            // (for example, an annotation's yellow could be painted green).
-            val precedenceComparator =
-                compareByDescending<SpanPriorityKey> { it.priority }
-                    .thenBy { it.declarationOrder }
-                    .thenBy { it.startByte }
-                    .thenByDescending { it.endByte }
-                    .thenBy { it.source }
-                    .thenBy { it.styleId }
-            val ruleOrder = spans.asSequence()
-                .map {
-                    SpanPriorityKey(
-                        it.priority,
-                        it.declarationOrder,
-                        it.startByteUnsigned,
-                        it.endByteUnsigned,
-                        it.source,
-                        it.styleId
-                    )
-                }
-                .distinct()
-                .sortedWith(precedenceComparator)
-                .mapIndexed { index, key -> key to (255 - index).coerceAtLeast(1) }
-                .toMap()
-            // Android exposes only eight bits for SPAN_PRIORITY. When a grammar has
-            // more than 255 distinct rule layers, equal low priorities must still
-            // preserve the same deterministic first-wins order instead of inheriting
-            // the arbitrary order in which overlapping cache entries were merged.
-            val orderedSpans = spans.sortedWith(
-                compareByDescending<HighlightSpan> { it.priority }
-                    .thenBy { it.declarationOrder }
-                    .thenBy { it.startByteUnsigned }
-                    .thenByDescending { it.endByteUnsigned }
-                    .thenBy { it.source }
-                    .thenBy { it.styleId }
+            data class BoundaryEvent(
+                val offset: Int,
+                val captureIndex: Int,
+                val starts: Boolean
             )
 
-            for (span in orderedSpans) {
+            // Resolve overlap before creating Android spans. Android's SPAN_PRIORITY
+            // field is only eight bits; assigning priorities to hundreds of distinct
+            // captures necessarily creates collisions. StyledTextPainter then has no
+            // deterministic way to choose the intended foreground/background.
+            // A sweep-line produces disjoint runs, so the renderer never has to arbitrate
+            // between overlapping TSH styles and the full native ordering is preserved.
+            val nativeOrder = compareByDescending<HighlightSpan> { it.priority }
+                .thenBy { it.declarationOrder }
+                .thenBy { it.startByteUnsigned }
+                .thenByDescending { it.endByteUnsigned }
+                .thenBy { it.source }
+                .thenBy { it.styleId }
+
+            val captures = ArrayList<ClippedCapture>(spans.size)
+            for (span in spans) {
                 val globalStart = span.startByteUnsigned ushr 1
                 val globalEnd = span.endByteUnsigned ushr 1
                 val localStart = globalStart - documentOffset.toLong()
                 val localEnd = globalEnd - documentOffset.toLong()
-                val charStart = maxOf(localStart, visibleStart.toLong())
-                val charEnd = minOf(localEnd, visibleEnd.toLong())
-                if (charStart >= charEnd) continue
-                val localCharStart = charStart.toInt()
-                val localCharEnd = charEnd.toInt()
+                val clippedStart = maxOf(localStart, visibleStart.toLong())
+                val clippedEnd = minOf(localEnd, visibleEnd.toLong())
+                if (clippedStart >= clippedEnd) continue
+                captures += ClippedCapture(
+                    span, clippedStart.toInt(), clippedEnd.toInt()
+                )
+            }
+            if (captures.isEmpty()) return@synchronized
 
-                val colorDef = palette[span.styleId]
-                // One native rule precedence must govern every visual property,
-                // not only foreground color. Otherwise a lower-priority capture's
-                // bold/italic/underline/opacity can leak through a higher-priority
-                // nested capture even while its text color is correctly resolved.
-                val precedence = ruleOrder[
-                    SpanPriorityKey(
-                        span.priority,
-                        span.declarationOrder,
-                        span.startByteUnsigned,
-                        span.endByteUnsigned,
-                        span.source,
-                        span.styleId
-                    )
-                ] ?: 1
-                val spanFlags = Spannable.SPAN_EXCLUSIVE_EXCLUSIVE or
-                    (precedence shl Spanned.SPAN_PRIORITY_SHIFT)
+            val active = java.util.TreeSet<Int> { left, right ->
+                val order = nativeOrder.compare(
+                    captures[left].span, captures[right].span
+                )
+                if (order != 0) order else left.compareTo(right)
+            }
+            val events = ArrayList<BoundaryEvent>(captures.size * 2)
+            captures.forEachIndexed { index, capture ->
+                events += BoundaryEvent(capture.start, index, true)
+                events += BoundaryEvent(capture.end, index, false)
+            }
+            events.sortWith(
+                compareBy<BoundaryEvent> { it.offset }
+                    .thenBy { it.starts }
+            )
 
-                // Background and foreground are independent palette channels.
-                // A transparent background is still explicit when its presence bit is set.
+            fun paintRun(runStart: Int, runEnd: Int, capture: ClippedCapture) {
+                if (runStart >= runEnd) return
+                val colorDef = palette[capture.span.styleId]
+                val flags = Spannable.SPAN_EXCLUSIVE_EXCLUSIVE
+
                 val hasBackground = if (darkMode) {
                     colorDef?.hasDarkBackground == true
                 } else {
                     colorDef?.hasLightBackground == true
                 }
-                val background = if (darkMode) {
-                    colorDef?.darkBackground ?: 0
-                } else {
-                    colorDef?.lightBackground ?: 0
-                }
                 if (hasBackground) {
-                    spannable.setSpan(BackgroundColorSpan(background), localCharStart, localCharEnd, spanFlags)
+                    val background = if (darkMode) {
+                        colorDef?.darkBackground ?: 0
+                    } else {
+                        colorDef?.lightBackground ?: 0
+                    }
+                    spannable.setSpan(
+                        BackgroundColorSpan(background), runStart, runEnd, flags
+                    )
                 }
 
-                // Missing colors leave the editor's base foreground untouched.
-                val hasColor = if (darkMode) colorDef?.hasDarkColor == true else colorDef?.hasLightColor == true
-                val color = if (darkMode) colorDef?.darkColor ?: 0 else colorDef?.lightColor ?: 0
+                val hasColor = if (darkMode) {
+                    colorDef?.hasDarkColor == true
+                } else {
+                    colorDef?.hasLightColor == true
+                }
                 if (hasColor) {
-                    spannable.setSpan(ForegroundColorSpan(color), localCharStart, localCharEnd, spanFlags)
+                    val color = if (darkMode) {
+                        colorDef?.darkColor ?: 0
+                    } else {
+                        colorDef?.lightColor ?: 0
+                    }
+                    spannable.setSpan(
+                        ForegroundColorSpan(color), runStart, runEnd, flags
+                    )
                 }
 
-                val schemeFlags = if (darkMode) colorDef?.darkFontFlags ?: 0 else colorDef?.lightFontFlags ?: 0
-                val flags = span.fontFlags or schemeFlags
-                if ((flags and 0x01) != 0) {
-                    spannable.setSpan(StyleSpan(android.graphics.Typeface.BOLD), localCharStart, localCharEnd, spanFlags)
+                // The winning capture owns the complete visual style for this run.
+                // Lower-precedence captures cannot leak bold/italic/opacity into it.
+                val styleFlags = capture.span.fontFlags or
+                    (if (darkMode) colorDef?.darkFontFlags ?: 0
+                     else colorDef?.lightFontFlags ?: 0)
+                if ((styleFlags and 0x01) != 0) {
+                    spannable.setSpan(
+                        StyleSpan(android.graphics.Typeface.BOLD), runStart, runEnd, flags
+                    )
                 }
-                if ((flags and 0x02) != 0) {
-                    spannable.setSpan(StyleSpan(android.graphics.Typeface.ITALIC), localCharStart, localCharEnd, spanFlags)
+                if ((styleFlags and 0x02) != 0) {
+                    spannable.setSpan(
+                        StyleSpan(android.graphics.Typeface.ITALIC), runStart, runEnd, flags
+                    )
                 }
-                if ((flags and 0x04) != 0) {
-                    spannable.setSpan(UnderlineSpan(), localCharStart, localCharEnd, spanFlags)
+                if ((styleFlags and 0x04) != 0) {
+                    spannable.setSpan(UnderlineSpan(), runStart, runEnd, flags)
                 }
-                if ((flags and 0x08) != 0) {
-                    spannable.setSpan(StrikethroughSpan(), localCharStart, localCharEnd, spanFlags)
+                if ((styleFlags and 0x08) != 0) {
+                    spannable.setSpan(
+                        StrikethroughSpan(), runStart, runEnd, flags
+                    )
                 }
-                if ((flags and 0x10) != 0) {
+                if ((styleFlags and 0x10) != 0) {
                     spannable.setSpan(object : CharacterStyle() {
                         override fun updateDrawState(textPaint: TextPaint) {
                             textPaint.alpha = minOf(textPaint.alpha, 160)
                         }
-                    }, localCharStart, localCharEnd, spanFlags)
+                    }, runStart, runEnd, flags)
                 }
+            }
+
+            var eventIndex = 0
+            var cursor = visibleStart
+            while (eventIndex < events.size) {
+                val boundary = events[eventIndex].offset
+                if (cursor < boundary && active.isNotEmpty()) {
+                    paintRun(cursor, boundary, captures[active.first()])
+                }
+                while (eventIndex < events.size &&
+                    events[eventIndex].offset == boundary &&
+                    !events[eventIndex].starts) {
+                    active.remove(events[eventIndex].captureIndex)
+                    eventIndex++
+                }
+                while (eventIndex < events.size &&
+                    events[eventIndex].offset == boundary &&
+                    events[eventIndex].starts) {
+                    active.add(events[eventIndex].captureIndex)
+                    eventIndex++
+                }
+                cursor = boundary
+            }
+            if (cursor < visibleEnd && active.isNotEmpty()) {
+                paintRun(cursor, visibleEnd, captures[active.first()])
             }
         }
     }
