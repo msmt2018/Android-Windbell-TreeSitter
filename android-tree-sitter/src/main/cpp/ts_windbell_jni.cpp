@@ -2346,7 +2346,13 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
     cache_value.dependencies = std::move(highlight_dependencies);
     // If Query execution was unavailable or did not produce dependency
     // metadata, never cache a partial result under an assumed local scope.
-    if (!grammar->native_queries.empty() && cache_value.dependencies.empty()) {
+    const bool has_native_query_dependency = std::any_of(
+        cache_value.dependencies.begin(), cache_value.dependencies.end(),
+        [](const HighlightDependencyRange& dependency) {
+            return dependency.source ==
+                static_cast<uint8_t>(HighlightSource::NATIVE_QUERY);
+        });
+    if (!grammar->native_queries.empty() && !has_native_query_dependency) {
         cache_value.dependencies.push_back({
             0u, static_cast<uint32_t>(total_bytes), UINT32_MAX,
             static_cast<uint8_t>(HighlightSource::NATIVE_QUERY), 0xFFu,
