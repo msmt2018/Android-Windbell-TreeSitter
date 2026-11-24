@@ -2,6 +2,7 @@ package com.zerostudio.idea.treesitter.largefile
 
 import com.zerostudio.idea.treesitter.TSPoint
 import com.zerostudio.idea.treesitter.TSRange
+import java.util.IdentityHashMap
 import java.util.LinkedHashMap
 import java.util.concurrent.locks.ReentrantReadWriteLock
 import kotlin.concurrent.read
@@ -492,6 +493,85 @@ class ByteBudgetLruCache<K : Any, V : Any>(
                 recent += key to value
             }
             recent
+        }
+    }
+
+    /**
+     * Re-key or replace selected immutable entries without first clearing the cache.
+     *
+     * The transform must produce unique keys. It is evaluated before the live map
+     * changes; a failure therefore leaves the original cache intact. LRU order is
+     * preserved, unchanged key/value pairs retain their existing index membership,
+     * and only keys entering/leaving the map trigger index callbacks.
+     */
+    fun transformEntries(
+        predicate: (K, V) -> Boolean,
+        transform: (K, V) -> Pair<K, V>?
+    ) = lock.write {
+        val transformed = LinkedHashMap<K, Entry<V>>(
+            entries.size.coerceAtLeast(16), 0.75f, true
+        )
+        val createdValues = IdentityHashMap<V, Boolean>()
+        try {
+            for ((key, entry) in entries) {
+                val mapped = if (predicate(key, entry.value)) {
+                    transform(key, entry.value)
+                } else {
+                    key to entry.value
+                } ?: continue
+                val nextKey = mapped.first
+                val nextValue = mapped.second
+                if (nextValue !== entry.value) createdValues[nextValue] = true
+                check(!transformed.containsKey(nextKey)) {
+                    "Cache entry transformation produced duplicate keys"
+                }
+                val weight = weigh(nextValue).coerceAtLeast(0L)
+                if (weight > maxBytes || maxBytes == 0L) continue
+                transformed[nextKey] = Entry(nextValue, weight)
+            }
+        } catch (error: Throwable) {
+            createdValues.keys.forEach(onEvict)
+            throw error
+        }
+
+        var nextBytes = 0L
+        for (entry in transformed.values) {
+            nextBytes = if (Long.MAX_VALUE - nextBytes < entry.weight) {
+                Long.MAX_VALUE
+            } else {
+                nextBytes + entry.weight
+            }
+        }
+        val iterator = transformed.entries.iterator()
+        while (nextBytes > maxBytes && iterator.hasNext()) {
+            val eldest = iterator.next()
+            nextBytes -= eldest.value.weight
+            iterator.remove()
+        }
+
+        val retainedValues = IdentityHashMap<V, Boolean>()
+        transformed.values.forEach { retainedValues[it.value] = true }
+
+        val previousEntries = entries
+        entries.clear()
+        entries.putAll(transformed)
+        usedBytes = nextBytes
+
+        for ((oldKey, oldEntry) in previousEntries) {
+            if (!entries.containsKey(oldKey)) {
+                onEntryRemoved(oldKey, oldEntry.value)
+            }
+            if (!retainedValues.containsKey(oldEntry.value)) {
+                onEvict(oldEntry.value)
+            }
+        }
+        for ((newKey, newEntry) in entries) {
+            if (!previousEntries.containsKey(newKey)) {
+                onEntryAdded(newKey, newEntry.value)
+            }
+        }
+        createdValues.keys.forEach { value ->
+            if (!retainedValues.containsKey(value)) onEvict(value)
         }
     }
 
