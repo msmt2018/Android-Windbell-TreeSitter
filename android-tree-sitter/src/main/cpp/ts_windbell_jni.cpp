@@ -2217,9 +2217,16 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
                 state_entry.second.begin(), state_entry.second.end(),
                 [](const RegexStateRule &rule) { return rule.enabled; });
         });
+    const auto has_active_native_query = [](const NativeQueryProgram &query) {
+        return query.enabled && query.query &&
+            std::any_of(query.pattern_metadata.begin(), query.pattern_metadata.end(),
+                [](const auto &item) { return item.second.enabled; });
+    };
     const bool has_enabled_native_query = std::any_of(
         grammar->native_queries.begin(), grammar->native_queries.end(),
-        [](const NativeQueryProgram &query) { return query.enabled; });
+        [&](const NativeQueryProgram &query) {
+            return has_active_native_query(query);
+        });
     const bool has_enabled_ast_selector = std::any_of(
         grammar->ast_selector_rules.begin(), grammar->ast_selector_rules.end(),
         [](const AstSelectorRule &rule) { return rule.enabled; });
@@ -2229,8 +2236,8 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
                 return has_enabled_regex_rule(has_enabled_regex_rule, rule);
             }) ||
         std::any_of(grammar->native_queries.begin(), grammar->native_queries.end(),
-            [](const NativeQueryProgram &query) {
-                return query.enabled && !query.predicate_regexes.empty();
+            [&](const NativeQueryProgram &query) {
+                return has_active_native_query(query) && !query.predicate_regexes.empty();
             }) ||
         std::any_of(grammar->ast_selector_rules.begin(), grammar->ast_selector_rules.end(),
             [](const AstSelectorRule &rule) {
@@ -2243,8 +2250,8 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
             }) ||
         (has_regex_state && !grammar->regex_state_graph_bounded) ||
         std::any_of(grammar->native_queries.begin(), grammar->native_queries.end(),
-            [](const NativeQueryProgram &query) {
-                return query.enabled &&
+            [&](const NativeQueryProgram &query) {
+                return has_active_native_query(query) &&
                     std::any_of(query.predicate_regexes.begin(), query.predicate_regexes.end(),
                         [](const NativeQueryProgram::PredicateRegex &predicate) {
                             return predicate.execution_capability ==
@@ -2447,8 +2454,8 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
                     has_uncheckpointed_context_rule, rule);
             }) ||
         std::any_of(grammar->native_queries.begin(), grammar->native_queries.end(),
-            [](const NativeQueryProgram &query) {
-                return query.enabled &&
+            [&](const NativeQueryProgram &query) {
+                return has_active_native_query(query) &&
                     std::any_of(query.predicate_regexes.begin(),
                     query.predicate_regexes.end(),
                     [](const NativeQueryProgram::PredicateRegex &predicate) {
