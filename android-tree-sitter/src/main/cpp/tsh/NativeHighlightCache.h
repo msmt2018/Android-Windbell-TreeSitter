@@ -169,13 +169,22 @@ public:
             sizeof(Value) + sizeof(Key) + 5u * sizeof(void *);
         const size_t span_capacity = value.spans.capacity();
         if (span_capacity > (static_cast<size_t>(-1) - kEntryOverhead) /
-                sizeof(HighlightSpan)) return;
+                sizeof(HighlightSpan)) {
+            ++payload_rejected_count_;
+            return;
+        }
         const size_t span_bytes = span_capacity * sizeof(HighlightSpan);
         const size_t bytes = span_bytes + kEntryOverhead;
-        if (budget_bytes_ == 0 || bytes > budget_bytes_) return;
+        if (budget_bytes_ == 0 || bytes > budget_bytes_) {
+            ++payload_rejected_count_;
+            return;
+        }
         auto existing = entries_.find(key);
         if (existing != entries_.end()) erase(existing);
-        if (shared_budget_ && !shared_budget_->tryAcquire(bytes)) return;
+        if (shared_budget_ && !shared_budget_->tryAcquire(bytes)) {
+            ++payload_rejected_count_;
+            return;
+        }
 
         try {
             const auto inserted = entries_.emplace(
@@ -188,6 +197,7 @@ public:
             linkFront(&inserted.first->second);
         } catch (...) {
             if (shared_budget_) shared_budget_->release(bytes);
+            ++payload_rejected_count_;
             return;
         }
         used_bytes_ += bytes;
@@ -198,6 +208,7 @@ public:
                 continue;
             }
             erase(victim);
+            ++payload_eviction_count_;
         }
     }
 
@@ -439,6 +450,8 @@ public:
     size_t dependencyBytesUsed() const noexcept { return dependency_used_bytes_; }
     size_t budgetBytes() const noexcept { return budget_bytes_; }
     size_t size() const noexcept { return entries_.size(); }
+    size_t payloadEvictionCount() const noexcept { return payload_eviction_count_; }
+    size_t payloadRejectedCount() const noexcept { return payload_rejected_count_; }
 
 private:
     struct KeyHash {
@@ -620,6 +633,8 @@ private:
     std::unordered_map<Key, DependencyEntry, KeyHash> dependency_entries_;
     std::list<Key> dependency_lru_;
     size_t dependency_used_bytes_ = 0;
+    size_t payload_eviction_count_ = 0;
+    size_t payload_rejected_count_ = 0;
 };
 
 } // namespace windbell::tsh
