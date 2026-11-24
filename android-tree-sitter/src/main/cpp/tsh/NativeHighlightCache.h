@@ -454,9 +454,18 @@ private:
         try {
             std::vector<DependencyRange> copy = dependencies;
             const size_t bytes = dependencyWeight(copy);
-            if (bytes > kDependencyLedgerBudgetBytes) return;
-
             auto existing = dependency_entries_.find(key);
+            if (bytes > kDependencyLedgerBudgetBytes) {
+                if (existing != dependency_entries_.end()) {
+                    dependency_used_bytes_ -= std::min(
+                        dependency_used_bytes_, existing->second.bytes);
+                    dependency_lru_.erase(existing->second.lru);
+                    dependency_entries_.erase(existing);
+                }
+                return;
+            }
+
+            if (existing != dependency_entries_.end()) {
             if (existing != dependency_entries_.end()) {
                 dependency_used_bytes_ -= std::min(
                     dependency_used_bytes_, existing->second.bytes);
