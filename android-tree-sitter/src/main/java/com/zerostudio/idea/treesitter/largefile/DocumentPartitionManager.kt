@@ -514,11 +514,11 @@ class ByteBudgetLruCache<K : Any, V : Any>(
         val createdValues = IdentityHashMap<V, Boolean>()
         try {
             for ((key, entry) in entries) {
-                val mapped = if (predicate(key, entry.value)) {
+                val mapped = (if (predicate(key, entry.value)) {
                     transform(key, entry.value)
                 } else {
                     key to entry.value
-                } ?: continue
+                }) ?: continue
                 val nextKey = mapped.first
                 val nextValue = mapped.second
                 if (nextValue !== entry.value) createdValues[nextValue] = true
@@ -552,7 +552,7 @@ class ByteBudgetLruCache<K : Any, V : Any>(
         val retainedValues = IdentityHashMap<V, Boolean>()
         transformed.values.forEach { retainedValues[it.value] = true }
 
-        val previousEntries = entries
+        val previousEntries = LinkedHashMap(entries)
         entries.clear()
         entries.putAll(transformed)
         usedBytes = nextBytes
