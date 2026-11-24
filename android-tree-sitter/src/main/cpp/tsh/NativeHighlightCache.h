@@ -76,6 +76,24 @@ public:
 
     using DependencyRange = HighlightDependencyRange;
 
+    struct RebaseStats {
+        size_t payload_before = 0;
+        size_t payload_after = 0;
+        size_t dependencies_before = 0;
+        size_t dependencies_after = 0;
+        size_t missing_dependency_proof = 0;
+        size_t viewport_intersects_edit = 0;
+        size_t document_wide_dependency = 0;
+        size_t checkpoint_invalidated = 0;
+        size_t boundary_invalidated = 0;
+        size_t dirty_range_invalidated = 0;
+        size_t inserted_range_invalidated = 0;
+        size_t dependency_budget_rejected = 0;
+        size_t payload_without_proof = 0;
+        bool reset_for_invalid_edit = false;
+        bool reset_after_allocation_failure = false;
+    };
+
     struct Value {
         std::vector<HighlightSpan> spans;
         uint32_t match_counts[4] = {};
@@ -186,21 +204,26 @@ public:
     // space. Every producer must attach its dependency envelope. Missing
     // dependency metadata is treated as document-wide and therefore evicted.
     // dirtyRanges are Tree-sitter changed ranges in POST-edit coordinates.
-    void rebaseAfterEdit(
+    RebaseStats rebaseAfterEdit(
         uint64_t newVersion, uint64_t newSourceVersion, uint64_t newPartitionVersion,
         uint32_t editStart, uint32_t oldEditEnd, uint32_t insertedBytes,
         const std::vector<std::pair<uint32_t, uint32_t>> &dirtyRanges
     ) noexcept {
+        RebaseStats stats;
+        stats.payload_before = entries_.size();
+        stats.dependencies_before = dependency_entries_.size();
         if (oldEditEnd < editStart) {
             clear();
-            return;
+            stats.reset_for_invalid_edit = true;
+            return stats;
         }
         const int64_t delta = static_cast<int64_t>(insertedBytes) -
             static_cast<int64_t>(oldEditEnd - editStart);
         const uint64_t insertedEnd64 = static_cast<uint64_t>(editStart) + insertedBytes;
         if (insertedEnd64 > UINT32_MAX) {
             clear();
-            return;
+            stats.reset_for_invalid_edit = true;
+            return stats;
         }
         const uint32_t insertedEnd = static_cast<uint32_t>(insertedEnd64);
 
@@ -243,32 +266,43 @@ public:
                 Key next_key = old_key;
                 auto dependencies = std::move(found->second.ranges);
                 bool reusable = !dependencies.empty();
-                reusable = reusable && transformRange(
-                    &next_key.start_byte, &next_key.end_byte);
+                if (!reusable) ++stats.missing_dependency_proof;
+                if (reusable && !transformRange(
+                        &next_key.start_byte, &next_key.end_byte)) {
+                    reusable = false;
+                    ++stats.viewport_intersects_edit;
+                }
                 for (auto &dependency : dependencies) {
                     if (!reusable) break;
                     if ((dependency.flags & HIGHLIGHT_DEPENDENCY_DOCUMENT_WIDE) != 0) {
                         reusable = false;
+                        ++stats.document_wide_dependency;
                         break;
                     }
                     if ((dependency.flags & HIGHLIGHT_DEPENDENCY_CHECKPOINT_BASED) != 0 &&
                         editStart <= dependency.start_byte) {
                         reusable = false;
+                        ++stats.checkpoint_invalidated;
                         break;
                     }
                     if ((dependency.flags & HIGHLIGHT_DEPENDENCY_BOUNDARY_SENSITIVE) != 0 &&
                         editStart <= dependency.end_byte &&
                         oldEditEnd >= dependency.start_byte) {
                         reusable = false;
+                        ++stats.boundary_invalidated;
                         break;
                     }
                     reusable = transformRange(
                         &dependency.start_byte, &dependency.end_byte);
-                    if (!reusable) break;
+                    if (!reusable) {
+                        ++stats.viewport_intersects_edit;
+                        break;
+                    }
                     if (insertedBytes != 0 &&
                         overlaps(dependency.start_byte, dependency.end_byte,
                                  editStart, insertedEnd)) {
                         reusable = false;
+                        ++stats.inserted_range_invalidated;
                         break;
                     }
                     for (const auto &dirty : dirtyRanges) {
@@ -276,6 +310,7 @@ public:
                             overlaps(dependency.start_byte, dependency.end_byte,
                                      dirty.first, dirty.second)) {
                             reusable = false;
+                            ++stats.dirty_range_invalidated;
                             break;
                         }
                     }
@@ -287,6 +322,7 @@ public:
                 const size_t bytes = dependencyWeight(dependencies);
                 if (bytes > kDependencyLedgerBudgetBytes ||
                     bytes > kDependencyLedgerBudgetBytes - rebased_dependency_bytes) {
+                    ++stats.dependency_budget_rejected;
                     continue;
                 }
                 rebased_dependency_lru.push_back(next_key);
@@ -348,6 +384,7 @@ public:
                 }
 
                 if (!reusable) {
+                    ++stats.payload_without_proof;
                     forgetDependencies(next_key);
                     erase(found);
                     entry = next;
@@ -374,7 +411,11 @@ public:
             // A partially rebased cache is never published. Cache admission is
             // optional; dropping it is safer than returning mixed-version data.
             clear();
+            stats.reset_after_allocation_failure = true;
         }
+        stats.payload_after = entries_.size();
+        stats.dependencies_after = dependency_entries_.size();
+        return stats;
     }
 
     void clear() noexcept {
