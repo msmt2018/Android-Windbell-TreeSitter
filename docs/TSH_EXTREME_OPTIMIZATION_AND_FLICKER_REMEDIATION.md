@@ -238,3 +238,18 @@ These reports remain open until the exact runtime and device acceptance gates be
 - These counters are diagnostic only and do not alter cache admission, invalidation, query scheduling, or rendering decisions.
 - Use the record to distinguish repeated native query work, Kotlin cache pressure/eviction, lock contention, and repeated line-span projection work. Correlate with native TSHCache editRebase logs to separate semantic invalidation from capacity loss.
 - The metrics are cumulative for the highlighter instance except process-global capture-cache size/eviction/rejection counters. Compare deltas over controlled cold-open, scroll-away/back, and theme-switch runs.
+
+
+## 2026-11-25 CI #1833: predicate hot-path compile regression and correction
+
+- CI run #1833 (run ID 45476894992, tested head 542fef84b523c35185d2f9a0cad4d101b1096628) failed in the Host JNI native build. The compiler reported `actual` undeclared in the Regex predicate fallback at `WindbellTshCore.cpp:1029/1031`. Release and Android instrumentation jobs also failed downstream at native compilation; their failures must not be misclassified as independent rendering regressions.
+- Root cause: predicate operand precompilation removed the former per-match `actual` temporary from the shared evaluator scope, but the non-contiguous, non-windowed Regex fallback still used that scratch vector to materialize capture text.
+- Corrective commit `66ab378883ff9c3e96eeace1df58fb8be526d094` restores the scratch vector locally inside the Regex fallback branch. The contiguous-source and bounded-window fast paths do not allocate or use it. Predicate operands remain immutable and precompiled; this correction does not restore per-match literal decoding or the old general-purpose containers.
+- Validation is pending on the workflow triggered by the corrective commit. Do not mark predicate optimization complete until Host JNI, Release, native cache tests, JVM tests, and Android API 26/30/35 jobs are checked.
+
+### Additional rendering-path finding
+
+- `styleLine()` still obtains a newly materialized `List<HighlightSpan>` for each draw by querying the packed interval index. `CaptureIntervalIndex.appendQuery()` creates one `HighlightSpan` object per overlapping capture. The painter then allocates `ClippedCapture` and two `BoundaryEvent` objects per clipped capture, sorts the boundary events, builds active ordered sets, and allocates Android style spans. Thus a capture-cache hit avoids Native Query but does not avoid per-frame projection and paint-work allocations.
+- This is a separate hot path from AST parsing and Native Query. Instrumentation must distinguish cache-hit projection time, painter CPU time, allocation/GC, and actual Native range query time before choosing the next optimization.
+- Do not add an unbounded line-span cache or retain stale projections across edits. Any projection reuse must be keyed by session/document revision, exact source slice, and style/palette generation; its retained bytes must be charged to a bounded budget, and cache eviction must never be treated as semantic invalidation.
+- Current source has not yet introduced such a projection cache. This remains open work, not a claimed optimization.
