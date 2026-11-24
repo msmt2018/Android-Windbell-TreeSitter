@@ -127,6 +127,12 @@ class TshSyntaxHighlighter(
     // work. They are sampled at a low rate and never drive cache validity.
     private val styleLineCalls = AtomicLong()
     private val styleLineNanos = AtomicLong()
+    // Separate cache-to-span projection from Android span/sweep painting. A
+    // cache hit is not evidence that repeated line rendering is inexpensive.
+    private val captureProjectionNanos = AtomicLong()
+    private val captureProjectionSpans = AtomicLong()
+    private val androidPaintNanos = AtomicLong()
+    private val androidPaintRuns = AtomicLong()
     private val cachedCaptureHits = AtomicLong()
     private val cachedCaptureMisses = AtomicLong()
     private val nativeRangeQueries = AtomicLong()
@@ -320,6 +326,7 @@ class TshSyntaxHighlighter(
         // cache reads. While a native edit is pending, only unchanged display
         // captures are mapped from the old revision; semantic consumers never see
         // these provisional spans.
+        val projectionStartedNanos = System.nanoTime()
         val spans = synchronized(nativeEditLock) {
             if (largeSession !== active || generation.get() != active.ticket) {
                 return@synchronized emptyList()
@@ -388,6 +395,8 @@ class TshSyntaxHighlighter(
                 cached?.spans.orEmpty()
             }
         }
+        captureProjectionNanos.addAndGet(System.nanoTime() - projectionStartedNanos)
+        captureProjectionSpans.addAndGet(spans.size.toLong())
 
         if (firstStyleCallLogged.compareAndSet(false, true)) {
             Log.i(TAG, "Editor renderer invoked styleLine: extension=.$extension line=$bufferLine range=$start..$end captures=${spans.size}")
@@ -395,6 +404,7 @@ class TshSyntaxHighlighter(
         if (spans.isEmpty()) return null
 
         val styled = SpannableStringBuilder(text)
+        val paintStartedNanos = System.nanoTime()
         engine.applyHighlightSpansToSpannable(
             spans = spans,
             documentOffset = lineStartOffset,
@@ -404,7 +414,9 @@ class TshSyntaxHighlighter(
             start = visibleStart,
             end = visibleEnd
         )
+        androidPaintNanos.addAndGet(System.nanoTime() - paintStartedNanos)
         val applied = styled.getSpans(visibleStart, visibleEnd, CharacterStyle::class.java)
+        androidPaintRuns.addAndGet(applied.size.toLong())
         if (applied.isEmpty()) {
             Log.w(TAG, "No Android CharacterStyle applied: extension=.$extension line=$bufferLine captures=${spans.size}")
             return null
@@ -694,6 +706,10 @@ class TshSyntaxHighlighter(
             TAG,
             "pipelineMetrics extension=.$extension " +
                 "styleLineCalls=${styleLineCalls.get()} styleLineMs=${styleLineNanos.get() / 1_000_000L} " +
+                "captureProjectionMs=${captureProjectionNanos.get() / 1_000_000L} " +
+                "captureProjectionSpans=${captureProjectionSpans.get()} " +
+                "androidPaintMs=${androidPaintNanos.get() / 1_000_000L} " +
+                "androidPaintRuns=${androidPaintRuns.get()} " +
                 "captureCacheHits=${cachedCaptureHits.get()} captureCacheMisses=${cachedCaptureMisses.get()} " +
                 "nativeRanges=${nativeRangeQueries.get()} nativeLockWaitMs=${nativeRangeWaitNanos.get() / 1_000_000L} " +
                 "nativeQueryMs=${nativeRangeQueryNanos.get() / 1_000_000L} " +
