@@ -2387,8 +2387,41 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
                     static_cast<uint8_t>(HighlightSource::REGEX_STATE) &&
                 (dependency.flags & HIGHLIGHT_DEPENDENCY_DOCUMENT_WIDE) != 0;
         });
+    const auto has_uncheckpointed_context_rule =
+        [](const auto &self, const CompiledRegexRule &rule) -> bool {
+            if (rule.execution_capability ==
+                    RegexExecutionCapability::DOCUMENT_CONTEXT_REQUIRED &&
+                (rule.type != RegexRuleType::BLOCK ||
+                 !rule.block_delimiters_bounded)) {
+                return true;
+            }
+            return std::any_of(
+                rule.nested_rules.begin(), rule.nested_rules.end(),
+                [&](const CompiledRegexRule &nested) {
+                    return self(self, nested);
+                });
+        };
+    const bool has_uncheckpointed_context_regex =
+        std::any_of(grammar->regex_rules.begin(), grammar->regex_rules.end(),
+            [&](const CompiledRegexRule &rule) {
+                return has_uncheckpointed_context_rule(
+                    has_uncheckpointed_context_rule, rule);
+            }) ||
+        std::any_of(grammar->native_queries.begin(), grammar->native_queries.end(),
+            [](const NativeQueryProgram &query) {
+                return std::any_of(query.predicate_regexes.begin(),
+                    query.predicate_regexes.end(),
+                    [](const NativeQueryProgram::PredicateRegex &predicate) {
+                        return predicate.execution_capability ==
+                            RegexExecutionCapability::DOCUMENT_CONTEXT_REQUIRED;
+                    });
+            }) ||
+        std::any_of(grammar->ast_selector_rules.begin(), grammar->ast_selector_rules.end(),
+            [](const AstSelectorRule &rule) {
+                return rule.has_text_regex && !rule.text_regex_bounded;
+            });
     const bool added_global_regex_dependency =
-        source_requires_contiguous_regex &&
+        has_uncheckpointed_context_regex &&
         !has_document_wide_regex_dependency;
     if (added_global_regex_dependency) {
         cache_value.dependencies.push_back({
