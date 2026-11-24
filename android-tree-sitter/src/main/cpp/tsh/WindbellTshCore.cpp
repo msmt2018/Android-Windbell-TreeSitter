@@ -1310,8 +1310,15 @@ void WindbellEngine::matchBlockRecursive(
                     checkpoint_byte_offset = static_cast<uint32_t>(event_start);
                     break;
                 }
-                active_start_byte = start_precedes_end
-                    ? static_cast<uint32_t>(event_start) : kNoActiveBlock;
+                if (start_precedes_end) {
+                    // Match the block executor: nested start delimiters do not
+                    // replace an already-open top-level block.
+                    if (active_start_byte == kNoActiveBlock) {
+                        active_start_byte = static_cast<uint32_t>(event_start);
+                    }
+                } else {
+                    active_start_byte = kNoActiveBlock;
+                }
 
                 const UChar* next = text_start + event_end;
                 if (next <= scan) next = advanceOneUtf16CodePoint(scan, text_end);
