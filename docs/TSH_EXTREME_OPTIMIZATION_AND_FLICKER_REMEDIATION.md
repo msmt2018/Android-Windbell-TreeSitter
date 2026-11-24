@@ -292,3 +292,17 @@ These reports remain open until the exact runtime and device acceptance gates be
 - The global 32 MiB capture LRU remains bounded. Do not disable its budget or add a second unaccounted in-memory copy to hide recapture. A future retained-page tier must be backed by a shared byte budget and have precise document/session/revision identity plus local edit invalidation.
 - Theme changes remain paint-only. They must not invalidate native captures or issue Native Query work. Capture-cache eviction and budget pressure are storage events, not source edits; they must not clear already-valid ATS colors in unaffected ranges.
 - No line-projection cache is added yet. It would be incorrect to key it only by line number or document revision without accounting for shifted lines, multiline dependency changes, exact text, and palette generation. The new metrics are the prerequisite for choosing a bounded representation with a provable invalidation model.
+
+
+## 2026-11-25: primitive painter sweep events
+
+- The line painter previously allocated two `BoundaryEvent` Kotlin objects for every clipped capture, then sorted an object list by offset and start/end state. This is on the per-line paint path, after capture-cache lookup, so it can remain expensive even when Native Query is never rerun.
+- Commits `986c5c2c39b1ef4e0dd26d072edaf9b9f383a5c2` and `a9b44d2379e44af863a9307becf7599eaa7b8035` replace those objects with one primitive `LongArray` containing two packed events per capture. Sorting is now primitive-array sorting; the packed key orders by line-local offset, then end before start, then capture index. The explicit end-before-start bit is important for adjacent spans that share a boundary.
+- Added instrumentation regression `packedPainterEventsKeepAdjacentCaptureBoundariesDisjoint`, which paints adjacent red/green captures and asserts that the resulting Android foreground spans occupy exactly [0,1) and [1,2), with no overlap or color bleed.
+- This removes two per-capture event objects and comparator-driven object sorting from each paint call. It does not yet eliminate `ClippedCapture`, boxed TreeSet entries, or Android span allocation. The performance gain must be measured using `androidPaintMs` and allocation/GC profiling; no speedup percentage is claimed without device measurements.
+- Latest change also retains the previous full native-priority sweep and dark/light palette selection. The event packing is a representation change only; it must not alter ATS overlap precedence or annotation colors.
+
+### Current validation baseline
+
+- Workflow #1845 (run ID `45507572731`) was queued for head `0706804d169b5c89beea5a34cdca3889b2023ca5`; it does not include the primitive-event commits above and cannot validate them.
+- The current PR head after primitive-event implementation and regression test is `0e30312114519d8e7c0d0705040816412e9ae741`. A new workflow result for this exact head is required before marking this optimization verified. Earlier queued/cancelled workflow results must not be reused as evidence.
