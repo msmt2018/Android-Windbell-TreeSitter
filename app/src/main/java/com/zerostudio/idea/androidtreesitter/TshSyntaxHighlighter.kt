@@ -60,7 +60,10 @@ class TshSyntaxHighlighter(
         private val captureRangeIndex = CaptureRangeLookupIndex()
         private val captureCache = ByteBudgetLruCache<CaptureRangeKey, CaptureIntervalIndex>(
             CAPTURE_CACHE_BYTES,
-            { index -> 96L + index.size.toLong() * 96L },
+            // Primitive CaptureIntervalIndex storage is 25 bytes/capture plus
+            // array/object headers. Charge 32 bytes/capture to include alignment
+            // and allocator overhead without the former 96-byte object estimate.
+            { index -> 160L + index.size.toLong() * 32L },
             onEntryAdded = { key, _ -> captureRangeIndex.add(key) },
             onEntryRemoved = { key, _ -> captureRangeIndex.remove(key) }
         )
