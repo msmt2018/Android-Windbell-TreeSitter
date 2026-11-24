@@ -97,4 +97,56 @@ class CaptureIntervalIndexTest {
         ))
     }
 
+    @Test fun pendingEditDisplayMappingKeepsUnchangedPrefixAndShiftsSuffix() {
+        val edits = listOf(
+            CaptureDisplayRebaser.PendingEdit(
+                startUtf16 = 10, deletedChars = 2, insertedChars = 4
+            )
+        )
+        assertEquals(
+            CaptureDisplayRebaser.SourceRange(2, 8),
+            CaptureDisplayRebaser.mapCurrentRangeToOriginal(2, 8, edits)
+        )
+        assertEquals(
+            CaptureDisplayRebaser.SourceRange(12, 18),
+            CaptureDisplayRebaser.mapCurrentRangeToOriginal(14, 20, edits)
+        )
+        assertEquals(
+            CaptureDisplayRebaser.SourceRange(2, 8),
+            CaptureDisplayRebaser.mapOriginalCaptureToCurrent(2, 8, edits)
+        )
+        assertEquals(
+            CaptureDisplayRebaser.SourceRange(14, 20),
+            CaptureDisplayRebaser.mapOriginalCaptureToCurrent(12, 18, edits)
+        )
+        assertEquals(null, CaptureDisplayRebaser.mapCurrentRangeToOriginal(9, 12, edits))
+        assertEquals(null, CaptureDisplayRebaser.mapOriginalCaptureToCurrent(8, 12, edits))
+    }
+
+    @Test fun pendingEditDisplayMappingComposesBottomUpMultiEditBatch() {
+        val edits = listOf(
+            CaptureDisplayRebaser.PendingEdit(20, 0, 3),
+            CaptureDisplayRebaser.PendingEdit(4, 2, 1)
+        )
+        val current = CaptureDisplayRebaser.mapCurrentRangeToOriginal(30, 36, edits)
+        assertEquals(CaptureDisplayRebaser.SourceRange(28, 34), current)
+        assertEquals(
+            CaptureDisplayRebaser.SourceRange(30, 36),
+            CaptureDisplayRebaser.mapOriginalCaptureToCurrent(28, 34, edits)
+        )
+    }
+
+    @Test fun pendingDeletionBoundaryMapsSuffixWithoutRepaintingPrefix() {
+        val edits = listOf(CaptureDisplayRebaser.PendingEdit(5, 4, 0))
+        assertEquals(
+            CaptureDisplayRebaser.SourceRange(9, 14),
+            CaptureDisplayRebaser.mapCurrentRangeToOriginal(5, 10, edits)
+        )
+        assertEquals(
+            CaptureDisplayRebaser.SourceRange(5, 10),
+            CaptureDisplayRebaser.mapOriginalCaptureToCurrent(9, 14, edits)
+        )
+        assertEquals(null, CaptureDisplayRebaser.mapCurrentRangeToOriginal(3, 7, edits))
+    }
+
 }
