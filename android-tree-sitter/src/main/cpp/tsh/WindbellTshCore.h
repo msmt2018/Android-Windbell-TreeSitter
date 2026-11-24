@@ -70,9 +70,6 @@ enum class RegexRuleType : uint8_t {
     BLOCK
 };
 
-// Strict UTF-8 decoder shared by query compilation and native predicate execution.
-bool tshUtf8ToUtf16(std::string_view input, std::vector<UChar>& output);
-
 enum class RegexExecutionCapability : uint8_t {
     // The compiler proved a finite maximum match width for the supported
     // regular-expression subset. This is necessary, but not by itself
@@ -157,12 +154,6 @@ struct RegexStateRule {
 // One independently compiled native Tree-sitter query block. The source text is
 // consumed directly by ts_query_new; no generated SCM artifact exists.
 struct NativeQueryProgram {
-    struct PredicateOperands {
-        // Immutable operands decoded once during query compilation. These are
-        // shared safely by concurrent query executions; no match-local cache.
-        std::vector<std::vector<UChar>> string_values;
-        std::vector<std::string> type_values;
-    };
     // This is a compile-time proof classification, not a guessed byte range.
     // ROOTED_LOCAL may use AST candidate-root envelopes only when the compiler
     // also resolves one fixed root symbol. Unknown/non-local roots stay global.
@@ -204,8 +195,6 @@ struct NativeQueryProgram {
     // Parsed once at grammar compilation; the hot match loop must not rebuild
     // predicate-step vectors for every match in large documents.
     std::vector<std::vector<std::vector<TSQueryPredicateStep>>> predicates_by_pattern;
-    // Same [pattern][predicate] shape as predicates_by_pattern.
-    std::vector<std::vector<PredicateOperands>> predicate_operands_by_pattern;
 };
 
 // std::map's transparent comparator provides heterogeneous string_view lookup
