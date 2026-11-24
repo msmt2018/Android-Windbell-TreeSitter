@@ -187,6 +187,11 @@ struct NativeDocumentInput {
     bool read_failed = false;
 };
 
+// Snapshot transfer crosses JNI once per window. Keep this larger than the
+// parser's 64 KiB TextSource window so large PieceTree snapshots do not pay
+// thousands of Java callback transitions and tiny pwrite calls. Heap-backed.
+static constexpr uint32_t kNativeDocumentTransferChunkBytes = 1024u * 1024u;
+
 using DirtyLineInterval = std::pair<uint64_t, uint64_t>;
 
 static bool appendDirtyLineInterval(
@@ -1506,7 +1511,7 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeCreateDocument(
     if (ok && byte_length > 0) {
         try {
             window.resize(static_cast<size_t>(std::min<uint64_t>(
-                windbell::largefile::kTreeSitterInputChunkBytes,
+                kNativeDocumentTransferChunkBytes,
                 static_cast<uint64_t>(byte_length))));
         } catch (...) {
             fd_guard.close();
@@ -1526,7 +1531,7 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeCreateDocument(
     while (ok && offset < static_cast<uint64_t>(byte_length)) {
         ++reader_calls;
         const jint requested = static_cast<jint>(std::min<uint64_t>(
-            windbell::largefile::kTreeSitterInputChunkBytes,
+            kNativeDocumentTransferChunkBytes,
             static_cast<uint64_t>(byte_length) - offset));
         const jint count = env->CallIntMethod(
             reader, read_method, static_cast<jlong>(offset), requested, direct_window);
@@ -1667,13 +1672,15 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeCreateDocument(
     };
     LOGI("TSHPerf",
          "nativeCreateDocument bytes=%lld anonymousBacking=%d readerCalls=%llu "
-         "readerTransferAndWriteMs=%lld backingMapPieceTreeMs=%lld parseMs=%lld totalMs=%lld",
+         "readerTransferAndWriteMs=%lld backingMapPieceTreeMs=%lld parseMs=%lld totalMs=%lld "
+         "transferChunkBytes=%u",
          static_cast<long long>(byte_length), anonymous_backing ? 1 : 0,
          static_cast<unsigned long long>(reader_calls),
          static_cast<long long>(elapsed_ms(native_create_started, source_transfer_finished)),
          static_cast<long long>(elapsed_ms(source_transfer_finished, parser_started)),
          static_cast<long long>(elapsed_ms(parser_started, parse_finished)),
-         static_cast<long long>(elapsed_ms(native_create_started, parse_finished)));
+         static_cast<long long>(elapsed_ms(native_create_started, parse_finished)),
+         kNativeDocumentTransferChunkBytes);
 #endif
     const jlong handle = nativeDocumentRegistry().insert(std::move(document));
     if (handle == 0) {
