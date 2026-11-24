@@ -222,3 +222,12 @@ These reports remain open until the exact runtime and device acceptance gates be
 - Exercise repeated scroll-away/scroll-back, theme switching, insertion/deletion before and inside ATS dependencies, and multiple edits before one render frame. Already-painted unaffected symbols must remain visually stable.
 - If a range cannot be retained under cache pressure, use explicit page/batch continuation or bounded retry with diagnostics; do not silently report a successful cache operation when no page was retained.
 - Do not close the flicker or color issue until the API 26/30/35 Canvas/device tests and repeated-edit/scroll scenarios pass. Do not claim a 100x speedup without same-device, same-input, same-output measurements.
+
+
+## 2026-11-25 Native query predicate hot-path optimization
+
+- Added immutable per-pattern predicate operand records alongside compiled Tree-sitter predicate steps.
+- UTF-8 query literals are decoded to UTF-16 once during grammar compilation; structural node-type operands are retained as immutable strings.
+- The per-match evaluator reads precompiled operations and operand arrays instead of allocating nested vectors and retranscoding identical literals for every AST match.
+- Existing equality, membership, contains, structural, and regex predicate evaluation branches remain in place. This changes operand preparation, not predicate semantics.
+- Verification pending: native host tests, JVM tests, Release build, and Android API 26/30/35 rendering tests. No speedup multiplier is claimed without same-device measurements.
