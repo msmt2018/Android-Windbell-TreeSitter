@@ -2438,7 +2438,7 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
              static_cast<long long>(elapsed_ms(encode_started, encode_finished)),
              static_cast<long long>(elapsed_ms(native_highlight_started, native_highlight_finished)),
              document->highlight_cache.size(),
-             static_cast<unsigned long long>(document->highlight_cache.bytesUsed()));
+             static_cast<unsigned long long>(document->highlight_cache.usedBytes()));
     }
 #endif
     return encoded;
