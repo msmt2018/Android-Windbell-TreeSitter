@@ -76,10 +76,6 @@ public:
 
     struct Value {
         std::vector<HighlightSpan> spans;
-        // Absolute UTF-16LE byte ranges whose source text/tree structure may
-        // influence this viewport result. Unknown dependencies are represented
-        // explicitly as [0, document_size), never inferred from capture spans.
-        std::vector<DependencyRange> dependencies;
         uint32_t match_counts[4] = {};
     };
 
@@ -129,23 +125,22 @@ public:
         return ranges;
     }
 
-    void put(Key key, Value value) {
-        // Preserve dependency proof even when the larger native span payload
-        // cannot enter the LRU. The Kotlin capture cache may still retain that
-        // immutable result and must not lose edit-reuse eligibility just because
-        // this second payload copy was evicted.
-        rememberDependencies(key, value.dependencies);
+    void put(
+        Key key,
+        Value value,
+        const std::vector<DependencyRange>& dependencies
+    ) {
+        // Dependency proofs have one owner: the compact ledger. They survive
+        // independently of this larger span-payload LRU and are not duplicated
+        // in every cached value.
+        rememberDependencies(key, dependencies);
         constexpr size_t kEntryOverhead =
             sizeof(Value) + sizeof(Key) + 5u * sizeof(void *);
         const size_t span_capacity = value.spans.capacity();
-        const size_t dependency_capacity = value.dependencies.capacity();
         if (span_capacity > (static_cast<size_t>(-1) - kEntryOverhead) /
                 sizeof(HighlightSpan)) return;
         const size_t span_bytes = span_capacity * sizeof(HighlightSpan);
-        if (dependency_capacity > (static_cast<size_t>(-1) - kEntryOverhead - span_bytes) /
-                sizeof(DependencyRange)) return;
-        const size_t bytes = span_bytes +
-            dependency_capacity * sizeof(DependencyRange) + kEntryOverhead;
+        const size_t bytes = span_bytes + kEntryOverhead;
         if (budget_bytes_ == 0 || bytes > budget_bytes_) return;
         auto existing = entries_.find(key);
         if (existing != entries_.end()) erase(existing);
@@ -323,56 +318,17 @@ public:
                 }
 
                 Key next_key = found->first;
-                bool reusable = !entry->value.dependencies.empty();
                 // The requested viewport itself must not include replaced text.
-                reusable = reusable && transformRange(
+                bool reusable = transformRange(
                     &next_key.start_byte, &next_key.end_byte);
-
-                for (auto &dependency : entry->value.dependencies) {
-                    if (!reusable) break;
-                    // Document-context dependencies cannot be rebased across
-                    // any edit, including insertion exactly at byte zero where
-                    // ordinary interval shifting would otherwise skip new text.
-                    if ((dependency.flags & HIGHLIGHT_DEPENDENCY_DOCUMENT_WIDE) != 0) {
-                        reusable = false;
-                        break;
-                    }
-                    // Stateful Regex dependencies are based on a tokenizer
-                    // checkpoint. Any edit at/before that checkpoint may change
-                    // the state summarized by it, even when the edit is outside
-                    // the recorded scan interval.
-                    if ((dependency.flags & HIGHLIGHT_DEPENDENCY_CHECKPOINT_BASED) != 0 &&
-                        editStart <= dependency.start_byte) {
-                        reusable = false;
-                        break;
-                    }
-                    // Bounded Regex can match across either edge of its scan
-                    // window. An insertion at the exact edge changes that
-                    // window's context even when the old interval can be shifted.
-                    if ((dependency.flags & HIGHLIGHT_DEPENDENCY_BOUNDARY_SENSITIVE) != 0 &&
-                        editStart <= dependency.end_byte &&
-                        oldEditEnd >= dependency.start_byte) {
-                        reusable = false;
-                        break;
-                    }
-                    reusable = transformRange(
-                        &dependency.start_byte, &dependency.end_byte);
-                    if (!reusable) break;
-                    if (insertedBytes != 0 &&
-                        overlaps(dependency.start_byte, dependency.end_byte,
-                                 editStart, insertedEnd)) {
-                        reusable = false;
-                        break;
-                    }
-                    for (const auto &dirty : dirtyRanges) {
-                        if (dirty.first < dirty.second &&
-                            overlaps(dependency.start_byte, dependency.end_byte,
-                                     dirty.first, dirty.second)) {
-                            reusable = false;
-                            break;
-                        }
-                    }
-                }
+                next_key.version = newVersion;
+                next_key.source_version = newSourceVersion;
+                next_key.partition_version = newPartitionVersion;
+                // The dependency ledger is the single source of truth for whether
+                // this viewport survived the edit. A payload without a retained
+                // proof is conservatively discarded.
+                reusable = reusable &&
+                    dependency_entries_.find(next_key) != dependency_entries_.end();
 
                 for (auto &span : entry->value.spans) {
                     if (!reusable) break;
