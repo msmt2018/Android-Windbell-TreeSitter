@@ -107,12 +107,14 @@ public:
     // This ledger is deliberately independent from the span-payload LRU: Kotlin
     // may still own a compact capture page after the native payload was evicted.
     std::vector<std::pair<uint32_t, uint32_t>> snapshotRanges(
-        bool diagnostics
+        bool diagnostics,
+        uint64_t grammarRevision
     ) const {
         std::vector<std::pair<uint32_t, uint32_t>> ranges;
         ranges.reserve(dependency_entries_.size());
         for (const auto& item : dependency_entries_) {
-            if (item.first.diagnostics == diagnostics) {
+            if (item.first.diagnostics == diagnostics &&
+                item.first.grammar_revision == grammarRevision) {
                 ranges.emplace_back(item.first.start_byte, item.first.end_byte);
             }
         }
