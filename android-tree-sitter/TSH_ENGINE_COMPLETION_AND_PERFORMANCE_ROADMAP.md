@@ -844,3 +844,74 @@ Static call-site review found the native document parser already separately trac
 - 候选 Parser 使用 RAII 所有权，覆盖提前返回路径，避免失败分支泄漏。
 
 本次仅完成静态源码修改；没有执行测试、编译、构建、CI、设备验证或基准测试。
+
+## 2026-11-24 TSH 颜色优先级、视口刷新与增量缓存稳定性修复（源码已提交，验证暂缓）
+
+本轮围绕三个反馈点检查了应用层渲染、Kotlin 捕获缓存、Native TSH 执行和编辑器行缓存。确认并修复以下问题：
+
+### A. 注解/重叠捕获颜色优先级不一致
+
+问题：Native 捕获结果的确定性顺序为 priority 降序、declarationOrder 升序、startByte 升序、endByte 降序、source 升序、styleId 升序；Kotlin 构造 Android SPAN_PRIORITY 时却先按 source/styleId 排序，再考虑范围。相同规则发出的 whole-match 与 nested capture 如果具有不同 style，Kotlin 可能按 styleId 分配优先级，从而让不应获胜的颜色覆盖 TSH 规则指定颜色。
+
+修复：Kotlin 的优先级键和最终 spans 排序均改为与 Native 完全一致的六字段顺序；优先级查找键同时包含 start/end byte，避免不同捕获范围误用同一个优先级条目。
+
+源码：android-tree-sitter/src/main/java/com/zerostudio/idea/treesitter/tsh/WindbellTshEngine.kt
+
+### B. 视口捕获不再触发全编辑器样式/结构刷新
+
+问题：普通视口捕获完成后，旧逻辑无条件调用全局 invalidateStyles() 和 invalidateStructure()。EditorView 的全局样式失效会提升整份文档的 styles generation，并使已经记录的行再次进入样式处理路径。滚动时新视口的捕获因此会扰动之前已着色的 ATS 符号。
+
+修复：
+- 视口捕获成功后只对本批已完成的范围做 UTF-16 offset → 行号映射。
+- 使用 invalidateStyles(startLine, endLine) 局部失效，不再对整份文档执行样式失效。
+- 普通高亮捕获不再触发结构刷新；只有括号/自动配对作用域查询确实等待了捕获结果时，才刷新结构。
+- 失败重试唤醒同样只刷新失败范围，不再触发全局重绘。
+- 只对本批真正完成的范围失效，快速滚动时未执行的过期范围不再被误标记为已完成。
+
+源码：app/src/main/java/com/zerostudio/idea/androidtreesitter/TshSyntaxHighlighter.kt
+
+### C. 移除重复的 Kotlin 捕获缓存
+
+问题：captureCache 和 displayCache 持有同一份 CaptureIntervalIndex 数据，分别维护两套 LRU 和区间索引；每次绘制查询还要合并并去重。这不是两个独立缓存层，而是同一结果重复存储/重复查找。
+
+修复：统一为单个 32 MiB 捕获缓存，删除重复 displayCache/displayRangeIndex；查询只遍历一次重叠区间并直接追加命中结果，避免为每行绘制分配 LinkedHashSet。
+
+源码：app/src/main/java/com/zerostudio/idea/androidtreesitter/TshSyntaxHighlighter.kt
+
+### D. 增量编辑不再先清空整个 Kotlin 捕获缓存
+
+问题：旧 rebaseCaptureCaches() 先快照所有会话条目，再 invalidate 整个 session，最后逐项重新 put。即使大多数缓存项可复用，也会对整批条目执行移除/添加和区间索引回调。
+
+修复：
+- ByteBudgetLruCache 新增 transformEntries()，在缓存锁内构建变换结果，保留原 LRU 顺序和未变化的 key/value。
+- 只有确实移除或改变 key 的条目才触发区间索引回调；未变化条目不再执行 remove/add。
+- 保留冻结的原始 weight；替换值才重新计算权重；缓存预算累加采用防溢出方式。
+- TshSyntaxHighlighter 使用该原子变换接口，只变换当前会话条目，不再先清空整个会话缓存。
+- 对无法复用的旧视口范围进行坐标变换并记录；与 Native dirty byte ranges 合并后，只失效这些范围对应的行。删除/替换造成的空区间会扩展到所在行边界。
+- Native 依赖分析若确实认定捕获依赖为 document-wide，相关旧视口仍会被失效；这是语义正确性要求，不会为了避免重绘而保留错误 ATS 结果。
+
+源码：
+- android-tree-sitter/src/main/java/com/zerostudio/idea/treesitter/largefile/DocumentPartitionManager.kt
+- app/src/main/java/com/zerostudio/idea/androidtreesitter/TshSyntaxHighlighter.kt
+
+### E. 增加 Native TSH 分阶段耗时诊断
+
+Native document 创建已有 source transfer/write、backing map/PieceTree、Tree-sitter parse 的分项计时。本轮为 nativeHighlightDocument 增加 debug verbose 诊断，区分：
+- Native highlight cache hit/miss；
+- context-dependent Regex snapshot 创建耗时；
+- highlightHybrid 核心执行耗时；
+- JNI 结果编码耗时；
+- 文档字节数、请求范围、捕获数量、Native cache entries/bytes。
+
+这样后续设备日志可以明确区分“首次 Native 文档传输/完整 AST parse”与“首次 TSH 捕获执行”，不再把所有延迟笼统归因于 Token 缓存。
+
+源码：android-tree-sitter/src/main/cpp/ts_windbell_jni.cpp
+
+### 尚未关闭的重点问题
+
+1. 夜间模式 @ 注解颜色：源码已修正 Native/Kotlin 捕获优先级顺序，但最终设备绘制结果尚未验证；不能在验证前宣称颜色 bug 已彻底关闭。
+2. 首次打开大文件：需要结合新增的 nativeCreateDocument 与 nativeHighlightDocument 分段日志，进一步定位源读取/写入、Tree-sitter 全文 parse、Regex/Block、ATS selector、Tree-sitter Query、JNI 编码各自占比。
+3. BLOCK Regex：matchBlockRecursive() 在视口边界通过反向搜索恢复先前 delimiter 状态；对稀疏 delimiter（例如少量 text block/Javadoc）的规则，仍可能在不同视口请求中重复扫描较长文档前缀。当前尚未加入持久化 delimiter-state checkpoint，这是下一项 Native 性能修复重点。
+4. 已绘制 ATS 符号稳定性：本轮已移除滚动捕获触发的全局样式/结构刷新，并使编辑失效范围局部化；仍需继续检查 Renderer 行缓存、缓存淘汰和 Native 依赖 envelope 在极端大文件下是否存在额外失效路径。
+
+严格遵守当前开发顺序：以上均为源码修改和静态检查；没有运行 Unit/Instrumentation tests、Gradle build/compile、CI、设备验证或 Benchmark。所有验证流程继续冻结，直到用户提出的源码 Bug 修复完成。
