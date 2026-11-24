@@ -183,6 +183,20 @@ void testCheckpointDependencyKeepsLaterUnrelatedEdits() {
     assert(cache.find(key(2, 140, 180)) != nullptr);
 }
 
+void testPayloadCapacityPressureIsCounted() {
+    NativeHighlightCache cache(256u);
+    cache.put(key(1, 100, 200), value(120, 130), dependencies(110, 150));
+    cache.put(key(2, 300, 400), value(320, 330), dependencies(310, 350));
+    assert(cache.payloadEvictionCount() == 1u);
+    assert(cache.size() == 1u);
+
+    NativeHighlightCache::Value oversized;
+    oversized.spans.resize(64u);
+    cache.put(key(3, 500, 600), std::move(oversized), dependencies(510, 550));
+    assert(cache.payloadRejectedCount() == 1u);
+    assert(cache.payloadEvictionCount() == 1u);
+}
+
 void testSharedBudgetReleasedOnEviction() {
     auto budget = std::make_shared<SharedNativeMemoryBudget>(1024u * 1024u);
     NativeHighlightCache cache(1024u * 1024u, budget);
@@ -205,6 +219,7 @@ int main() {
     testRegexDependencyInvalidatesBoundaryInsertion();
     testCheckpointDependencyInvalidatesEarlierEdits();
     testCheckpointDependencyKeepsLaterUnrelatedEdits();
+    testPayloadCapacityPressureIsCounted();
     testSharedBudgetReleasedOnEviction();
     return 0;
 }
