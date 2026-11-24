@@ -115,6 +115,10 @@ class TshSyntaxHighlighter(
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val generation = AtomicLong()
     private val firstStyleCallLogged = AtomicBoolean(false)
+    // Structure is invalidated only when a lexical-scope lookup (bracket/auto-pair)
+    // was waiting for this viewport's captures. Ordinary syntax capture completion
+    // must not rebuild editor structure for every scroll frame.
+    private val structureRefreshPending = AtomicBoolean(false)
 
     private val viewportRequestLock = Any()
     // Requests collected from actual renderer callbacks during the current draw.
@@ -395,7 +399,10 @@ class TshSyntaxHighlighter(
                     offset == Int.MAX_VALUE) return@synchronized emptyList()
                 val key = CaptureRangeKey(active.cacheSessionId, offset, offset + 1)
                 val cached = queryCachedCaptures(key, offset, offset + 1)
-                if (cached == null) enqueueViewportRange(key)
+                if (cached == null) {
+                    structureRefreshPending.set(true)
+                    enqueueViewportRange(key)
+                }
                 cached
             } ?: return true
             resolved
@@ -784,8 +791,10 @@ class TshSyntaxHighlighter(
                         // one structure invalidation, even if cancellation/supersession
                         // interrupts the remainder of the batch.
                         if (batchUpdated) {
-                            host?.invalidateStyles()
-                            host?.invalidateStructure()
+                            invalidateViewportStyles(active, batch)
+                            if (structureRefreshPending.getAndSet(false)) {
+                                host?.invalidateStructure()
+                            }
                         }
                     }
                 }
@@ -800,6 +809,39 @@ class TshSyntaxHighlighter(
                     }
                     if (restart) startViewportWorker()
                 }
+            }
+        }
+    }
+
+    /**
+     * Capture completion changes only the source lines covered by the completed
+     * viewport batch. A document-wide stylesGeneration bump forces every recorded
+     * row through styleLine again and makes already-painted ATS symbols appear to
+     * be cleared/re-captured during ordinary scrolling.
+     *
+     * Resolve offsets on the main thread, where EditorDocument mutations are
+     * serialized. If an edit has started since the native result was admitted,
+     * its edit transaction owns the next invalidation instead.
+     */
+    private fun invalidateViewportStyles(active: LargeSession, batch: List<CaptureRangeKey>) {
+        if (batch.isEmpty()) return
+        val startOffset = batch.minOfOrNull { it.startUtf16 } ?: return
+        val endOffset = batch.maxOfOrNull { it.endUtf16 } ?: return
+        scope.launch(Dispatchers.Main.immediate) {
+            val currentHost = host ?: return@launch
+            val currentBuffer = currentHost.buffer
+            val canInvalidate = synchronized(nativeEditLock) {
+                largeSession === active &&
+                    generation.get() == active.ticket &&
+                    active.pendingEditEpoch.get() == active.appliedEditEpoch.get()
+            }
+            if (!canInvalidate || currentBuffer.length <= 0) return@launch
+            val safeStart = startOffset.coerceIn(0, currentBuffer.length - 1)
+            val safeEnd = (endOffset - 1).coerceIn(safeStart, currentBuffer.length - 1)
+            val firstLine = currentBuffer.getPositionAt(safeStart).line
+            val lastLine = currentBuffer.getPositionAt(safeEnd).line
+            if (firstLine > 0 && lastLine >= firstLine) {
+                currentHost.invalidateStyles(firstLine, lastLine)
             }
         }
     }
