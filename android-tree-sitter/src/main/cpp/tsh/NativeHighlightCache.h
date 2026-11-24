@@ -229,7 +229,7 @@ public:
                 auto found = dependency_entries_.find(old_key);
                 if (found == dependency_entries_.end()) continue;
                 Key next_key = old_key;
-                auto dependencies = found->second.ranges;
+                auto dependencies = std::move(found->second.ranges);
                 bool reusable = !dependencies.empty();
                 reusable = reusable && transformRange(
                     &next_key.start_byte, &next_key.end_byte);
