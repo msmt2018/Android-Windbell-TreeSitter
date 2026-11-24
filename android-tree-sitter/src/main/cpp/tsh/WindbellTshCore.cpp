@@ -2779,32 +2779,27 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                     append_ast_dependency(parent);
                     const char* parent_type = ts_node_is_null(parent) ? nullptr : ts_node_type(parent);
                     const char* parent_grammar_type = ts_node_is_null(parent) ? nullptr : ts_node_grammar_type(parent);
-                    // The compile-time dispatch index already expanded the
-                    // target supertype's transitive subtype closure. Re-checking
-                    // it recursively for every viewport node only repeats that work.
-                    const bool owner_symbol_matches = ast_rule.target_symbol != 0 &&
-                        (ast_rule.target_symbol == parent_sym ||
-                         ast_rule.target_symbol == parent_grammar_sym);
-                    const bool owner_type_matches = !ast_rule.target_type.empty() &&
-                        ((parent_type && ast_rule.target_type == parent_type) ||
-                         (parent_grammar_type && ast_rule.target_type == parent_grammar_type));
-                    if (ts_node_is_null(parent) ||
-                        (!owner_symbol_matches && !owner_type_matches) ||
-                        ast_rule.field_id != fid) {
+                    // Dispatch indexes are expanded through the complete
+                    // supertype/subtype closure. Revalidate with the immutable
+                    // reverse index (exact symbol/type plus supertype relation),
+                    // not exact symbol equality, or valid subtype owners are
+                    // discarded after dispatch.
+                    const bool owner_matches = !ts_node_is_null(parent) &&
+                        tshAstNodeMatchesSelector(
+                            *grammar, parent, ast_rule.target_symbol,
+                            ast_rule.target_type);
+                    if (!owner_matches || ast_rule.field_id != fid) {
                         continue;
                     }
                 } else {
-                    // Candidate dispatch is keyed by both visible and grammar
-                    // symbols and includes all compiled supertype descendants.
-                    // Exact identity here is sufficient and avoids a recursive
-                    // language-subtype walk for every candidate node.
-                    const bool node_symbol_matches = ast_rule.target_symbol != 0 &&
-                        (ast_rule.target_symbol == sym ||
-                         ast_rule.target_symbol == node_grammar_sym);
-                    const bool node_type_matches = !ast_rule.target_type.empty() &&
-                        ((node_type && ast_rule.target_type == node_type) ||
-                         (node_grammar_type && ast_rule.target_type == node_grammar_type));
-                    if (!node_symbol_matches && !node_type_matches) continue;
+                    // Candidate dispatch is already narrowed by the compile-time
+                    // symbol/type indexes. Use the same constant-time reverse
+                    // supertype index for the final check; exact equality would
+                    // reject every concrete subtype that reached this rule through
+                    // the expanded dispatch table.
+                    if (!tshAstNodeMatchesSelector(
+                            *grammar, node, ast_rule.target_symbol,
+                            ast_rule.target_type)) continue;
                 }
                 if (ast_rule.parent_symbol != 0 || !ast_rule.parent_type.empty()) {
                     append_ast_dependency(parent);
