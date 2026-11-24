@@ -1234,7 +1234,8 @@ void WindbellEngine::matchBlockRecursive(
     std::vector<RegexBlockCheckpoint>* block_checkpoints,
     uint64_t grammar_revision,
     uint64_t source_version,
-    uint64_t partition_version
+    uint64_t partition_version,
+    std::vector<HighlightDependencyRange>* dependency_ranges
 ) {
     struct RegionOwner {
         OnigRegion* value;
@@ -1249,6 +1250,8 @@ void WindbellEngine::matchBlockRecursive(
         static_cast<uint32_t>(range_start - text_start);
     uint32_t active_start_byte = kNoActiveBlock;
     uint32_t checkpoint_byte_offset = viewport_start_byte;
+    uint32_t dependency_start_byte =
+        static_cast<uint32_t>(search_floor - text_start);
     bool recovered_from_checkpoint = false;
 
     // Top-level BLOCK rules retain the state at prior viewport boundaries.
@@ -1268,6 +1271,7 @@ void WindbellEngine::matchBlockRecursive(
         }
         if (nearest) {
             active_start_byte = nearest->active_start_byte;
+            dependency_start_byte = nearest->byte_offset;
             const UChar* scan = text_start + nearest->byte_offset;
             while (scan < range_start) {
                 const int start_hit = onig_search(
@@ -1394,6 +1398,28 @@ void WindbellEngine::matchBlockRecursive(
         }
     }
 
+    if (dependency_ranges) {
+        const uint64_t source_bytes = static_cast<uint64_t>(text_end - text_start);
+        const uint64_t range_dependency_end =
+            static_cast<uint64_t>(range_end - text_start);
+        const uint64_t context_bytes = rule.block_delimiters_bounded
+            ? rule.maximum_block_delimiter_bytes : 0u;
+        const uint32_t dependency_end = static_cast<uint32_t>(
+            std::min<uint64_t>(source_bytes, range_dependency_end + context_bytes));
+        if (dependency_start_byte < dependency_end) {
+            dependency_ranges->push_back({
+                dependency_start_byte,
+                dependency_end,
+                rule.declaration_order,
+                static_cast<uint8_t>(HighlightSource::ONIG_REGEX),
+                0xFFu,
+                static_cast<uint8_t>(
+                    HIGHLIGHT_DEPENDENCY_CHECKPOINT_BASED |
+                    HIGHLIGHT_DEPENDENCY_BOUNDARY_SENSITIVE)
+            });
+        }
+    }
+
     const UChar* curr = active_start_byte != kNoActiveBlock
         ? text_start + active_start_byte
         : range_start;
@@ -1508,7 +1534,9 @@ void WindbellEngine::matchBlockRecursive(
                         matchBlockRecursive(
                             nested, text_start, text_end,
                             nested_range_start, nested_range_end, inner_start,
-                            output_start_byte, output_end_byte, out_spans, regex_match_count);
+                            output_start_byte, output_end_byte, out_spans, regex_match_count,
+                            nullptr, grammar_revision, source_version, partition_version,
+                            dependency_ranges);
                         continue;
                     }
                     if (nested.type == RegexRuleType::MATCH && nested.onig_start) {
@@ -2159,7 +2187,8 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                 text_start + range_start_byte, text_start + range_end_byte, text_start,
                 range_start_byte, range_end_byte, micro_spans,
                 diagnostic_match_counts ? &diagnostic_match_counts[0] : nullptr,
-                block_checkpoints, grammar->revision, source_version, partition_version);
+                block_checkpoints, grammar->revision, source_version, partition_version,
+                dependency_ranges);
             retain_requested_range(micro_spans);
             continue;
         }
