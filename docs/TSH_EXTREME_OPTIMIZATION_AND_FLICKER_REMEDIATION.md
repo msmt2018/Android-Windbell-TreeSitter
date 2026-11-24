@@ -122,3 +122,33 @@ These corrections are source-committed but not yet verified. CI run #1786 (45403
 - Predicate execution still reconstructs expected literal vectors and converts immutable UTF-8 query literals to UTF-16 during match execution. Move immutable decoding to compilation and reuse bounded per-query execution storage.
 - Regex window execution still materializes complete per-window result arrays; resumable cursor/continuation semantics remain open.
 - Device rendering and 100–300 MiB end-to-end tests remain separate acceptance gates; current workflow's device matrix is skipped.
+
+## 2026-11-24 CI #1787: exact failure causes and follow-up corrections
+
+CI run #1787 (45403311336, tested head 824a214377e2cbf5c4c346aec6f3e4a938b5cf1e) completed with two failing jobs. The downloadable test report was inspected rather than relying only on the Gradle summary.
+
+### Verified passing gates in #1787
+
+- Native large-file storage tests (ASan/UBSan): passed.
+- Host JNI library build: passed.
+- Native TSH cache tests: passed after the separate dependency-ledger migration.
+- testNativeAnyEqualityMissingCaptureUsesPredicatePolarity: passed. Debug evidence showed a missing target capture (capture_id=0, actual match capture index 1) yields any-eq? -> reject and any-not-eq? -> accept. This polarity regression is now covered by a passing CI test; keep the test and do not reintroduce polarity-only workarounds.
+
+### Failures identified and corrective commits
+
+- CaptureIntervalIndexTest had two failures after edits: expected retained styles [1, 3], observed [1, 2]. Root cause: rebaseEdit compacted range arrays but copied style/priority/source arrays from the original prefix, associating retained ranges with the wrong capture metadata. Commit 2e454e0a30f0e9f2372f879592ba3274dbe94e42 replaces the one-pass full-size scratch arrays plus trimming copies with a two-pass exact-size rebase. The second pass copies all fields from the same retained source index. This both fixes data integrity and reduces peak temporary memory.
+- Release ABI build failed because the viewport-only ATS fallback dependency initialized uint32 byte ranges from jlong values. The JNI entrypoint had already validated and narrowed these values to requested_start / requested_end; commit de19cf1ae5a69032c1df2a6273dd7c8c2760c81a uses those validated uint32 values instead of narrowing implicitly.
+- testLargeTextSourceQueryPredicateDoesNotMaterializeHugeCaptureForEquality failed during TSH compilation because its query predicates were detached from their structural patterns. Commit 0d43ccc066ba0a3ca234f212e6a1e670d60250fd groups each pattern and predicate as one Tree-sitter expression. This corrects the test fixture; it does not weaken the compiler's structural validation.
+- testMonarchNestedIncludeStateHotPathRemainsStable expected 4096 identifier spans but counted 8191 because the source filter also included 4095 default-token whitespace spans. Commits 0d43ccc066ba0a3ca234f212e6a1e670d60250fd and d0ddbddd08e8a6fdbc9a4b6a7efeb7a3a5107c89 constrain both full and viewport assertions to the identifier style, preserving the intended nested-include assertion.
+- testAstSelectorNodeFlagsAreExecuted exposed a real ATS bug: compile-time dispatch correctly expanded a supertype into its concrete subtypes, but the final candidate check reverted to exact symbol/type equality and discarded those candidates. Commit fd99db73574e961f612ff1f17840a170729b1956 reuses the precomputed reverse supertype index through tshAstNodeMatchesSelector for both ordinary node selectors and field-owner selectors. This keeps runtime matching indexed and avoids recursive subtype traversal per node.
+- testJavaAnnotationCapturesAreStableForQualifiedAndParameterizedNames showed one marker capture changing declaration order between full-document and viewport execution. Root cause: emitted precedence included current_order, the number of prior matches in the current cursor range. Commit cb743324aee660e958a91f871ff8899bb486ee83 removes range-dependent match enumeration from precedence; declaration order now derives only from immutable query, pattern and capture declaration metadata.
+
+### Current validation status after the corrections
+
+The corrections above are source-committed after #1787 and have not yet been validated by a completed CI run. The Kotlin metadata diagnostics (stdlib 2.4.21 metadata 2.4.0 versus a compiler expecting 2.2.0) appeared in the Release log but did not stop Kotlin compilation; the Release job proceeded to the native CMake task and failed on the JNI narrowing error described above. Keep this version alignment under observation and only change the toolchain if a subsequent build demonstrates it is a fatal compiler-resolution problem.
+
+### Still-open performance work
+
+- Native predicate evaluation still allocates expected/actual containers and decodes immutable UTF-8 string literals to UTF-16 for each match. Compile immutable operands once and reuse bounded per-query execution storage; do not add a global unbounded cache.
+- Regex execution still needs a resumable result cursor/continuation to avoid materializing complete per-window result arrays.
+- Device rendering and 100–300 MiB end-to-end memory/latency validation remain open; CI's Android device matrix is skipped.
