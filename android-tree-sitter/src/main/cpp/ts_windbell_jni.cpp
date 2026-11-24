@@ -2241,10 +2241,12 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
             const auto cache_hit_finished = std::chrono::steady_clock::now();
             LOGV("TSHPerf",
                  "nativeHighlightDocument cache=hit range=%u..%u documentBytes=%llu "
-                 "spans=%zu totalMs=%lld",
+                 "spans=%zu totalMs=%lld cacheEvictions=%zu cacheRejected=%zu",
                  requested_start, requested_end,
                  static_cast<unsigned long long>(total_bytes), cached->spans.size(),
-                 static_cast<long long>(elapsed_ms(native_highlight_started, cache_hit_finished)));
+                 static_cast<long long>(elapsed_ms(native_highlight_started, cache_hit_finished)),
+                 document->highlight_cache.payloadEvictionCount(),
+                 document->highlight_cache.payloadRejectedCount());
 #endif
             return encoded;
         } catch (const std::bad_alloc&) {
@@ -2597,6 +2599,7 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
              "nativeHighlightDocument cache=miss range=%u..%u documentBytes=%llu "
              "spans=%zu regexSnapshotMs=%lld coreMs=%lld encodeMs=%lld totalMs=%lld "
              "cacheEntries=%zu cacheBytes=%llu dependencyLedgerBytes=%llu "
+             "cacheEvictions=%zu cacheRejected=%zu "
              "blockCheckpoints=%zu requiresSnapshot=%d sourceHasRegex=%d "
              "activeNativeQuery=%d activeAstSelector=%d regexState=%d",
              requested_start, requested_end,
@@ -2608,6 +2611,8 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
              document->highlight_cache.size(),
              static_cast<unsigned long long>(document->highlight_cache.usedBytes()),
              static_cast<unsigned long long>(document->highlight_cache.dependencyBytesUsed()),
+             document->highlight_cache.payloadEvictionCount(),
+             document->highlight_cache.payloadRejectedCount(),
              document->regex_block_checkpoints.size(),
              source_requires_contiguous_regex ? 1 : 0,
              source_has_regex ? 1 : 0,
