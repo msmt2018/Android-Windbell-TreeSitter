@@ -164,10 +164,38 @@ internal class CaptureIntervalIndex private constructor(
             oldEndByte > 0xFFFF_FFFFL) return null
         if (deltaBytes == 0L && oldEndByte == editStartByte) return this
 
-        val nextStarts = IntArray(size)
-        val nextEnds = IntArray(size)
-        val nextPrefixMaxEnd = IntArray(size)
-        var outputSize = 0
+        // Pass one computes the exact retained size and validates every mapped
+        // range. This avoids allocating full-size scratch arrays and then
+        // copying them down after dropping captures that intersect the edit.
+        var retainedCount = 0
+        for (index in 0 until size) {
+            val start = starts[index].toLong() and 0xFFFF_FFFFL
+            val end = ends[index].toLong() and 0xFFFF_FFFFL
+            when {
+                end <= editStartByte -> retainedCount++
+                start >= oldEndByte -> {
+                    val mappedStart = start + deltaBytes
+                    val mappedEnd = end + deltaBytes
+                    if (mappedStart < 0L || mappedEnd <= mappedStart ||
+                        mappedEnd > 0xFFFF_FFFFL) return null
+                    retainedCount++
+                }
+                else -> Unit
+            }
+        }
+
+        // Pass two copies all fields from the same source index. Keeping the
+        // metadata arrays aligned is essential: interval and style metadata
+        // form one packed record, even though they are stored in SoA arrays.
+        val nextStarts = IntArray(retainedCount)
+        val nextEnds = IntArray(retainedCount)
+        val nextStyleIds = ShortArray(retainedCount)
+        val nextFontFlags = ShortArray(retainedCount)
+        val nextPriorities = IntArray(retainedCount)
+        val nextDeclarationOrders = IntArray(retainedCount)
+        val nextSources = ByteArray(retainedCount)
+        val nextPrefixMaxEnd = IntArray(retainedCount)
+        var outputIndex = 0
         var maximumEnd = 0L
 
         for (index in 0 until size) {
@@ -175,7 +203,6 @@ internal class CaptureIntervalIndex private constructor(
             val end = ends[index].toLong() and 0xFFFF_FFFFL
             val mappedStart: Long
             val mappedEnd: Long
-
             when {
                 end <= editStartByte -> {
                     mappedStart = start
@@ -188,26 +215,29 @@ internal class CaptureIntervalIndex private constructor(
                 else -> continue
             }
 
-            if (mappedStart < 0L || mappedEnd <= mappedStart ||
-                mappedEnd > 0xFFFF_FFFFL) return null
-
-            nextStarts[outputSize] = mappedStart.toInt()
-            nextEnds[outputSize] = mappedEnd.toInt()
+            nextStarts[outputIndex] = mappedStart.toInt()
+            nextEnds[outputIndex] = mappedEnd.toInt()
+            nextStyleIds[outputIndex] = styleIds[index]
+            nextFontFlags[outputIndex] = fontFlags[index]
+            nextPriorities[outputIndex] = priorities[index]
+            nextDeclarationOrders[outputIndex] = declarationOrders[index]
+            nextSources[outputIndex] = sources[index]
             if (mappedEnd > maximumEnd) maximumEnd = mappedEnd
-            nextPrefixMaxEnd[outputSize] = maximumEnd.toInt()
-            outputSize++
+            nextPrefixMaxEnd[outputIndex] = maximumEnd.toInt()
+            outputIndex++
         }
 
+        check(outputIndex == retainedCount)
         return CaptureIntervalIndex(
-            nextStarts.copyOf(outputSize),
-            nextEnds.copyOf(outputSize),
-            styleIds.copyOf(outputSize),
-            fontFlags.copyOf(outputSize),
-            priorities.copyOf(outputSize),
-            declarationOrders.copyOf(outputSize),
-            sources.copyOf(outputSize),
-            nextPrefixMaxEnd.copyOf(outputSize),
-            outputSize
+            nextStarts,
+            nextEnds,
+            nextStyleIds,
+            nextFontFlags,
+            nextPriorities,
+            nextDeclarationOrders,
+            nextSources,
+            nextPrefixMaxEnd,
+            retainedCount
         )
     }
 
