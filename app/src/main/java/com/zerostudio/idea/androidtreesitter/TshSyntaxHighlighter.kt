@@ -87,6 +87,11 @@ class TshSyntaxHighlighter(
         val rangeWork: ConcurrentHashMap<CaptureRangeKey, RangeWork> = ConcurrentHashMap()
     )
 
+    private data class CaptureQueryResult(
+        val spans: List<WindbellTshEngine.HighlightSpan>,
+        val complete: Boolean
+    )
+
     private enum class RangeWorkState { QUEUED, RUNNING, SUCCEEDED, FAILED, CANCELLED }
 
     private class RangeWork(val attempt: Int = 0) {
@@ -295,10 +300,10 @@ class TshSyntaxHighlighter(
                 val cached = if (editPending) null else queryCachedCaptures(
                     requested, boundedStart.toInt(), boundedEnd.toInt()
                 )
-                if (cached != null) cached else {
-                    if (!editPending) enqueueViewportRange(requested)
-                    emptyList()
+                if (!editPending && cached?.complete != true) {
+                    enqueueViewportRange(requested)
                 }
+                cached?.spans.orEmpty()
             }
         }
 
@@ -396,11 +401,13 @@ class TshSyntaxHighlighter(
                     offset == Int.MAX_VALUE) return@synchronized emptyList()
                 val key = CaptureRangeKey(active.cacheSessionId, offset, offset + 1)
                 val cached = queryCachedCaptures(key, offset, offset + 1)
-                if (cached == null) {
+                if (cached?.complete != true) {
                     structureRefreshPending.set(true)
                     enqueueViewportRange(key)
+                    null
+                } else {
+                    cached.spans
                 }
-                cached
             } ?: return true
             resolved
         } else {
@@ -589,7 +596,7 @@ class TshSyntaxHighlighter(
         key: CaptureRangeKey,
         startUtf16: Int,
         endUtf16: Int
-    ): List<WindbellTshEngine.HighlightSpan>? {
+    ): CaptureQueryResult? {
         val keys = captureRangeIndex.findOverlappingRanges(
             key.sessionId, startUtf16, endUtf16
         )
@@ -597,25 +604,31 @@ class TshSyntaxHighlighter(
 
         val entries = ArrayList<CaptureIntervalIndex>(keys.size)
         var coveredUntil = startUtf16
+        var complete = true
         for (cachedKey in keys) {
-            if (cachedKey.startUtf16 > coveredUntil) return null
+            if (cachedKey.startUtf16 > coveredUntil) complete = false
             val index = captureCache.get(cachedKey)
             if (index == null) {
                 captureRangeIndex.remove(cachedKey)
                 continue
             }
             entries += index
-            coveredUntil = maxOf(coveredUntil, cachedKey.endUtf16)
+            if (cachedKey.endUtf16 > coveredUntil) {
+                coveredUntil = cachedKey.endUtf16
+            }
             if (coveredUntil >= endUtf16) break
         }
-        if (coveredUntil < endUtf16) return null
+        if (coveredUntil < endUtf16) complete = false
+        if (entries.isEmpty()) return null
 
-        // Cache admission stores only uncovered, half-open gaps and every native
-        // result is clipped to that gap. Therefore entries cannot duplicate the
-        // same capture; append directly instead of allocating a LinkedHashSet.
+        // A partial cache hit is still useful: preserve and paint the captures
+        // already known for this line while the missing gaps are processed. Treat
+        // incomplete coverage as not-ready for structure queries, but never turn
+        // previously captured colors into a plain-text line just because another
+        // part of the same viewport is still being captured.
         val spans = ArrayList<WindbellTshEngine.HighlightSpan>()
         entries.forEach { it.appendQuery(startUtf16, endUtf16, spans) }
-        return spans
+        return CaptureQueryResult(spans, complete)
     }
 
     /** Source intervals already represented by the capture cache. */
