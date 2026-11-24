@@ -52,14 +52,14 @@ class WindbellTshEngine private constructor() {
     private fun packBoundaryEvent(offset: Int, captureIndex: Int, starts: Boolean): Long {
         require(offset >= 0 && captureIndex >= 0)
         return (offset.toLong() shl 32) or
-            ((captureIndex.toLong() and 0x7FFF_FFFFL) shl 1) or
-            if (starts) 1L else 0L
+            (if (starts) (1L shl 31) else 0L) or captureIndex.toLong()
     }
 
     private fun boundaryEventOffset(event: Long): Int = (event ushr 32).toInt()
     private fun boundaryEventCaptureIndex(event: Long): Int =
-        ((event ushr 1) and 0x7FFF_FFFFL).toInt()
-    private fun boundaryEventStarts(event: Long): Boolean = (event and 1L) != 0L
+        (event and 0x7FFF_FFFFL).toInt()
+    private fun boundaryEventStarts(event: Long): Boolean =
+        (event and (1L shl 31)) != 0L
 
     data class LanguageMetadata(
         val id: String = "",
