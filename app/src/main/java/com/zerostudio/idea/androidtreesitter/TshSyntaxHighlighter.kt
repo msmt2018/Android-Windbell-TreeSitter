@@ -27,6 +27,7 @@ import x.github.module.editor.model.EditorDocument
 import x.github.module.editor.model.EditorTextSnapshot
 import x.github.module.editor.structure.PlainBracketMatcher
 import java.io.File
+import java.nio.ByteOrder
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
@@ -497,12 +498,16 @@ class TshSyntaxHighlighter(
                 destination.limit(maxBytes)
                 val start = (byteOffset / 2L).toInt()
                 val text = snapshot.getNearestChunk(start, maxBytes / 2)
-                for (character in text) {
-                    val codeUnit = character.code
-                    destination.put((codeUnit and 0xFF).toByte())
-                    destination.put((codeUnit ushr 8).toByte())
+                require(text.length <= maxBytes / 2) {
+                    "Piece Tree snapshot returned more UTF-16 code units than the native window"
                 }
-                destination.position()
+                // Write UTF-16 code units through a little-endian direct-buffer view.
+                // This preserves lone surrogates exactly while avoiding two Kotlin
+                // ByteBuffer.put calls and bit conversions for every document code unit.
+                val byteCount = text.length * 2
+                destination.order(ByteOrder.LITTLE_ENDIAN).asCharBuffer().put(text)
+                destination.position(byteCount)
+                byteCount
             }
             nativeHandle = engine.createNativeDocument(
                 language = language,
