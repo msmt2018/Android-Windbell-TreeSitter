@@ -645,67 +645,69 @@ class WindbellTshEngine private constructor() {
                     .thenBy { it.starts }
             )
 
-            fun paintRun(runStart: Int, runEnd: Int, capture: ClippedCapture) {
-                if (runStart >= runEnd) return
-                val colorDef = palette[capture.span.styleId]
+            fun paintRun(runStart: Int, runEnd: Int) {
+                if (runStart >= runEnd || active.isEmpty()) return
                 val flags = Spannable.SPAN_EXCLUSIVE_EXCLUSIVE
+                var foregroundStyle: StylePalette? = null
+                var backgroundStyle: StylePalette? = null
+                var fontFlags = 0
 
-                val hasBackground = if (darkMode) {
-                    colorDef?.hasDarkBackground == true
-                } else {
-                    colorDef?.hasLightBackground == true
-                }
-                if (hasBackground) {
-                    val background = if (darkMode) {
-                        colorDef?.darkBackground ?: 0
-                    } else {
-                        colorDef?.lightBackground ?: 0
+                // Resolve each independently-defined visual channel from the first
+                // highest-precedence capture that actually declares that channel.
+                // A higher capture that only declares bold, for example, must not
+                // erase a lower capture's explicit foreground color.
+                for (captureIndex in active) {
+                    val capture = captures[captureIndex].span
+                    val style = palette[capture.styleId]
+                    if (foregroundStyle == null && style != null &&
+                        (if (darkMode) style.hasDarkColor else style.hasLightColor)) {
+                        foregroundStyle = style
                     }
+                    if (backgroundStyle == null && style != null &&
+                        (if (darkMode) style.hasDarkBackground else style.hasLightBackground)) {
+                        backgroundStyle = style
+                    }
+                    if (fontFlags == 0 && style != null) {
+                        val candidateFlags = capture.fontFlags or
+                            (if (darkMode) style.darkFontFlags else style.lightFontFlags)
+                        if (candidateFlags != 0) fontFlags = candidateFlags
+                    }
+                    if (foregroundStyle != null && backgroundStyle != null && fontFlags != 0) {
+                        break
+                    }
+                }
+
+                backgroundStyle?.let { style ->
+                    val background = if (darkMode) style.darkBackground else style.lightBackground
                     spannable.setSpan(
                         BackgroundColorSpan(background), runStart, runEnd, flags
                     )
                 }
-
-                val hasColor = if (darkMode) {
-                    colorDef?.hasDarkColor == true
-                } else {
-                    colorDef?.hasLightColor == true
-                }
-                if (hasColor) {
-                    val color = if (darkMode) {
-                        colorDef?.darkColor ?: 0
-                    } else {
-                        colorDef?.lightColor ?: 0
-                    }
+                foregroundStyle?.let { style ->
+                    val color = if (darkMode) style.darkColor else style.lightColor
                     spannable.setSpan(
                         ForegroundColorSpan(color), runStart, runEnd, flags
                     )
                 }
-
-                // The winning capture owns the complete visual style for this run.
-                // Lower-precedence captures cannot leak bold/italic/opacity into it.
-                val styleFlags = capture.span.fontFlags or
-                    (if (darkMode) colorDef?.darkFontFlags ?: 0
-                     else colorDef?.lightFontFlags ?: 0)
-                if ((styleFlags and 0x01) != 0) {
+                if ((fontFlags and 0x01) != 0) {
                     spannable.setSpan(
                         StyleSpan(android.graphics.Typeface.BOLD), runStart, runEnd, flags
                     )
                 }
-                if ((styleFlags and 0x02) != 0) {
+                if ((fontFlags and 0x02) != 0) {
                     spannable.setSpan(
                         StyleSpan(android.graphics.Typeface.ITALIC), runStart, runEnd, flags
                     )
                 }
-                if ((styleFlags and 0x04) != 0) {
+                if ((fontFlags and 0x04) != 0) {
                     spannable.setSpan(UnderlineSpan(), runStart, runEnd, flags)
                 }
-                if ((styleFlags and 0x08) != 0) {
+                if ((fontFlags and 0x08) != 0) {
                     spannable.setSpan(
                         StrikethroughSpan(), runStart, runEnd, flags
                     )
                 }
-                if ((styleFlags and 0x10) != 0) {
+                if ((fontFlags and 0x10) != 0) {
                     spannable.setSpan(object : CharacterStyle() {
                         override fun updateDrawState(textPaint: TextPaint) {
                             textPaint.alpha = minOf(textPaint.alpha, 160)
@@ -719,7 +721,7 @@ class WindbellTshEngine private constructor() {
             while (eventIndex < events.size) {
                 val boundary = events[eventIndex].offset
                 if (cursor < boundary && active.isNotEmpty()) {
-                    paintRun(cursor, boundary, captures[active.first()])
+                    paintRun(cursor, boundary)
                 }
                 while (eventIndex < events.size &&
                     events[eventIndex].offset == boundary &&
@@ -736,7 +738,7 @@ class WindbellTshEngine private constructor() {
                 cursor = boundary
             }
             if (cursor < visibleEnd && active.isNotEmpty()) {
-                paintRun(cursor, visibleEnd, captures[active.first()])
+                paintRun(cursor, visibleEnd)
             }
         }
     }
