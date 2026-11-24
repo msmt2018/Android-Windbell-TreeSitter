@@ -90,6 +90,11 @@ struct CompiledRegexRule {
     RegexExecutionCapability execution_capability =
         RegexExecutionCapability::DOCUMENT_CONTEXT_REQUIRED;
     uint64_t maximum_match_bytes = 0;
+    // BLOCK delimiters can still require the full source string for Oniguruma
+    // context, while their state dependency is checkpointable when both
+    // delimiter patterns have compiler-proven finite widths.
+    uint64_t maximum_block_delimiter_bytes = 0;
+    bool block_delimiters_bounded = false;
     RegexRuleType type = RegexRuleType::MATCH;
     uint16_t style_id = 0;
     bool has_style = false;
@@ -520,7 +525,8 @@ private:
         std::vector<RegexBlockCheckpoint>* block_checkpoints = nullptr,
         uint64_t grammar_revision = 0,
         uint64_t source_version = 0,
-        uint64_t partition_version = 0
+        uint64_t partition_version = 0,
+        std::vector<HighlightDependencyRange>* dependency_ranges = nullptr
     );
 
     std::mutex registry_lock_;
