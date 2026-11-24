@@ -466,7 +466,6 @@ private:
             }
 
             if (existing != dependency_entries_.end()) {
-            if (existing != dependency_entries_.end()) {
                 dependency_used_bytes_ -= std::min(
                     dependency_used_bytes_, existing->second.bytes);
                 dependency_lru_.erase(existing->second.lru);
