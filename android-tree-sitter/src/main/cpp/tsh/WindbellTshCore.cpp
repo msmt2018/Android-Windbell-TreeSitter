@@ -1404,8 +1404,11 @@ void WindbellEngine::matchBlockRecursive(
             static_cast<uint64_t>(range_end - text_start);
         const uint64_t context_bytes = rule.block_delimiters_bounded
             ? rule.maximum_block_delimiter_bytes : 0u;
-        const uint32_t dependency_end = static_cast<uint32_t>(
-            std::min<uint64_t>(source_bytes, range_dependency_end + context_bytes));
+        const uint64_t dependency_end_wide =
+            context_bytes > source_bytes - range_dependency_end
+                ? source_bytes : range_dependency_end + context_bytes;
+        const uint32_t dependency_end =
+            static_cast<uint32_t>(dependency_end_wide);
         if (dependency_start_byte < dependency_end) {
             dependency_ranges->push_back({
                 dependency_start_byte,
