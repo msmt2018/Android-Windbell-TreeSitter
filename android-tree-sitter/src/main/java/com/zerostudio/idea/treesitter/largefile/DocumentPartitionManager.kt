@@ -525,7 +525,11 @@ class ByteBudgetLruCache<K : Any, V : Any>(
                 check(!transformed.containsKey(nextKey)) {
                     "Cache entry transformation produced duplicate keys"
                 }
-                val weight = weigh(nextValue).coerceAtLeast(0L)
+                val weight = if (nextValue === entry.value) {
+                    entry.weight
+                } else {
+                    weigh(nextValue).coerceAtLeast(0L)
+                }
                 if (weight > maxBytes || maxBytes == 0L) continue
                 transformed[nextKey] = Entry(nextValue, weight)
             }
