@@ -948,7 +948,7 @@ Native document 创建已有 source transfer/write、backing map/PieceTree、Tre
    - 每个可见区间只发出已确定的颜色/背景/字体样式，不再向 StyledTextPainter 提供相互竞争的重叠样式。
    - foreground/background 分别选择最高优先级且确实声明该通道的捕获，避免只声明字体属性的高优先级捕获意外抹掉下层显式颜色。
    - 活动集合使用有序集合，边界处理为 O(n log n)；相邻且解析结果相同的区间合并，减少 Android Span 数量。
-   - 字体、透明度和装饰属性按最高优先级的有效字体捕获确定。
+   - 字体属性保持 StyledTextPainter 原有的可组合语义：对当前活动捕获的字体标志按位合并；颜色/背景则分别按 Native 优先级选择唯一胜出者。
 
 2. **BLOCK delimiter 跨视口起始边界修复。**
    - 检查点恢复时，若 start delimiter 的起点位于视口之前、结束位置跨过视口边界，原逻辑把检查点保留在 delimiter 起点，却让当前视口的正向扫描从 viewport 起点开始，导致当前视口漏掉这个 start delimiter。
