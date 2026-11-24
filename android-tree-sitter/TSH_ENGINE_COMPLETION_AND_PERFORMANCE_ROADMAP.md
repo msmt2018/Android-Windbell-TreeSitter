@@ -1008,3 +1008,7 @@ Native document 创建已有 source transfer/write、backing map/PieceTree、Tre
    - rebaseCachedEntry() 不再对每个捕获构造 HighlightSpan、执行 lambda、重新打包和排序；坐标平移直接处理 primitive arrays，时间与临时对象分配均随缓存页数组规模线性下降。
    - 如果任一偏移越界或 prefix-max-end 顺序不再成立，则拒绝复用该页，由原有依赖失效路径重新捕获。
    - 实现只使用 Android API 21 可用的整数位运算，不依赖较新的 Integer.toUnsignedLong()。
+
+6. **进一步精确化启用态 Query 判定与性能诊断。**
+   - Native Query 只有 query.enabled、query handle 有效且至少存在一个 enabled pattern metadata 时，才计入 active producer；仅打开 Query 容器但所有 pattern 均禁用/无效，不再触发 Regex full snapshot 或 document-wide Query 依赖。
+   - TSHPerf 增加 requiresSnapshot、sourceHasRegex、activeNativeQuery、activeAstSelector、regexState 字段。后续可直接从日志判断首屏慢是否由完整 Regex Snapshot、ATS Query 或 AST Selector 管线导致，而不再只看总耗时。
