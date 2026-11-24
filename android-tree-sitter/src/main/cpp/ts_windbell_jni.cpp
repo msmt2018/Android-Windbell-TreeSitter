@@ -2296,14 +2296,22 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
             HIGHLIGHT_DEPENDENCY_DOCUMENT_WIDE
         });
     }
-    // AST selectors can inspect parent, ancestor, sibling, field and descendant
-    // relationships. Until their candidate-node envelopes are collected, keep
-    // their cache dependency document-wide.
-    if (!grammar->ast_selector_rules.empty()) {
+    // ATS now publishes the viewport plus the exact candidate-node,
+    // parent/child-list and inspected ancestor envelopes from the AST selector
+    // traversal. Keep a viewport-only safety dependency if a future producer
+    // path returns no ATS envelope; do not invalidate every document partition
+    // merely because this grammar contains ATS rules.
+    const bool has_ast_selector_dependency = std::any_of(
+        cache_value.dependencies.begin(), cache_value.dependencies.end(),
+        [](const HighlightDependencyRange& dependency) {
+            return dependency.source ==
+                static_cast<uint8_t>(HighlightSource::AST_SELECTOR);
+        });
+    if (!grammar->ast_selector_rules.empty() && !has_ast_selector_dependency) {
         cache_value.dependencies.push_back({
-            0u, static_cast<uint32_t>(total_bytes), UINT32_MAX,
+            evaluation_start, evaluation_end, UINT32_MAX,
             static_cast<uint8_t>(HighlightSource::AST_SELECTOR), 0xFFu,
-            HIGHLIGHT_DEPENDENCY_DOCUMENT_WIDE
+            HIGHLIGHT_DEPENDENCY_BOUNDARY_SENSITIVE
         });
     }
     // Stateful and document-context Regex can propagate lexical state beyond
