@@ -69,3 +69,30 @@ Audit `RowCache`, `TextRenderer`, `EditorView`, TSH render plan, style cache, an
 - API 35 artifact XML for both `:editor` and `:app` reported `tests=0`, `failures=0`, `errors=0`. This is instrumentation/test-discovery or runner-startup failure, not an assertion failure. The workflow correctly refuses to treat empty reports as success.
 - The API 35 failed job was re-run; rerun job id `136778449039` was queued at the time of investigation. Its result must be checked before deciding whether this is flaky or reproducible.
 - API 35 artifact report inspected directly: empty XML reports confirmed. Logcat artifact was reviewed for runner/Instrumentation evidence; no definitive test-discovery root cause established. Do not mask this by allowing zero-test reports.
+
+## 2026-11-24 Native ATS/JNI follow-up: cursor traversal and build-scope repair
+
+This follow-up is source-committed on `integration/all-open-prs`. It is not yet BUILD_VERIFIED or TEST_VERIFIED.
+
+### ATS adjacent-sibling and position traversal
+
+- Commit `b38341487ff0ae541772a91d1871a6de3662ceba` initially separated sibling-only constraints from child-position constraints and used Tree-sitter's previous/next sibling APIs.
+- A subsequent source audit of the vendored Tree-sitter implementation showed that `ts_node_prev_sibling` and `ts_node_next_sibling` each perform their own tree walk; they are not O(1). Treating them as constant-time would be an inaccurate performance claim and can duplicate traversal when both sides are requested.
+- Replaced the separate sibling lookups with one `TSTreeCursor` pass over the parent's visible children. The pass records the previous node, current visible-child index/named-child index, and (when needed) the next node. Anonymous children remain in positional order.
+- `lastChild` reuses the same next-sibling probe instead of performing an additional child-count/index traversal.
+- Source commits: `2df9a3a79c1cc56fb908c719f964557ba3d3e116`, `d50d5c12d9eaa77b25416bd66b9a1021670b4177`.
+- Required verification: `testAstSelectorNodeFlagsAreExecuted`, especially simultaneous previous/next sibling constraints, wrong-left/right rejection, anonymous operator nodes, first/last child and named/unnamed indexes.
+
+### JNI Debug-build blocker
+
+- CI run `45394899848` failed in the local-test job while compiling `ts_windbell_jni.cpp`: document-backed highlight timing referenced `highlight_core_started`, which was declared in a different JNI entry point and therefore out of scope.
+- Added the timing origin in the document-backed highlight function immediately before its `highlightHybrid` invocation, guarded by `#ifndef NDEBUG`.
+- Source commit: `818939819dbf1ac8ddf1b05e0a9f5695ba826221`.
+- The failed CI attempt predates this JNI fix and cannot validate it. A new CI run for the corrected branch head is still required.
+
+### Remaining correctness/performance work (not closed)
+
+- The missing-capture polarity regression for `any-eq?` / `any-not-eq?` remains unverified. Instrument the actual `TSQueryMatch.pattern_index` and capture IDs per OR alternative before changing predicate semantics; do not assume the capture is absent based only on the query source.
+- Native predicate evaluation still constructs temporary expected/actual containers and converts immutable query literals during match execution. The next optimization should move immutable operand decoding into compile-time metadata and reuse per-query execution storage, without changing predicate quantifier semantics.
+- Native Regex still materializes a complete per-window result array. A resumable Native Regex cursor and end-to-end MatchSet continuation remain outstanding.
+- CI device tests are intentionally disabled in the current workflow. Local/native test success is not device verification.
