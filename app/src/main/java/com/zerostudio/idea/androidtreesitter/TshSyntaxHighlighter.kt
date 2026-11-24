@@ -969,17 +969,62 @@ class TshSyntaxHighlighter(
      * still exists in NativeHighlightCache. The native cache has already evaluated
      * each entry's AST/Query/Regex dependency envelope against this edit transaction.
      */
+    /**
+     * Maps a previously painted viewport through an edit even when its captures
+     * cannot be reused. The resulting range tells the renderer exactly which old
+     * rows must be re-recorded; a viewport intersecting the edit expands around
+     * the inserted/replacement text instead of forcing a document-wide refresh.
+     */
+    private fun transformViewportRangeForInvalidation(
+        startByte: Long,
+        endByte: Long,
+        edit: NativeEdit
+    ): Pair<Long, Long> {
+        val editStart = edit.startByte
+        val oldEditEnd = edit.oldEndByte
+        val insertedBytes = edit.insertedUtf16Le.size.toLong()
+        val insertedEnd = editStart + insertedBytes
+        val delta = insertedBytes - (oldEditEnd - editStart)
+
+        if (endByte <= editStart) return startByte to endByte
+        if (startByte >= oldEditEnd && !(oldEditEnd == editStart && startByte < editStart)) {
+            return (startByte + delta) to (endByte + delta)
+        }
+
+        val mappedStart = minOf(startByte, editStart)
+        val mappedEnd = if (endByte > oldEditEnd) {
+            endByte + delta
+        } else {
+            insertedEnd
+        }
+        return mappedStart to maxOf(mappedStart, mappedEnd)
+    }
+
     private fun rebaseCaptureCaches(
         sessionId: Long,
         edits: List<NativeEdit>,
         reusableNativeRanges: Set<Pair<Long, Long>>
-    ) {
+    ): List<Pair<Long, Long>> {
         val captureEntries = captureCache.snapshotMostRecentEntries(
             { key, _ -> key.sessionId == sessionId }, Int.MAX_VALUE
         )
         val rebased = HashMap<CaptureRangeKey, Pair<CaptureRangeKey, CaptureIntervalIndex>?>()
+        val invalidatedRanges = ArrayList<Pair<Long, Long>>()
         for ((key, index) in captureEntries) {
-            rebased[key] = rebaseCachedEntry(key, index, edits, reusableNativeRanges)
+            val next = rebaseCachedEntry(key, index, edits, reusableNativeRanges)
+            rebased[key] = next
+            if (next == null) {
+                var startByte = key.startUtf16.toLong() * 2L
+                var endByte = key.endUtf16.toLong() * 2L
+                for (edit in edits) {
+                    val mapped = transformViewportRangeForInvalidation(
+                        startByte, endByte, edit
+                    )
+                    startByte = mapped.first
+                    endByte = mapped.second
+                }
+                if (startByte < endByte) invalidatedRanges += startByte to endByte
+            }
         }
 
         captureCache.invalidate { key, _ -> key.sessionId == sessionId }
@@ -987,6 +1032,73 @@ class TshSyntaxHighlighter(
             rebased[key]?.let { (nextKey, nextIndex) ->
                 captureCache.put(nextKey, nextIndex)
             }
+        }
+        return invalidatedRanges
+    }
+
+    /**
+     * Re-record only lines whose native dirty intervals or previously painted
+     * viewport dependencies were invalidated by this edit transaction.
+     */
+    private fun invalidateEditedStyles(
+        active: LargeSession,
+        dirtyRanges: List<Pair<Long, Long>>,
+        invalidatedCaptureRanges: List<Pair<Long, Long>>
+    ) {
+        val ranges = ArrayList<Pair<Long, Long>>(
+            dirtyRanges.size + invalidatedCaptureRanges.size
+        )
+        ranges += dirtyRanges
+        ranges += invalidatedCaptureRanges
+        scope.launch(Dispatchers.Main.immediate) {
+            val currentHost = host ?: return@launch
+            if (largeSession !== active || generation.get() != active.ticket) return@launch
+            val buffer = currentHost.buffer
+            val length = buffer.length
+            if (length <= 0) {
+                currentHost.invalidateStyles(1, 1)
+                currentHost.invalidateStructure()
+                return@launch
+            }
+
+            val lineRanges = ArrayList<Pair<Int, Int>>()
+            val documentBytes = length.toLong() * 2L
+            for ((startByte, endByte) in ranges) {
+                if (startByte < 0L || endByte < startByte) continue
+                val startUtf16 = (startByte / 2L).coerceIn(0L, length.toLong()).toInt()
+                val endUtf16 = (endByte / 2L).coerceIn(0L, length.toLong()).toInt()
+                val safeStart = startUtf16.coerceAtMost(length - 1)
+                val safeEnd = (if (endUtf16 > startUtf16) endUtf16 - 1 else safeStart)
+                    .coerceIn(safeStart, length - 1)
+                val firstLine = buffer.getPositionAt(safeStart).line
+                val lastLine = buffer.getPositionAt(safeEnd).line
+                if (firstLine > 0 && lastLine >= firstLine) {
+                    lineRanges += firstLine to lastLine
+                }
+            }
+
+            if (lineRanges.isEmpty()) {
+                // A deletion can leave an empty post-edit byte interval. If no
+                // cached viewport described it, fall back to the exact dirty
+                // document envelope rather than invalidating every row.
+                currentHost.invalidateStyles(1, 1)
+            } else {
+                val sorted = lineRanges.sortedBy { it.first }
+                var first = sorted.first().first
+                var last = sorted.first().second
+                for (index in 1 until sorted.size) {
+                    val next = sorted[index]
+                    if (next.first <= last + 1) {
+                        last = maxOf(last, next.second)
+                    } else {
+                        currentHost.invalidateStyles(first, last)
+                        first = next.first
+                        last = next.second
+                    }
+                }
+                currentHost.invalidateStyles(first, last)
+            }
+            currentHost.invalidateStructure()
         }
     }
 
@@ -1037,7 +1149,9 @@ class TshSyntaxHighlighter(
                         active.nativeHandle
                     ).mapTo(HashSet()) { it.startByte to it.endByte }
                     active.documentRevision.incrementAndGet()
-                    rebaseCaptureCaches(active.cacheSessionId, edits, reusableNativeRanges)
+                    val invalidatedCaptureRanges = rebaseCaptureCaches(
+                        active.cacheSessionId, edits, reusableNativeRanges
+                    )
                     active.rangeWork.clear()
                     synchronized(viewportRequestLock) {
                         pendingViewportRanges.clear()
@@ -1056,11 +1170,17 @@ class TshSyntaxHighlighter(
                     // Publish the new revision only after its stale cache entries are gone.
                     active.appliedEditEpoch.set(editEpoch)
                     if (generation.get() == active.ticket && largeSession === active) {
-                        // Cached row output can contain captures whose query dependency
-                        // crosses the edited range. Until dependency envelopes are stored,
-                        // redraw all rows rather than risk retaining a stale prefix.
-                        host?.invalidateStyles()
-                        host?.invalidateStructure()
+                        val dirtyByteRanges = dirtySnapshot.byteRanges.map { range ->
+                            val end = if (range.endByte > range.startByte) {
+                                range.endByte
+                            } else {
+                                minOf(active.lengthChars.get() * 2L, range.startByte + 2L)
+                            }
+                            range.startByte to end
+                        }
+                        invalidateEditedStyles(
+                            active, dirtyByteRanges, invalidatedCaptureRanges
+                        )
                     }
                 }
             } catch (cancelled: CancellationException) {
