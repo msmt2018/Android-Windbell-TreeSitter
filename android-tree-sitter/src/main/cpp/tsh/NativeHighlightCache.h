@@ -117,7 +117,7 @@ public:
     ) {
         std::vector<std::pair<uint32_t, uint32_t>> ranges;
         ranges.reserve(dependency_entries_.size());
-        for (const auto& item : dependency_entries_) {
+        for (auto& item : dependency_entries_) {
             if (item.first.diagnostics == diagnostics &&
                 item.first.grammar_revision == grammarRevision &&
                 item.first.version == documentVersion &&
