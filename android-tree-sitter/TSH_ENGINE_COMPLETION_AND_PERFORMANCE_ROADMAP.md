@@ -1012,3 +1012,18 @@ Native document 创建已有 source transfer/write、backing map/PieceTree、Tre
 6. **进一步精确化启用态 Query 判定与性能诊断。**
    - Native Query 只有 query.enabled、query handle 有效且至少存在一个 enabled pattern metadata 时，才计入 active producer；仅打开 Query 容器但所有 pattern 均禁用/无效，不再触发 Regex full snapshot 或 document-wide Query 依赖。
    - TSHPerf 增加 requiresSnapshot、sourceHasRegex、activeNativeQuery、activeAstSelector、regexState 字段。后续可直接从日志判断首屏慢是否由完整 Regex Snapshot、ATS Query 或 AST Selector 管线导致，而不再只看总耗时。
+
+## 2026-11-24 Native Capture JNI 结果零对象解码路径（源码已提交，验证暂缓）
+
+静态追踪发现，Native 每个捕获以 6 个整数返回 JNI IntArray，Kotlin 原路径先为每个捕获创建 HighlightSpan data object，再由 CaptureIntervalIndex 把对象字段复制进 primitive arrays。大文件捕获数量较多时，这会产生一轮完全可避免的对象分配、对象头和中间列表峰值内存。
+
+修复：
+- CaptureIntervalIndex 新增直接消费 Native 六整数 ABI 的构造入口。
+- 正常已排序结果直接逐项写入 starts/ends/style/font/priority/declaration/source/prefixMaxEnd primitive arrays，不再创建中间 HighlightSpan 对象。
+- 对非单调 startByte 输入保留防御性排序路径，避免把 Native 排序契约失守转化为错误区间索引。
+- TshSyntaxHighlighter 在 JNI 返回后直接构造索引并入缓存，删除旧的逐项对象解码函数。
+- 空捕获结果同样可以构造空索引并缓存，避免无语法捕获区间在反复滚动时被当作缓存缺失而重复执行。
+
+该修改降低的是 Native 结果解码阶段的临时分配和峰值内存，不改变捕获语义、优先级、区间边界或缓存失效规则。
+
+没有执行测试、编译、构建、CI、设备验证或基准测试。
