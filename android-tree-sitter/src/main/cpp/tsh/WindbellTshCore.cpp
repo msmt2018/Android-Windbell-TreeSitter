@@ -1301,12 +1301,15 @@ void WindbellEngine::matchBlockRecursive(
         uint32_t block_start_byte = static_cast<uint32_t>(start_region->beg[0]);
         const UChar* content_start = text_start + start_region->end[0];
 
+        // Only closing delimiters that can affect this viewport need to be
+        // searched. Keep text_end as the full string boundary for lookahead and
+        // anchor semantics, but cap candidate delimiter starts at range_end.
         int hit_end = onig_search(
             rule.onig_end,
             text_start,
             text_end,
             content_start,
-            text_end,
+            range_end,
             end_region,
             ONIG_OPTION_NONE
         );
@@ -2041,14 +2044,18 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
             ~ContiguousRegionGuard() { if (value) onig_region_free(value, 1); }
         } region_guard{region};
         const UChar* current = text_start;
+        const UChar* search_range_end = text_start + range_end_byte;
 
-        while (current < text_end) {
+        // Preserve full-document lookahead/anchor context while limiting match
+        // start positions to this viewport. Captures beginning before the viewport
+        // are still discovered; matches starting after it cannot contribute here.
+        while (current < search_range_end) {
             int hit_pos = onig_search(
                 rule.onig_start,
                 text_start,
                 text_end,
                 current,
-                text_end,
+                search_range_end,
                 region,
                 ONIG_OPTION_NONE
             );
