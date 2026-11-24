@@ -2309,7 +2309,7 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
         });
     if (!grammar->ast_selector_rules.empty() && !has_ast_selector_dependency) {
         cache_value.dependencies.push_back({
-            evaluation_start, evaluation_end, UINT32_MAX,
+            range_start_byte, range_end_byte, UINT32_MAX,
             static_cast<uint8_t>(HighlightSource::AST_SELECTOR), 0xFFu,
             HIGHLIGHT_DEPENDENCY_BOUNDARY_SENSITIVE
         });
