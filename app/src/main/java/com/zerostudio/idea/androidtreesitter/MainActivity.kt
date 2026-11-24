@@ -10,6 +10,7 @@ package com.zerostudio.idea.androidtreesitter
 
 import android.app.ProgressDialog
 import android.content.Intent
+import android.content.res.Configuration
 import android.net.Uri
 import android.provider.OpenableColumns
 import android.os.Bundle
@@ -132,6 +133,20 @@ class MainActivity : AppCompatActivity() {
         setupConsoleTab(binding.contentConsole)
         setupEditorTab(binding.contentEditor)
         loadExternalLanguages()
+    }
+
+    /**
+     * AppCompat night-mode changes are handled in-place (see MainActivity's
+     * uiMode configChanges declaration). Re-resolve only the TSH palette and
+     * redraw cached captures; do not detach the editor or rebuild its native
+     * Tree-sitter document just to change foreground colors.
+     */
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        if (_binding != null) {
+            activeTshHighlighter?.refreshTheme()
+            applyTshThemeTokens()
+        }
     }
 
     /**
