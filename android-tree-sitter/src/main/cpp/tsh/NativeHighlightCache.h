@@ -108,13 +108,19 @@ public:
     // may still own a compact capture page after the native payload was evicted.
     std::vector<std::pair<uint32_t, uint32_t>> snapshotRanges(
         bool diagnostics,
-        uint64_t grammarRevision
+        uint64_t grammarRevision,
+        uint64_t documentVersion,
+        uint64_t sourceVersion,
+        uint64_t partitionVersion
     ) const {
         std::vector<std::pair<uint32_t, uint32_t>> ranges;
         ranges.reserve(dependency_entries_.size());
         for (const auto& item : dependency_entries_) {
             if (item.first.diagnostics == diagnostics &&
-                item.first.grammar_revision == grammarRevision) {
+                item.first.grammar_revision == grammarRevision &&
+                item.first.version == documentVersion &&
+                item.first.source_version == sourceVersion &&
+                item.first.partition_version == partitionVersion) {
                 ranges.emplace_back(item.first.start_byte, item.first.end_byte);
             }
         }
