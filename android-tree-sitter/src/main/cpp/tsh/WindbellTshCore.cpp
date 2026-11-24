@@ -1314,6 +1314,15 @@ void WindbellEngine::matchBlockRecursive(
                     // Keep the checkpoint before a delimiter that crosses the
                     // boundary; the next viewport must see and finish that event.
                     checkpoint_byte_offset = static_cast<uint32_t>(event_start);
+                    // The current viewport must also execute a start delimiter
+                    // whose first code unit lies before its boundary. Otherwise
+                    // the normal forward scan begins at range_start, misses the
+                    // opening delimiter entirely, and paints the rest of this
+                    // block as ordinary code until a later viewport is requested.
+                    if (start_precedes_end &&
+                        active_start_byte == kNoActiveBlock) {
+                        active_start_byte = static_cast<uint32_t>(event_start);
+                    }
                     break;
                 }
                 if (start_precedes_end) {
