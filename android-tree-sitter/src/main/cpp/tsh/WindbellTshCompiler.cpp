@@ -260,16 +260,37 @@ static bool analyzeBoundedRegexWidth(
     return true;
 }
 static void annotateRegexRuleExecution(CompiledRegexRule& rule) {
-    uint64_t width = 0;
-    const bool bounded = rule.type == RegexRuleType::MATCH &&
-        analyzeBoundedRegexWidth(rule.raw_match_pattern, &width);
-    rule.execution_capability = bounded ?
-        RegexExecutionCapability::BOUNDED_WINDOW :
-        RegexExecutionCapability::DOCUMENT_CONTEXT_REQUIRED;
-    rule.maximum_match_bytes = bounded && width <= std::numeric_limits<uint64_t>::max() / sizeof(uint16_t) ?
-        width * sizeof(uint16_t) : 0;
-    if (bounded && rule.maximum_match_bytes == 0) {
+    if (rule.type == RegexRuleType::BLOCK) {
+        uint64_t start_width = 0;
+        uint64_t end_width = 0;
+        const bool bounded_start =
+            analyzeBoundedRegexWidth(rule.raw_start_pattern, &start_width);
+        const bool bounded_end =
+            analyzeBoundedRegexWidth(rule.raw_end_pattern, &end_width);
+        const uint64_t maximum_width = std::max(start_width, end_width);
+        rule.block_delimiters_bounded = bounded_start && bounded_end &&
+            maximum_width > 0 &&
+            maximum_width <= std::numeric_limits<uint64_t>::max() / sizeof(uint16_t);
+        rule.maximum_block_delimiter_bytes = rule.block_delimiters_bounded
+            ? maximum_width * sizeof(uint16_t) : 0;
+        // BLOCK execution still needs the complete string context, but bounded
+        // delimiters permit a finite checkpoint dependency envelope.
         rule.execution_capability = RegexExecutionCapability::DOCUMENT_CONTEXT_REQUIRED;
+        rule.maximum_match_bytes = 0;
+    } else {
+        uint64_t width = 0;
+        const bool bounded = analyzeBoundedRegexWidth(rule.raw_match_pattern, &width);
+        rule.execution_capability = bounded ?
+            RegexExecutionCapability::BOUNDED_WINDOW :
+            RegexExecutionCapability::DOCUMENT_CONTEXT_REQUIRED;
+        rule.maximum_match_bytes =
+            bounded && width <= std::numeric_limits<uint64_t>::max() / sizeof(uint16_t)
+                ? width * sizeof(uint16_t) : 0;
+        if (bounded && rule.maximum_match_bytes == 0) {
+            rule.execution_capability = RegexExecutionCapability::DOCUMENT_CONTEXT_REQUIRED;
+        }
+        rule.block_delimiters_bounded = false;
+        rule.maximum_block_delimiter_bytes = 0;
     }
     for (auto& nested : rule.nested_rules) annotateRegexRuleExecution(nested);
 }
