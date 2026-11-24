@@ -468,7 +468,7 @@ private:
     static size_t dependencyWeight(
         const std::vector<DependencyRange>& ranges
     ) noexcept {
-        constexpr size_t overhead = sizeof(Key) + sizeof(DependencyEntry) + 48u;
+        constexpr size_t overhead = sizeof(Key) + sizeof(DependencyEntry) + 128u;
         if (ranges.capacity() >
             (static_cast<size_t>(-1) - overhead) / sizeof(DependencyRange)) {
             return static_cast<size_t>(-1);
