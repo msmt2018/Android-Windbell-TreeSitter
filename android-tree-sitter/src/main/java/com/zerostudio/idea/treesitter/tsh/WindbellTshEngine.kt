@@ -596,11 +596,26 @@ class WindbellTshEngine private constructor() {
             // CaptureIntervalIndex and viewport queries may reorder captures by source
             // offset. Derive Android priority from the native rule ordering metadata,
             // never from the incidental order of this particular result list.
+            // Native capture ordering has deterministic tie-breakers beyond rule priority:
+            // declaration order, producer pipeline, then style identity. Collapsing captures
+            // to (priority, declarationOrder) gave distinct foreground styles the same
+            // Android SPAN_PRIORITY; StyledTextPainter then selected whichever span happened
+            // to be returned first, allowing an annotation's yellow to be replaced by an
+            // unrelated overlapping Regex/ATS style.
+            data class SpanPriorityKey(
+                val priority: Int,
+                val declarationOrder: Int,
+                val source: Int,
+                val styleId: Int
+            )
             val ruleOrder = spans.asSequence()
-                .map { it.priority to it.declarationOrder }
+                .map { SpanPriorityKey(it.priority, it.declarationOrder, it.source, it.styleId) }
                 .distinct()
                 .sortedWith(
-                    compareByDescending<Pair<Int, Int>> { it.first }.thenBy { it.second }
+                    compareByDescending<SpanPriorityKey> { it.priority }
+                        .thenBy { it.declarationOrder }
+                        .thenBy { it.source }
+                        .thenBy { it.styleId }
                 )
                 .mapIndexed { index, key -> key to (255 - index).coerceAtLeast(1) }
                 .toMap()
@@ -621,7 +636,9 @@ class WindbellTshEngine private constructor() {
                 // not only foreground color. Otherwise a lower-priority capture's
                 // bold/italic/underline/opacity can leak through a higher-priority
                 // nested capture even while its text color is correctly resolved.
-                val precedence = ruleOrder[span.priority to span.declarationOrder] ?: 1
+                val precedence = ruleOrder[
+                    SpanPriorityKey(span.priority, span.declarationOrder, span.source, span.styleId)
+                ] ?: 1
                 val spanFlags = Spannable.SPAN_EXCLUSIVE_EXCLUSIVE or
                     (precedence shl Spanned.SPAN_PRIORITY_SHIFT)
 
