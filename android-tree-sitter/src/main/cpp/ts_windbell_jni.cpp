@@ -1375,6 +1375,9 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlight(
     std::vector<HighlightSpan> raw_candidates;
     uint32_t pipeline_match_counts[4] = {};
     std::vector<HighlightSpan> spans;
+#ifndef NDEBUG
+    const auto highlight_core_started = std::chrono::steady_clock::now();
+#endif
     try {
         spans = WindbellEngine::getInstance().highlightHybrid(
             tree ? ts_tree_language(tree) : nullptr,
@@ -2085,6 +2088,12 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
         return nullptr;
     }
     std::lock_guard<std::mutex> lock(document->mutex);
+#ifndef NDEBUG
+    const auto native_highlight_started = std::chrono::steady_clock::now();
+    const auto elapsed_ms = [](auto start, auto end) noexcept {
+        return std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+    };
+#endif
     const uint64_t total_bytes = document->source->sizeBytes();
     // Tree-sitter's public TSNode/TSPoint byte coordinates are uint32_t in the
     // vendored ABI. The TextSource itself is 64-bit, but this JNI highlighter
@@ -2147,9 +2156,19 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
     };
     if (const auto *cached = document->highlight_cache.find(cache_key)) {
         try {
-            return encodeNativeHighlightResult(
+            jintArray encoded = encodeNativeHighlightResult(
                 env, cached->spans, cached->match_counts,
                 diagnostics == JNI_TRUE);
+#ifndef NDEBUG
+            const auto cache_hit_finished = std::chrono::steady_clock::now();
+            LOGV("TSHPerf",
+                 "nativeHighlightDocument cache=hit range=%u..%u documentBytes=%llu "
+                 "spans=%zu totalMs=%lld",
+                 requested_start, requested_end,
+                 static_cast<unsigned long long>(total_bytes), cached->spans.size(),
+                 static_cast<long long>(elapsed_ms(native_highlight_started, cache_hit_finished)));
+#endif
+            return encoded;
         } catch (const std::bad_alloc&) {
             throwNativeAllocationFailure(env, "Unable to allocate cached JNI highlight result");
             return nullptr;
@@ -2191,6 +2210,9 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
             }));
     const bool source_native_ast_only = grammar && !source_has_regex;
     const windbell::largefile::TextSource *highlight_source = document->source.get();
+#ifndef NDEBUG
+    int64_t regex_snapshot_ms = 0;
+#endif
     if (source_requires_contiguous_regex) {
         const char *contiguous_data = nullptr;
         uint64_t contiguous_size = 0;
@@ -2201,8 +2223,15 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
         if (!already_contiguous) {
             if (!document->regex_snapshot ||
                 document->regex_snapshot_version != document->source->version()) {
+#ifndef NDEBUG
+                const auto snapshot_started = std::chrono::steady_clock::now();
+#endif
                 auto candidate = windbell::largefile::MappedFileSource::createSnapshot(
                     *document->source, document->temporary_directory);
+#ifndef NDEBUG
+                regex_snapshot_ms = elapsed_ms(
+                    snapshot_started, std::chrono::steady_clock::now());
+#endif
                 if (!candidate || candidate->sizeBytes() != total_bytes) {
                     throw_illegal_state(env,
                         "Unable to create a complete mmap snapshot for context-dependent TSH Regex");
@@ -2266,8 +2295,15 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
         return nullptr;
     }
 
+#ifndef NDEBUG
+    const auto highlight_core_finished = std::chrono::steady_clock::now();
+    const size_t highlight_span_count = spans.size();
+#endif
     // Encode before cache admission. Cache pressure must never invalidate a
     // complete highlight result that has already been produced for the caller.
+#ifndef NDEBUG
+    const auto encode_started = std::chrono::steady_clock::now();
+#endif
     jintArray encoded = nullptr;
     try {
         encoded = encodeNativeHighlightResult(
@@ -2280,6 +2316,9 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
         return nullptr;
     }
     if (!encoded || env->ExceptionCheck()) return nullptr;
+#ifndef NDEBUG
+    const auto encode_finished = std::chrono::steady_clock::now();
+#endif
 
     NativeHighlightCache::Value cache_value;
     cache_value.spans = std::move(spans);
@@ -2384,6 +2423,24 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
         // Cache admission is optional. Preserve the complete result even when
         // cache bookkeeping cannot allocate under memory pressure.
     }
+#ifndef NDEBUG
+    const auto native_highlight_finished = std::chrono::steady_clock::now();
+    if (total_bytes >= 10u * 1024u * 1024u ||
+        elapsed_ms(native_highlight_started, native_highlight_finished) >= 5) {
+        LOGV("TSHPerf",
+             "nativeHighlightDocument cache=miss range=%u..%u documentBytes=%llu "
+             "spans=%zu regexSnapshotMs=%lld coreMs=%lld encodeMs=%lld totalMs=%lld "
+             "cacheEntries=%zu cacheBytes=%llu",
+             requested_start, requested_end,
+             static_cast<unsigned long long>(total_bytes), highlight_span_count,
+             static_cast<long long>(regex_snapshot_ms),
+             static_cast<long long>(elapsed_ms(highlight_core_started, highlight_core_finished)),
+             static_cast<long long>(elapsed_ms(encode_started, encode_finished)),
+             static_cast<long long>(elapsed_ms(native_highlight_started, native_highlight_finished)),
+             document->highlight_cache.size(),
+             static_cast<unsigned long long>(document->highlight_cache.bytesUsed()));
+    }
+#endif
     return encoded;
 }
 
