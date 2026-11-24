@@ -1253,11 +1253,13 @@ void WindbellEngine::matchBlockRecursive(
     uint32_t dependency_start_byte =
         static_cast<uint32_t>(search_floor - text_start);
     bool recovered_from_checkpoint = false;
+    bool checkpoint_safe = rule.block_delimiters_bounded;
 
     // Top-level BLOCK rules retain the state at prior viewport boundaries.
     // When the viewport advances, scan only the newly crossed interval for
     // delimiter transitions instead of reverse-searching back to document byte 0.
-    if (block_checkpoints && search_floor == text_start) {
+    if (block_checkpoints && search_floor == text_start &&
+        rule.block_delimiters_bounded) {
         const RegexBlockCheckpoint* nearest = nullptr;
         for (const auto& checkpoint : *block_checkpoints) {
             if (checkpoint.declaration_order == rule.declaration_order &&
@@ -1363,6 +1365,15 @@ void WindbellEngine::matchBlockRecursive(
             (previous_end->beg[0] < 0 || previous_end->end[0] < previous_end->beg[0])) {
             throw std::runtime_error("Oniguruma returned an invalid recovered block end");
         }
+        // Do not checkpoint a boundary that cuts through a delimiter. The next
+        // viewport can seed a safe checkpoint once the complete delimiter is
+        // behind its start offset.
+        if ((start_hit >= 0 && previous_start->end[0] >
+                static_cast<int64_t>(viewport_start_byte)) ||
+            (end_hit >= 0 && previous_end->end[0] >
+                static_cast<int64_t>(viewport_start_byte))) {
+            checkpoint_safe = false;
+        }
         if (start_hit >= 0 &&
             (end_hit == ONIG_MISMATCH ||
              previous_start->beg[0] > previous_end->beg[0])) {
@@ -1370,7 +1381,7 @@ void WindbellEngine::matchBlockRecursive(
         }
     }
 
-    if (block_checkpoints && search_floor == text_start) {
+    if (block_checkpoints && search_floor == text_start && checkpoint_safe) {
         auto existing = std::find_if(
             block_checkpoints->begin(), block_checkpoints->end(),
             [&](const RegexBlockCheckpoint& checkpoint) {
