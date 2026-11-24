@@ -1575,6 +1575,87 @@ static bool collectQueryRootRanges(
     return found_symbols->size() == root_symbols.size();
 }
 
+/**
+ * Collect the smallest source-ordered AST roots needed by rooted-local TSH
+ * Query programs. Tree-sitter's byte-range cursor option filters returned
+ * captures, but its query VM still walks the subtree passed to exec(). Starting
+ * each local query at the relevant candidate roots avoids re-walking unrelated
+ * document prefixes for every viewport.
+ */
+struct TshQueryRootCandidate {
+    TSNode node{};
+    std::vector<TSSymbol> matching_symbols;
+};
+
+static void collectQueryRootCandidates(
+    const TshGrammar& grammar,
+    TSTree* tree,
+    const std::unordered_set<TSSymbol>& root_symbols,
+    uint32_t range_start,
+    uint32_t range_end,
+    std::vector<TshQueryRootCandidate>* candidates
+) {
+    if (!tree || root_symbols.empty() || !candidates || range_start >= range_end) return;
+    TSTreeCursor cursor = ts_tree_cursor_new(ts_tree_root_node(tree));
+    bool done = false;
+    try {
+        while (!done) {
+            const TSNode node = ts_tree_cursor_current_node(&cursor);
+            const uint32_t start = ts_node_start_byte(node);
+            const uint32_t end = ts_node_end_byte(node);
+            const bool zero_width = start == end;
+            if (!zero_width && start >= range_end) break;
+
+            const bool intersects = zero_width
+                ? (start >= range_start && start <= range_end)
+                : (start < range_end && end > range_start);
+            if (intersects) {
+                TshQueryRootCandidate candidate;
+                candidate.node = node;
+                for (TSSymbol selector : root_symbols) {
+                    if (tshAstSymbolMatchesNode(grammar, node, selector)) {
+                        candidate.matching_symbols.push_back(selector);
+                    }
+                }
+                if (!candidate.matching_symbols.empty()) {
+                    candidates->push_back(std::move(candidate));
+                }
+
+                // Jump over preceding sibling subtrees while retaining the
+                // ancestors that can contain a viewport-intersecting root.
+                if (ts_tree_cursor_goto_first_child_for_byte(&cursor, range_start) >= 0)
+                    continue;
+            }
+
+            while (!ts_tree_cursor_goto_next_sibling(&cursor)) {
+                if (!ts_tree_cursor_goto_parent(&cursor)) {
+                    done = true;
+                    break;
+                }
+            }
+        }
+    } catch (...) {
+        ts_tree_cursor_delete(&cursor);
+        throw;
+    }
+    ts_tree_cursor_delete(&cursor);
+}
+
+static bool hasMatchingQueryRootAncestor(
+    const TshGrammar& grammar,
+    TSNode node,
+    const std::unordered_set<TSSymbol>& root_symbols
+) noexcept {
+    TSNode ancestor = ts_node_parent(node);
+    while (!ts_node_is_null(ancestor)) {
+        for (TSSymbol selector : root_symbols) {
+            if (tshAstSymbolMatchesNode(grammar, ancestor, selector)) return true;
+        }
+        ancestor = ts_node_parent(ancestor);
+    }
+    return false;
+}
+
 static void appendQueryPatternDependencies(
     const TshGrammar& grammar,
     const TSLanguage* language,
