@@ -1236,3 +1236,61 @@ Scheduler 至少要限制：
 ### 26.2 实施状态不得由本规范自动推定
 
 本节新增内容仍属于规范与验收要求。除非对应源码、构建、自动化测试和设备证据均已核验，不得将 Span Recycler、事务屏障、Ledger 背压或 Range Query 等标记为已实现。状态继续遵循第 14 节的 SPEC_ONLY、SOURCE_PARTIAL、SOURCE_COMPLETE、BUILD_VERIFIED、TEST_VERIFIED、DEVICE_VERIFIED 分级。
+---
+
+## 2026-11-24 渲染优先级与视口失效范围修复（源码已提交，验证暂缓）
+
+本轮针对夜间模式注解颜色错误和 ATS 符号闪烁，修复了两个已由源码确认的问题。
+
+### 1. Kotlin Span 优先级与 Native 捕获排序不一致
+
+WindbellTshEngine.applyHighlightSpansToSpannable() 原先构造 Android SPAN_PRIORITY 时，按以下字段排序：
+
+- priority
+- declarationOrder
+- source
+- styleId
+
+但 Native WindbellTshCore 的最终捕获排序在 source/styleId 之前，还会比较捕获范围的 startByte 和 endByte。对于同一规则发出的 whole-match 与 nested capture，若它们 priority、declarationOrder、source 相同但 style 不同，Kotlin 会先按 styleId 决定 Android 绘制优先级，导致数值较小的 styleId 抢占颜色；这与 Native 的捕获顺序不一致，可能把 TSH 指定的注解颜色覆盖为另一种颜色。
+
+修复后 Kotlin 两处排序统一为 Native 的完整顺序：
+
+1. priority 降序；
+2. declarationOrder 升序；
+3. startByteUnsigned 升序；
+4. endByteUnsigned 降序；
+5. source 升序；
+6. styleId 升序。
+
+文件：android-tree-sitter/src/main/java/com/zerostudio/idea/treesitter/tsh/WindbellTshEngine.kt
+
+### 2. 视口捕获完成不再触发全文样式/结构刷新
+
+原先每次视口 Native 捕获完成后都会调用 host.invalidateStyles() 和 host.invalidateStructure()。这会使编辑器对整个文档提升 styles generation，并重新处理已经绘制过的行；普通滚动产生的新视口捕获也会触发结构刷新。它不符合“已有 ATS 符号在没有相关变化时保持已提交渲染状态”的要求。
+
+修复后：
+
+- 只根据已完成视口批次的 UTF-16 范围，在主线程映射到实际行号；
+- 使用 host.invalidateStyles(startLine, endLine) 局部刷新，不再对全文增加样式 generation；
+- 普通语法捕获完成不再刷新结构；
+- 只有括号/自动配对等词法作用域查询曾因缺少捕获而等待时，才在对应捕获完成后刷新结构；
+- 会话替换、detach 时清除待刷新的结构标记，避免旧任务污染新文档。
+
+文件：app/src/main/java/com/zerostudio/idea/androidtreesitter/TshSyntaxHighlighter.kt
+
+### 3. 合并重复的 Kotlin 捕获缓存
+
+原实现将同一个 CaptureIntervalIndex 同时写入 captureCache 与 displayCache，两个 LRU 分别维护相同的区间索引；查询时又合并两套结果并通过 LinkedHashSet 去重。两套缓存没有独立数据来源或独立生命周期，属于重复存储与重复索引维护。
+
+修复后统一为一个 32 MiB capture cache：
+
+- 删除重复 displayCache 和 displayRangeIndex；
+- 查询、覆盖判断、缓存回退和编辑后 rebase 统一使用同一索引；
+- 同一份捕获结果不再被双重计费、双重触碰和重复合并；
+- 保留原先按 Native dependency envelope 决定可复用范围的机制。
+
+### 当前边界
+
+以上修复是源码级修复，尚未运行测试、编译、CI、设备或性能验证。
+
+大文件首次打开的剩余重点仍是 Native 文档初始化与首次视口执行的分段耗时，以及 BLOCK/上下文相关 Regex 在不同视口间的重复前缀扫描。当前 Native 文档创建会将 Kotlin 快照分块写入 Native backing file 后执行完整 Tree-sitter parse；该成本必须与首次 TSH 捕获成本分别观测，不能将两者混为一个“Token 缓存慢”问题。
