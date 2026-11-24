@@ -1274,6 +1274,7 @@ class TshSyntaxHighlighter(
                     // Publish cache rebasing and the matching edit epoch atomically
                     // with styleLine's cache reads. Remove only this committed batch:
                     // newer edits may already be queued against the resulting revision.
+                    val captureCacheEntriesBefore = captureCache.size
                     val (invalidatedCaptureRanges, readyDisplayRanges) =
                         synchronized(nativeEditLock) {
                             active.documentRevision.incrementAndGet()
@@ -1302,7 +1303,10 @@ class TshSyntaxHighlighter(
                             "byteRanges=${dirtySnapshot.byteRanges.size} lineRanges=${dirtySnapshot.ranges.size} " +
                             "firstDirtyByte=$dirtyStartByte firstDirtyLine=$dirtyStartLine " +
                             "reusableNativeViewports=${reusableNativeRanges.size} " +
-                            "captureCacheEntries=${captureCache.size}"
+                            "captureCacheEntries=$captureCacheEntriesBefore->${captureCache.size} " +
+                            "invalidatedCaptureRanges=${invalidatedCaptureRanges.size} " +
+                            "deferredDisplayRanges=${readyDisplayRanges.size} " +
+                            "pendingDisplayEdits=${synchronized(nativeEditLock) { pendingDisplayEdits.size }}"
                     )
                     // The current edit epoch is now committed; any later queued edit
                     // remains pending and retains its own display transform.
