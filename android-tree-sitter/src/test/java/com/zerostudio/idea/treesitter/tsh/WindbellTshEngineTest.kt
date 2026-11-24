@@ -915,6 +915,42 @@ class WindbellTshLinkageTest {
     }
 
     @Test
+    fun testNativeQueryPrecompiledUnicodePredicateLiteral() {
+        val engine = WindbellTshEngine.instance
+        val language = TSLanguageJava.getInstance()
+        val source = """
+            tsh 2 {
+                language { id: "java-native-unicode-predicate" extensions: [".jnup"] }
+                styles { unicodeClass { scope: "entity.name.type.unicode" } }
+                treeSitter {
+                    queries: [
+                        {
+                            id: "unicode-class-name"
+                            source: `(class_declaration name: (identifier) @unicodeClass (#eq? @unicodeClass "演示"))`
+                        }
+                    ]
+                }
+            }
+        """.trimIndent()
+
+        assertTrue(engine.loadTshSource("java-native-unicode-predicate", source, language))
+        val parser = TSParser.create().apply { setLanguage(language) }
+        val code = "class 演示 {}"
+        val tree = parser.parseString(code)
+        val spans = engine.computeHighlights(tree, code, "java-native-unicode-predicate")
+        val styleId = engine.getStyleCatalog("java-native-unicode-predicate")
+            .first { it.name == "unicodeClass" }.styleId
+
+        assertTrue(
+            spans.any { it.styleId == styleId && it.startByte == code.indexOf("演示") * 2 },
+            "A non-ASCII predicate literal must be decoded once and compared without changing UTF-16 offsets."
+        )
+
+        tree?.close()
+        parser.close()
+    }
+
+    @Test
     fun testNativeQueryContainsAndStructuralPredicates() {
         val engine = WindbellTshEngine.instance
         val language = TSLanguageJava.getInstance()
