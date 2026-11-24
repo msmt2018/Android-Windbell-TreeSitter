@@ -1382,30 +1382,36 @@ void WindbellEngine::matchBlockRecursive(
     }
 
     if (block_checkpoints && search_floor == text_start && checkpoint_safe) {
-        auto existing = std::find_if(
-            block_checkpoints->begin(), block_checkpoints->end(),
-            [&](const RegexBlockCheckpoint& checkpoint) {
-                return checkpoint.declaration_order == rule.declaration_order &&
-                    checkpoint.byte_offset == checkpoint_byte_offset &&
-                    checkpoint.grammar_revision == grammar_revision &&
-                    checkpoint.source_version == source_version &&
-                    checkpoint.partition_version == partition_version;
-            });
-        const RegexBlockCheckpoint checkpoint{
-            rule.declaration_order, checkpoint_byte_offset, active_start_byte,
-            grammar_revision, source_version, partition_version
-        };
-        if (existing != block_checkpoints->end()) {
-            *existing = checkpoint;
-        } else {
-            block_checkpoints->push_back(checkpoint);
-        }
-        constexpr size_t kMaxBlockCheckpoints = 512;
-        if (block_checkpoints->size() > kMaxBlockCheckpoints) {
-            block_checkpoints->erase(
-                block_checkpoints->begin(),
-                block_checkpoints->begin() +
-                    static_cast<ptrdiff_t>(block_checkpoints->size() - kMaxBlockCheckpoints));
+        try {
+            auto existing = std::find_if(
+                block_checkpoints->begin(), block_checkpoints->end(),
+                [&](const RegexBlockCheckpoint& checkpoint) {
+                    return checkpoint.declaration_order == rule.declaration_order &&
+                        checkpoint.byte_offset == checkpoint_byte_offset &&
+                        checkpoint.grammar_revision == grammar_revision &&
+                        checkpoint.source_version == source_version &&
+                        checkpoint.partition_version == partition_version;
+                });
+            const RegexBlockCheckpoint checkpoint{
+                rule.declaration_order, checkpoint_byte_offset, active_start_byte,
+                grammar_revision, source_version, partition_version
+            };
+            if (existing != block_checkpoints->end()) {
+                *existing = checkpoint;
+            } else {
+                block_checkpoints->push_back(checkpoint);
+            }
+            constexpr size_t kMaxBlockCheckpoints = 512;
+            if (block_checkpoints->size() > kMaxBlockCheckpoints) {
+                block_checkpoints->erase(
+                    block_checkpoints->begin(),
+                    block_checkpoints->begin() +
+                        static_cast<ptrdiff_t>(block_checkpoints->size() - kMaxBlockCheckpoints));
+            }
+        } catch (...) {
+            // Checkpoints are an optimization. Allocation pressure must not turn
+            // a complete TSH result into a failed highlight request.
+            block_checkpoints->clear();
         }
     }
 
