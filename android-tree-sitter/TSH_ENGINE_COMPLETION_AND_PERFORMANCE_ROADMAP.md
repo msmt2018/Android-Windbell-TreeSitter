@@ -977,3 +977,28 @@ Native document 创建已有 source transfer/write、backing map/PieceTree、Tre
    - 现在分别映射到行范围、合并相邻/重叠范围，再通过 invalidateStyles(ranges) 一次提交；不再清除不连续范围之间的 ATS 行缓存。
 
 以上为源码级改动和静态阅读结论；尚未执行测试、编译、CI、设备验证或 Benchmark。
+
+### 2026-11-24 再后续：局部捕获可见性与 Native/ Kotlin 缓存一致性
+
+1. **局部缓存未完成时不再抹掉同一行已捕获颜色。**
+   - 旧 queryCachedCaptures() 只要请求区间存在一个未命中 gap，就返回 null；即使同一行的前半段已有完整捕获，也会让整行退回 plain text。
+   - 现在返回 spans + complete 状态。Renderer 可以立即绘制已命中的捕获，缺失区间继续排队；结构/括号查询仍要求完整覆盖，避免用部分结果作语义判断。
+   - 查询时直接把各命中 CaptureIntervalIndex 追加到结果列表，移除中间索引列表分配。
+
+2. **只失效真正新捕获的 byte gaps。**
+   - executeNativeRangeNow() 现在返回成功写入缓存的精确缺失区间，而不是原始 viewport 请求区间。
+   - 一次 viewport 请求若只有少量空洞，已经缓存的其它行/区间不会因为这次补洞而再次被 Renderer 失效。
+   - invalidateViewportStyles() 同时保留 batch 中不连续的行区间，不再用 min/max 生成大范围无关失效。
+
+3. **Native AST Query 依赖和执行共用同一次候选节点遍历。**
+   - 旧逻辑先调用 collectQueryRootRanges() 为缓存依赖扫描一次 AST，再调用 collectQueryRootCandidates() 为 Query 执行扫描第二次。
+   - 现在 collectQueryRootCandidates() 产出的节点及 matching symbols 同时用于生成依赖区间和执行根节点，移除重复的视口 AST 遍历。
+   - 非 ROOTED_LOCAL Query 仍保持完整树执行和 document-wide 依赖，不改变查询语义。
+
+4. **Native payload 与 dependency ledger 统一为单一依赖元数据所有者。**
+   - 进一步移除 NativeHighlightCache::Value 中重复的 dependency vector；依赖证明只由受预算保护的 ledger 持有。
+   - Native span payload LRU 只负责缓存 spans；payload 被淘汰不再丢失 Kotlin 捕获结果所需的依赖有效性证明。
+   - payload rebase 通过 ledger 的新版本 Key 校验；若实际 span 无法安全移动，则同步撤销对应 ledger proof，避免 Kotlin 保留不安全的旧捕获。
+   - dependency vector 以 move 方式进入 ledger，避免每个视口结果再次复制整份依赖数组。
+
+以上改动仍处于源码静态审查阶段；按照当前开发顺序，没有执行测试、编译、CI、设备或 Benchmark。
