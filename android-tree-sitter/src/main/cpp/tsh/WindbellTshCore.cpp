@@ -1304,15 +1304,17 @@ void WindbellEngine::matchBlockRecursive(
         // Only closing delimiters that can affect this viewport need to be
         // searched. Keep text_end as the full string boundary for lookahead and
         // anchor semantics, but cap candidate delimiter starts at range_end.
-        int hit_end = onig_search(
-            rule.onig_end,
-            text_start,
-            text_end,
-            content_start,
-            range_end,
-            end_region,
-            ONIG_OPTION_NONE
-        );
+        int hit_end = content_start <= range_end
+            ? onig_search(
+                rule.onig_end,
+                text_start,
+                text_end,
+                content_start,
+                range_end,
+                end_region,
+                ONIG_OPTION_NONE
+            )
+            : ONIG_MISMATCH;
 
         if (hit_end < 0 && hit_end != ONIG_MISMATCH) {
             throw std::runtime_error("Oniguruma block end execution failed with status " +
