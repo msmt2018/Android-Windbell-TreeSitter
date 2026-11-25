@@ -76,13 +76,20 @@ static jint TSLanguage_fldIdForName(JNIEnv *env,
                                     jlong ptr,
                                     jbyteArray name,
                                     jint length) {
-  jbyte *nm = env->GetByteArrayElements(name, nullptr);
   req_nnp(env, ptr);
-  uint32_t id = ts_language_field_id_for_name((TSLanguage *) ptr,
-                                              reinterpret_cast<const char *>(nm),
-                                              length);
+  req_nnp(env, name, "field name bytes");
+  if (length < 0 || length > env->GetArrayLength(name)) {
+    throw_illegal_args(env, "Invalid Tree-sitter field-name byte length");
+    return 0;
+  }
+  jbyte *nm = env->GetByteArrayElements(name, nullptr);
+  if (nm == nullptr) return 0;
+  const uint32_t id = ts_language_field_id_for_name(
+      reinterpret_cast<const TSLanguage *>(ptr),
+      reinterpret_cast<const char *>(nm),
+      static_cast<uint32_t>(length));
   env->ReleaseByteArrayElements(name, nm, JNI_ABORT);
-  return (jint) id;
+  return static_cast<jint>(id);
 }
 
 
