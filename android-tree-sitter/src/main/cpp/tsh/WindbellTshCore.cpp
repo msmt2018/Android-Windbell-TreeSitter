@@ -1456,6 +1456,11 @@ void WindbellEngine::matchBlockRecursive(
         }
     }
 
+    const uint32_t viewport_end_byte =
+        static_cast<uint32_t>(range_end - text_start);
+    uint32_t active_at_viewport_end = active_start_byte;
+    bool viewport_end_checkpoint_safe = checkpoint_safe;
+
     const UChar* curr = active_start_byte != kNoActiveBlock
         ? text_start + active_start_byte
         : range_start;
@@ -1483,6 +1488,16 @@ void WindbellEngine::matchBlockRecursive(
         uint32_t block_start_byte = static_cast<uint32_t>(start_region->beg[0]);
         const UChar* content_start = text_start + start_region->end[0];
 
+        // A checkpoint at the viewport's right edge is valid only when neither
+        // delimiter is split by that boundary. Preserve the block's opening
+        // offset while it remains active; clear it only after a complete end
+        // delimiter has been consumed before the boundary.
+        if (start_region->beg[0] < static_cast<int64_t>(viewport_end_byte) &&
+            start_region->end[0] > static_cast<int64_t>(viewport_end_byte)) {
+            viewport_end_checkpoint_safe = false;
+        }
+        active_at_viewport_end = block_start_byte;
+
         // Only closing delimiters that can affect this viewport need to be
         // searched. Keep text_end as the full string boundary for lookahead and
         // anchor semantics, but cap candidate delimiter starts at range_end.
@@ -1506,6 +1521,17 @@ void WindbellEngine::matchBlockRecursive(
             (end_region->beg[0] < 0 || end_region->end[0] < end_region->beg[0])) {
             throw std::runtime_error("Oniguruma returned an invalid block end range");
         }
+        if (hit_end >= 0) {
+            const int64_t end_begin = end_region->beg[0];
+            const int64_t end_finish = end_region->end[0];
+            if (end_begin < static_cast<int64_t>(viewport_end_byte) &&
+                end_finish > static_cast<int64_t>(viewport_end_byte)) {
+                viewport_end_checkpoint_safe = false;
+            } else if (end_finish <= static_cast<int64_t>(viewport_end_byte)) {
+                active_at_viewport_end = kNoActiveBlock;
+            }
+        }
+
         uint32_t block_end_byte = (hit_end >= 0) ?
             static_cast<uint32_t>(end_region->end[0]) :
             static_cast<uint32_t>(text_end - text_start);
@@ -1696,6 +1722,43 @@ void WindbellEngine::matchBlockRecursive(
         }
     }
 
+    // Seed the next forward viewport from the state reached at this viewport's
+    // end. This closes the cold-jump gap: after the first scan, a distant jump
+    // resumes from the nearest completed boundary instead of replaying every
+    // delimiter transition from byte zero. Never publish a checkpoint that
+    // bisects an opening or closing delimiter.
+    if (block_checkpoints && search_floor == text_start &&
+        rule.block_delimiters_bounded && viewport_end_checkpoint_safe) {
+        try {
+            auto existing = std::find_if(
+                block_checkpoints->begin(), block_checkpoints->end(),
+                [&](const RegexBlockCheckpoint& checkpoint) {
+                    return checkpoint.declaration_order == rule.declaration_order &&
+                        checkpoint.byte_offset == viewport_end_byte &&
+                        checkpoint.grammar_revision == grammar_revision &&
+                        checkpoint.source_version == source_version &&
+                        checkpoint.partition_version == partition_version;
+                });
+            const RegexBlockCheckpoint checkpoint{
+                rule.declaration_order, viewport_end_byte, active_at_viewport_end,
+                grammar_revision, source_version, partition_version
+            };
+            if (existing != block_checkpoints->end()) {
+                *existing = checkpoint;
+            } else {
+                block_checkpoints->push_back(checkpoint);
+            }
+            constexpr size_t kMaxBlockCheckpoints = 512;
+            if (block_checkpoints->size() > kMaxBlockCheckpoints) {
+                block_checkpoints->erase(
+                    block_checkpoints->begin(),
+                    block_checkpoints->begin() +
+                        static_cast<ptrdiff_t>(block_checkpoints->size() - kMaxBlockCheckpoints));
+            }
+        } catch (...) {
+            block_checkpoints->clear();
+        }
+    }
 }
 
 /**
