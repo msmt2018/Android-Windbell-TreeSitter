@@ -244,6 +244,65 @@ if(NOT TSH_STACK_BRANCH_CAP_POSITION LESS 0)
     message(FATAL_ERROR "Tree-sitter stack iterator branch cap was not removed")
 endif()
 
+# Iterator paths are borrowed while stack__iter walks the persistent stack DAG.
+# Retain Subtrees only when a completed path is emitted as a StackSlice. This
+# avoids refcount traffic for every intermediate GLR iterator fork.
+set(TSH_STACK_ITERATOR_COPY_OLD [=[static StackSliceArray stack__iter(]=])
+set(TSH_STACK_ITERATOR_COPY_NEW [=[
+static void stack__copy_iterator_subtrees(SubtreeArray source, SubtreeArray *dest) {
+  dest->size = source.size;
+  dest->capacity = source.size;
+  dest->contents = NULL;
+  if (source.size > 0) {
+    dest->contents = ts_malloc((size_t)source.size * sizeof(Subtree));
+    memcpy(dest->contents, source.contents, (size_t)source.size * sizeof(Subtree));
+  }
+}
+
+static StackSliceArray stack__iter(]=])
+string(REPLACE "${TSH_STACK_ITERATOR_COPY_OLD}" "${TSH_STACK_ITERATOR_COPY_NEW}"
+    TSH_STACK_SOURCE "${TSH_STACK_SOURCE}")
+string(REPLACE "ts_subtree_array_copy(subtrees, &subtrees);"
+    "stack__copy_iterator_subtrees(subtrees, &subtrees);"
+    TSH_STACK_SOURCE "${TSH_STACK_SOURCE}")
+string(REPLACE "ts_subtree_array_copy(next_iterator->subtrees, &next_iterator->subtrees);"
+    "stack__copy_iterator_subtrees(next_iterator->subtrees, &next_iterator->subtrees);"
+    TSH_STACK_SOURCE "${TSH_STACK_SOURCE}")
+string(REPLACE "ts_subtree_array_delete(self->subtree_pool, &iterator->subtrees);"
+    "array_delete(&iterator->subtrees);"
+    TSH_STACK_SOURCE "${TSH_STACK_SOURCE}")
+set(TSH_STACK_ADD_SLICE_OLD [=[static void ts_stack__add_slice(
+  Stack *self,
+  StackVersion original_version,
+  StackNode *node,
+  SubtreeArray *subtrees
+) {
+  for (uint32_t i = self->slices.size - 1; i + 1 > 0; i--) {]=])
+set(TSH_STACK_ADD_SLICE_NEW [=[static void ts_stack__add_slice(
+  Stack *self,
+  StackVersion original_version,
+  StackNode *node,
+  SubtreeArray *subtrees
+) {
+  // Convert a borrowed iterator path into an owned result slice exactly once.
+  for (uint32_t i = 0; i < subtrees->size; i++) {
+    ts_subtree_retain(*array_get(subtrees, i));
+  }
+  for (uint32_t i = self->slices.size - 1; i + 1 > 0; i--) {]=])
+string(REPLACE "${TSH_STACK_ADD_SLICE_OLD}" "${TSH_STACK_ADD_SLICE_NEW}"
+    TSH_STACK_SOURCE "${TSH_STACK_SOURCE}")
+string(FIND "${TSH_STACK_SOURCE}" "stack__copy_iterator_subtrees"
+    TSH_STACK_ITERATOR_COPY_POSITION)
+string(FIND "${TSH_STACK_SOURCE}" "Convert a borrowed iterator path"
+    TSH_STACK_ITERATOR_RETAIN_POSITION)
+string(FIND "${TSH_STACK_SOURCE}" "array_delete(&iterator->subtrees);"
+    TSH_STACK_ITERATOR_DELETE_POSITION)
+if(TSH_STACK_ITERATOR_COPY_POSITION LESS 0 OR
+   TSH_STACK_ITERATOR_RETAIN_POSITION LESS 0 OR
+   TSH_STACK_ITERATOR_DELETE_POSITION LESS 0)
+    message(FATAL_ERROR "Pinned Tree-sitter borrowed iterator-path patch did not apply")
+endif()
+
 string(REPLACE
     "array_reserve(&self->heads, 4);\n  array_reserve(&self->slices, 4);\n  array_reserve(&self->iterators, 4);"
     "array_reserve(&self->heads, 8);\n  array_reserve(&self->slices, INITIAL_ITERATOR_CAPACITY);\n  array_reserve(&self->iterators, INITIAL_ITERATOR_CAPACITY);"
