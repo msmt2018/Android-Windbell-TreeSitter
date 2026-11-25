@@ -14,6 +14,7 @@ import com.zerostudio.idea.treesitter.tsh.NativeTextWindowReader
 import com.zerostudio.idea.treesitter.tsh.TshDocumentRuntime
 import com.zerostudio.idea.treesitter.tsh.TshParserFactory
 import com.zerostudio.idea.treesitter.tsh.TshGrammarProvider
+import com.zerostudio.idea.treesitter.tsh.TshGrammarBinding
 import com.zerostudio.idea.treesitter.tsh.TshGrammarRegistry
 import com.zerostudio.idea.treesitter.tsh.TshLanguageRequest
 import kotlinx.coroutines.CancellationException
@@ -583,7 +584,7 @@ class TshSyntaxHighlighter(
                     return@synchronized null
                 }
                 if (offset < 0 || offset.toLong() >= active.lengthChars.get() ||
-                    offset == Int.MAX_VALUE) return@synchronized emptyList()
+                    offset == Int.MAX_VALUE) return@synchronized HighlightCaptureBatch.empty()
                 val key = CaptureRangeKey(active.cacheSessionId, offset, offset + 1)
                 val cached = queryCachedCaptures(key, offset, offset + 1)
                 if (cached?.complete != true) {
