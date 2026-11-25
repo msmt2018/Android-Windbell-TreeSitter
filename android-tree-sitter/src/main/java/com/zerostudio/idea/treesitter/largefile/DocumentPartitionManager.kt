@@ -463,13 +463,21 @@ class ByteBudgetLruCache<K : Any, V : Any>(
     private val onEvict: (V) -> Unit = {},
     private val onEntryAdded: (K, V) -> Unit = { _, _ -> },
     private val onEntryRemoved: (K, V) -> Unit = { _, _ -> },
+ ) : AutoCloseable {
+    private data class Entry<V>(val value: V, val weight: Long)
+
     /**
      * Allows a capacity-evicted value to transfer to another owner/cache.
      * Return true only after ownership has been successfully transferred.
+     *
+     * Kept out of the constructor to preserve the trailing-lambda API where
+     * the final constructor callback is the legacy one-argument onEvict.
      */
-    private val onCapacityEvicted: (K, V) -> Boolean = { _, _ -> false }
-) : AutoCloseable {
-    private data class Entry<V>(val value: V, val weight: Long)
+    private var onCapacityEvicted: (K, V) -> Boolean = { _, _ -> false }
+
+    internal fun setCapacityEvictionHandler(handler: (K, V) -> Boolean) {
+        onCapacityEvicted = handler
+    }
 
     private val lock = ReentrantReadWriteLock()
     private val entries = LinkedHashMap<K, Entry<V>>(16, 0.75f, true)
