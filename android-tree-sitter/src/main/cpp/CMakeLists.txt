@@ -200,17 +200,25 @@ TS_PUBLIC void *(*ts_current_realloc)(void *, size_t) = ts_realloc_default;
 TS_PUBLIC void (*ts_current_free)(void *) = ts_free_default;
 void ts_set_allocator(void *(*m)(size_t), void *(*c)(size_t,size_t),
                       void *(*r)(void *,size_t), void (*f)(void *)) {
-  // Partial external allocators retain libc-compatible fallback callbacks.
-  if (m || c || r || f) {
-    ts_current_malloc = m ? m : malloc;
-    ts_current_calloc = c ? c : calloc;
-    ts_current_realloc = r ? r : realloc;
-    ts_current_free = f ? f : free;
-  } else {
+  // Tree-sitter allocations must always be released by the matching
+  // allocator family. Mixing a caller-provided malloc with libc free (or
+  // realloc) is undefined behavior, so accept custom allocators only as a
+  // complete quartet. A partial quartet deliberately falls back to libc.
+  if (m && c && r && f) {
+    ts_current_malloc = m;
+    ts_current_calloc = c;
+    ts_current_realloc = r;
+    ts_current_free = f;
+  } else if (!m && !c && !r && !f) {
     ts_current_malloc = ts_malloc_default;
     ts_current_calloc = ts_calloc_default;
     ts_current_realloc = ts_realloc_default;
     ts_current_free = ts_free_default;
+  } else {
+    ts_current_malloc = malloc;
+    ts_current_calloc = calloc;
+    ts_current_realloc = realloc;
+    ts_current_free = free;
   }
 }
 ]=])
@@ -224,6 +232,12 @@ string(REPLACE
     "array_reserve(&self->heads, 4);\n  array_reserve(&self->slices, 4);\n  array_reserve(&self->iterators, 4);"
     "array_reserve(&self->heads, 8);\n  array_reserve(&self->slices, MAX_ITERATOR_COUNT);\n  array_reserve(&self->iterators, MAX_ITERATOR_COUNT);"
     TSH_STACK_SOURCE "${TSH_STACK_SOURCE}")
+string(FIND "${TSH_STACK_SOURCE}"
+    "array_reserve(&self->heads, 8);\n  array_reserve(&self->slices, MAX_ITERATOR_COUNT);\n  array_reserve(&self->iterators, MAX_ITERATOR_COUNT);"
+    TSH_STACK_RESERVE_PATCH_POSITION)
+if(TSH_STACK_RESERVE_PATCH_POSITION LESS 0)
+    message(FATAL_ERROR "Pinned Tree-sitter stack iterator reserve patch did not apply")
+endif()
 
 set(TSH_SUBTREE_COPY_OLD [=[void ts_subtree_array_copy(SubtreeArray self, SubtreeArray *dest) {
   dest->size = self.size;
@@ -251,11 +265,22 @@ set(TSH_SUBTREE_COPY_NEW [=[void ts_subtree_array_copy(SubtreeArray self, Subtre
 }]=])
 string(REPLACE "${TSH_SUBTREE_COPY_OLD}" "${TSH_SUBTREE_COPY_NEW}"
     TSH_SUBTREE_SOURCE "${TSH_SUBTREE_SOURCE}")
+string(FIND "${TSH_SUBTREE_SOURCE}" "dest->capacity = self.size;"
+    TSH_SUBTREE_COPY_PATCH_POSITION)
+if(TSH_SUBTREE_COPY_PATCH_POSITION LESS 0)
+    message(FATAL_ERROR "Pinned Tree-sitter subtree copy patch did not apply")
+endif()
 
 string(REPLACE
     "uint32_t halted_version_count = ts_stack_halted_version_count(self->stack);"
     "uint32_t halted_version_count = initial_version_count > 1 ? ts_stack_halted_version_count(self->stack) : 0;"
     TSH_PARSER_SOURCE "${TSH_PARSER_SOURCE}")
+string(FIND "${TSH_PARSER_SOURCE}"
+    "initial_version_count > 1 ? ts_stack_halted_version_count(self->stack) : 0"
+    TSH_PARSER_REDUCE_PATCH_POSITION)
+if(TSH_PARSER_REDUCE_PATCH_POSITION LESS 0)
+    message(FATAL_ERROR "Pinned Tree-sitter parser reduce patch did not apply")
+endif()
 
 file(WRITE "${TSH_RUNTIME_PERF_OVERLAY_DIR}/alloc.c" "${TSH_ALLOC_SOURCE}")
 file(WRITE "${TSH_RUNTIME_PERF_OVERLAY_DIR}/stack.c" "${TSH_STACK_SOURCE}")
@@ -272,6 +297,11 @@ set(TSH_REUSABLE_NODE_NEW [=[static inline ReusableNode reusable_node_new(void) 
 }]=])
 string(REPLACE "${TSH_REUSABLE_NODE_OLD}" "${TSH_REUSABLE_NODE_NEW}"
     TSH_REUSABLE_NODE_HEADER "${TSH_REUSABLE_NODE_HEADER}")
+string(FIND "${TSH_REUSABLE_NODE_HEADER}" "array_reserve(&result.stack, 32);"
+    TSH_REUSABLE_NODE_PATCH_POSITION)
+if(TSH_REUSABLE_NODE_PATCH_POSITION LESS 0)
+    message(FATAL_ERROR "Pinned Tree-sitter reusable-node reserve patch did not apply")
+endif()
 file(WRITE "${TSH_RUNTIME_PERF_OVERLAY_DIR}/subtree.c" "${TSH_SUBTREE_SOURCE}")
 file(WRITE "${TSH_RUNTIME_PERF_OVERLAY_DIR}/reusable_node.h" "${TSH_REUSABLE_NODE_HEADER}")
 
