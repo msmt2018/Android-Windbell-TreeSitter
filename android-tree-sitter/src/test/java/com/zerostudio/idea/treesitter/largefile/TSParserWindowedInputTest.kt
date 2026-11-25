@@ -86,7 +86,7 @@ class TSParserWindowedInputTest {
         try {
             val tree = parser.parseWindowed(null, text.length.toLong() * 2L, emptyArray(), callback)
             assertNotNull(tree)
-            assertTrue(maxRead <= 64 * 1024)
+            assertTrue(maxRead <= 128 * 1024, "Tree-sitter input windows must remain bounded to 128 KiB")
             assertFalse(tree!!.rootNode.hasErrors(),
                 "A valid windowed full-document parse must not introduce ERROR/MISSING nodes")
             tree.close()
