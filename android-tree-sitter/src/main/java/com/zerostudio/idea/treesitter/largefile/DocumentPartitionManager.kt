@@ -617,20 +617,28 @@ class ByteBudgetLruCache<K : Any, V : Any>(
         entries[key]?.value
     }
 
-    fun put(key: K, value: V) = lock.write {
+    /**
+     * Attempts to retain [value] within the byte budget.
+     *
+     * Returns true only after the entry is present in the cache. An oversized
+     * replacement is rejected before the old value is removed, so a failed
+     * admission cannot destroy a previously valid entry for the same key.
+     */
+    fun put(key: K, value: V): Boolean = lock.write {
         // Freeze the weight at admission. Re-evaluating a mutable value during
         // eviction/removal can otherwise corrupt byte accounting.
         val weight = weigh(value).coerceAtLeast(0L)
+        if (weight > maxBytes || maxBytes == 0L) {
+            rejectedAdmissionCountValue++
+            onEvict(value)
+            return@write false
+        }
+
         val previous = entries.remove(key)
         if (previous != null) {
             usedBytes -= previous.weight
             onEntryRemoved(key, previous.value)
             if (previous.value !== value) onEvict(previous.value)
-        }
-        if (weight > maxBytes || maxBytes == 0L) {
-            rejectedAdmissionCountValue++
-            onEvict(value)
-            return@write
         }
 
         // Evict before addition so usedBytes + weight can never overflow Long.
@@ -647,11 +655,12 @@ class ByteBudgetLruCache<K : Any, V : Any>(
         if (weight > maxBytes - usedBytes) {
             rejectedAdmissionCountValue++
             onEvict(value)
-            return@write
+            return@write false
         }
         entries[key] = Entry(value, weight)
         usedBytes += weight
         onEntryAdded(key, value)
+        true
     }
 
     fun remove(key: K): V? = lock.write {
