@@ -260,18 +260,25 @@ public class TSLanguage extends TSNativeObject {
   public static TSLanguage loadLanguage(String libraryPath, String lang) {
     validateLangName(lang);
 
-    var language = TSLanguageCache.get(lang);
-    if (language != null) {
+    final String canonicalPath;
+    try {
+      canonicalPath = new java.io.File(libraryPath).getCanonicalPath();
+    } catch (java.io.IOException ignored) {
+      throw new IllegalArgumentException("Cannot canonicalize grammar library path: " + libraryPath, ignored);
+    }
+
+    var language = TSLanguageCache.get(lang, canonicalPath);
+    if (language != null && language.getNativeObject() != 0) {
       return language;
     }
 
-    final long[] pointers = Native.loadLanguage(libraryPath, "tree_sitter_" + lang);
+    final long[] pointers = Native.loadLanguage(canonicalPath, "tree_sitter_" + lang);
     if (pointers == null) {
       return null;
     }
 
     language = TSLanguage.create(lang, pointers);
-    TSLanguageCache.cache(lang, language);
+    TSLanguageCache.cache(lang, canonicalPath, language);
     return language;
   }
 
