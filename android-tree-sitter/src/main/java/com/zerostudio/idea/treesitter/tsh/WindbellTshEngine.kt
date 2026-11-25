@@ -45,6 +45,36 @@ fun interface NativeTextWindowReader {
     /** Fill a reusable direct native window and return the number of UTF-16LE bytes written. */
     fun read(byteOffset: Long, maxBytes: Int, destination: ByteBuffer): Int
 }
+private interface HighlightCaptureSource {
+    val size: Int
+    fun startByteUnsigned(index: Int): Long
+    fun endByteUnsigned(index: Int): Long
+    fun styleId(index: Int): Int
+    fun fontFlags(index: Int): Int
+    fun priority(index: Int): Int
+    fun declarationOrder(index: Int): Int
+    fun source(index: Int): Int
+}
+private class ListHighlightCaptureSource(private val values: List<WindbellTshEngine.HighlightSpan>) : HighlightCaptureSource {
+    override val size get() = values.size
+    override fun startByteUnsigned(index: Int) = values[index].startByteUnsigned
+    override fun endByteUnsigned(index: Int) = values[index].endByteUnsigned
+    override fun styleId(index: Int) = values[index].styleId
+    override fun fontFlags(index: Int) = values[index].fontFlags
+    override fun priority(index: Int) = values[index].priority
+    override fun declarationOrder(index: Int) = values[index].declarationOrder
+    override fun source(index: Int) = values[index].source
+}
+private class BatchHighlightCaptureSource(private val values: HighlightCaptureBatch) : HighlightCaptureSource {
+    override val size get() = values.size
+    override fun startByteUnsigned(index: Int) = values.startByteUnsignedAt(index)
+    override fun endByteUnsigned(index: Int) = values.endByteUnsignedAt(index)
+    override fun styleId(index: Int) = values.styleIdAt(index)
+    override fun fontFlags(index: Int) = values.fontFlagsAt(index)
+    override fun priority(index: Int) = values.priorityAt(index)
+    override fun declarationOrder(index: Int) = values.declarationOrderAt(index)
+    override fun source(index: Int) = values.sourceAt(index)
+}
 /**
  * Windbell Treesitter Highlighting Configuration Engine (Windbell-TSH)
  * Provides the dual-backend highlighting bridge and DSL-backed style rendering.
@@ -585,6 +615,30 @@ class WindbellTshEngine private constructor() {
         start: Int = 0,
         end: Int = spannable.length
     ) {
+        applyCaptureSourceToSpannable(ListHighlightCaptureSource(spans), documentOffset, text, extension, spannable, start, end)
+    }
+
+    fun applyHighlightCaptureBatchToSpannable(
+        batch: HighlightCaptureBatch,
+        documentOffset: Int,
+        text: String,
+        extension: String,
+        spannable: SpannableStringBuilder,
+        start: Int = 0,
+        end: Int = spannable.length
+    ) {
+        applyCaptureSourceToSpannable(BatchHighlightCaptureSource(batch), documentOffset, text, extension, spannable, start, end)
+    }
+
+    private fun applyCaptureSourceToSpannable(
+        captures: HighlightCaptureSource,
+        documentOffset: Int,
+        text: String,
+        extension: String,
+        spannable: SpannableStringBuilder,
+        start: Int,
+        end: Int
+    ) {
         ensurePalette(extension)
         synchronized(spannable) {
             val palette = paletteCache[extension].orEmpty()
@@ -610,26 +664,26 @@ class WindbellTshEngine private constructor() {
             // object. The ordering is byte-for-byte equivalent to the former
             // compareByDescending/thenBy chain, with source index as final tie-break.
             fun compareCaptureOrder(leftIndex: Int, rightIndex: Int): Int {
-                val left = spans[leftIndex]
-                val right = spans[rightIndex]
-                var order = right.priority.compareTo(left.priority)
+                var order = captures.priority(rightIndex).compareTo(captures.priority(leftIndex))
                 if (order != 0) return order
-                order = left.declarationOrder.compareTo(right.declarationOrder)
+                order = captures.declarationOrder(leftIndex).compareTo(captures.declarationOrder(rightIndex))
                 if (order != 0) return order
-                order = java.lang.Long.compare(left.startByteUnsigned, right.startByteUnsigned)
+                order = java.lang.Long.compare(
+                    captures.startByteUnsigned(leftIndex), captures.startByteUnsigned(rightIndex))
                 if (order != 0) return order
-                order = java.lang.Long.compare(right.endByteUnsigned, left.endByteUnsigned)
+                order = java.lang.Long.compare(
+                    captures.endByteUnsigned(rightIndex), captures.endByteUnsigned(leftIndex))
                 if (order != 0) return order
-                order = left.source.compareTo(right.source)
+                order = captures.source(leftIndex).compareTo(captures.source(rightIndex))
                 if (order != 0) return order
-                order = left.styleId.compareTo(right.styleId)
+                order = captures.styleId(leftIndex).compareTo(captures.styleId(rightIndex))
                 if (order != 0) return order
-                order = left.fontFlags.compareTo(right.fontFlags)
+                order = captures.fontFlags(leftIndex).compareTo(captures.fontFlags(rightIndex))
                 if (order != 0) return order
                 return leftIndex.compareTo(rightIndex)
             }
 
-            val rankedIndices = IntArray(spans.size) { it }
+            val rankedIndices = IntArray(captures.size) { it }
             fun siftRankedDown(rootIndex: Int, limit: Int) {
                 var root = rootIndex
                 while (true) {
@@ -660,17 +714,17 @@ class WindbellTshEngine private constructor() {
                 siftRankedDown(0, limit)
             }
 
-            val capturePriorityFlags = IntArray(spans.size)
+            val capturePriorityFlags = IntArray(captures.size)
             var rank = -1
             var previousPriority: Int? = null
             var previousDeclaration: Int? = null
             for (index in rankedIndices) {
-                val span = spans[index]
-                if (previousPriority != span.priority ||
-                    previousDeclaration != span.declarationOrder) {
+                val priority = captures.priority(index)
+                val declarationOrder = captures.declarationOrder(index)
+                if (previousPriority != priority || previousDeclaration != declarationOrder) {
                     rank++
-                    previousPriority = span.priority
-                    previousDeclaration = span.declarationOrder
+                    previousPriority = priority
+                    previousDeclaration = declarationOrder
                 }
                 val androidPriority = (255 - rank).coerceAtLeast(1)
                 capturePriorityFlags[index] =
@@ -680,13 +734,13 @@ class WindbellTshEngine private constructor() {
             // Keep clipped captures in primitive parallel arrays. The previous
             // ClippedCapture wrapper allocated one object per overlapping span on
             // every line draw, despite the source HighlightSpan being immutable.
-            val captureSourceIndices = IntArray(spans.size)
-            val captureStarts = IntArray(spans.size)
-            val captureEnds = IntArray(spans.size)
+            val captureSourceIndices = IntArray(captures.size)
+            val captureStarts = IntArray(captures.size)
+            val captureEnds = IntArray(captures.size)
             var captureCount = 0
-            for ((sourceIndex, span) in spans.withIndex()) {
-                val globalStart = span.startByteUnsigned ushr 1
-                val globalEnd = span.endByteUnsigned ushr 1
+            for (sourceIndex in 0 until captures.size) {
+                val globalStart = captures.startByteUnsigned(sourceIndex) ushr 1
+                val globalEnd = captures.endByteUnsigned(sourceIndex) ushr 1
                 val localStart = globalStart - documentOffset.toLong()
                 val localEnd = globalEnd - documentOffset.toLong()
                 val clippedStart = maxOf(localStart, visibleStart.toLong())
@@ -699,9 +753,8 @@ class WindbellTshEngine private constructor() {
             }
             if (captureCount == 0) return@synchronized
 
-            val compareCaptureIndices = java.util.Comparator<Int> { left, right ->
+            fun compareCaptureIndices(left: Int, right: Int): Int =
                 compareCaptureOrder(captureSourceIndices[left], captureSourceIndices[right])
-            }
             val hasForeground = BooleanArray(captureCount)
             val hasBackground = BooleanArray(captureCount)
             val captureFontFlags = IntArray(captureCount)
@@ -712,8 +765,7 @@ class WindbellTshEngine private constructor() {
             var eventWrite = 0
             for (index in 0 until captureCount) {
                 val sourceIndex = captureSourceIndices[index]
-                val span = spans[sourceIndex]
-                val style = palette[span.styleId]
+                val style = palette[captures.styleId(sourceIndex)]
                 // Resolve each appearance independently, but never let an
                 // omitted dark/light override fall through to the editor's base
                 // TextPaint color. That fallback is unrelated to the TSH style and
@@ -729,7 +781,7 @@ class WindbellTshEngine private constructor() {
                 } else {
                     style?.lightFontFlags ?: 0
                 }
-                captureFontFlags[index] = span.fontFlags or schemeFlags
+                captureFontFlags[index] = captures.fontFlags(sourceIndex) or schemeFlags
                 if (hasForeground[index]) activeHeapCapacities[0]++
                 if (hasBackground[index]) activeHeapCapacities[1]++
                 for (bitIndex in 0 until 5) {
@@ -759,8 +811,8 @@ class WindbellTshEngine private constructor() {
                     val right = left + 1
                     var best = left
                     if (right < size &&
-                        compareCaptureIndices.compare(heap[right], heap[left]) < 0) best = right
-                    if (compareCaptureIndices.compare(heap[best], heap[parent]) >= 0) break
+                        compareCaptureIndices(heap[right], heap[left]) < 0) best = right
+                    if (compareCaptureIndices(heap[best], heap[parent]) >= 0) break
                     val swap = heap[parent]
                     heap[parent] = heap[best]
                     heap[best] = swap
@@ -775,7 +827,7 @@ class WindbellTshEngine private constructor() {
                 heap[position] = captureIndex
                 while (position > 0) {
                     val parent = (position - 1) ushr 1
-                    if (compareCaptureIndices.compare(heap[position], heap[parent]) >= 0) break
+                    if (compareCaptureIndices(heap[position], heap[parent]) >= 0) break
                     val swap = heap[parent]
                     heap[parent] = heap[position]
                     heap[position] = swap
@@ -816,7 +868,7 @@ class WindbellTshEngine private constructor() {
                 val flags = Spannable.SPAN_EXCLUSIVE_EXCLUSIVE
                 backgroundIndex?.let { index ->
                     val sourceIndex = captureSourceIndices[index]
-                    val style = palette[spans[sourceIndex].styleId] ?: return@let
+                    val style = palette[captures.styleId(sourceIndex)] ?: return@let
                     val background = when {
                         darkMode && style.hasDarkBackground -> style.darkBackground
                         style.hasLightBackground -> style.lightBackground
@@ -830,7 +882,7 @@ class WindbellTshEngine private constructor() {
                 }
                 foregroundIndex?.let { index ->
                     val sourceIndex = captureSourceIndices[index]
-                    val style = palette[spans[sourceIndex].styleId] ?: return@let
+                    val style = palette[captures.styleId(sourceIndex)] ?: return@let
                     val color = when {
                         darkMode && style.hasDarkColor -> style.darkColor
                         style.hasLightColor -> style.lightColor

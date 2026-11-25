@@ -28,6 +28,26 @@ public:
         }
     }
 
+    // Atomically exchange an existing reservation for a replacement so failed
+    // shared-budget admission cannot destroy the old valid payload.
+    bool tryReplace(size_t oldBytes, size_t newBytes) noexcept {
+        size_t current = used_bytes_.load(std::memory_order_relaxed);
+        for (;;) {
+            size_t next = current;
+            if (newBytes >= oldBytes) {
+                const size_t increase = newBytes - oldBytes;
+                if (increase > limit_bytes_ - std::min(limit_bytes_, current)) return false;
+                next = current + increase;
+            } else {
+                const size_t decrease = oldBytes - newBytes;
+                next = current - std::min(current, decrease);
+            }
+            if (used_bytes_.compare_exchange_weak(
+                    current, next,
+                    std::memory_order_acq_rel, std::memory_order_relaxed)) return true;
+        }
+    }
+
     void release(size_t bytes) noexcept {
         size_t current = used_bytes_.load(std::memory_order_relaxed);
         for (;;) {
@@ -180,27 +200,43 @@ public:
             return;
         }
         auto existing = entries_.find(key);
-        if (existing != entries_.end()) erase(existing);
-        if (shared_budget_ && !shared_budget_->tryAcquire(bytes)) {
+        const size_t previousBytes = existing == entries_.end() ? 0u : existing->second.bytes;
+        const bool reserved = shared_budget_
+            ? (existing == entries_.end()
+                ? shared_budget_->tryAcquire(bytes)
+                : shared_budget_->tryReplace(previousBytes, bytes))
+            : true;
+        if (!reserved) {
             ++payload_rejected_count_;
             return;
         }
 
-        try {
-            const auto inserted = entries_.emplace(
-                key, Entry{std::move(value), nullptr, nullptr, nullptr, bytes});
-            if (!inserted.second) {
+        if (existing != entries_.end()) {
+            // Keep the existing map node and LRU links. Move-assigning the span
+            // vector replaces its payload without losing the old key on failure.
+            used_bytes_ -= std::min(used_bytes_, previousBytes);
+            existing->second.value = std::move(value);
+            existing->second.bytes = bytes;
+            used_bytes_ += bytes;
+            touch(&existing->second);
+        } else {
+            try {
+                const auto inserted = entries_.emplace(
+                    key, Entry{std::move(value), nullptr, nullptr, nullptr, bytes});
+                if (!inserted.second) {
+                    if (shared_budget_) shared_budget_->release(bytes);
+                    ++payload_rejected_count_;
+                    return;
+                }
+                inserted.first->second.key = &inserted.first->first;
+                linkFront(&inserted.first->second);
+                used_bytes_ += bytes;
+            } catch (...) {
                 if (shared_budget_) shared_budget_->release(bytes);
+                ++payload_rejected_count_;
                 return;
             }
-            inserted.first->second.key = &inserted.first->first;
-            linkFront(&inserted.first->second);
-        } catch (...) {
-            if (shared_budget_) shared_budget_->release(bytes);
-            ++payload_rejected_count_;
-            return;
         }
-        used_bytes_ += bytes;
         while (used_bytes_ > budget_bytes_ && tail_ != nullptr) {
             const auto victim = entries_.find(*tail_->key);
             if (victim == entries_.end()) {

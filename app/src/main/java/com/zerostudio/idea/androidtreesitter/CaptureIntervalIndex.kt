@@ -1,6 +1,7 @@
 package com.zerostudio.idea.androidtreesitter
 
 import com.zerostudio.idea.treesitter.tsh.WindbellTshEngine
+import com.zerostudio.idea.treesitter.tsh.HighlightCaptureBatch
 
 /**
  * Immutable primitive-array interval index over sorted native captures.
@@ -54,6 +55,73 @@ internal class CaptureIntervalIndex private constructor(
      * producer that violates that ordering contract.
      */
     constructor(nativeFlat: IntArray) : this(packNative(nativeFlat))
+
+    /** Builds a viewport-clipped child page from an already-computed native result. */
+    constructor(nativeFlat: IntArray, startByte: Long, endByte: Long) :
+        this(packNative(nativeFlat, startByte, endByte))
+
+    fun countQuery(startUtf16: Int, endUtf16: Int): Int {
+        val bounds = queryBounds(startUtf16, endUtf16)
+        if (bounds == -1L) return 0
+        val lower = (bounds ushr 32).toInt()
+        val upper = bounds.toInt()
+        val startByte = (startUtf16.toLong() * 2L).toInt()
+        var count = 0
+        for (index in lower until upper) {
+            if (Integer.compareUnsigned(ends[index], startByte) > 0) count++
+        }
+        return count
+    }
+
+    fun writeQuery(
+        startUtf16: Int,
+        endUtf16: Int,
+        destination: HighlightCaptureBatch,
+        destinationOffset: Int
+    ): Int {
+        val bounds = queryBounds(startUtf16, endUtf16)
+        if (bounds == -1L) return 0
+        val lower = (bounds ushr 32).toInt()
+        val upper = bounds.toInt()
+        val startByte = (startUtf16.toLong() * 2L).toInt()
+        var output = destinationOffset
+        for (index in lower until upper) {
+            if (Integer.compareUnsigned(ends[index], startByte) <= 0) continue
+            destination.writeRecord(
+                output++, starts[index], ends[index],
+                styleIds[index].toInt() and 0xFFFF,
+                fontFlags[index].toInt() and 0xFFFF,
+                priorities[index], declarationOrders[index],
+                sources[index].toInt() and 0xFF
+            )
+        }
+        return output - destinationOffset
+    }
+
+    /** Returns [lower, upper) packed in a Long; -1 means no overlap. */
+    private fun queryBounds(startUtf16: Int, endUtf16: Int): Long {
+        if (startUtf16 < 0 || endUtf16 <= startUtf16 || size == 0) return -1L
+        val startByte = (startUtf16.toLong() * 2L).toInt()
+        val endByte = (endUtf16.toLong() * 2L).toInt()
+        var low = 0
+        var high = size
+        while (low < high) {
+            val middle = (low + high) ushr 1
+            if (Integer.compareUnsigned(starts[middle], endByte) < 0) low = middle + 1
+            else high = middle
+        }
+        val upper = low
+        if (upper == 0) return -1L
+        low = 0
+        high = upper
+        while (low < high) {
+            val middle = (low + high) ushr 1
+            if (Integer.compareUnsigned(prefixMaxEnd[middle], startByte) <= 0) low = middle + 1
+            else high = middle
+        }
+        if (low >= upper) return -1L
+        return (low.toLong() shl 32) or (upper.toLong() and 0xFFFF_FFFFL)
+    }
 
     fun query(startUtf16: Int, endUtf16: Int): List<WindbellTshEngine.HighlightSpan> {
         if (startUtf16 < 0 || endUtf16 <= startUtf16 || size == 0) return emptyList()
@@ -244,13 +312,30 @@ internal class CaptureIntervalIndex private constructor(
     companion object {
         private const val NATIVE_CAPTURE_STRIDE = 6
 
-        private fun packNative(flat: IntArray): PackedArrays {
+        private fun packNative(
+            flat: IntArray,
+            clipStartByte: Long? = null,
+            clipEndByte: Long? = null
+        ): PackedArrays {
             require(flat.size % NATIVE_CAPTURE_STRIDE == 0) {
                 "Native capture payload must contain six integers per capture"
             }
-            val count = flat.size / NATIVE_CAPTURE_STRIDE
+            val sourceCount = flat.size / NATIVE_CAPTURE_STRIDE
+            val clipStart = clipStartByte?.also { require(it in 0L..0xFFFF_FFFFL) }?.toInt()
+            val clipEnd = clipEndByte?.also { require(it in 0L..0xFFFF_FFFFL) }?.toInt()
+            require((clipStart == null) == (clipEnd == null))
+            if (clipStart != null) require(Integer.compareUnsigned(clipStart, clipEnd!!) <= 0)
+            var count = 0
+            for (index in 0 until sourceCount) {
+                val offset = index * NATIVE_CAPTURE_STRIDE
+                val start = flat[offset]
+                val end = flat[offset + 1]
+                if (clipStart == null ||
+                    (Integer.compareUnsigned(start, clipEnd!!) < 0 &&
+                     Integer.compareUnsigned(end, clipStart) > 0)) count++
+            }
             var sorted = true
-            for (index in 1 until count) {
+            for (index in 1 until sourceCount) {
                 val previous = flat[(index - 1) * NATIVE_CAPTURE_STRIDE]
                 val current = flat[index * NATIVE_CAPTURE_STRIDE]
                 if (Integer.compareUnsigned(previous, current) > 0) {
@@ -259,7 +344,7 @@ internal class CaptureIntervalIndex private constructor(
                 }
             }
             val order: Array<Int>? = if (sorted) null else
-                Array(count) { it }.also { indices ->
+                Array(sourceCount) { it }.also { indices ->
                     indices.sortWith(Comparator { left, right ->
                         Integer.compareUnsigned(
                             flat[left * NATIVE_CAPTURE_STRIDE],
@@ -277,22 +362,33 @@ internal class CaptureIntervalIndex private constructor(
             val sources = ByteArray(count)
             val prefixMaxEnd = IntArray(count)
             var maximumEnd = 0
-            for (index in 0 until count) {
-                val sourceIndex = order?.get(index) ?: index
+            var outputIndex = 0
+            for (orderIndex in 0 until sourceCount) {
+                val sourceIndex = order?.get(orderIndex) ?: orderIndex
                 val offset = sourceIndex * NATIVE_CAPTURE_STRIDE
-                val start = flat[offset]
-                val end = flat[offset + 1]
+                val originalStart = flat[offset]
+                val originalEnd = flat[offset + 1]
+                if (clipStart != null &&
+                    (Integer.compareUnsigned(originalStart, clipEnd!!) >= 0 ||
+                     Integer.compareUnsigned(originalEnd, clipStart) <= 0)) continue
+                val start = if (clipStart != null &&
+                    Integer.compareUnsigned(originalStart, clipStart) < 0) clipStart else originalStart
+                val end = if (clipEnd != null &&
+                    Integer.compareUnsigned(originalEnd, clipEnd) > 0) clipEnd else originalEnd
+                if (Integer.compareUnsigned(start, end) >= 0) continue
                 val packedStyle = flat[offset + 2]
-                starts[index] = start
-                ends[index] = end
-                styleIds[index] = (packedStyle and 0xFFFF).toShort()
-                fontFlags[index] = ((packedStyle ushr 16) and 0xFFFF).toShort()
-                priorities[index] = flat[offset + 3]
-                declarationOrders[index] = flat[offset + 4]
-                sources[index] = flat[offset + 5].toByte()
+                starts[outputIndex] = start
+                ends[outputIndex] = end
+                styleIds[outputIndex] = (packedStyle and 0xFFFF).toShort()
+                fontFlags[outputIndex] = ((packedStyle ushr 16) and 0xFFFF).toShort()
+                priorities[outputIndex] = flat[offset + 3]
+                declarationOrders[outputIndex] = flat[offset + 4]
+                sources[outputIndex] = flat[offset + 5].toByte()
                 if (Integer.compareUnsigned(end, maximumEnd) > 0) maximumEnd = end
-                prefixMaxEnd[index] = maximumEnd
+                prefixMaxEnd[outputIndex] = maximumEnd
+                outputIndex++
             }
+            check(outputIndex == count)
             return PackedArrays(
                 starts, ends, styleIds, fontFlags, priorities,
                 declarationOrders, sources, prefixMaxEnd, count

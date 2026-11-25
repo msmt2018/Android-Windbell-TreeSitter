@@ -378,3 +378,43 @@ These reports remain open until the exact runtime and device acceptance gates be
 - Added cache tests for explicit admission outcomes, zero-byte budgets, and preservation of a prior entry on oversized replacement. This is a correctness fix; no throughput improvement is claimed.
 - Follow-up still required: a persistently oversized viewport should be split into bounded subranges (with UTF-16 surrogate-safe boundaries and preserved query dependency semantics) rather than retried forever at a fixed range. Implement only after measuring the capture index weight and proving that splitting does not lose multiline/ancestor-dependent captures.
 - Primitive Capture Batch remains the next paint-path optimization. It must eliminate per-capture `HighlightSpan` materialization end-to-end, including pending-edit rebasing and all structure-query consumers; it must not introduce an unbudgeted duplicate copy or lazy object-allocating list facade.
+
+
+## 2026-11-25 — Primitive capture projection and Native cache replacement safety
+
+### Source changes made (validation intentionally deferred)
+
+- Added `HighlightCaptureBatch`, an exact-sized primitive parallel-array representation. It preserves unsigned Tree-sitter byte-offset bit patterns and avoids one `HighlightSpan` object per capture.
+- Added two-pass `CaptureIntervalIndex.countQuery()/writeQuery()`. Cache projection counts first and writes directly into the final batch; the old List-based `appendQuery` remains as a compatibility path.
+- Replaced pending-edit `mapNotNull { span.copy(...) }` with a count pass and direct primitive record rebasing. The hot mapping helper returns packed coordinates without allocating one `SourceRange` per capture.
+- Added a primitive-batch Painter entry point. The existing List API remains available; the large-document highlighter uses the primitive entry point and the existing native-precedence sweep-line Painter.
+- Fixed NativeHighlightCache payload replacement under shared-budget pressure. Replacement atomically exchanges the existing shared reservation and updates the existing LRU node in place; failed reservation no longer erases the prior payload first.
+
+### Still open
+
+- A single oversized viewport result still needs adaptive child-page admission from the already-computed native flat result, with UTF-16 surrogate-safe split points and exact capture clipping. Child pages must not rerun the Native query.
+- A range that remains uncacheable at minimum scalar width must use a bounded blocked/degraded state instead of exponential retry.
+- JNI still returns a flat `IntArray`, after which Kotlin packs it into the interval index. A direct native-to-primitive-batch fill path remains open.
+- Cache eviction is a storage event, not semantic invalidation. Scroll-away/back visual continuity still needs end-to-end source remediation and must not be called solved based on this change.
+- No tests or workflows were run, as requested. This source change is not validated.
+
+
+## 2026-11-25 — Follow-up: bounded page admission and eviction retention
+
+The previous section's open items were revisited in source. The following changes are now included in the same implementation batch (still unvalidated):
+
+- **Two-tier capture retention:** the existing 32 MiB total capture budget is divided into a 24 MiB primary LRU and an 8 MiB display-retention LRU. Primary capacity eviction transfers ownership of the same immutable `CaptureIntervalIndex` into the secondary tier; it does not copy the arrays. Both tiers share one range index and the same total byte budget. Explicit invalidation, session teardown, and semantic edit invalidation do not transfer entries.
+- **Edit rebasing:** both tiers are rebased through the same Native dependency proof and edit transform. Capacity evictions caused by a cache rebase can also transfer to the secondary tier. Range lookup, cache hit projection, and cache metrics include both tiers.
+- **Bounded oversized viewport handling:** the Native flat capture result is queried once. A preflight pass estimates exact clipped child-page weights, including captures duplicated across split boundaries and per-page overhead. Only when the total fits the combined 32 MiB budget is the result partitioned into scalar-aligned pages no larger than 8 MiB. Each child index clips the original flat captures to its UTF-16LE byte range; the Native query is not repeated.
+- **Unadmittable result handling:** if the full partitioned representation cannot fit the combined budget, or a minimum scalar-aligned page cannot be split safely, the work item becomes `BLOCKED`. It is retained within the existing bounded RangeWork table and is not retried on every redraw. A document edit/session replacement clears the work state.
+- **Cache transfer ownership:** `ByteBudgetLruCache` now has a capacity-eviction transfer callback. The callback is distinct from semantic invalidation and close; it returns whether ownership was accepted by the secondary tier. The same behavior applies to capacity trimming during entry transformation.
+- **Painter comparator:** the primitive capture-index comparator no longer uses `Comparator<Int>` boxing during heap comparisons.
+
+The JNI encoder was inspected as part of this pass. `ts_windbell_jni.cpp` already encodes captures in fixed 512-span stack batches (12 KiB) directly into the result `jintArray`; it does not build a second full-sized temporary vector. That bounded implementation was retained rather than replaced with an unproven JNI buffer ABI.
+
+### Remaining limitations
+
+- The JNI boundary still materializes a flat `IntArray`, then Kotlin packs it into `CaptureIntervalIndex` arrays. A two-phase JNI API that fills the final primitive batch directly would remove this additional full-result transfer/copy, but requires a carefully versioned JNI contract and is not included here.
+- The two-tier retention is deliberately bounded. If a page is evicted from both tiers, a later viewport miss must query again; eviction itself does not invalidate or clear already-painted styles. Guaranteeing indefinite display retention is incompatible with a finite memory budget.
+- The `BLOCKED` path is a controlled degradation for a result whose full representation exceeds the combined budget. It prevents repeated identical Native queries but does not render captures that cannot be retained. A future streaming Painter path would be required to render such a viewport without retaining its complete capture set.
+- No unit tests, build, instrumentation, or workflow were run, per the requested execution order. The source changes are not validated and must not be marked CI-passing.

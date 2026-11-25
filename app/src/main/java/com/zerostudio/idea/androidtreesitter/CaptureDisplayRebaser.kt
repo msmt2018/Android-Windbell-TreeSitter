@@ -60,12 +60,12 @@ internal object CaptureDisplayRebaser {
      * replaced text or cross an insertion point are intentionally withheld until
      * the native parser has produced a fresh semantic result.
      */
-    fun mapOriginalCaptureToCurrent(
+    fun mapOriginalCaptureToCurrentPacked(
         startUtf16: Int,
         endUtf16: Int,
         edits: List<PendingEdit>
-    ): SourceRange? {
-        if (startUtf16 < 0 || endUtf16 <= startUtf16) return null
+    ): Long {
+        if (startUtf16 < 0 || endUtf16 <= startUtf16) return -1L
         var start = startUtf16.toLong()
         var end = endUtf16.toLong()
         for (edit in edits) {
@@ -74,15 +74,21 @@ internal object CaptureDisplayRebaser {
             val delta = edit.insertedChars.toLong() - edit.deletedChars.toLong()
             when {
                 end <= editStart -> Unit
-                start >= oldEnd -> {
-                    start += delta
-                    end += delta
-                }
-                else -> return null
+                start >= oldEnd -> { start += delta; end += delta }
+                else -> return -1L
             }
-            if (start < 0L || end <= start || end > Int.MAX_VALUE.toLong()) return null
+            if (start < 0L || end <= start || end > Int.MAX_VALUE.toLong()) return -1L
         }
-        return SourceRange(start.toInt(), end.toInt())
+        return (start shl 32) or (end and 0xFFFF_FFFFL)
+    }
+
+    fun mapOriginalCaptureToCurrent(
+        startUtf16: Int,
+        endUtf16: Int,
+        edits: List<PendingEdit>
+    ): SourceRange? {
+        val packed = mapOriginalCaptureToCurrentPacked(startUtf16, endUtf16, edits)
+        return if (packed == -1L) null else SourceRange((packed ushr 32).toInt(), packed.toInt())
     }
 
     fun rebase(

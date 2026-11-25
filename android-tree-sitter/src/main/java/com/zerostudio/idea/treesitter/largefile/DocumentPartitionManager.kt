@@ -556,9 +556,11 @@ class ByteBudgetLruCache<K : Any, V : Any>(
             }
             nextBytes += entry.weight
         }
+        val capacityEvictedEntries = ArrayList<Pair<K, V>>()
         val iterator = transformed.entries.iterator()
         while (overBudget && iterator.hasNext()) {
-            iterator.next()
+            val removed = iterator.next()
+            capacityEvictedEntries += removed.key to removed.value.value
             iterator.remove()
             evictionCountValue++
             nextBytes = 0L
@@ -602,10 +604,19 @@ class ByteBudgetLruCache<K : Any, V : Any>(
         usedBytes = nextBytes
 
         removedEntries.forEach { (key, value) -> onEntryRemoved(key, value) }
-        evictedValues.keys.forEach(onEvict)
+        val transferredValues = IdentityHashMap<V, Boolean>()
+        for ((key, value) in capacityEvictedEntries) {
+            val transferred = runCatching { onCapacityEvicted(key, value) }.getOrDefault(false)
+            if (transferred) transferredValues[value] = true
+        }
+        evictedValues.keys.forEach { value ->
+            if (!transferredValues.containsKey(value)) onEvict(value)
+        }
         addedEntries.forEach { (key, value) -> onEntryAdded(key, value) }
         createdValues.keys.forEach { value ->
-            if (!retainedValues.containsKey(value)) onEvict(value)
+            if (!retainedValues.containsKey(value) && !transferredValues.containsKey(value)) {
+                onEvict(value)
+            }
         }
     }
 
@@ -649,7 +660,10 @@ class ByteBudgetLruCache<K : Any, V : Any>(
             iterator.remove()
             usedBytes -= eldest.weight
             onEntryRemoved(eldestEntry.key, eldest.value)
-            onEvict(eldest.value)
+            val retainedElsewhere = runCatching {
+                onCapacityEvicted(eldestEntry.key, eldest.value)
+            }.getOrDefault(false)
+            if (!retainedElsewhere) onEvict(eldest.value)
             evictionCountValue++
         }
         if (weight > maxBytes - usedBytes) {

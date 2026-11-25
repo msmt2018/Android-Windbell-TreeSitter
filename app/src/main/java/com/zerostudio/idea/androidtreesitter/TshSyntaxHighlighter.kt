@@ -8,6 +8,7 @@ import android.util.Log
 import com.zerostudio.idea.treesitter.TSLanguage
 import com.zerostudio.idea.treesitter.largefile.ByteBudgetLruCache
 import com.zerostudio.idea.treesitter.tsh.WindbellTshEngine
+import com.zerostudio.idea.treesitter.tsh.HighlightCaptureBatch
 import com.zerostudio.idea.treesitter.tsh.NativeTextWindowReader
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -53,20 +54,27 @@ class TshSyntaxHighlighter(
         // Keeping duplicate semantic/display LRUs charged the same payload twice
         // and doubled index maintenance without providing an independent lifetime.
         private const val CAPTURE_CACHE_BYTES = 32L * 1024L * 1024L
-        // Failed viewport attempts are retained only for retry backoff. Keep their
-        // bookkeeping bounded when a broken grammar/native call is hit while scrolling
-        // through many distinct regions of a very large document.
+        private const val DISPLAY_RETENTION_CACHE_BYTES = 8L * 1024L * 1024L
+        private const val PRIMARY_CAPTURE_CACHE_BYTES =
+            CAPTURE_CACHE_BYTES - DISPLAY_RETENTION_CACHE_BYTES
         private const val MAX_RANGE_WORK_ENTRIES = 256
         private val nextSessionId = AtomicLong(1L)
         private val captureRangeIndex = CaptureRangeLookupIndex()
+        // Recently capacity-evicted pages retain their primitive captures. Both
+        // tiers share one hard budget; eviction is storage-only, never semantic invalidation.
+        private val displayRetentionCache =
+            ByteBudgetLruCache<CaptureRangeKey, CaptureIntervalIndex>(
+                DISPLAY_RETENTION_CACHE_BYTES,
+                { index -> 160L + index.size.toLong() * 32L },
+                onEntryAdded = { key, _ -> captureRangeIndex.add(key) },
+                onEntryRemoved = { key, _ -> captureRangeIndex.remove(key) }
+            )
         private val captureCache = ByteBudgetLruCache<CaptureRangeKey, CaptureIntervalIndex>(
-            CAPTURE_CACHE_BYTES,
-            // Primitive CaptureIntervalIndex storage is 25 bytes/capture plus
-            // array/object headers. Charge 32 bytes/capture to include alignment
-            // and allocator overhead without the former 96-byte object estimate.
+            PRIMARY_CAPTURE_CACHE_BYTES,
             { index -> 160L + index.size.toLong() * 32L },
             onEntryAdded = { key, _ -> captureRangeIndex.add(key) },
-            onEntryRemoved = { key, _ -> captureRangeIndex.remove(key) }
+            onEntryRemoved = { key, _ -> captureRangeIndex.remove(key) },
+            onCapacityEvicted = { key, index -> displayRetentionCache.put(key, index) }
         )
     }
 
@@ -89,11 +97,11 @@ class TshSyntaxHighlighter(
     )
 
     private data class CaptureQueryResult(
-        val spans: List<WindbellTshEngine.HighlightSpan>,
+        val captures: HighlightCaptureBatch,
         val complete: Boolean
     )
 
-    private enum class RangeWorkState { QUEUED, RUNNING, SUCCEEDED, FAILED, CANCELLED }
+    private enum class RangeWorkState { QUEUED, RUNNING, SUCCEEDED, FAILED, BLOCKED, CANCELLED }
 
     private class RangeWork(val attempt: Int = 0) {
         @Volatile var state: RangeWorkState = RangeWorkState.QUEUED
@@ -329,7 +337,7 @@ class TshSyntaxHighlighter(
         val projectionStartedNanos = System.nanoTime()
         val spans = synchronized(nativeEditLock) {
             if (largeSession !== active || generation.get() != active.ticket) {
-                return@synchronized emptyList()
+                return@synchronized HighlightCaptureBatch.empty()
             }
             val editPending =
                 active.pendingEditEpoch.get() != active.appliedEditEpoch.get()
@@ -341,7 +349,7 @@ class TshSyntaxHighlighter(
                 else queryStart.coerceAtMost(active.lengthChars.get())
             val boundedEnd = if (editPending) queryEnd
                 else queryEnd.coerceAtMost(active.lengthChars.get())
-            if (boundedStart >= boundedEnd) emptyList()
+            if (boundedStart >= boundedEnd) HighlightCaptureBatch.empty()
             else {
                 val requested = CaptureRangeKey(
                     active.cacheSessionId, boundedStart.toInt(), boundedEnd.toInt())
@@ -361,20 +369,32 @@ class TshSyntaxHighlighter(
                         queryCachedCaptures(
                             oldKey, original.startUtf16, original.endUtf16
                         )?.let { old ->
-                            CaptureQueryResult(
-                                spans = old.spans.mapNotNull { span ->
-                                    val mapped = CaptureDisplayRebaser.mapOriginalCaptureToCurrent(
-                                        ((span.startByte.toLong() and 0xFFFF_FFFFL) / 2L).toInt(),
-                                        ((span.endByte.toLong() and 0xFFFF_FFFFL) / 2L).toInt(),
+                            val oldCaptures = old.captures
+                            var retainedCount = 0
+                            for (captureIndex in 0 until oldCaptures.size) {
+                                if (CaptureDisplayRebaser.mapOriginalCaptureToCurrentPacked(
+                                        (oldCaptures.startByteUnsignedAt(captureIndex) / 2L).toInt(),
+                                        (oldCaptures.endByteUnsignedAt(captureIndex) / 2L).toInt(),
                                         displayEdits
-                                    ) ?: return@mapNotNull null
-                                    span.copy(
-                                        startByte = mapped.startUtf16 * 2,
-                                        endByte = mapped.endUtf16 * 2
-                                    )
-                                },
-                                // These captures are visual continuity only. The
-                                // renderer must retry after the native revision commits.
+                                    ) != -1L) retainedCount++
+                            }
+                            val rebasedCaptures = HighlightCaptureBatch.allocate(retainedCount)
+                            var outputIndex = 0
+                            for (captureIndex in 0 until oldCaptures.size) {
+                                val mapped = CaptureDisplayRebaser.mapOriginalCaptureToCurrentPacked(
+                                    (oldCaptures.startByteUnsignedAt(captureIndex) / 2L).toInt(),
+                                    (oldCaptures.endByteUnsignedAt(captureIndex) / 2L).toInt(),
+                                    displayEdits
+                                )
+                                if (mapped == -1L) continue
+                                rebasedCaptures.copyRecordFrom(
+                                    outputIndex++, oldCaptures, captureIndex,
+                                    (mapped ushr 32).toInt() * 2, mapped.toInt() * 2
+                                )
+                            }
+                            CaptureQueryResult(
+                                captures = rebasedCaptures,
+                                // Display continuity only; native semantics are refreshed after commit.
                                 complete = false
                             ).also {
                                 val displayRange = CaptureDisplayRebaser.SourceRange(
@@ -392,7 +412,7 @@ class TshSyntaxHighlighter(
                 if (!editPending && cached?.complete != true) {
                     enqueueViewportRange(requested)
                 }
-                cached?.spans.orEmpty()
+                cached?.captures ?: HighlightCaptureBatch.empty()
             }
         }
         captureProjectionNanos.addAndGet(System.nanoTime() - projectionStartedNanos)
@@ -401,12 +421,12 @@ class TshSyntaxHighlighter(
         if (firstStyleCallLogged.compareAndSet(false, true)) {
             Log.i(TAG, "Editor renderer invoked styleLine: extension=.$extension line=$bufferLine range=$start..$end captures=${spans.size}")
         }
-        if (spans.isEmpty()) return null
+        if (spans.size == 0) return null
 
         val styled = SpannableStringBuilder(text)
         val paintStartedNanos = System.nanoTime()
-        engine.applyHighlightSpansToSpannable(
-            spans = spans,
+        engine.applyHighlightCaptureBatchToSpannable(
+            batch = spans,
             documentOffset = lineStartOffset,
             text = text,
             extension = extension,
@@ -503,7 +523,7 @@ class TshSyntaxHighlighter(
                     enqueueViewportRange(key)
                     null
                 } else {
-                    cached.spans
+                    cached.captures
                 }
             } ?: return true
             resolved
@@ -513,12 +533,13 @@ class TshSyntaxHighlighter(
             // unknown and avoid inserting bracket pairs into comments/strings.
             return true
         }
-        return spans.any { span ->
-            val style = stylesById[span.styleId]
-            excludedScopes.any { scope ->
-                style?.tags?.contains(scope) == true || style?.scope?.startsWith(scope) == true
-            }
+        for (index in 0 until spans.size) {
+            val style = stylesById[spans.styleIdAt(index)]
+            if (excludedScopes.any { scope ->
+                    style?.tags?.contains(scope) == true || style?.scope?.startsWith(scope) == true
+                }) return true
         }
+        return false
     }
 
     /** Theme changes only invalidate drawing; range captures remain valid. */
@@ -675,6 +696,7 @@ class TshSyntaxHighlighter(
             if (nativeHandle != 0L) engine.closeNativeDocument(nativeHandle)
             if (cacheSessionId != 0L) {
                 captureCache.invalidate { key, _ -> key.sessionId == cacheSessionId }
+                displayRetentionCache.invalidate { key, _ -> key.sessionId == cacheSessionId }
             }
         }
     }
@@ -692,10 +714,9 @@ class TshSyntaxHighlighter(
     }
 
     /**
-     * Read a requested viewport from the single immutable capture cache.
-     * The former display cache held the exact same CaptureIntervalIndex objects
-     * under a second LRU/index and was merged back with LinkedHashSet on every
-     * line draw. That duplicated accounting and lookup work without adding data.
+     * Read a requested viewport across the primary capture LRU and its bounded
+     * display-retention tier. Both tiers share one range index and one total byte
+     * budget; no capture objects or duplicate page copies are created on lookup.
      */
     private fun logPipelineMetricsIfDue() {
         val now = System.nanoTime()
@@ -713,8 +734,10 @@ class TshSyntaxHighlighter(
                 "captureCacheHits=${cachedCaptureHits.get()} captureCacheMisses=${cachedCaptureMisses.get()} " +
                 "nativeRanges=${nativeRangeQueries.get()} nativeLockWaitMs=${nativeRangeWaitNanos.get() / 1_000_000L} " +
                 "nativeQueryMs=${nativeRangeQueryNanos.get() / 1_000_000L} " +
-                "cacheEntries=${captureCache.size} cacheBytes=${captureCache.bytesUsed} " +
-                "cacheEvictions=${captureCache.evictionCount} cacheRejected=${captureCache.rejectedAdmissionCount}"
+                "cacheEntries=${captureCache.size + displayRetentionCache.size} " +
+                "cacheBytes=${captureCache.bytesUsed + displayRetentionCache.bytesUsed} " +
+                "cacheEvictions=${captureCache.evictionCount + displayRetentionCache.evictionCount} " +
+                "cacheRejected=${captureCache.rejectedAdmissionCount + displayRetentionCache.rejectedAdmissionCount}"
         )
     }
 
@@ -735,19 +758,22 @@ class TshSyntaxHighlighter(
         var coveredUntil = startUtf16
         var complete = true
         var foundEntry = false
-        val spans = ArrayList<WindbellTshEngine.HighlightSpan>()
+        var captureCount = 0L
+        val indexes = ArrayList<CaptureIntervalIndex>(keys.size)
         for (cachedKey in keys) {
             if (cachedKey.startUtf16 > coveredUntil) complete = false
-            val index = captureCache.get(cachedKey)
+            val index = captureCache.get(cachedKey) ?: displayRetentionCache.get(cachedKey)
             if (index == null) {
                 captureRangeIndex.remove(cachedKey)
                 continue
             }
             foundEntry = true
-            index.appendQuery(startUtf16, endUtf16, spans)
-            if (cachedKey.endUtf16 > coveredUntil) {
-                coveredUntil = cachedKey.endUtf16
+            indexes += index
+            captureCount += index.countQuery(startUtf16, endUtf16).toLong()
+            if (captureCount > Int.MAX_VALUE) {
+                throw IllegalStateException("Viewport capture count exceeds the primitive batch index domain")
             }
+            if (cachedKey.endUtf16 > coveredUntil) coveredUntil = cachedKey.endUtf16
             if (coveredUntil >= endUtf16) break
         }
         if (coveredUntil < endUtf16) complete = false
@@ -756,16 +782,20 @@ class TshSyntaxHighlighter(
             logPipelineMetricsIfDue()
             return null
         }
+
+        val captures = HighlightCaptureBatch.allocate(captureCount.toInt())
+        var outputOffset = 0
+        for (index in indexes) {
+            outputOffset += index.writeQuery(startUtf16, endUtf16, captures, outputOffset)
+        }
+        check(outputOffset == captures.size) {
+            "Capture index changed while projecting an immutable cache batch"
+        }
         cachedCaptureHits.incrementAndGet()
         logPipelineMetricsIfDue()
-
-        // A partial cache hit is still useful: preserve and paint the captures
-        // already known for this line while the missing gaps are processed. Treat
-        // incomplete coverage as not-ready for structure queries, but never turn
-        // previously captured colors into a plain-text line just because another
-        // part of the same viewport is still being captured.
-        return CaptureQueryResult(spans, complete)
+        return CaptureQueryResult(captures, complete)
     }
+
 
     /** Source intervals already represented by the capture cache. */
     private fun cachedRanges(key: CaptureRangeKey): List<Pair<Int, Int>> {
@@ -773,7 +803,7 @@ class TshSyntaxHighlighter(
         for (cachedKey in captureRangeIndex.findOverlappingRanges(
             key.sessionId, key.startUtf16, key.endUtf16
         )) {
-            if (captureCache.get(cachedKey) != null) {
+            if (captureCache.get(cachedKey) != null || displayRetentionCache.get(cachedKey) != null) {
                 ranges += cachedKey.startUtf16 to cachedKey.endUtf16
             } else captureRangeIndex.remove(cachedKey)
         }
@@ -998,6 +1028,112 @@ class TshSyntaxHighlighter(
         }
     }
 
+    /**
+     * Admits one Native result as a cache page or as scalar-aligned child pages.
+     * All children are clipped from the same flat result, preserving spans that
+     * cross split boundaries without repeating the expensive Native query.
+     *
+     * true = all pages admitted; false = subdivision exhausted; null = stale revision.
+     */
+    private fun admitNativeCaptureRange(
+        active: LargeSession,
+        rootKey: CaptureRangeKey,
+        key: CaptureRangeKey,
+        flat: IntArray,
+        expectedRevision: Long,
+        admittedRanges: MutableList<CaptureRangeKey>
+    ): Boolean? {
+        if (key == rootKey) {
+            val rootBytes = 160L +
+                countNativeCaptures(flat, key.startUtf16, key.endUtf16).toLong() * 32L
+            // Splitting cannot reduce total capture storage; reject before planning
+            // if even the unsplit representation exceeds the combined hard budget.
+            if (rootBytes > CAPTURE_CACHE_BYTES) return false
+            val totalBytes = estimatePartitionedCaptureBytes(
+                flat, key.startUtf16, key.endUtf16, DISPLAY_RETENTION_CACHE_BYTES
+            )
+            // Account for duplicated captures crossing child boundaries and page overhead.
+            if (totalBytes > CAPTURE_CACHE_BYTES) return false
+        }
+
+        val pageBytes = 160L +
+            countNativeCaptures(flat, key.startUtf16, key.endUtf16).toLong() * 32L
+        if (pageBytes > DISPLAY_RETENTION_CACHE_BYTES) {
+            val split = chooseScalarSafeSplit(key.startUtf16, key.endUtf16) ?: return false
+            val left = CaptureRangeKey(key.sessionId, key.startUtf16, split)
+            val right = CaptureRangeKey(key.sessionId, split, key.endUtf16)
+            val leftResult = admitNativeCaptureRange(
+                active, rootKey, left, flat, expectedRevision, admittedRanges
+            ) ?: return null
+            if (!leftResult) return false
+            return admitNativeCaptureRange(
+                active, rootKey, right, flat, expectedRevision, admittedRanges
+            )
+        }
+
+        val index = CaptureIntervalIndex(
+            flat, key.startUtf16.toLong() * 2L, key.endUtf16.toLong() * 2L
+        )
+        val admitted = synchronized(nativeEditLock) {
+            if (generation.get() == active.ticket && largeSession === active &&
+                active.documentRevision.get() == expectedRevision &&
+                active.pendingEditEpoch.get() == active.appliedEditEpoch.get()) {
+                captureCache.put(key, index)
+            } else null
+        } ?: return null
+        if (!admitted) return false
+        admittedRanges += key
+        return true
+    }
+
+    private fun estimatePartitionedCaptureBytes(
+        flat: IntArray,
+        startUtf16: Int,
+        endUtf16: Int,
+        targetPageBytes: Long
+    ): Long {
+        val pageBytes = 160L +
+            countNativeCaptures(flat, startUtf16, endUtf16).toLong() * 32L
+        if (pageBytes <= targetPageBytes) return pageBytes
+        val split = chooseScalarSafeSplit(startUtf16, endUtf16) ?: return Long.MAX_VALUE
+        val left = estimatePartitionedCaptureBytes(flat, startUtf16, split, targetPageBytes)
+        if (left > CAPTURE_CACHE_BYTES) return Long.MAX_VALUE
+        val right = estimatePartitionedCaptureBytes(flat, split, endUtf16, targetPageBytes)
+        if (right > CAPTURE_CACHE_BYTES || left > Long.MAX_VALUE - right) return Long.MAX_VALUE
+        return left + right
+    }
+
+    private fun countNativeCaptures(flat: IntArray, startUtf16: Int, endUtf16: Int): Int {
+        require(flat.size % 6 == 0) { "Native capture payload must contain six integers per capture" }
+        val startByte = (startUtf16.toLong() * 2L).toInt()
+        val endByte = (endUtf16.toLong() * 2L).toInt()
+        var count = 0
+        var offset = 0
+        while (offset < flat.size) {
+            if (Integer.compareUnsigned(flat[offset], endByte) < 0 &&
+                Integer.compareUnsigned(flat[offset + 1], startByte) > 0) count++
+            offset += 6
+        }
+        return count
+    }
+
+    private fun chooseScalarSafeSplit(startUtf16: Int, endUtf16: Int): Int? {
+        if (endUtf16 - startUtf16 <= 1) return null
+        var split = startUtf16 + ((endUtf16 - startUtf16) ushr 1)
+        if (split <= startUtf16 || split >= endUtf16) return null
+        val buffer = host?.buffer ?: return null
+        val before: Int
+        val after: Int
+        try {
+            before = buffer.getCharCode(split - 1)
+            after = buffer.getCharCode(split)
+        } catch (_: Throwable) {
+            return null
+        }
+        if (before in 0xD800..0xDBFF && after in 0xDC00..0xDFFF) split++
+        return split.takeIf { it > startUtf16 && it < endUtf16 }
+    }
+
     private suspend fun executeNativeRangeNow(
         key: CaptureRangeKey
     ): List<CaptureRangeKey> {
@@ -1019,19 +1155,17 @@ class TshSyntaxHighlighter(
                     retry
                 }
                 RangeWorkState.SUCCEEDED, RangeWorkState.CANCELLED -> {
-                    // SUCCEEDED records completion of a capture attempt, not
-                    // permanent ownership of its result. The byte-budget LRU can
-                    // evict that page later (or reject admission under pressure).
-                    // Since uncoveredViewportRanges() above proved that data is
-                    // missing now, a stale SUCCEEDED marker must not suppress the
-                    // recapture forever. Likewise, a cancelled request may be
-                    // resubmitted when its viewport is visible again.
+                    // SUCCEEDED records completion, not permanent ownership.
+                    // Primary-cache eviction transfers the immutable page into the
+                    // bounded display-retention tier; only eviction from both tiers
+                    // creates a true miss. A stale SUCCEEDED marker must not suppress
+                    // that eventual recapture. Cancelled work may also be resubmitted.
                     val retry = RangeWork(existing.attempt)
                     if (!active.rangeWork.replace(key, existing, retry)) return emptyList()
                     trimRangeWork(active)
                     retry
                 }
-                RangeWorkState.QUEUED, RangeWorkState.RUNNING -> return emptyList()
+                RangeWorkState.QUEUED, RangeWorkState.RUNNING, RangeWorkState.BLOCKED -> return emptyList()
             }
         }
         val requestedRevision = active.documentRevision.get()
@@ -1067,32 +1201,26 @@ class TshSyntaxHighlighter(
                         logPipelineMetricsIfDue()
                     }
                 }
-                // Pack the six-int JNI ABI directly into primitive arrays.
-                // Avoid allocating one HighlightSpan object per native capture and
-                // then copying those objects into the cache's compact representation.
-                val index = CaptureIntervalIndex(flat)
-                val admitted = synchronized(nativeEditLock) {
-                    if (generation.get() == active.ticket && largeSession === active &&
-                        active.documentRevision.get() == requestedRevision &&
-                        active.pendingEditEpoch.get() == active.appliedEditEpoch.get()) {
-                        captureCache.put(missingKey, index)
-                    } else null
-                }
+                // Split an oversized result from this one Native query. Child
+                // pages are clipped from the same flat payload; Native is not rerun.
+                val admitted = admitNativeCaptureRange(
+                    active, missingKey, missingKey, flat, requestedRevision, capturedRanges
+                )
                 if (admitted == null) {
                     work.state = RangeWorkState.CANCELLED
                     break
                 }
                 if (!admitted) {
-                    // A query result that was rejected by the byte budget is not
-                    // a completed viewport capture. Route it through FAILED with
-                    // the existing bounded exponential retry, rather than
-                    // reporting SUCCEEDED and repeatedly querying an uncovered gap.
-                    throw IllegalStateException(
-                        "Capture cache rejected viewport ${missingKey.startUtf16}.." +
-                            "${missingKey.endUtf16}; rejectedAdmissions=${captureCache.rejectedAdmissionCount}"
+                    // The minimum scalar-aligned child still cannot fit. Block this
+                    // exact work item rather than repeatedly querying it forever.
+                    work.state = RangeWorkState.BLOCKED
+                    Log.w(
+                        TAG,
+                        "Viewport capture is not cache-admissible after bounded subdivision: " +
+                            "${missingKey.startUtf16}..${missingKey.endUtf16}"
                     )
+                    break
                 }
-                capturedRanges += missingKey
             }
             if (work.state != RangeWorkState.CANCELLED) {
                 work.state = RangeWorkState.SUCCEEDED
@@ -1126,7 +1254,7 @@ class TshSyntaxHighlighter(
                 }
             }
         } finally {
-            if (work.state != RangeWorkState.FAILED) {
+            if (work.state != RangeWorkState.FAILED && work.state != RangeWorkState.BLOCKED) {
                 work.retryWakeJob?.cancel()
                 active.rangeWork.remove(key, work)
             }
@@ -1231,25 +1359,29 @@ class TshSyntaxHighlighter(
         reusableNativeRanges: Set<Pair<Long, Long>>
     ): List<Pair<Long, Long>> {
         val invalidatedRanges = ArrayList<Pair<Long, Long>>()
-        captureCache.transformEntries(
-            predicate = { key, _ -> key.sessionId == sessionId },
-            transform = { key, index ->
-                val next = rebaseCachedEntry(key, index, edits, reusableNativeRanges)
-                if (next == null) {
-                    var startByte = key.startUtf16.toLong() * 2L
-                    var endByte = key.endUtf16.toLong() * 2L
-                    for (edit in edits) {
-                        val mapped = transformViewportRangeForInvalidation(
-                            startByte, endByte, edit
-                        )
-                        startByte = mapped.first
-                        endByte = mapped.second
+        fun rebaseCache(cache: ByteBudgetLruCache<CaptureRangeKey, CaptureIntervalIndex>) {
+            cache.transformEntries(
+                predicate = { key, _ -> key.sessionId == sessionId },
+                transform = { key, index ->
+                    val next = rebaseCachedEntry(key, index, edits, reusableNativeRanges)
+                    if (next == null) {
+                        var startByte = key.startUtf16.toLong() * 2L
+                        var endByte = key.endUtf16.toLong() * 2L
+                        for (edit in edits) {
+                            val mapped = transformViewportRangeForInvalidation(
+                                startByte, endByte, edit
+                            )
+                            startByte = mapped.first
+                            endByte = mapped.second
+                        }
+                        if (startByte < endByte) invalidatedRanges += startByte to endByte
                     }
-                    if (startByte < endByte) invalidatedRanges += startByte to endByte
+                    next
                 }
-                next
-            }
-        )
+            )
+        }
+        rebaseCache(captureCache)
+        rebaseCache(displayRetentionCache)
         return invalidatedRanges
     }
 
@@ -1370,7 +1502,7 @@ class TshSyntaxHighlighter(
                     // Publish cache rebasing and the matching edit epoch atomically
                     // with styleLine's cache reads. Remove only this committed batch:
                     // newer edits may already be queued against the resulting revision.
-                    val captureCacheEntriesBefore = captureCache.size
+                    val captureCacheEntriesBefore = captureCache.size + displayRetentionCache.size
                     val (invalidatedCaptureRanges, readyDisplayRanges) =
                         synchronized(nativeEditLock) {
                             active.documentRevision.incrementAndGet()
@@ -1403,10 +1535,10 @@ class TshSyntaxHighlighter(
                             "byteRanges=${dirtySnapshot.byteRanges.size} lineRanges=${dirtySnapshot.ranges.size} " +
                             "firstDirtyByte=$dirtyStartByte firstDirtyLine=$dirtyStartLine " +
                             "reusableNativeViewports=${reusableNativeRanges.size} " +
-                            "captureCacheEntries=$captureCacheEntriesBefore->${captureCache.size} " +
-                            "captureCacheBytes=${captureCache.bytesUsed} " +
-                            "captureCacheEvictions=${captureCache.evictionCount} " +
-                            "captureCacheRejected=${captureCache.rejectedAdmissionCount} " +
+                            "captureCacheEntries=$captureCacheEntriesBefore->${captureCache.size + displayRetentionCache.size} " +
+                            "captureCacheBytes=${captureCache.bytesUsed + displayRetentionCache.bytesUsed} " +
+                            "captureCacheEvictions=${captureCache.evictionCount + displayRetentionCache.evictionCount} " +
+                            "captureCacheRejected=${captureCache.rejectedAdmissionCount + displayRetentionCache.rejectedAdmissionCount} " +
                             "invalidatedCaptureRanges=${invalidatedCaptureRanges.size} " +
                             "deferredDisplayRanges=${readyDisplayRanges.size} " +
                             "pendingDisplayEdits=${synchronized(nativeEditLock) { pendingDisplayEdits.size }}"
@@ -1493,7 +1625,10 @@ class TshSyntaxHighlighter(
         val overflow = active.rangeWork.size - MAX_RANGE_WORK_ENTRIES
         if (overflow <= 0) return
         active.rangeWork.entries.asSequence()
-            .filter { it.value.state == RangeWorkState.FAILED }
+            .filter {
+                it.value.state == RangeWorkState.FAILED ||
+                    it.value.state == RangeWorkState.BLOCKED
+            }
             .sortedBy { it.value.lastAttemptNanos }
             .take(overflow)
             .forEach { entry ->
@@ -1519,6 +1654,7 @@ class TshSyntaxHighlighter(
                 }
             }.onFailure { Log.w(TAG, "Failed to close native TSH document", it) }
             captureCache.invalidate { key, _ -> key.sessionId == active.cacheSessionId }
+            displayRetentionCache.invalidate { key, _ -> key.sessionId == active.cacheSessionId }
         }
     }
 }
