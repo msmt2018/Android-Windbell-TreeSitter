@@ -20,6 +20,7 @@
 #include <utility>
 
 #include "tree_sitter/api.h"
+#include "../ts_language_lease.h"
 #include "oniguruma.h"
 #include "../largefile/TextSource.h"
 
@@ -418,6 +419,8 @@ public:
     std::string first_line_pattern;
     regex_t* first_line_regex = nullptr;
     const TSLanguage* ts_language = nullptr;
+    // Retains the shared object containing generated language tables.
+    std::shared_ptr<void> language_library_lease;
     
     std::unordered_map<std::string, uint16_t> style_name_to_id;
     std::unordered_map<std::string, TshStyle> style_definitions;

@@ -12,7 +12,7 @@
 
 namespace windbell::largefile {
 
-inline constexpr uint32_t kTreeSitterInputChunkBytes = 64u * 1024u;
+inline constexpr uint32_t kTreeSitterInputChunkBytes = 128u * 1024u;
 
 struct TextChunkView {
     const char *data = nullptr;

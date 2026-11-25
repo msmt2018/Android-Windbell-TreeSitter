@@ -286,3 +286,22 @@ void TSLanguage_Native__SetJniMethods(JNINativeMethod *methods, int count) {
   SET_JNI_METHOD(methods, TSLanguage_Native_stateCount, TSLanguage_stateCount);
   SET_JNI_METHOD(methods, TSLanguage_Native_nextState, TSLanguage_nextState);
 }
+
+// Independent loader reference for the image containing a generated language.
+// This outlives Java TSLanguage.close() while TSH grammars/documents still use it.
+std::shared_ptr<void> retainTreeSitterLanguageLibrary(const TSLanguage *language) noexcept {
+  if (language == nullptr) return {};
+  Dl_info image{};
+  if (dladdr(reinterpret_cast<const void *>(language), &image) == 0 ||
+      image.dli_fname == nullptr || image.dli_fname[0] == '\0') return {};
+  void *handle = dlopen(image.dli_fname, RTLD_NOW | RTLD_LOCAL);
+  if (handle == nullptr) return {};
+  try {
+    return std::shared_ptr<void>(handle, [](void *value) noexcept {
+      if (value != nullptr) (void)dlclose(value);
+    });
+  } catch (...) {
+    (void)dlclose(handle);
+    return {};
+  }
+}

@@ -48,6 +48,9 @@ class TshSyntaxHighlighter(
     private val temporaryDirectory: File
 ) : SyntaxHighlighter {
 
+    // Validate the selected .tsh binding before any native document is created.
+    private val grammarBinding = TshGrammarBinding.bind(language, extension, engine)
+
     companion object {
         private const val TAG = "WindbellTSH"
         // One immutable interval payload is shared by scope lookups and drawing.

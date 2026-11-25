@@ -19,6 +19,7 @@
 #include <chrono>
 
 #include "tsh/WindbellTshCore.h"
+#include "ts_language_lease.h"
 #include "tsh/WindbellTshCompiler.h"
 #include "tsh/TshRegexNative.h"
 #include "tsh/NativeHighlightCache.h"
@@ -104,6 +105,8 @@ struct NativeTshDocument {
     std::unique_ptr<windbell::largefile::MappedFileSource> regex_snapshot;
     uint64_t regex_snapshot_version = UINT64_MAX;
     std::string temporary_directory;
+    // Destructor deletes tree and parser before this loader lease is released.
+    std::shared_ptr<void> grammar_library_lease;
     TSParser *parser = nullptr;
     TSTree *tree = nullptr;
     std::string extension;
@@ -653,6 +656,13 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeLoadTshSource(
             }
             LOGE("WindbellTSH", "Failed to compile TSH grammar rules for: %s", ext_str.c_str());
             return JNI_FALSE;
+        }
+        if (ts_lang != nullptr) {
+            compilation.grammar->language_library_lease = retainTreeSitterLanguageLibrary(ts_lang);
+            if (!compilation.grammar->language_library_lease) {
+                throw_illegal_state(env, "Unable to retain TSH language shared object");
+                return JNI_FALSE;
+            }
         }
         WindbellEngine::getInstance().registerGrammar(ext_str, compilation.grammar);
         return JNI_TRUE;
@@ -1661,6 +1671,12 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeCreateDocument(
     document->extension = extension;
     document->temporary_directory = directory;
     document->length_chars = static_cast<uint32_t>(static_cast<uint64_t>(byte_length) / 2u);
+    const auto *document_language = reinterpret_cast<const TSLanguage *>(language_pointer);
+    document->grammar_library_lease = retainTreeSitterLanguageLibrary(document_language);
+    if (!document->grammar_library_lease) {
+        throw_illegal_state(env, "Unable to retain document TSLanguage shared object");
+        return 0;
+    }
     document->parser = ts_parser_new();
     if (!document->parser || !ts_parser_set_language(
             document->parser, reinterpret_cast<const TSLanguage *>(language_pointer))) {

@@ -36,9 +36,66 @@ set(TSH_TREE_SITTER_HAS_EXACT_QUERY_STEP_BUDGET FALSE)
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
     "${TS_DIR}/lib/src/lib.c"
     "${TS_DIR}/lib/src/query.c"
+    "${TS_DIR}/lib/src/alloc.c"
+    "${TS_DIR}/lib/src/stack.c"
+    "${TS_DIR}/lib/src/parser.c"
+    "${TS_DIR}/lib/src/subtree.c"
 )
 file(READ "${TS_DIR}/lib/src/query.c" TSH_TREE_SITTER_QUERY_SOURCE)
 file(READ "${TS_DIR}/lib/src/lib.c" TSH_TREE_SITTER_LIB_AMALGAMATION)
+
+# Runtime hot-path overlay for the pinned Tree-sitter 0.28 amalgamation.
+# Preserve parse semantics while reducing GLR stack and subtree allocation churn.
+set(TSH_RUNTIME_OVERLAY_ANCHORS 0)
+set(TSH_STACK_POOL_OLD "#define MAX_NODE_POOL_SIZE 50")
+set(TSH_STACK_POOL_NEW "#define MAX_NODE_POOL_SIZE 128")
+set(TSH_SUBTREE_POOL_OLD "#define TS_MAX_TREE_POOL_SIZE 32")
+set(TSH_SUBTREE_POOL_NEW "#define TS_MAX_TREE_POOL_SIZE 128")
+set(TSH_SUBTREE_COPY_OLD "dest->contents = ts_calloc(self.capacity, sizeof(Subtree));")
+set(TSH_SUBTREE_COPY_NEW "dest->contents = ts_malloc((size_t)self.capacity * sizeof(Subtree));")
+set(TSH_STACK_RESERVE_OLD
+    "array_reserve(&self->heads, 4);\n  array_reserve(&self->slices, 4);\n  array_reserve(&self->iterators, 4);")
+set(TSH_STACK_RESERVE_NEW
+    "array_reserve(&self->heads, 8);\n  array_reserve(&self->slices, MAX_ITERATOR_COUNT);\n  array_reserve(&self->iterators, MAX_ITERATOR_COUNT);")
+foreach(anchor IN ITEMS
+    TSH_STACK_POOL_OLD TSH_SUBTREE_POOL_OLD TSH_SUBTREE_COPY_OLD TSH_STACK_RESERVE_OLD)
+    string(FIND "${TSH_TREE_SITTER_LIB_AMALGAMATION}" "${${anchor}}" anchor_position)
+    if(NOT anchor_position LESS 0)
+        math(EXPR TSH_RUNTIME_OVERLAY_ANCHORS "${TSH_RUNTIME_OVERLAY_ANCHORS} + 1")
+    endif()
+endforeach()
+if(TSH_RUNTIME_OVERLAY_ANCHORS EQUAL 4)
+    string(REPLACE "${TSH_STACK_POOL_OLD}" "${TSH_STACK_POOL_NEW}"
+        TSH_TREE_SITTER_LIB_AMALGAMATION "${TSH_TREE_SITTER_LIB_AMALGAMATION}")
+    string(REPLACE "${TSH_SUBTREE_POOL_OLD}" "${TSH_SUBTREE_POOL_NEW}"
+        TSH_TREE_SITTER_LIB_AMALGAMATION "${TSH_TREE_SITTER_LIB_AMALGAMATION}")
+    string(REPLACE "${TSH_SUBTREE_COPY_OLD}" "${TSH_SUBTREE_COPY_NEW}"
+        TSH_TREE_SITTER_LIB_AMALGAMATION "${TSH_TREE_SITTER_LIB_AMALGAMATION}")
+    string(REPLACE "${TSH_STACK_RESERVE_OLD}" "${TSH_STACK_RESERVE_NEW}"
+        TSH_TREE_SITTER_LIB_AMALGAMATION "${TSH_TREE_SITTER_LIB_AMALGAMATION}")
+    set(TSH_TREE_SITTER_HAS_RUNTIME_PERF_OVERLAY TRUE)
+else()
+    set(TSH_TREE_SITTER_HAS_RUNTIME_PERF_OVERLAY FALSE)
+    message(STATUS "Tree-sitter runtime performance overlay skipped: pinned source anchors differ")
+endif()
+
+# Keep allocator failure handling cold and skip a halted-version scan for the
+# common single-stack parse path. These are branch/loop reductions, not limits.
+string(REPLACE "if (size > 0 && !result)" "if (__builtin_expect(size > 0 && !result, 0))"
+    TSH_TREE_SITTER_LIB_AMALGAMATION "${TSH_TREE_SITTER_LIB_AMALGAMATION}")
+string(REPLACE "if (count > 0 && !result)" "if (__builtin_expect(count > 0 && !result, 0))"
+    TSH_TREE_SITTER_LIB_AMALGAMATION "${TSH_TREE_SITTER_LIB_AMALGAMATION}")
+string(REPLACE
+    "uint32_t halted_version_count = ts_stack_halted_version_count(self->stack);"
+    "uint32_t halted_version_count = initial_version_count > 1 ? ts_stack_halted_version_count(self->stack) : 0;"
+    TSH_TREE_SITTER_LIB_AMALGAMATION "${TSH_TREE_SITTER_LIB_AMALGAMATION}")
+
+if(TSH_TREE_SITTER_HAS_RUNTIME_PERF_OVERLAY)
+    set(TSH_RUNTIME_PERF_OVERLAY_DIR "${CMAKE_CURRENT_BINARY_DIR}/tree-sitter-runtime-perf")
+    file(MAKE_DIRECTORY "${TSH_RUNTIME_PERF_OVERLAY_DIR}")
+    file(WRITE "${TSH_RUNTIME_PERF_OVERLAY_DIR}/lib.c" "${TSH_TREE_SITTER_LIB_AMALGAMATION}")
+    set(TSH_TREE_SITTER_LIB_SOURCE "${TSH_RUNTIME_PERF_OVERLAY_DIR}/lib.c")
+endif()
 
 set(TSH_QUERY_STEP_FIELD_MARKER "  unsigned work_count;\n")
 set(TSH_QUERY_STEP_INIT_MARKER "    .work_count = 0,\n  };\n")
