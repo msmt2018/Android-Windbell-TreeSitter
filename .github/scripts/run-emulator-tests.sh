@@ -52,7 +52,7 @@ adb -s emulator-5554 shell settings put global transition_animation_scale 0
 adb -s emulator-5554 shell settings put global window_animation_scale 0
 
 # Return 0 only when both modules have valid reports and each reports tests.
-# Return 2 for a transient empty-report/instrumentation-startup condition.
+# Return 2 for empty reports, 3 for real test failures.
 validate_reports() {
   python3 - <<'PY'
 import glob
@@ -133,7 +133,7 @@ for attempt in 1 2 3 4; do
     break
   fi
 
-  if (( report_status == 2 )) && grep -Eqi 'adb: device offline|no devices/emulators found|device not found|Failed to start Emulator console|Broken pipe|INSTRUMENTATION_FAILED|Unable to connect to adb|emulator-5554' "$log_dir/gradle-attempt-${attempt}.log"; then
+  if (( report_status == 2 )) && grep -Eqi 'adb: device offline|no devices/emulators found|device not found|Failed to start Emulator console|Broken pipe|INSTRUMENTATION_FAILED|Unable to connect to adb' "$log_dir/gradle-attempt-${attempt}.log"; then
     if (( attempt == 4 )); then
       echo "::error::Instrumentation remained empty after 4 attempts; refusing to accept zero-test reports."
       test_result=1
