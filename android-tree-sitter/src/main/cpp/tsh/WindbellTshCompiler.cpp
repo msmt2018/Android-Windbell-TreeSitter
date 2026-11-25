@@ -2950,7 +2950,19 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                                                     program.query = nullptr;
                                                     return nullptr;
                                                 }
-                                                operands.expected_utf16.emplace_back(decoded.begin(), decoded.end());
+                                                // Predicate match helpers compare UTF-16LE source bytes
+                                                // (Tree-sitter byte offsets), not uint16_t code-unit arrays.
+                                                // Preserve both bytes of every decoded code unit; directly
+                                                // emplacing uint16_t values into vector<UChar> truncated
+                                                // non-ASCII units and made even ASCII literals lose their
+                                                // zero high byte.
+                                                std::vector<UChar> utf16le;
+                                                utf16le.reserve(decoded.size() * sizeof(uint16_t));
+                                                for (const uint16_t code_unit : decoded) {
+                                                    utf16le.push_back(static_cast<UChar>(code_unit & 0xFFu));
+                                                    utf16le.push_back(static_cast<UChar>(code_unit >> 8u));
+                                                }
+                                                operands.expected_utf16.emplace_back(std::move(utf16le));
                                             }
                                         }
                                         program.compiled_predicates_by_pattern[pattern].push_back(std::move(operands));
