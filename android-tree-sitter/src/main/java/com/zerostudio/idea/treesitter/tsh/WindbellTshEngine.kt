@@ -1,6 +1,7 @@
 package com.zerostudio.idea.treesitter.tsh
 
 import android.text.Spannable
+import android.text.Spanned
 import android.text.SpannableStringBuilder
 import android.text.TextPaint
 import android.text.style.CharacterStyle
@@ -699,10 +700,7 @@ class WindbellTshEngine private constructor() {
             if (captureCount == 0) return@synchronized
 
             val compareCaptureIndices = java.util.Comparator<Int> { left, right ->
-                val order = nativeOrder.compare(
-                    spans[captureSourceIndices[left]], spans[captureSourceIndices[right]]
-                )
-                if (order != 0) order else left.compareTo(right)
+                compareCaptureOrder(captureSourceIndices[left], captureSourceIndices[right])
             }
             val hasForeground = BooleanArray(captureCount)
             val hasBackground = BooleanArray(captureCount)
