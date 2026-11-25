@@ -366,9 +366,9 @@ if(TSH_PARSER_REDUCE_PATCH_POSITION LESS 0)
 endif()
 
 
-// Parser phase telemetry: measure lexer callback execution separately from
-// reduction work and parent-node construction. clock() reports process CPU
-// ticks, so these counters exclude time spent blocked in the input callback.
+# Parser phase telemetry: measure lexer callback execution separately from
+# reduction work and parent-node construction. clock() reports process CPU
+# ticks, so these counters exclude time spent blocked in the input callback.
 string(REPLACE
     "#include <inttypes.h>\n"
     "#include <inttypes.h>\n#include <time.h>\n"
@@ -411,7 +411,11 @@ foreach(TSH_METRIC_ANCHOR
     "self->reduce_calls++;"
     "self->ast_parent_nodes++;"
     "self->lex_calls++;"
-    "parser_work lexer_calls:")
+    "parser_work lexer_calls:"
+    "#include <time.h>"
+    "self->reduce_ticks += (uint64_t)(clock() - reduce_started);"
+    "self->ast_parent_ticks += (uint64_t)(clock() - ast_started);"
+    "self->reduce_child_visits += ast_child_count;")
   string(FIND "${TSH_PARSER_SOURCE}" "${TSH_METRIC_ANCHOR}" TSH_METRIC_POSITION)
   if(TSH_METRIC_POSITION LESS 0)
     message(FATAL_ERROR "Tree-sitter parser phase telemetry patch did not apply: ${TSH_METRIC_ANCHOR}")
