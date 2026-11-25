@@ -201,11 +201,14 @@ public class TSLanguage extends TSNativeObject {
 
   @Override
   public void close() {
-    if (isExternal()) {
-      Native.dlclose(getLibHandle());
-      setLibHandle(0);
+    // Multiple owners may race to close a shared cached language. Transfer the
+    // loader handle to exactly one caller before invoking dlclose; checking
+    // isExternal() followed by getLibHandle()/setLibHandle(0) can double-close.
+    final long handle = libHandle.getAndSet(0);
+    if (handle != 0) {
+      Native.dlclose(handle);
 
-      // Language instance loaded using loadLanguage(...) must not be reused
+      // Language instance loaded using loadLanguage(...) must not be reused.
       TSLanguageCache.remove(this);
     }
 
