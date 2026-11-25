@@ -157,12 +157,22 @@ jobs:
             local dir_path
             dir_path="$(dirname "$config_path")"
             echo "::group::📦 Installing grammar dependencies: $dir_path"
-            if (cd "$dir_path" && npm install --legacy-peer-deps --no-audit --no-fund); then
-              echo "::endgroup::"
-              return 0
-            fi
+            local attempt=1
+            local max_attempts=4
+            while (( attempt <= max_attempts )); do
+              if (cd "$dir_path" && npm install --legacy-peer-deps --no-audit --no-fund); then
+                echo "::endgroup::"
+                return 0
+              fi
+              if (( attempt < max_attempts )); then
+                local delay=$((attempt * 15))
+                echo "::warning::npm install failed for $dir_path (attempt $attempt/$max_attempts); retrying in ${delay}s"
+                sleep "$delay"
+              fi
+              attempt=$((attempt + 1))
+            done
             echo "::endgroup::"
-            printf '%s\n' "$dir_path" >> "$failed_file"
+            printf '%s\\n' "$dir_path" >> "$failed_file"
             return 1
           }
           export -f install_grammar
@@ -309,12 +319,22 @@ jobs:
             local dir_path
             dir_path="$(dirname "$config_path")"
             echo "::group::📦 Installing grammar dependencies: $dir_path"
-            if (cd "$dir_path" && npm install --legacy-peer-deps --no-audit --no-fund); then
-              echo "::endgroup::"
-              return 0
-            fi
+            local attempt=1
+            local max_attempts=4
+            while (( attempt <= max_attempts )); do
+              if (cd "$dir_path" && npm install --legacy-peer-deps --no-audit --no-fund); then
+                echo "::endgroup::"
+                return 0
+              fi
+              if (( attempt < max_attempts )); then
+                local delay=$((attempt * 15))
+                echo "::warning::npm install failed for $dir_path (attempt $attempt/$max_attempts); retrying in ${delay}s"
+                sleep "$delay"
+              fi
+              attempt=$((attempt + 1))
+            done
             echo "::endgroup::"
-            printf '%s\n' "$dir_path" >> "$failed_file"
+            printf '%s\\n' "$dir_path" >> "$failed_file"
             return 1
           }
           export -f install_grammar
@@ -488,12 +508,22 @@ jobs:
             local dir_path
             dir_path="$(dirname "$config_path")"
             echo "::group::📦 Installing grammar dependencies: $dir_path"
-            if (cd "$dir_path" && npm install --legacy-peer-deps --no-audit --no-fund); then
-              echo "::endgroup::"
-              return 0
-            fi
+            local attempt=1
+            local max_attempts=4
+            while (( attempt <= max_attempts )); do
+              if (cd "$dir_path" && npm install --legacy-peer-deps --no-audit --no-fund); then
+                echo "::endgroup::"
+                return 0
+              fi
+              if (( attempt < max_attempts )); then
+                local delay=$((attempt * 15))
+                echo "::warning::npm install failed for $dir_path (attempt $attempt/$max_attempts); retrying in ${delay}s"
+                sleep "$delay"
+              fi
+              attempt=$((attempt + 1))
+            done
             echo "::endgroup::"
-            printf '%s\n' "$dir_path" >> "$failed_file"
+            printf '%s\\n' "$dir_path" >> "$failed_file"
             return 1
           }
           export -f install_grammar
