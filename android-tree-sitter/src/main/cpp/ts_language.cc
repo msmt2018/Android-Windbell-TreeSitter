@@ -79,7 +79,11 @@ static jint TSLanguage_fldIdForName(JNIEnv *env,
   req_nnp(env, ptr);
   req_nnp(env, name, "field name bytes");
   if (length < 0 || length > env->GetArrayLength(name)) {
-    throw_illegal_args(env, "Invalid Tree-sitter field-name byte length");
+    jclass exception = env->FindClass("java/lang/IllegalArgumentException");
+    if (exception != nullptr) {
+      env->ThrowNew(exception, "Invalid Tree-sitter field-name byte length");
+      env->DeleteLocalRef(exception);
+    }
     return 0;
   }
   jbyte *nm = env->GetByteArrayElements(name, nullptr);
