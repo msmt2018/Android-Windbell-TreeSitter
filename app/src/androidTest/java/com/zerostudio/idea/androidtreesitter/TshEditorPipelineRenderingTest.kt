@@ -489,10 +489,11 @@ class TshEditorPipelineRenderingTest {
         ).filter {
             styled.getSpanStart(it) <= tokenStart && styled.getSpanEnd(it) >= tokenEnd
         }
-        assertTrue("Both outer and nested styles must cover TOKEN", tokenColors.size >= 2)
-        val winningColor = tokenColors.maxByOrNull {
-            styled.getSpanFlags(it) and Spanned.SPAN_PRIORITY
-        }?.foregroundColor
+        // Foreground overlap is resolved by the native-precedence sweep into
+        // one disjoint winning run. Android must not receive overlapping
+        // foreground spans and be asked to arbitrate them a second time.
+        assertEquals("The nested token must have one resolved foreground run", 1, tokenColors.size)
+        val winningColor = tokenColors.single().foregroundColor
         assertEquals(
             "Android span priority must preserve the native high-priority capture",
             engine.getStylePalette("canvas-priority-regression", "inner")?.lightColor,
