@@ -268,6 +268,11 @@ string(REPLACE "ts_subtree_array_copy(subtrees, &subtrees);"
 string(REPLACE "ts_subtree_array_copy(next_iterator->subtrees, &next_iterator->subtrees);"
     "stack__copy_iterator_subtrees(next_iterator->subtrees, &next_iterator->subtrees);"
     TSH_STACK_SOURCE "${TSH_STACK_SOURCE}")
+# Iterator arrays borrow stack-link Subtrees until ts_stack__add_slice retains
+# the completed path. Keeping the old per-link retain here would leak refs.
+string(REPLACE "            ts_subtree_retain(link.subtree);"
+    ""
+    TSH_STACK_SOURCE "${TSH_STACK_SOURCE}")
 string(REPLACE "ts_subtree_array_delete(self->subtree_pool, &iterator->subtrees);"
     "array_delete(&iterator->subtrees);"
     TSH_STACK_SOURCE "${TSH_STACK_SOURCE}")
@@ -297,9 +302,12 @@ string(FIND "${TSH_STACK_SOURCE}" "Convert a borrowed iterator path"
     TSH_STACK_ITERATOR_RETAIN_POSITION)
 string(FIND "${TSH_STACK_SOURCE}" "array_delete(&iterator->subtrees);"
     TSH_STACK_ITERATOR_DELETE_POSITION)
+string(FIND "${TSH_STACK_SOURCE}" "ts_subtree_retain(link.subtree)"
+    TSH_STACK_ITERATOR_OLD_RETAIN_POSITION)
 if(TSH_STACK_ITERATOR_COPY_POSITION LESS 0 OR
    TSH_STACK_ITERATOR_RETAIN_POSITION LESS 0 OR
-   TSH_STACK_ITERATOR_DELETE_POSITION LESS 0)
+   TSH_STACK_ITERATOR_DELETE_POSITION LESS 0 OR
+   NOT TSH_STACK_ITERATOR_OLD_RETAIN_POSITION LESS 0)
     message(FATAL_ERROR "Pinned Tree-sitter borrowed iterator-path patch did not apply")
 endif()
 
