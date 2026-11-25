@@ -180,14 +180,17 @@ static NativeDocumentRegistry &nativeDocumentRegistry() {
 
 struct NativeDocumentInput {
     const windbell::largefile::TextSource *source = nullptr;
+    // Keep read_failed second so {source, false} is explicit and does not
+    // accidentally initialize the first byte of the staging buffer.
+    bool read_failed = false;
+    // Debug profiling separates source-window work from Tree-sitter CPU time.
+    uint64_t read_calls = 0;
+    uint64_t read_bytes = 0;
+    uint64_t read_nanoseconds = 0;
     // Every callback result is copied into stable per-parse storage. TextSource
     // views may be invalidated by boundary look-ahead across PieceTree pieces.
     std::array<char, windbell::largefile::kTreeSitterInputChunkBytes + 2u>
         input_buffer{};
-    // TSInput uses a null/zero-length result to signal EOF. Preserve the
-    // distinction between a real EOF and an I/O/source failure so a failed
-    // read can never be accepted as a successfully parsed truncated document.
-    bool read_failed = false;
 };
 
 // Snapshot transfer crosses JNI once per window. Keep this larger than the
@@ -368,6 +371,16 @@ static const char *nativeDocumentRead(
         return nullptr;
     }
 
+#ifndef NDEBUG
+    const auto read_started = std::chrono::steady_clock::now();
+    const auto record_read = [&](uint32_t count) noexcept {
+        ++input->read_calls;
+        input->read_bytes += count;
+        input->read_nanoseconds += static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::steady_clock::now() - read_started).count());
+    };
+#endif
     // Untouched mmap/contiguous Piece Tree documents can be exposed directly.
     // Tree-sitter consumes the stable backing view without per-callback memcpy,
     // 128 KiB staging writes, or repeated source-window lookups. Edited piece
@@ -383,6 +396,9 @@ static const char *nativeDocumentRead(
             return nullptr;
         }
         *bytes_read = static_cast<uint32_t>(remaining);
+#ifndef NDEBUG
+        record_read(*bytes_read);
+#endif
         return contiguous_data + byte_index;
     }
 
@@ -391,10 +407,16 @@ static const char *nativeDocumentRead(
             *input->source, byte_index, input->input_buffer.data(),
             static_cast<uint32_t>(input->input_buffer.size()), &stable_bytes)) {
         input->read_failed = true;
+#ifndef NDEBUG
+        record_read(0);
+#endif
         return nullptr;
     }
     if (stable_bytes == 0) return nullptr;
     *bytes_read = stable_bytes;
+#ifndef NDEBUG
+    record_read(stable_bytes);
+#endif
     return input->input_buffer.data();
 }
 
@@ -1720,15 +1742,23 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeCreateDocument(
     const auto elapsed_ms = [](auto start, auto end) noexcept {
         return std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
     };
+    const int64_t parse_ms = elapsed_ms(parser_started, parse_finished);
+    const int64_t source_read_ms = static_cast<int64_t>(payload.read_nanoseconds / 1000000u);
+    const int64_t parser_cpu_ms = std::max<int64_t>(0, parse_ms - source_read_ms);
     LOGI("TSHPerf",
-         "nativeCreateDocument bytes=%lld anonymousBacking=%d readerCalls=%llu "
-         "readerTransferAndWriteMs=%lld backingMapPieceTreeMs=%lld parseMs=%lld totalMs=%lld "
+         "nativeCreateDocument bytes=%lld anonymousBacking=%d transferReaderCalls=%llu "
+         "treeInputCalls=%llu treeInputBytes=%llu treeInputReadMs=%lld parserCpuMs=%lld "
+         "backingTransferMs=%lld backingMapPieceTreeMs=%lld parseTotalMs=%lld totalMs=%lld "
          "transferChunkBytes=%u",
          static_cast<long long>(byte_length), anonymous_backing ? 1 : 0,
          static_cast<unsigned long long>(reader_calls),
+         static_cast<unsigned long long>(payload.read_calls),
+         static_cast<unsigned long long>(payload.read_bytes),
+         static_cast<long long>(source_read_ms),
+         static_cast<long long>(parser_cpu_ms),
          static_cast<long long>(elapsed_ms(native_create_started, source_transfer_finished)),
          static_cast<long long>(elapsed_ms(source_transfer_finished, parser_started)),
-         static_cast<long long>(elapsed_ms(parser_started, parse_finished)),
+         static_cast<long long>(parse_ms),
          static_cast<long long>(elapsed_ms(native_create_started, parse_finished)),
          kNativeDocumentTransferChunkBytes);
 #endif
@@ -1937,11 +1967,18 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeApplyDocumentEdi
     }
     if (old_size >= 10u * 1024u * 1024u ||
         used_full_parse_fallback || incremental_parse_ms >= 5) {
+        const int64_t input_read_ms =
+            static_cast<int64_t>(payload.read_nanoseconds / 1000000u);
         LOGI("TSHPerf",
              "nativeApplyDocumentEdit bytes=%llu incrementalParseMs=%lld "
+             "inputCalls=%llu inputBytes=%llu inputReadMs=%lld parserCpuMs=%lld "
              "fullParseFallback=%d fallbackParseMs=%lld dirtyRangesPending=%zu",
              static_cast<unsigned long long>(old_size),
              static_cast<long long>(incremental_parse_ms),
+             static_cast<unsigned long long>(payload.read_calls),
+             static_cast<unsigned long long>(payload.read_bytes),
+             static_cast<long long>(input_read_ms),
+             static_cast<long long>(std::max<int64_t>(0, incremental_parse_ms - input_read_ms)),
              used_full_parse_fallback ? 1 : 0,
              static_cast<long long>(full_parse_fallback_ms),
              document->dirty_byte_intervals.size());
