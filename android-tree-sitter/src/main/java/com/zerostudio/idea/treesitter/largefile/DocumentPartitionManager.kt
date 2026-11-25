@@ -475,7 +475,7 @@ class ByteBudgetLruCache<K : Any, V : Any>(
      */
     private var onCapacityEvicted: (K, V) -> Boolean = { _, _ -> false }
 
-    internal fun setCapacityEvictionHandler(handler: (K, V) -> Boolean) {
+    fun setCapacityEvictionHandler(handler: (K, V) -> Boolean) {
         onCapacityEvicted = handler
     }
 
