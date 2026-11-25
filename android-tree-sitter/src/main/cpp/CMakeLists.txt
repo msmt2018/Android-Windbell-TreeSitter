@@ -423,7 +423,6 @@ set(TSH_STACK_ITER_OLD [=[static StackSliceArray stack__iter(
           link = node->links[0];
           next_iterator = array_get(&self->iterators, i);
         } else {
-          if (self->iterators.size >= MAX_ITERATOR_COUNT) continue;
           link = node->links[j];
           StackIterator current_iterator = *array_get(&self->iterators, i);
           array_push(&self->iterators, current_iterator);
