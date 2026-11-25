@@ -350,10 +350,6 @@ static SubtreeArray stack__materialize_iterator_path(
   return subtrees;
 }]=])
 string(REPLACE
-    "struct Stack {"
-    "struct Stack {"
-    TSH_STACK_SOURCE "${TSH_STACK_SOURCE}")
-string(REPLACE
     "${TSH_STACK_STRUCT_NEW}"
     "${TSH_STACK_STRUCT_NEW}\n\n${TSH_STACK_ITERATOR_HELPERS}"
     TSH_STACK_SOURCE "${TSH_STACK_SOURCE}")
