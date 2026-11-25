@@ -166,13 +166,19 @@ void fillQuery(JNIEnv *env,
   jclass klass = env->GetObjectClass(query);
   if (klass == nullptr) return;
   jfieldID offsetField = env->GetFieldID(klass, "errorOffset", "I");
+  if (offsetField == nullptr || env->ExceptionCheck()) {
+    env->DeleteLocalRef(klass);
+    return;
+  }
   jfieldID errorTypeField = env->GetFieldID(klass, "errorType", "I");
-  if (offsetField == nullptr || errorTypeField == nullptr || env->ExceptionCheck()) {
+  if (errorTypeField == nullptr || env->ExceptionCheck()) {
     env->DeleteLocalRef(klass);
     return;
   }
   env->SetIntField(query, offsetField, static_cast<jint>(error_offset));
-  env->SetIntField(query, errorTypeField, getErrorType(error_type));
+  if (!env->ExceptionCheck()) {
+    env->SetIntField(query, errorTypeField, getErrorType(error_type));
+  }
   env->DeleteLocalRef(klass);
 }
 
