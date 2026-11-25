@@ -322,10 +322,8 @@ public class TSLanguage extends TSNativeObject {
     @FastNative
     static native int[] supertypes(long ptr);
 
-    @FastNative
     static native long[] loadLanguage(String sharedLib, String func);
 
-    @FastNative
     static native void dlclose(long libhandle);
 
     @FastNative
