@@ -9,7 +9,9 @@ import com.zerostudio.idea.treesitter.CleanTreeSitterBuildTask
 import com.zerostudio.idea.treesitter.projectVersionCode
 import org.gradle.plugins.signing.SigningExtension
 import java.io.ByteArrayOutputStream
+import java.time.LocalDate
 import java.time.LocalDateTime
+import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 
 buildscript {
@@ -27,39 +29,37 @@ buildscript {
 }
 
 
-
-
-// 获取当前时间戳 (格式: 20261102212545)
+// Android versionCode keeps its timestamp-based uniqueness.
 val timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMddHHmmss"))
 
-// 获取 Git 当前 Commit 的 Short Hash (如果获取失败则用 "unknown" 保底)
+// Maven version format: yyyyMMdd-<7-character Git HEAD hash>.
+// Fail the build if Git metadata is unavailable; never publish an ambiguous "unknown" version.
+val buildDate = LocalDate.now(ZoneOffset.UTC)
+  .format(DateTimeFormatter.BASIC_ISO_DATE)
+
 val gitCommit = provider {
-    try {
-        val stdout = ByteArrayOutputStream()
-        exec {
-            commandLine("git", "rev-parse", "--short", "HEAD")
-            standardOutput = stdout
-            isIgnoreExitValue = true // 避免在无 Git 环境下构建直接崩溃
-        }
-        stdout.toString().trim().ifEmpty { "unknown" }
-    } catch (e: Exception) {
-        "unknown"
+  val stdout = ByteArrayOutputStream()
+  exec {
+    commandLine("git", "rev-parse", "--short=7", "HEAD")
+    standardOutput = stdout
+  }
+  stdout.toString().trim().also {
+    if (!it.matches(Regex("[0-9a-fA-F]{7}"))) {
+      throw GradleException("Unable to determine the current Git commit hash for the Maven version: '$it'")
     }
+  }
 }.get()
 
-// 拼接生成最终的字符串版本号
-val buildVersionName = "$timestamp-$gitCommit"
+val buildVersionName = "$buildDate-$gitCommit"
 
-// 将时间戳转换为纯数字，用于给 Android 提供唯一的、递增的 VersionCode 
-// 因为 20261102212545 超过了 Int.MAX_VALUE (2147483647)，这里截取去掉年份前两位或采用自增算法
-// 截取后如：2611022125 刚好在 Int 范围内，可以完美作为自增的 VersionCode
-val buildVersionCode = timestamp.substring(2).toLong().let { 
-    if (it > Int.MAX_VALUE) (it % Int.MAX_VALUE).toInt() else it.toInt() 
+// Android versionCode is derived from the full build timestamp and kept within Int range.
+val buildVersionCode = timestamp.substring(2).toLong().let {
+    if (it > Int.MAX_VALUE) (it % Int.MAX_VALUE).toInt() else it.toInt()
 }
 
 // Android uses the leading 'v'; Maven publications remove it.
 // val releaseVersion = providers.gradleProperty("releaseVersion").orElse("1.0.0")
-// version = "v${releaseVersion.get().removePrefix("v")}" 
+// version = "v${releaseVersion.get().removePrefix("v")}"
 
 fun Project.githubPackagesOwner(): String =
   providers.gradleProperty("gpr.owner")
@@ -81,7 +81,7 @@ fun Project.configureBaseExtension() {
       minSdk = 21
       targetSdk = 34
       versionName = buildVersionName
-        versionCode = buildVersionCode
+      versionCode = buildVersionCode
     }
 
     compileOptions {
