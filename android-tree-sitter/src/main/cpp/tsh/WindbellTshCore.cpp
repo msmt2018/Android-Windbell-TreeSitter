@@ -2673,6 +2673,11 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
             });
         }
         TSTreeCursor cursor = ts_tree_cursor_new(ts_tree_root_node(tree));
+        // TreeCursor already maintains the active DFS path. Keep its ancestors
+        // here instead of calling ts_node_parent(), which must rediscover the
+        // parent from the tree root for every visited node.
+        std::vector<TSNode> ancestor_path;
+        ancestor_path.reserve(32);
         std::vector<const AstSelectorRule*> candidate_rules;
         candidate_rules.reserve(grammar->ast_wildcard_rules.size() + 16);
         // Candidate rules are already indexed by node/owner symbol. Deduplicate
@@ -2695,7 +2700,7 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
             TSSymbol sym = ts_node_symbol(node);
             TSFieldId fid = ts_tree_cursor_current_field_id(&cursor);
 
-            TSNode parent = ts_node_parent(node);
+            TSNode parent = ancestor_path.empty() ? TSNode{} : ancestor_path.back();
             TSSymbol parent_sym = ts_node_is_null(parent) ? 0 : ts_node_symbol(parent);
             const TSSymbol parent_grammar_sym = ts_node_is_null(parent) ? 0 :
                 ts_node_grammar_symbol(parent);
@@ -2822,8 +2827,9 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                 }
                 if (ast_rule.ancestor_symbol != 0) {
                     bool ancestor_found = false;
-                    TSNode ancestor = parent;
-                    while (!ts_node_is_null(ancestor)) {
+                    for (auto ancestor_it = ancestor_path.rbegin();
+                         ancestor_it != ancestor_path.rend(); ++ancestor_it) {
+                        const TSNode ancestor = *ancestor_it;
                         // Positive and negative ancestor constraints depend on every
                         // inspected ancestor up to the first match (or the root).
                         append_ast_dependency(ancestor);
@@ -2842,7 +2848,6 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                             ancestor_found = true;
                             break;
                         }
-                        ancestor = ts_node_parent(ancestor);
                     }
                     if (!ancestor_found) continue;
                 }
@@ -3098,15 +3103,22 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                 current_start_byte < range_start_byte &&
                 current_end_byte > range_start_byte &&
                 ts_tree_cursor_goto_first_child_for_byte(&cursor, range_start_byte) >= 0) {
+                ancestor_path.push_back(node);
                 continue;
             }
-            if (!subtree_before_viewport && ts_tree_cursor_goto_first_child(&cursor)) continue;
+            if (!subtree_before_viewport && ts_tree_cursor_goto_first_child(&cursor)) {
+                ancestor_path.push_back(node);
+                continue;
+            }
             if (ts_tree_cursor_goto_next_sibling(&cursor)) continue;
 
-            // Advance to the next sibling of the nearest ancestor. This is
-            // shared by normal DFS completion and whole-subtree viewport skips.
+            // Advance to the next sibling of the nearest ancestor. Each successful
+            // cursor ascent removes the node that just became the current parent
+            // from the cached path; no parent reconstruction or sibling rescan is
+            // needed for ATS parent/ancestor constraints.
             bool retraced = false;
             while (ts_tree_cursor_goto_parent(&cursor)) {
+                if (!ancestor_path.empty()) ancestor_path.pop_back();
                 if (ts_tree_cursor_goto_next_sibling(&cursor)) {
                     retraced = true;
                     break;
