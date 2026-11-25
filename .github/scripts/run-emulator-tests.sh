@@ -3,22 +3,50 @@ set -Eeuo pipefail
 mkdir -p build/emulator-test-logs
 log_dir="build/emulator-test-logs"
 adb start-server
+
+expected_sdk="${EXPECTED_API_LEVEL:-}"
+if [[ -z "$expected_sdk" ]]; then
+  echo "::error::EXPECTED_API_LEVEL must be set by the Android emulator matrix."
+  exit 1
+fi
+
+wait_for_emulator_ready() {
+  local timeout_seconds="${1:-240}"
+  local deadline=$(( $(date +%s) + timeout_seconds ))
+  local stable_probes=0
+  while (( stable_probes < 5 )); do
+    local adb_state actual_sdk fingerprint
+    adb_state="$(adb -s emulator-5554 get-state 2>/dev/null || true)"
+    actual_sdk="$(adb -s emulator-5554 shell getprop ro.build.version.sdk 2>/dev/null | tr -d '\r' || true)"
+    fingerprint="$(adb -s emulator-5554 shell getprop ro.build.fingerprint 2>/dev/null | tr -d '\r' || true)"
+    local boot_completed
+    boot_completed="$(adb -s emulator-5554 shell getprop sys.boot_completed 2>/dev/null | tr -d '\r' || true)"
+    if [[ "$adb_state" == "device" && "$actual_sdk" == "$expected_sdk" &&
+          -n "$fingerprint" && "$boot_completed" == "1" ]] &&
+       adb -s emulator-5554 shell service check activity 2>/dev/null | grep -q "found" &&
+       adb -s emulator-5554 shell service check package 2>/dev/null | grep -q "found"; then
+      stable_probes=$((stable_probes + 1))
+    else
+      stable_probes=0
+      echo "Waiting for stable emulator: adb=$adb_state sdk=$actual_sdk expected=$expected_sdk"
+    fi
+    if (( $(date +%s) >= deadline )); then
+      adb devices -l > "$log_dir/adb-devices-timeout.txt" 2>&1 || true
+      adb -s emulator-5554 shell getprop > "$log_dir/emulator-properties-timeout.txt" 2>&1 || true
+      echo "::error::Emulator did not remain ready at API $expected_sdk within ${timeout_seconds}s."
+      return 1
+    fi
+    sleep 3
+  done
+  echo "Emulator is stable and reports API $expected_sdk."
+}
+
 if ! timeout 180 adb -s emulator-5554 wait-for-device; then
   adb devices -l > "$log_dir/adb-devices.txt" 2>&1 || true
   echo "::error::Emulator failed to connect to adb within 180 seconds."
   exit 1
 fi
-for boot_attempt in $(seq 1 60); do
-  boot_completed="$(adb -s emulator-5554 shell getprop sys.boot_completed 2>/dev/null | tr -d '\r' || true)"
-  if [[ "$boot_completed" == "1" ]]; then break; fi
-  if (( boot_attempt == 60 )); then
-    adb -s emulator-5554 shell getprop > "$log_dir/emulator-properties.txt" 2>&1 || true
-    adb devices -l > "$log_dir/adb-devices.txt" 2>&1 || true
-    echo "::error::Emulator boot did not complete within 120 seconds."
-    exit 1
-  fi
-  sleep 2
-done
+wait_for_emulator_ready 300
 adb -s emulator-5554 shell settings put global animator_duration_scale 0
 adb -s emulator-5554 shell settings put global transition_animation_scale 0
 adb -s emulator-5554 shell settings put global window_animation_scale 0
@@ -46,6 +74,10 @@ for module in modules:
         try:
             root = ET.parse(path).getroot()
             module_count += int(root.attrib.get("tests", "0"))
+            failures = int(root.attrib.get("failures", "0")) + int(root.attrib.get("errors", "0"))
+            if failures:
+                print(f"::error::Instrumentation report {path} contains {failures} failed/error test(s)")
+                sys.exit(3)
         except (ET.ParseError, OSError, ValueError) as exc:
             print(f"::error::Invalid instrumentation report {path}: {exc}")
             sys.exit(1)
@@ -95,25 +127,33 @@ for attempt in 1 2 3 4; do
   # A zero-test report means the Android test runner did not actually execute
   # tests (often emulator/ADB/Instrumentation startup instability). Retry only
   # this infrastructure condition; real test failures are never retried here.
-  if (( report_status == 2 )); then
+  if (( report_status == 3 )); then
+    echo "::error::Instrumentation reports contain real test failures; not retrying."
+    test_result=1
+    break
+  fi
+
+  if (( report_status == 2 )) && grep -Eqi 'adb: device offline|no devices/emulators found|device not found|Failed to start Emulator console|Broken pipe|INSTRUMENTATION_FAILED|Unable to connect to adb|emulator-5554' "$log_dir/gradle-attempt-${attempt}.log"; then
     if (( attempt == 4 )); then
       echo "::error::Instrumentation remained empty after 4 attempts; refusing to accept zero-test reports."
       test_result=1
       break
     fi
     echo "::warning::Instrumentation produced zero tests on attempt ${attempt}/4; reconnecting ADB and retrying."
+    adb reconnect offline >/dev/null 2>&1 || true
+    adb kill-server >/dev/null 2>&1 || true
     adb start-server || true
-    if ! timeout 60 adb -s emulator-5554 wait-for-device; then
-      echo "::error::Emulator/ADB unavailable during zero-test retry."
+    if ! timeout 90 adb -s emulator-5554 wait-for-device; then
+      echo "::error::Emulator/ADB unavailable during instrumentation retry."
       test_result=1
       break
     fi
-    for boot_attempt in $(seq 1 30); do
-      boot_completed="$(adb -s emulator-5554 shell getprop sys.boot_completed 2>/dev/null | tr -d '\r' || true)"
-      [[ "$boot_completed" == "1" ]] && break
-      sleep 2
-    done
-    sleep 10
+    if ! wait_for_emulator_ready 180; then
+      echo "::error::Emulator failed readiness probes during instrumentation retry."
+      test_result=1
+      break
+    fi
+    sleep 5
     continue
   fi
 
