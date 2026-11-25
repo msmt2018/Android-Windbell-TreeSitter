@@ -182,7 +182,9 @@ class TshGrammarRegistry {
     fun register(value: TshGrammarDescriptor): Entry = entries.compute(value.id.lowercase()) { _, old ->
         when {
             old == null -> Entry(value, Entry.State.AVAILABLE)
-            old.descriptor.library.canonicalPath == value.library.canonicalPath -> Entry(value, Entry.State.AVAILABLE)
+            old.descriptor == value -> old
+            old.descriptor.library.canonicalPath == value.library.canonicalPath ->
+                Entry(value, Entry.State.AVAILABLE)
             old.descriptor.source == TshGrammarDescriptor.Source.APK -> old
             value.source == TshGrammarDescriptor.Source.APK -> Entry(value, Entry.State.AVAILABLE)
             else -> Entry(value, Entry.State.CONFLICT, "Conflicting Grammar providers for " + value.id)
@@ -239,13 +241,24 @@ class TshGrammarProvider(
         val directory = File(context.cacheDir, "tsh-grammar-runtime")
         if (!directory.exists() && !directory.mkdirs()) return emptyMap()
         val result = LinkedHashMap<String, File>()
-        for (name in names) {
+        for (name in names.sorted()) {
             if (!name.endsWith(".tsh", true)) continue
             val target = File(directory, name.substringAfterLast('/'))
             try {
-                if (!target.isFile || target.length() == 0L) {
-                    context.assets.open("tsh/$name").use { input ->
-                        FileOutputStream(target).use { output -> input.copyTo(output) }
+                // cacheDir survives APK upgrades. Refresh the cached DSL when the
+                // packaged asset changes instead of silently compiling a stale file.
+                val assetBytes = context.assets.open("tsh/$name").use { it.readBytes() }
+                val unchanged = target.isFile && target.length() == assetBytes.size.toLong() &&
+                    target.readBytes().contentEquals(assetBytes)
+                if (!unchanged) {
+                    val temporary = File.createTempFile(target.name + ".", ".tmp", directory)
+                    try {
+                        FileOutputStream(temporary).use { it.write(assetBytes) }
+                        // Rename within cacheDir so readers never observe a partially
+                        // written grammar when discovery and loading overlap.
+                        android.system.Os.rename(temporary.absolutePath, target.absolutePath)
+                    } finally {
+                        if (temporary.exists()) temporary.delete()
                     }
                 }
                 result[name.substringAfterLast('/').removeSuffix(".tsh").lowercase(Locale.ROOT)] = target
