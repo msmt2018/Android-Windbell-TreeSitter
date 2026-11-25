@@ -172,7 +172,7 @@ jobs:
               attempt=$((attempt + 1))
             done
             echo "::endgroup::"
-            printf '%s\\n' "$dir_path" >> "$failed_file"
+            printf '%s\n' "$dir_path" >> "$failed_file"
             return 1
           }
           export -f install_grammar
@@ -334,7 +334,7 @@ jobs:
               attempt=$((attempt + 1))
             done
             echo "::endgroup::"
-            printf '%s\\n' "$dir_path" >> "$failed_file"
+            printf '%s\n' "$dir_path" >> "$failed_file"
             return 1
           }
           export -f install_grammar
@@ -523,7 +523,7 @@ jobs:
               attempt=$((attempt + 1))
             done
             echo "::endgroup::"
-            printf '%s\\n' "$dir_path" >> "$failed_file"
+            printf '%s\n' "$dir_path" >> "$failed_file"
             return 1
           }
           export -f install_grammar
