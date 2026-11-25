@@ -66,4 +66,41 @@ class CaptureAndByteBudgetCacheTest {
         cache.close()
         assertEquals(0, cache.bytesUsed)
     }
+
+    @Test fun byteLruPutReportsAdmissionAndPreservesOversizedReplacement() {
+        val evicted = mutableListOf<String>()
+        val cache = ByteBudgetLruCache<String, String>(
+            4L,
+            { it.length.toLong() },
+            { evicted += it }
+        )
+
+        assertTrue(cache.put("active", "good"))
+        assertFalse(cache.put("active", "too-large"))
+        assertEquals("good", cache.get("active"))
+        assertEquals(4L, cache.bytesUsed)
+        assertEquals(1L, cache.rejectedAdmissionCount)
+        assertEquals(listOf("too-large"), evicted)
+
+        // A fitting admission may evict older entries, but true means the
+        // new value is actually retained after all accounting/callbacks.
+        assertTrue(cache.put("next", "new"))
+        assertEquals("new", cache.get("next"))
+        assertNull(cache.get("active"))
+        assertEquals(3L, cache.bytesUsed)
+        cache.close()
+    }
+
+    @Test fun zeroBudgetCacheRejectsAdmissionExplicitly() {
+        val evicted = mutableListOf<String>()
+        val cache = ByteBudgetLruCache<String, String>(0L, { it.length.toLong() }) {
+            evicted += it
+        }
+        assertFalse(cache.put("empty", ""))
+        assertNull(cache.get("empty"))
+        assertEquals(1L, cache.rejectedAdmissionCount)
+        assertEquals(listOf(""), evicted)
+        cache.close()
+    }
+
 }
