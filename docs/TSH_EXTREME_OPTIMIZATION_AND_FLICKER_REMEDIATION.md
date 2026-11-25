@@ -350,3 +350,11 @@ These reports remain open until the exact runtime and device acceptance gates be
 
 - Before this commit, workflow #1857 (run ID `45509008770`) was running against head `655d48a4a9de493d19fb28e2663eac76d0100e93`. That run cannot validate commit `3a6b0f2`; a new workflow for the new exact head is required.
 - All open findings remain open until exact-head CI and the relevant API 26/30/35 rendering tests pass. The dark-palette pixel regression, nested span precedence regression, adjacent-boundary regression, and independent font-winner regression must all remain in the test matrix.
+
+
+## 2026-11-25: CI compile regression and correction
+
+- Workflow `45509640256` against `fc3da1523ab82c4e3c5e3453dbbb04afd2656bce` failed in all five jobs because the Kotlin module did not compile. The primary diagnostics were unresolved `Spanned` references in the painter and a stale `nativeOrder` reference in the sweep comparator. The failures were shared compile errors, not API-level rendering regressions.
+- Root cause: the primitive heapsort replacement removed the local `nativeOrder` comparator declaration, but the later sweep-line comparator still referenced it; the new priority-rank metadata also uses `Spanned.SPAN_PRIORITY_SHIFT` without importing `android.text.Spanned` in this file.
+- Commit `eede14fbd8dccb9bd079c60c69632b7733e58149` adds the missing Android `Spanned` import and routes sweep capture comparison through the same primitive `compareCaptureOrder` comparator. The comparator includes the original source index as its final tie-break; clipped captures retain source order, so this preserves the former deterministic tie behavior while eliminating the removed comparator object.
+- Validation is pending for the corrected HEAD. Do not treat the failed workflow as evidence of API 26/30/35 runtime regressions; those jobs stopped at the shared Kotlin compile failure. Keep all four bug tracks open until corrected-head CI completes.
