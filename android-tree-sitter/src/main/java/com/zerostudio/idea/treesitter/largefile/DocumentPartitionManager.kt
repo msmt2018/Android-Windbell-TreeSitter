@@ -463,7 +463,7 @@ class ByteBudgetLruCache<K : Any, V : Any>(
     private val onEvict: (V) -> Unit = {},
     private val onEntryAdded: (K, V) -> Unit = { _, _ -> },
     private val onEntryRemoved: (K, V) -> Unit = { _, _ -> },
- ) : AutoCloseable {
+) : AutoCloseable {
     private data class Entry<V>(val value: V, val weight: Long)
 
     /**
