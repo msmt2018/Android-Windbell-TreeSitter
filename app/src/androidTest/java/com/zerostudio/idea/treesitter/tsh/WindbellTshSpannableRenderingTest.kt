@@ -139,21 +139,21 @@ class WindbellTshSpannableRenderingTest {
             val docCommentId = styles.getValue("docComment").styleId
             val keywordId = styles.getValue("keyword").styleId
             val captures = listOf(
-                WindbellTshEngine.HighlightSpan(0, 12, docCommentId, 0, 140, 0, 2),
-                WindbellTshEngine.HighlightSpan(5, 7, keywordId, 0, 95, 1, 0)
+                WindbellTshEngine.HighlightSpan(0, 8, docCommentId, 0, 140, 0, 2),
+                WindbellTshEngine.HighlightSpan(3, 5, keywordId, 0, 95, 1, 0)
             )
             val styled = SpannableStringBuilder("/* if */ text")
             engine.applyHighlightSpansToSpannable(
                 captures, 0, "/* if */ text", "span-occlusion", styled
             )
 
-            val bold = styled.getSpans(5, 7, android.text.style.StyleSpan::class.java)
+            val bold = styled.getSpans(3, 5, android.text.style.StyleSpan::class.java)
             assertTrue(
                 bold.isEmpty(),
                 "Lower-priority keyword bold must not leak through the higher-priority docComment foreground."
             )
             val foreground = styled.getSpans(
-                5, 7, android.text.style.ForegroundColorSpan::class.java
+                3, 5, android.text.style.ForegroundColorSpan::class.java
             )
             assertTrue(foreground.any { it.foregroundColor == 0xFF629755.toInt() })
             engine.clearAppearanceOverride("span-occlusion")
