@@ -18,6 +18,9 @@
 #include <cstdlib>
 #include <chrono>
 
+// Tree-sitter allocations must be released through the active allocator.
+#include "alloc.h"
+
 #include "tsh/WindbellTshCore.h"
 #include "ts_language_lease.h"
 #include "tsh/WindbellTshCompiler.h"
@@ -2018,7 +2021,7 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeApplyDocumentEdi
             catch (...) { dirty_ranges_ok = false; }
         }
     }
-    std::free(changed_ranges); // Tree-sitter 0.28 documents malloc/free ownership.
+    if (changed_ranges) ts_free(changed_ranges); // Match ts_malloc/ts_current_free, including the bounded pool overlay.
     const uint64_t insertedEnd = static_cast<uint64_t>(start_byte) +
         static_cast<uint64_t>(inserted_size);
     if (dirty_ranges_ok) {
