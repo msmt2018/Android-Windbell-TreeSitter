@@ -971,6 +971,12 @@ class WindbellTshEngine private constructor() {
                 var packedFontPriorities = 0L
                 for (bitIndex in 0 until 5) {
                     val winner = activeWinner(bitIndex + 2) ?: continue
+                    // A higher-precedence foreground capture is an opaque syntax
+                    // layer: lower-priority captures must not leak font attributes
+                    // through it. For example, a keyword's @bold must not make
+                    // the word "if" bold inside a normal-weight Javadoc comment.
+                    if (foreground != null &&
+                        compareCaptureIndices(winner, foreground) > 0) continue
                     fontFlags = fontFlags or (1 shl bitIndex)
                     if (bitIndex < 4) {
                         val priority = (capturePriorityFlags[captureSourceIndices[winner]] ushr
