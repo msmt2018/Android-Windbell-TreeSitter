@@ -79,13 +79,17 @@ class TshSyntaxHighlighter(
                 onEntryAdded = { key, _ -> captureRangeIndex.add(key) },
                 onEntryRemoved = { key, _ -> captureRangeIndex.remove(key) }
             )
-        private val captureCache = ByteBudgetLruCache<CaptureRangeKey, CaptureIntervalIndex>(
-            PRIMARY_CAPTURE_CACHE_BYTES,
-            { index -> 160L + index.size.toLong() * 32L },
-            onEntryAdded = { key, _ -> captureRangeIndex.add(key) },
-            onEntryRemoved = { key, _ -> captureRangeIndex.remove(key) },
-            onCapacityEvicted = { key, index -> displayRetentionCache.put(key, index) }
-        )
+        private val captureCache =
+            ByteBudgetLruCache<CaptureRangeKey, CaptureIntervalIndex>(
+                PRIMARY_CAPTURE_CACHE_BYTES,
+                { index -> 160L + index.size.toLong() * 32L },
+                onEntryAdded = { key, _ -> captureRangeIndex.add(key) },
+                onEntryRemoved = { key, _ -> captureRangeIndex.remove(key) }
+            ).also { cache ->
+                cache.setCapacityEvictionHandler { key, index ->
+                    displayRetentionCache.put(key, index)
+                }
+            }
 
         /**
          * Resolves the file's Grammar through APK/external providers, then enters
