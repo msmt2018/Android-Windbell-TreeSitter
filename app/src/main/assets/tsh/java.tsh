@@ -107,7 +107,7 @@
                 stringBlock: #497B51,
                 comment: #808080,
                 docComment: #629755,
-                docTag: #526F5C @bold,
+                docTag: #C69D48 @bold,
                 number: #6897BB,
                 annotation: #BBB529,
                 constant: #9876AA @bold,
@@ -265,6 +265,8 @@
         // --- 4.5 类型标识符宏观着色 ---
         { node: "type_identifier", style: "type", priority: 95 },
         { node: "scoped_type_identifier", style: "type", priority: 95 },
+        { node: "@", named: false, parent: "annotation", style: "annotation", priority: 120 },
+        { node: "@", named: false, parent: "marker_annotation", style: "annotation", priority: 120 },
         { node: "annotation", field: "name", style: "annotation", priority: 120 },
         { node: "marker_annotation", field: "name", style: "annotation", priority: 120 },
 
