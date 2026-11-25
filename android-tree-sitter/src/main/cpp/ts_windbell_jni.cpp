@@ -1475,6 +1475,22 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeCreateDocument(
         throw_illegal_args(env, "A writable application cache directory is required");
         return 0;
     }
+
+    // The .tsh compilation binds one exact TSLanguage object. Never accept a
+    // caller-supplied parser language merely because the extension matches:
+    // doing so can build an AST with a different symbol/field table than the
+    // one used to compile ATS selectors and native queries.
+    const auto bound_grammar =
+        WindbellEngine::getInstance().getGrammarByExtension(extension);
+    const auto *requested_language =
+        reinterpret_cast<const TSLanguage *>(language_pointer);
+    if (!bound_grammar || bound_grammar->ts_language == nullptr ||
+        bound_grammar->ts_language != requested_language) {
+        throw_illegal_state(env,
+            "TSH grammar language identity mismatch: compile the .tsh source with the exact TSLanguage instance used by the document parser");
+        return 0;
+    }
+
     jclass reader_class = env->GetObjectClass(reader);
     if (!reader_class) return 0;
     jmethodID read_method = env->GetMethodID(reader_class, "read", "(JILjava/nio/ByteBuffer;)I");
