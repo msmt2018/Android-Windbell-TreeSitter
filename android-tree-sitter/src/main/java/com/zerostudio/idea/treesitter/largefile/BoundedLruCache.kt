@@ -21,7 +21,7 @@ class BoundedLruCache<K : Any, V : Any> private constructor(
     val size: Int get() = delegate.size
 
     fun get(key: K): V? = delegate.get(key)
-    fun put(key: K, value: V) = delegate.put(key, value)
+    fun put(key: K, value: V): Boolean = delegate.put(key, value)
     fun removeIf(predicate: (K) -> Boolean) = delegate.invalidate { key, _ -> predicate(key) }
     fun weight(): Long = delegate.bytesUsed
     fun clear() = delegate.close()
