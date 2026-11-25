@@ -379,7 +379,7 @@ string(REPLACE
     TSH_PARSER_SOURCE "${TSH_PARSER_SOURCE}")
 string(REPLACE
     "static StackVersion ts_parser__reduce(\n  TSParser *self,\n  StackVersion version,\n  TSSymbol symbol,\n  uint32_t count,\n  int dynamic_precedence,\n  uint16_t production_id,\n  bool is_fragile,\n  bool end_of_non_terminal_extra\n) {\n  uint32_t initial_version_count = ts_stack_version_count(self->stack);"
-    "static StackVersion ts_parser__reduce(\n  TSParser *self,\n  StackVersion version,\n  TSSymbol symbol,\n  uint32_t count,\n  int dynamic_precedence,\n  uint16_t production_id,\n  bool is_fragile,\n  bool end_of_non_terminal_extra\n) {\n#ifndef NDEBUG\n  const clock_t reduce_started = clock();\n  self->reduce_calls++;\n#endif\n  uint32_t initial_version_count = ts_stack_version_count(self->stack);"
+    "static StackVersion ts_parser__reduce(\n  TSParser *self,\n  StackVersion version,\n  TSSymbol symbol,\n  uint32_t count,\n  int dynamic_precedence,\n  uint16_t production_id,\n  bool is_fragile,\n  bool end_of_non_terminal_extra\n) {\n#ifndef NDEBUG\n  const clock_t reduce_started = clock();\n  self->reduce_calls++;\n  uint32_t initial_version_count = ts_stack_version_count(self->stack);"
     TSH_PARSER_SOURCE "${TSH_PARSER_SOURCE}")
 string(REPLACE
     "    MutableSubtree parent = ts_subtree_new_node(\n      symbol, &children, production_id, self->language\n    );"
