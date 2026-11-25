@@ -228,12 +228,28 @@ file(READ "${TS_DIR}/lib/src/parser.c" TSH_PARSER_SOURCE)
 file(READ "${TS_DIR}/lib/src/subtree.c" TSH_SUBTREE_SOURCE)
 file(READ "${TS_DIR}/lib/src/reusable_node.h" TSH_REUSABLE_NODE_HEADER)
 
+# MAX_ITERATOR_COUNT in upstream stack.c is used as a semantic branch cap:
+# stack__iter silently discards every additional GLR path. Keep its value only
+# as an initial allocation hint; let the Array grow so no parse path is dropped.
+string(REPLACE
+    "#define MAX_ITERATOR_COUNT 64"
+    "#define INITIAL_ITERATOR_CAPACITY 64"
+    TSH_STACK_SOURCE "${TSH_STACK_SOURCE}")
+string(REPLACE
+    "if (self->iterators.size >= MAX_ITERATOR_COUNT) continue;"
+    ""
+    TSH_STACK_SOURCE "${TSH_STACK_SOURCE}")
+string(FIND "${TSH_STACK_SOURCE}" "MAX_ITERATOR_COUNT" TSH_STACK_BRANCH_CAP_POSITION)
+if(NOT TSH_STACK_BRANCH_CAP_POSITION LESS 0)
+    message(FATAL_ERROR "Tree-sitter stack iterator branch cap was not removed")
+endif()
+
 string(REPLACE
     "array_reserve(&self->heads, 4);\n  array_reserve(&self->slices, 4);\n  array_reserve(&self->iterators, 4);"
-    "array_reserve(&self->heads, 8);\n  array_reserve(&self->slices, MAX_ITERATOR_COUNT);\n  array_reserve(&self->iterators, MAX_ITERATOR_COUNT);"
+    "array_reserve(&self->heads, 8);\n  array_reserve(&self->slices, INITIAL_ITERATOR_CAPACITY);\n  array_reserve(&self->iterators, INITIAL_ITERATOR_CAPACITY);"
     TSH_STACK_SOURCE "${TSH_STACK_SOURCE}")
 string(FIND "${TSH_STACK_SOURCE}"
-    "array_reserve(&self->heads, 8);\n  array_reserve(&self->slices, MAX_ITERATOR_COUNT);\n  array_reserve(&self->iterators, MAX_ITERATOR_COUNT);"
+    "array_reserve(&self->heads, 8);\n  array_reserve(&self->slices, INITIAL_ITERATOR_CAPACITY);\n  array_reserve(&self->iterators, INITIAL_ITERATOR_CAPACITY);"
     TSH_STACK_RESERVE_PATCH_POSITION)
 if(TSH_STACK_RESERVE_PATCH_POSITION LESS 0)
     message(FATAL_ERROR "Pinned Tree-sitter stack iterator reserve patch did not apply")
