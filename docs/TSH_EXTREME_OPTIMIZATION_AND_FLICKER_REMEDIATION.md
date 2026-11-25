@@ -426,3 +426,9 @@ The JNI encoder was inspected as part of this pass. `ts_windbell_jni.cpp` alread
 - The Kotlin rebase path now uses a sorted prefix-maximum interval index over reusable Native viewport proofs. A clipped child page is reused only when one surviving Native proof fully contains the transformed child range. It does not incorrectly combine two adjacent proofs to justify one child.
 - This preserves safe reuse of unchanged child pages after unrelated edits while retaining conservative invalidation whenever the parent query's dependency proof is lost.
 - This correction is included in the follow-up source commit. No test or workflow validation was run.
+
+
+### Follow-up source consistency correction
+
+- Unified the reusable Native proof-index type across both cache-rebase entry points. Split child pages now receive the same parent-containment proof check through the entire rebase call chain; the Kotlin cache no longer compares child keys for exact equality against parent Native viewport keys.
+- This is a source consistency correction to the preceding change, not a validation result. Tests and workflows remain intentionally unrun.

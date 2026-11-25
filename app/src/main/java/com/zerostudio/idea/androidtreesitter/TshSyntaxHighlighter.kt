@@ -1391,7 +1391,7 @@ class TshSyntaxHighlighter(
     private fun rebaseCaptureCaches(
         sessionId: Long,
         edits: List<NativeEdit>,
-        reusableNativeRanges: Set<Pair<Long, Long>>
+        reusableNativeRanges: NativeReusableRangeIndex
     ): List<Pair<Long, Long>> {
         val invalidatedRanges = ArrayList<Pair<Long, Long>>()
         fun rebaseCache(cache: ByteBudgetLruCache<CaptureRangeKey, CaptureIntervalIndex>) {
