@@ -77,7 +77,14 @@ static jint TSLanguage_fldIdForName(JNIEnv *env,
                                     jbyteArray name,
                                     jint length) {
   req_nnp(env, ptr);
-  req_nnp(env, name, "field name bytes");
+  if (name == nullptr) {
+    jclass exception = env->FindClass("java/lang/NullPointerException");
+    if (exception != nullptr) {
+      env->ThrowNew(exception, "field name bytes must not be null");
+      env->DeleteLocalRef(exception);
+    }
+    return 0;
+  }
   if (length < 0 || length > env->GetArrayLength(name)) {
     jclass exception = env->FindClass("java/lang/IllegalArgumentException");
     if (exception != nullptr) {
