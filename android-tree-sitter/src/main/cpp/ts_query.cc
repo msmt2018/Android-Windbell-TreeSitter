@@ -31,7 +31,14 @@ static jlong TSQuery_newQuery(JNIEnv *env,
                               jlong language,
                               jstring source) {
   req_nnp(env, language);
-  req_nnp(env, source, "query source");
+  if (source == nullptr) {
+    jclass exception = env->FindClass("java/lang/NullPointerException");
+    if (exception != nullptr) {
+      env->ThrowNew(exception, "query source must not be null");
+      env->DeleteLocalRef(exception);
+    }
+    return 0;
+  }
   req_nnp(env, queryObject, "query object");
 
   const char *c_source = env->GetStringUTFChars(source, nullptr);
