@@ -1076,12 +1076,21 @@ class TshSyntaxHighlighter(
                         active.documentRevision.get() == requestedRevision &&
                         active.pendingEditEpoch.get() == active.appliedEditEpoch.get()) {
                         captureCache.put(missingKey, index)
-                        true
-                    } else false
+                    } else null
                 }
-                if (!admitted) {
+                if (admitted == null) {
                     work.state = RangeWorkState.CANCELLED
                     break
+                }
+                if (!admitted) {
+                    // A query result that was rejected by the byte budget is not
+                    // a completed viewport capture. Route it through FAILED with
+                    // the existing bounded exponential retry, rather than
+                    // reporting SUCCEEDED and repeatedly querying an uncovered gap.
+                    throw IllegalStateException(
+                        "Capture cache rejected viewport ${missingKey.startUtf16}.." +
+                            "${missingKey.endUtf16}; rejectedAdmissions=${captureCache.rejectedAdmissionCount}"
+                    )
                 }
                 capturedRanges += missingKey
             }
