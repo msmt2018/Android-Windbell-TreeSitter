@@ -259,6 +259,354 @@ if(TSH_STACK_RESERVE_PATCH_POSITION LESS 0)
     message(FATAL_ERROR "Pinned Tree-sitter stack iterator reserve patch did not apply")
 endif()
 
+
+# GLR iterators previously cloned the complete SubtreeArray at each branch.
+# Store immutable shared prefixes in an arena instead: branch copies are O(1),
+# each traversed subtree is retained once, and only emitted StackSlices are
+# materialized as independently owned arrays.
+set(TSH_STACK_ITERATOR_OLD [=[typedef struct {
+  StackNode *node;
+  SubtreeArray subtrees;
+  uint32_t subtree_count;
+  bool is_pending;
+} StackIterator;]=])
+set(TSH_STACK_ITERATOR_NEW [=[typedef struct {
+  StackNode *node;
+  uint32_t path_index;
+  uint32_t path_length;
+  Subtree latest_subtree;
+  uint32_t subtree_count;
+  bool is_pending;
+} StackIterator;
+
+typedef struct {
+  uint32_t previous;
+  Subtree subtree;
+} StackPathNode;
+
+typedef Array(StackPathNode) StackPathNodeArray;
+
+#define STACK_PATH_NONE UINT32_MAX]=])
+string(REPLACE "${TSH_STACK_ITERATOR_OLD}" "${TSH_STACK_ITERATOR_NEW}"
+    TSH_STACK_SOURCE "${TSH_STACK_SOURCE}")
+string(FIND "${TSH_STACK_SOURCE}" "uint32_t path_index;" TSH_STACK_PATH_STRUCT_POSITION)
+if(TSH_STACK_PATH_STRUCT_POSITION LESS 0)
+    message(FATAL_ERROR "Persistent GLR iterator structure patch did not apply")
+endif()
+
+set(TSH_STACK_STRUCT_OLD [=[struct Stack {
+  Array(StackHead) heads;
+  StackSliceArray slices;
+  Array(StackIterator) iterators;
+  StackNodeArray node_pool;
+  StackNode *base_node;
+  SubtreePool *subtree_pool;
+};]=])
+set(TSH_STACK_STRUCT_NEW [=[struct Stack {
+  Array(StackHead) heads;
+  StackSliceArray slices;
+  Array(StackIterator) iterators;
+  StackPathNodeArray iterator_paths;
+  StackNodeArray node_pool;
+  StackNode *base_node;
+  SubtreePool *subtree_pool;
+};]=])
+string(REPLACE "${TSH_STACK_STRUCT_OLD}" "${TSH_STACK_STRUCT_NEW}"
+    TSH_STACK_SOURCE "${TSH_STACK_SOURCE}")
+string(FIND "${TSH_STACK_SOURCE}" "StackPathNodeArray iterator_paths;" TSH_STACK_PATH_FIELD_POSITION)
+if(TSH_STACK_PATH_FIELD_POSITION LESS 0)
+    message(FATAL_ERROR "Persistent GLR iterator arena field patch did not apply")
+endif()
+
+set(TSH_STACK_ITERATOR_HELPERS [=[static void stack__clear_iterator_paths(Stack *self) {
+  for (uint32_t i = 0; i < self->iterator_paths.size; i++) {
+    ts_subtree_release(self->subtree_pool, array_get(&self->iterator_paths, i)->subtree);
+  }
+  array_clear(&self->iterator_paths);
+}
+
+static uint32_t stack__append_iterator_path(
+  Stack *self, uint32_t previous, Subtree subtree
+) {
+  StackPathNode path = {.previous = previous, .subtree = subtree};
+  ts_subtree_retain(subtree);
+  array_push(&self->iterator_paths, path);
+  return self->iterator_paths.size - 1;
+}
+
+static SubtreeArray stack__materialize_iterator_path(
+  Stack *self, const StackIterator *iterator
+) {
+  SubtreeArray subtrees = array_new();
+  array_reserve(&subtrees, iterator->path_length);
+  uint32_t path_index = iterator->path_index;
+  while (path_index != STACK_PATH_NONE) {
+    const StackPathNode *path = array_get(&self->iterator_paths, path_index);
+    array_push(&subtrees, path->subtree);
+    ts_subtree_retain(path->subtree);
+    path_index = path->previous;
+  }
+  ts_subtree_array_reverse(&subtrees);
+  return subtrees;
+}]=])
+string(REPLACE
+    "struct Stack {"
+    "struct Stack {"
+    TSH_STACK_SOURCE "${TSH_STACK_SOURCE}")
+string(REPLACE
+    "${TSH_STACK_STRUCT_NEW}"
+    "${TSH_STACK_STRUCT_NEW}\n\n${TSH_STACK_ITERATOR_HELPERS}"
+    TSH_STACK_SOURCE "${TSH_STACK_SOURCE}")
+
+set(TSH_STACK_ITER_OLD [=[static StackSliceArray stack__iter(
+  Stack *self,
+  StackVersion version,
+  StackCallback callback,
+  void *payload,
+  int goal_subtree_count
+) {
+  array_clear(&self->slices);
+  array_clear(&self->iterators);
+
+  StackHead *head = array_get(&self->heads, version);
+  StackIterator new_iterator = {
+    .node = head->node,
+    .subtrees = array_new(),
+    .subtree_count = 0,
+    .is_pending = true,
+  };
+
+  bool include_subtrees = false;
+  if (goal_subtree_count >= 0) {
+    include_subtrees = true;
+    array_reserve(&new_iterator.subtrees, (uint32_t)ts_subtree_alloc_size(goal_subtree_count) / sizeof(Subtree));
+  }
+
+  array_push(&self->iterators, new_iterator);
+
+  while (self->iterators.size > 0) {
+    for (uint32_t i = 0, size = self->iterators.size; i < size; i++) {
+      StackIterator *iterator = array_get(&self->iterators, i);
+      StackNode *node = iterator->node;
+
+      StackAction action = callback(payload, iterator);
+      bool should_pop = action & StackActionPop;
+      bool should_stop = action & StackActionStop || node->link_count == 0;
+
+      if (should_pop) {
+        SubtreeArray subtrees = iterator->subtrees;
+        if (!should_stop) {
+          ts_subtree_array_copy(subtrees, &subtrees);
+        }
+        ts_subtree_array_reverse(&subtrees);
+        ts_stack__add_slice(
+          self,
+          version,
+          node,
+          &subtrees
+        );
+      }
+
+      if (should_stop) {
+        if (!should_pop) {
+          ts_subtree_array_delete(self->subtree_pool, &iterator->subtrees);
+        }
+        array_erase(&self->iterators, i);
+        i--, size--;
+        continue;
+      }
+
+      for (uint32_t j = 1; j <= node->link_count; j++) {
+        StackIterator *next_iterator;
+        StackLink link;
+        if (j == node->link_count) {
+          link = node->links[0];
+          next_iterator = array_get(&self->iterators, i);
+        } else {
+          if (self->iterators.size >= MAX_ITERATOR_COUNT) continue;
+          link = node->links[j];
+          StackIterator current_iterator = *array_get(&self->iterators, i);
+          array_push(&self->iterators, current_iterator);
+          next_iterator = array_back(&self->iterators);
+          ts_subtree_array_copy(next_iterator->subtrees, &next_iterator->subtrees);
+        }
+
+        next_iterator->node = link.node;
+        if (link.subtree.ptr) {
+          if (include_subtrees) {
+            array_push(&next_iterator->subtrees, link.subtree);
+            ts_subtree_retain(link.subtree);
+          }
+
+          if (!ts_subtree_extra(link.subtree)) {
+            next_iterator->subtree_count++;
+            if (!link.is_pending) {
+              next_iterator->is_pending = false;
+            }
+          }
+        } else {
+          next_iterator->subtree_count++;
+          next_iterator->is_pending = false;
+        }
+      }
+    }
+  }
+
+  return self->slices;
+}
+]=])
+set(TSH_STACK_ITER_NEW [=[static StackSliceArray stack__iter(
+  Stack *self,
+  StackVersion version,
+  StackCallback callback,
+  void *payload,
+  int goal_subtree_count
+) {
+  array_clear(&self->slices);
+  array_clear(&self->iterators);
+  stack__clear_iterator_paths(self);
+
+  StackHead *head = array_get(&self->heads, version);
+  StackIterator new_iterator = {
+    .node = head->node,
+    .path_index = STACK_PATH_NONE,
+    .path_length = 0,
+    .latest_subtree = NULL_SUBTREE,
+    .subtree_count = 0,
+    .is_pending = true,
+  };
+
+  const bool include_subtrees = goal_subtree_count >= 0;
+  array_push(&self->iterators, new_iterator);
+
+  while (self->iterators.size > 0) {
+    for (uint32_t i = 0, size = self->iterators.size; i < size; i++) {
+      StackIterator *iterator = array_get(&self->iterators, i);
+      StackNode *node = iterator->node;
+
+      StackAction action = callback(payload, iterator);
+      const bool should_pop = action & StackActionPop;
+      const bool should_stop = (action & StackActionStop) || node->link_count == 0;
+
+      if (should_pop) {
+        // Immutable path prefixes are shared by index. Materialize an owned
+        // array only when a callback emits a StackSlice.
+        SubtreeArray subtrees = stack__materialize_iterator_path(self, iterator);
+        ts_stack__add_slice(self, version, node, &subtrees);
+      }
+
+      if (should_stop) {
+        array_erase(&self->iterators, i);
+        i--, size--;
+        continue;
+      }
+
+      for (uint32_t j = 1; j <= node->link_count; j++) {
+        StackIterator *next_iterator;
+        StackLink link;
+        if (j == node->link_count) {
+          link = node->links[0];
+          next_iterator = array_get(&self->iterators, i);
+        } else {
+          link = node->links[j];
+          StackIterator current_iterator = *array_get(&self->iterators, i);
+          array_push(&self->iterators, current_iterator);
+          next_iterator = array_back(&self->iterators);
+        }
+
+        next_iterator->node = link.node;
+        if (link.subtree.ptr) {
+          if (include_subtrees) {
+            next_iterator->path_index = stack__append_iterator_path(
+              self, next_iterator->path_index, link.subtree);
+            next_iterator->path_length++;
+            next_iterator->latest_subtree = link.subtree;
+          }
+          if (!ts_subtree_extra(link.subtree)) {
+            next_iterator->subtree_count++;
+            if (!link.is_pending) next_iterator->is_pending = false;
+          }
+        } else {
+          next_iterator->subtree_count++;
+          next_iterator->is_pending = false;
+        }
+      }
+    }
+  }
+
+  // StackSlices own their own references; the shared arena can now be released.
+  stack__clear_iterator_paths(self);
+  return self->slices;
+}]=])
+string(REPLACE "${TSH_STACK_ITER_OLD}" "${TSH_STACK_ITER_NEW}"
+    TSH_STACK_SOURCE "${TSH_STACK_SOURCE}")
+string(FIND "${TSH_STACK_SOURCE}" "stack__materialize_iterator_path"
+    TSH_STACK_ITER_PATH_POSITION)
+if(TSH_STACK_ITER_PATH_POSITION LESS 0)
+    message(FATAL_ERROR "Persistent GLR iterator traversal patch did not apply")
+endif()
+
+set(TSH_STACK_ERROR_CALLBACK_OLD [=[forceinline StackAction pop_error_callback(void *payload, const StackIterator *iterator) {
+  if (iterator->subtrees.size > 0) {
+    bool *found_error = payload;
+    if (!*found_error && ts_subtree_is_error(*array_get(&iterator->subtrees, 0))) {
+      *found_error = true;
+      return StackActionPop | StackActionStop;
+    } else {
+      return StackActionStop;
+    }
+  } else {
+    return StackActionNone;
+  }
+}
+]=])
+set(TSH_STACK_ERROR_CALLBACK_NEW [=[forceinline StackAction pop_error_callback(void *payload, const StackIterator *iterator) {
+  if (iterator->path_length > 0 && iterator->latest_subtree.ptr) {
+    bool *found_error = payload;
+    if (!*found_error && ts_subtree_is_error(iterator->latest_subtree)) {
+      *found_error = true;
+      return StackActionPop | StackActionStop;
+    }
+    return StackActionStop;
+  }
+  return StackActionNone;
+}]=])
+string(REPLACE "${TSH_STACK_ERROR_CALLBACK_OLD}" "${TSH_STACK_ERROR_CALLBACK_NEW}"
+    TSH_STACK_SOURCE "${TSH_STACK_SOURCE}")
+
+string(REPLACE
+    "  array_init(&self->iterators);\n  array_init(&self->node_pool);"
+    "  array_init(&self->iterators);\n  array_init(&self->iterator_paths);\n  array_init(&self->node_pool);"
+    TSH_STACK_SOURCE "${TSH_STACK_SOURCE}")
+string(REPLACE
+    "  array_reserve(&self->iterators, INITIAL_ITERATOR_CAPACITY);\n  array_reserve(&self->node_pool, MAX_NODE_POOL_SIZE);"
+    "  array_reserve(&self->iterators, INITIAL_ITERATOR_CAPACITY);\n  array_reserve(&self->iterator_paths, INITIAL_ITERATOR_CAPACITY);\n  array_reserve(&self->node_pool, MAX_NODE_POOL_SIZE);"
+    TSH_STACK_SOURCE "${TSH_STACK_SOURCE}")
+string(REPLACE
+    "void ts_stack_delete(Stack *self) {"
+    "void ts_stack_delete(Stack *self) {\n  stack__clear_iterator_paths(self);"
+    TSH_STACK_SOURCE "${TSH_STACK_SOURCE}")
+string(REPLACE
+    "  if (self->iterators.contents)\n    array_delete(&self->iterators);"
+    "  if (self->iterators.contents)\n    array_delete(&self->iterators);\n  if (self->iterator_paths.contents)\n    array_delete(&self->iterator_paths);"
+    TSH_STACK_SOURCE "${TSH_STACK_SOURCE}")
+string(REPLACE
+    "void ts_stack_clear(Stack *self) {"
+    "void ts_stack_clear(Stack *self) {\n  stack__clear_iterator_paths(self);"
+    TSH_STACK_SOURCE "${TSH_STACK_SOURCE}")
+
+foreach(TSH_STACK_PATH_ANCHOR
+    "StackPathNodeArray iterator_paths;"
+    "array_init(&self->iterator_paths);"
+    "array_reserve(&self->iterator_paths, INITIAL_ITERATOR_CAPACITY);"
+    "stack__clear_iterator_paths(self);")
+  string(FIND "${TSH_STACK_SOURCE}" "${TSH_STACK_PATH_ANCHOR}" TSH_STACK_PATH_ANCHOR_POSITION)
+  if(TSH_STACK_PATH_ANCHOR_POSITION LESS 0)
+    message(FATAL_ERROR "Persistent GLR iterator lifecycle patch did not apply: ${TSH_STACK_PATH_ANCHOR}")
+  endif()
+endforeach()
+
+
 set(TSH_SUBTREE_COPY_OLD [=[void ts_subtree_array_copy(SubtreeArray self, SubtreeArray *dest) {
   dest->size = self.size;
   dest->capacity = self.capacity;
