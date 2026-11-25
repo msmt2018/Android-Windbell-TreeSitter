@@ -101,6 +101,41 @@ class TshSyntaxHighlighter(
         val complete: Boolean
     )
 
+    /**
+     * Native records the dependency proof for the original viewport query. When
+     * Kotlin stores that result as clipped child pages, each child is reusable
+     * whenever one surviving native proof fully contains it.
+     */
+    private class NativeReusableRangeIndex(ranges: Collection<Pair<Long, Long>>) {
+        private val starts: LongArray
+        private val prefixMaxEnds: LongArray
+        val size: Int get() = starts.size
+
+        init {
+            val sorted = ranges.sortedBy { it.first }
+            starts = LongArray(sorted.size)
+            prefixMaxEnds = LongArray(sorted.size)
+            var maximumEnd = Long.MIN_VALUE
+            for (index in sorted.indices) {
+                starts[index] = sorted[index].first
+                maximumEnd = maxOf(maximumEnd, sorted[index].second)
+                prefixMaxEnds[index] = maximumEnd
+            }
+        }
+
+        fun covers(startByte: Long, endByte: Long): Boolean {
+            if (startByte < 0L || endByte < startByte || starts.isEmpty()) return false
+            var low = 0
+            var high = starts.size
+            while (low < high) {
+                val middle = (low + high) ushr 1
+                if (starts[middle] <= startByte) low = middle + 1 else high = middle
+            }
+            val candidate = low - 1
+            return candidate >= 0 && prefixMaxEnds[candidate] >= endByte
+        }
+    }
+
     private enum class RangeWorkState { QUEUED, RUNNING, SUCCEEDED, FAILED, BLOCKED, CANCELLED }
 
     private class RangeWork(val attempt: Int = 0) {
@@ -1298,7 +1333,7 @@ class TshSyntaxHighlighter(
         key: CaptureRangeKey,
         index: CaptureIntervalIndex,
         edits: List<NativeEdit>,
-        reusableNativeRanges: Set<Pair<Long, Long>>
+        reusableNativeRanges: NativeReusableRangeIndex
     ): Pair<CaptureRangeKey, CaptureIntervalIndex>? {
         val originalStart = key.startUtf16.toLong() * 2L
         val originalEnd = key.endUtf16.toLong() * 2L
@@ -1313,7 +1348,7 @@ class TshSyntaxHighlighter(
             startByte > endByte || endByte > 0xFFFF_FFFFL ||
             startByte / 2L > Int.MAX_VALUE.toLong() ||
             endByte / 2L > Int.MAX_VALUE.toLong() ||
-            (startByte to endByte) !in reusableNativeRanges) return null
+            !reusableNativeRanges.covers(startByte, endByte)) return null
 
         val delta = startByte - originalStart
         val rebasedIndex = index.shiftBytes(delta) ?: return null
@@ -1496,9 +1531,10 @@ class TshSyntaxHighlighter(
                     // AST/Query/Regex dependency envelopes survived every edit. Reuse that
                     // exact retained-key set to rebase the Kotlin capture cache;
                     // do not clear every token when one local region changes.
-                    val reusableNativeRanges = engine.reusableNativeHighlightRanges(
-                        active.nativeHandle
-                    ).mapTo(HashSet()) { it.startByte to it.endByte }
+                    val reusableNativeRanges = NativeReusableRangeIndex(
+                        engine.reusableNativeHighlightRanges(active.nativeHandle)
+                            .map { it.startByte to it.endByte }
+                    )
                     // Publish cache rebasing and the matching edit epoch atomically
                     // with styleLine's cache reads. Remove only this committed batch:
                     // newer edits may already be queued against the resulting revision.

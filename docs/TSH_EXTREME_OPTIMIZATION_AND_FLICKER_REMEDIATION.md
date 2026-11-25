@@ -418,3 +418,11 @@ The JNI encoder was inspected as part of this pass. `ts_windbell_jni.cpp` alread
 - The two-tier retention is deliberately bounded. If a page is evicted from both tiers, a later viewport miss must query again; eviction itself does not invalidate or clear already-painted styles. Guaranteeing indefinite display retention is incompatible with a finite memory budget.
 - The `BLOCKED` path is a controlled degradation for a result whose full representation exceeds the combined budget. It prevents repeated identical Native queries but does not render captures that cannot be retained. A future streaming Painter path would be required to render such a viewport without retaining its complete capture set.
 - No unit tests, build, instrumentation, or workflow were run, per the requested execution order. The source changes are not validated and must not be marked CI-passing.
+
+
+### Follow-up correction — child-page Native dependency proof
+
+- Adaptive cache pages are projections of one original Native viewport query. The Native dependency ledger therefore retains the proof for the original parent viewport, not one independent proof per Kotlin child page.
+- The Kotlin rebase path now uses a sorted prefix-maximum interval index over reusable Native viewport proofs. A clipped child page is reused only when one surviving Native proof fully contains the transformed child range. It does not incorrectly combine two adjacent proofs to justify one child.
+- This preserves safe reuse of unchanged child pages after unrelated edits while retaining conservative invalidation whenever the parent query's dependency proof is lost.
+- This correction is included in the follow-up source commit. No test or workflow validation was run.
