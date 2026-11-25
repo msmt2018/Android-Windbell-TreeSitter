@@ -29,7 +29,12 @@ class WindbellTshEditorViewRenderingTest {
     private val keywordColor = Color.rgb(255, 0, 127)
 
     private fun dsl() = """
-        name: ["Java", ".java"]
+        language {
+            id: "java"
+            name: "Java"
+            extensions: [".java", ".java-editor-e2e"]
+        }
+        name: ["Java", ".java", ".java-editor-e2e"]
         styles: [
             "keyword", #FF007F, #CC7832, @B,
             "string", #007F00, #6A8759,
