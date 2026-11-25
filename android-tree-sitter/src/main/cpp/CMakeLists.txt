@@ -302,7 +302,7 @@ string(FIND "${TSH_STACK_SOURCE}" "Convert a borrowed iterator path"
     TSH_STACK_ITERATOR_RETAIN_POSITION)
 string(FIND "${TSH_STACK_SOURCE}" "array_delete(&iterator->subtrees);"
     TSH_STACK_ITERATOR_DELETE_POSITION)
-string(FIND "${TSH_STACK_SOURCE}" "ts_subtree_retain(link.subtree)"
+string(FIND "${TSH_STACK_SOURCE}" "            ts_subtree_retain(link.subtree);"
     TSH_STACK_ITERATOR_OLD_RETAIN_POSITION)
 if(TSH_STACK_ITERATOR_COPY_POSITION LESS 0 OR
    TSH_STACK_ITERATOR_RETAIN_POSITION LESS 0 OR
