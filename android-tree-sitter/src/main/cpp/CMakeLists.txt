@@ -383,11 +383,11 @@ string(REPLACE
     TSH_PARSER_SOURCE "${TSH_PARSER_SOURCE}")
 string(REPLACE
     "    MutableSubtree parent = ts_subtree_new_node(\n      symbol, &children, production_id, self->language\n    );"
-    "    const uint32_t ast_child_count = children.size;\n#ifndef NDEBUG\n    const clock_t ast_started = clock();\n    MutableSubtree parent = ts_subtree_new_node(\n      symbol, &children, production_id, self->language\n    );\n    self->ast_parent_nodes++;\n    self->ast_parent_ticks += (uint64_t)(clock() - ast_started);\n    self->reduce_child_visits += ast_child_count;\n#endif"
+    "    const uint32_t ast_child_count = children.size;\n#ifndef NDEBUG\n    const clock_t ast_started = clock();\n#endif\n    MutableSubtree parent = ts_subtree_new_node(\n      symbol, &children, production_id, self->language\n    );\n#ifndef NDEBUG\n    self->ast_parent_nodes++;\n    self->ast_parent_ticks += (uint64_t)(clock() - ast_started);\n    self->reduce_child_visits += ast_child_count;\n#endif"
     TSH_PARSER_SOURCE "${TSH_PARSER_SOURCE}")
 string(REPLACE
     "        parent = ts_subtree_new_node(\n          symbol, &next_slice_children, production_id, self->language\n        );"
-    "        const uint32_t ast_child_count = next_slice_children.size;\n#ifndef NDEBUG\n        const clock_t ast_started = clock();\n        parent = ts_subtree_new_node(\n          symbol, &next_slice_children, production_id, self->language\n        );\n        self->ast_parent_nodes++;\n        self->ast_parent_ticks += (uint64_t)(clock() - ast_started);\n        self->reduce_child_visits += ast_child_count;"
+    "        const uint32_t ast_child_count = next_slice_children.size;\n#ifndef NDEBUG\n        const clock_t ast_started = clock();\n#endif\n        parent = ts_subtree_new_node(\n          symbol, &next_slice_children, production_id, self->language\n        );\n#ifndef NDEBUG\n        self->ast_parent_nodes++;\n        self->ast_parent_ticks += (uint64_t)(clock() - ast_started);\n        self->reduce_child_visits += ast_child_count;\n#endif"
     TSH_PARSER_SOURCE "${TSH_PARSER_SOURCE}")
 string(REPLACE
     "  return ts_stack_version_count(self->stack) > initial_version_count\n    ? initial_version_count\n    : STACK_VERSION_NONE;\n}"
