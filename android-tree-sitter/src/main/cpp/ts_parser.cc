@@ -346,7 +346,7 @@ static jlong TSParser_parse(JNIEnv *env,
   }
 
   // Adapt the existing UTF-16LE storage as a bounded, chunk-readable source.
-  // Tree-sitter receives at most 64 KiB per callback instead of a pointer to the
+  // Tree-sitter receives at most 128 KiB per callback instead of a pointer to the
   // entire remaining document. The source owns the bytes for the whole parse.
   const auto source_bytes = static_cast<uint64_t>(source->byte_length());
   if (source_bytes > UINT32_MAX || (source_bytes & 1u) != 0) {
