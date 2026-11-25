@@ -93,9 +93,11 @@ class CaptureAndByteBudgetCacheTest {
 
     @Test fun zeroBudgetCacheRejectsAdmissionExplicitly() {
         val evicted = mutableListOf<String>()
-        val cache = ByteBudgetLruCache<String, String>(0L, { it.length.toLong() }) {
-            evicted += it
-        }
+        val cache = ByteBudgetLruCache<String, String>(
+            0L,
+            { it.length.toLong() },
+            onEvict = { value -> evicted += value }
+        )
         assertFalse(cache.put("empty", ""))
         assertNull(cache.get("empty"))
         assertEquals(1L, cache.rejectedAdmissionCount)
