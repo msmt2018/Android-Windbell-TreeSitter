@@ -379,19 +379,19 @@ string(REPLACE
     TSH_PARSER_SOURCE "${TSH_PARSER_SOURCE}")
 string(REPLACE
     "static StackVersion ts_parser__reduce(\n  TSParser *self,\n  StackVersion version,\n  TSSymbol symbol,\n  uint32_t count,\n  int dynamic_precedence,\n  uint16_t production_id,\n  bool is_fragile,\n  bool end_of_non_terminal_extra\n) {\n  uint32_t initial_version_count = ts_stack_version_count(self->stack);"
-    "static StackVersion ts_parser__reduce(\n  TSParser *self,\n  StackVersion version,\n  TSSymbol symbol,\n  uint32_t count,\n  int dynamic_precedence,\n  uint16_t production_id,\n  bool is_fragile,\n  bool end_of_non_terminal_extra\n) {\n#ifndef NDEBUG\n  const clock_t reduce_started = clock();\n  self->reduce_calls++;\n  uint32_t initial_version_count = ts_stack_version_count(self->stack);"
+    "static StackVersion ts_parser__reduce(\n  TSParser *self,\n  StackVersion version,\n  TSSymbol symbol,\n  uint32_t count,\n  int dynamic_precedence,\n  uint16_t production_id,\n  bool is_fragile,\n  bool end_of_non_terminal_extra\n) {\n#ifndef NDEBUG\n  const clock_t reduce_started = clock();\n  self->reduce_calls++;\n#endif\n  uint32_t initial_version_count = ts_stack_version_count(self->stack);"
     TSH_PARSER_SOURCE "${TSH_PARSER_SOURCE}")
 string(REPLACE
     "    MutableSubtree parent = ts_subtree_new_node(\n      symbol, &children, production_id, self->language\n    );"
-    "    const uint32_t ast_child_count = children.size;\n#ifndef NDEBUG\n    const clock_t ast_started = clock();\n#endif\n    MutableSubtree parent = ts_subtree_new_node(\n      symbol, &children, production_id, self->language\n    );\n#ifndef NDEBUG\n    self->ast_parent_nodes++;\n    self->ast_parent_ticks += (uint64_t)(clock() - ast_started);\n    self->reduce_child_visits += ast_child_count;\n#endif"
+    "#ifndef NDEBUG\n    const uint32_t ast_child_count = children.size;\n    const clock_t ast_started = clock();\n#endif\n    MutableSubtree parent = ts_subtree_new_node(\n      symbol, &children, production_id, self->language\n    );\n#ifndef NDEBUG\n    self->ast_parent_nodes++;\n    self->ast_parent_ticks += (uint64_t)(clock() - ast_started);\n    self->reduce_child_visits += ast_child_count;\n#endif"
     TSH_PARSER_SOURCE "${TSH_PARSER_SOURCE}")
 string(REPLACE
     "        parent = ts_subtree_new_node(\n          symbol, &next_slice_children, production_id, self->language\n        );"
-    "        const uint32_t ast_child_count = next_slice_children.size;\n#ifndef NDEBUG\n        const clock_t ast_started = clock();\n#endif\n        parent = ts_subtree_new_node(\n          symbol, &next_slice_children, production_id, self->language\n        );\n#ifndef NDEBUG\n        self->ast_parent_nodes++;\n        self->ast_parent_ticks += (uint64_t)(clock() - ast_started);\n        self->reduce_child_visits += ast_child_count;\n#endif"
+    "#ifndef NDEBUG\n        const uint32_t ast_child_count = next_slice_children.size;\n        const clock_t ast_started = clock();\n#endif\n        parent = ts_subtree_new_node(\n          symbol, &next_slice_children, production_id, self->language\n        );\n#ifndef NDEBUG\n        self->ast_parent_nodes++;\n        self->ast_parent_ticks += (uint64_t)(clock() - ast_started);\n        self->reduce_child_visits += ast_child_count;\n#endif"
     TSH_PARSER_SOURCE "${TSH_PARSER_SOURCE}")
 string(REPLACE
     "  return ts_stack_version_count(self->stack) > initial_version_count\n    ? initial_version_count\n    : STACK_VERSION_NONE;\n}"
-    "  self->reduce_ticks += (uint64_t)(clock() - reduce_started);\n#endif\n  return ts_stack_version_count(self->stack) > initial_version_count\n    ? initial_version_count\n    : STACK_VERSION_NONE;\n}"
+    "#ifndef NDEBUG\n  self->reduce_ticks += (uint64_t)(clock() - reduce_started);\n#endif\n  return ts_stack_version_count(self->stack) > initial_version_count\n    ? initial_version_count\n    : STACK_VERSION_NONE;\n}"
     TSH_PARSER_SOURCE "${TSH_PARSER_SOURCE}")
 string(REPLACE
     "      lookahead = ts_parser__lex(self, version, state);"
