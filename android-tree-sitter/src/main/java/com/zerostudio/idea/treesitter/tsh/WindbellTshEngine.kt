@@ -1252,7 +1252,6 @@ class WindbellTshEngine private constructor() {
 
     private external fun nativeCloseDocument(documentHandle: Long)
 
-    @FastNative
     private external fun nativeLoadTshSource(extension: String, tshSourceContent: String, languagePtr: Long): Boolean
 
     @FastNative
@@ -1285,7 +1284,6 @@ class WindbellTshEngine private constructor() {
     @FastNative
     private external fun nativeGetPalette(extension: String, schemeName: String): IntArray?
 
-    @FastNative
     private external fun nativeHighlight(
         treePtr: Long,
         text: String,
