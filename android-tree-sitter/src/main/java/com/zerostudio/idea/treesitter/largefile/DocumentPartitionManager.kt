@@ -462,7 +462,12 @@ class ByteBudgetLruCache<K : Any, V : Any>(
     private val weigh: (V) -> Long,
     private val onEvict: (V) -> Unit = {},
     private val onEntryAdded: (K, V) -> Unit = { _, _ -> },
-    private val onEntryRemoved: (K, V) -> Unit = { _, _ -> }
+    private val onEntryRemoved: (K, V) -> Unit = { _, _ -> },
+    /**
+     * Allows a capacity-evicted value to transfer to another owner/cache.
+     * Return true only after ownership has been successfully transferred.
+     */
+    private val onCapacityEvicted: (K, V) -> Boolean = { _, _ -> false }
 ) : AutoCloseable {
     private data class Entry<V>(val value: V, val weight: Long)
 
