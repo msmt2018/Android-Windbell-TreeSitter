@@ -365,6 +365,59 @@ if(TSH_PARSER_REDUCE_PATCH_POSITION LESS 0)
     message(FATAL_ERROR "Pinned Tree-sitter parser reduce patch did not apply")
 endif()
 
+
+// Parser phase telemetry: measure lexer callback execution separately from
+// reduction work and parent-node construction. clock() reports process CPU
+// ticks, so these counters exclude time spent blocked in the input callback.
+string(REPLACE
+    "#include <inttypes.h>\n"
+    "#include <inttypes.h>\n#include <time.h>\n"
+    TSH_PARSER_SOURCE "${TSH_PARSER_SOURCE}")
+string(REPLACE
+    "  unsigned operation_count;\n"
+    "  unsigned operation_count;\n  uint64_t lex_calls;\n  uint64_t lex_ticks;\n  uint64_t reduce_calls;\n  uint64_t reduce_ticks;\n  uint64_t ast_parent_nodes;\n  uint64_t ast_parent_ticks;\n  uint64_t reduce_child_visits;\n"
+    TSH_PARSER_SOURCE "${TSH_PARSER_SOURCE}")
+string(REPLACE
+    ") {\n  uint32_t initial_version_count = ts_stack_version_count(self->stack);"
+    ") {\n  const clock_t reduce_started = clock();\n  self->reduce_calls++;\n  uint32_t initial_version_count = ts_stack_version_count(self->stack);"
+    TSH_PARSER_SOURCE "${TSH_PARSER_SOURCE}")
+string(REPLACE
+    "    MutableSubtree parent = ts_subtree_new_node(\n      symbol, &children, production_id, self->language\n    );"
+    "    const uint32_t ast_child_count = children.size;\n    const clock_t ast_started = clock();\n    MutableSubtree parent = ts_subtree_new_node(\n      symbol, &children, production_id, self->language\n    );\n    self->ast_parent_nodes++;\n    self->ast_parent_ticks += (uint64_t)(clock() - ast_started);\n    self->reduce_child_visits += ast_child_count;"
+    TSH_PARSER_SOURCE "${TSH_PARSER_SOURCE}")
+string(REPLACE
+    "        parent = ts_subtree_new_node(\n          symbol, &next_slice_children, production_id, self->language\n        );"
+    "        const uint32_t ast_child_count = next_slice_children.size;\n        const clock_t ast_started = clock();\n        parent = ts_subtree_new_node(\n          symbol, &next_slice_children, production_id, self->language\n        );\n        self->ast_parent_nodes++;\n        self->ast_parent_ticks += (uint64_t)(clock() - ast_started);\n        self->reduce_child_visits += ast_child_count;"
+    TSH_PARSER_SOURCE "${TSH_PARSER_SOURCE}")
+string(REPLACE
+    "  return ts_stack_version_count(self->stack) > initial_version_count\n    ? initial_version_count\n    : STACK_VERSION_NONE;\n}"
+    "  self->reduce_ticks += (uint64_t)(clock() - reduce_started);\n  return ts_stack_version_count(self->stack) > initial_version_count\n    ? initial_version_count\n    : STACK_VERSION_NONE;\n}"
+    TSH_PARSER_SOURCE "${TSH_PARSER_SOURCE}")
+string(REPLACE
+    "      lookahead = ts_parser__lex(self, version, state);"
+    "      const clock_t lex_started = clock();\n      self->lex_calls++;\n      lookahead = ts_parser__lex(self, version, state);\n      self->lex_ticks += (uint64_t)(clock() - lex_started);"
+    TSH_PARSER_SOURCE "${TSH_PARSER_SOURCE}")
+string(REPLACE
+    "  self->operation_count = 0;\n\n  if (ts_parser_has_outstanding_parse(self)) {"
+    "  self->operation_count = 0;\n  if (!ts_parser_has_outstanding_parse(self)) {\n    self->lex_calls = self->lex_ticks = 0;\n    self->reduce_calls = self->reduce_ticks = 0;\n    self->ast_parent_nodes = self->ast_parent_ticks = 0;\n    self->reduce_child_visits = 0;\n  }\n\n  if (ts_parser_has_outstanding_parse(self)) {"
+    TSH_PARSER_SOURCE "${TSH_PARSER_SOURCE}")
+string(REPLACE
+    "balance:\n  ts_assert(self->finished_tree.ptr);"
+    "balance:\n  LOG(\"parser_work lexer_calls:%\" PRIu64 \" lexer_cpu_ms:%.3f reduce_calls:%\" PRIu64 \" reduce_cpu_ms:%.3f ast_parent_nodes:%\" PRIu64 \" ast_parent_cpu_ms:%.3f reduce_child_visits:%\" PRIu64,\n    self->lex_calls, (double)self->lex_ticks * 1000.0 / CLOCKS_PER_SEC,\n    self->reduce_calls, (double)self->reduce_ticks * 1000.0 / CLOCKS_PER_SEC,\n    self->ast_parent_nodes, (double)self->ast_parent_ticks * 1000.0 / CLOCKS_PER_SEC,\n    self->reduce_child_visits);\n  ts_assert(self->finished_tree.ptr);"
+    TSH_PARSER_SOURCE "${TSH_PARSER_SOURCE}")
+
+foreach(TSH_METRIC_ANCHOR
+    "uint64_t reduce_child_visits;"
+    "self->reduce_calls++;"
+    "self->ast_parent_nodes++;"
+    "self->lex_calls++;"
+    "parser_work lexer_calls:")
+  string(FIND "${TSH_PARSER_SOURCE}" "${TSH_METRIC_ANCHOR}" TSH_METRIC_POSITION)
+  if(TSH_METRIC_POSITION LESS 0)
+    message(FATAL_ERROR "Tree-sitter parser phase telemetry patch did not apply: ${TSH_METRIC_ANCHOR}")
+  endif()
+endforeach()
+
 file(WRITE "${TSH_RUNTIME_PERF_OVERLAY_DIR}/alloc.c" "${TSH_ALLOC_SOURCE}")
 file(WRITE "${TSH_RUNTIME_PERF_OVERLAY_DIR}/stack.c" "${TSH_STACK_SOURCE}")
 file(WRITE "${TSH_RUNTIME_PERF_OVERLAY_DIR}/parser.c" "${TSH_PARSER_SOURCE}")
