@@ -17,6 +17,18 @@
 
 
 pluginManagement {
+    // Keep every Kotlin Gradle plugin on the same version as the stdlib and
+    // compiler dependencies declared by the root version catalog. Without an
+    // explicit resolution rule, the included build's Kotlin DSL plugin can
+    // leave an older compiler on the application plugin classpath.
+    resolutionStrategy {
+        eachPlugin {
+            if (requested.id.id.startsWith("org.jetbrains.kotlin")) {
+                useVersion("2.4.21")
+            }
+        }
+    }
+
     // AGP 8.13.2 bundles an R8 release that predates Kotlin 2.4 metadata.
     // Use Google's compatible R8 release without forcing an AGP 9 / Gradle 9
     // migration into this integration branch.
