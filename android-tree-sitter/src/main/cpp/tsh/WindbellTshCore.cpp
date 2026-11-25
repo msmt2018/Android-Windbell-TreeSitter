@@ -5,6 +5,7 @@
 
 #include "WindbellTshCore.h"
 #include <algorithm>
+#include <cctype>
 #include <atomic>
 #include <cstring>
 #include <array>
@@ -1178,21 +1179,52 @@ WindbellEngine::~WindbellEngine() {
     onig_end();
 }
 
+namespace {
+static std::string normalizeTshExtension(std::string value) {
+    while (!value.empty() && value.front() == '.') value.erase(value.begin());
+    std::transform(value.begin(), value.end(), value.begin(),
+        [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+    return value;
+}
+} // namespace
+
 bool WindbellEngine::registerGrammar(const std::string& extension, std::shared_ptr<TshGrammar> grammar) {
     if (!grammar) return false;
+    const std::string key = normalizeTshExtension(extension);
+    if (key.empty()) return false;
     static std::atomic<uint64_t> next_revision{1};
     uint64_t revision = next_revision.fetch_add(1, std::memory_order_relaxed);
     if (revision == 0) revision = next_revision.fetch_add(1, std::memory_order_relaxed);
     grammar->revision = revision;
     std::lock_guard<std::mutex> lock(registry_lock_);
-    grammar_registry_[extension] = grammar;
+    grammar_registry_[key] = grammar;
     return true;
 }
 
 std::shared_ptr<const TshGrammar> WindbellEngine::getGrammarByExtension(const std::string& extension) {
+    const std::string key = normalizeTshExtension(extension);
+    if (key.empty()) return nullptr;
     std::lock_guard<std::mutex> lock(registry_lock_);
-    auto it = grammar_registry_.find(extension);
-    return (it != grammar_registry_.end()) ? it->second : nullptr;
+    auto exact = grammar_registry_.find(key);
+    if (exact != grammar_registry_.end()) return exact->second;
+
+    // One compiled .tsh grammar can serve every declared extension. Resolve
+    // those aliases from the immutable grammar metadata instead of compiling
+    // the same DSL repeatedly under .java, .kt, .kts, etc.
+    std::shared_ptr<const TshGrammar> match;
+    for (const auto& entry : grammar_registry_) {
+        const auto& grammar = entry.second;
+        if (!grammar) continue;
+        const bool declares_extension = std::any_of(
+            grammar->file_extensions.begin(), grammar->file_extensions.end(),
+            [&](const std::string& declared) {
+                return normalizeTshExtension(declared) == key;
+            });
+        if (!declares_extension) continue;
+        if (match && match.get() != grammar.get()) return nullptr;
+        match = grammar;
+    }
+    return match;
 }
 
 void WindbellEngine::matchBlockRecursive(

@@ -21,6 +21,8 @@
 
 cmake_minimum_required(VERSION 3.22.1)
 project("android-tree-sitter")
+set(CMAKE_C_STANDARD 11)
+set(CMAKE_C_STANDARD_REQUIRED ON)
 
 set(PROJECT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../../..)
 
@@ -44,58 +46,234 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
 file(READ "${TS_DIR}/lib/src/query.c" TSH_TREE_SITTER_QUERY_SOURCE)
 file(READ "${TS_DIR}/lib/src/lib.c" TSH_TREE_SITTER_LIB_AMALGAMATION)
 
-# Runtime hot-path overlay for the pinned Tree-sitter 0.28 amalgamation.
-# Preserve parse semantics while reducing GLR stack and subtree allocation churn.
-set(TSH_RUNTIME_OVERLAY_ANCHORS 0)
-set(TSH_STACK_POOL_OLD "#define MAX_NODE_POOL_SIZE 50")
-set(TSH_STACK_POOL_NEW "#define MAX_NODE_POOL_SIZE 128")
-set(TSH_SUBTREE_POOL_OLD "#define TS_MAX_TREE_POOL_SIZE 32")
-set(TSH_SUBTREE_POOL_NEW "#define TS_MAX_TREE_POOL_SIZE 128")
-set(TSH_SUBTREE_COPY_OLD "dest->contents = ts_calloc(self.capacity, sizeof(Subtree));")
-set(TSH_SUBTREE_COPY_NEW "dest->contents = ts_malloc((size_t)self.capacity * sizeof(Subtree));")
-set(TSH_STACK_RESERVE_OLD
-    "array_reserve(&self->heads, 4);\n  array_reserve(&self->slices, 4);\n  array_reserve(&self->iterators, 4);")
-set(TSH_STACK_RESERVE_NEW
-    "array_reserve(&self->heads, 8);\n  array_reserve(&self->slices, MAX_ITERATOR_COUNT);\n  array_reserve(&self->iterators, MAX_ITERATOR_COUNT);")
-foreach(anchor IN ITEMS
-    TSH_STACK_POOL_OLD TSH_SUBTREE_POOL_OLD TSH_SUBTREE_COPY_OLD TSH_STACK_RESERVE_OLD)
-    string(FIND "${TSH_TREE_SITTER_LIB_AMALGAMATION}" "${${anchor}}" anchor_position)
-    if(NOT anchor_position LESS 0)
-        math(EXPR TSH_RUNTIME_OVERLAY_ANCHORS "${TSH_RUNTIME_OVERLAY_ANCHORS} + 1")
-    endif()
-endforeach()
-if(TSH_RUNTIME_OVERLAY_ANCHORS EQUAL 4)
-    string(REPLACE "${TSH_STACK_POOL_OLD}" "${TSH_STACK_POOL_NEW}"
-        TSH_TREE_SITTER_LIB_AMALGAMATION "${TSH_TREE_SITTER_LIB_AMALGAMATION}")
-    string(REPLACE "${TSH_SUBTREE_POOL_OLD}" "${TSH_SUBTREE_POOL_NEW}"
-        TSH_TREE_SITTER_LIB_AMALGAMATION "${TSH_TREE_SITTER_LIB_AMALGAMATION}")
-    string(REPLACE "${TSH_SUBTREE_COPY_OLD}" "${TSH_SUBTREE_COPY_NEW}"
-        TSH_TREE_SITTER_LIB_AMALGAMATION "${TSH_TREE_SITTER_LIB_AMALGAMATION}")
-    string(REPLACE "${TSH_STACK_RESERVE_OLD}" "${TSH_STACK_RESERVE_NEW}"
-        TSH_TREE_SITTER_LIB_AMALGAMATION "${TSH_TREE_SITTER_LIB_AMALGAMATION}")
-    set(TSH_TREE_SITTER_HAS_RUNTIME_PERF_OVERLAY TRUE)
-else()
-    set(TSH_TREE_SITTER_HAS_RUNTIME_PERF_OVERLAY FALSE)
-    message(STATUS "Tree-sitter runtime performance overlay skipped: pinned source anchors differ")
-endif()
+# Compile a private copy of the real Tree-sitter implementation files.
+# lib.c is only an include amalgamation; editing its text does not edit alloc.c,
+# stack.c, parser.c or subtree.c.
+set(TSH_RUNTIME_PERF_OVERLAY_DIR "${CMAKE_CURRENT_BINARY_DIR}/tree-sitter-runtime-perf")
+file(REMOVE_RECURSE "${TSH_RUNTIME_PERF_OVERLAY_DIR}")
+file(MAKE_DIRECTORY "${TSH_RUNTIME_PERF_OVERLAY_DIR}")
+file(COPY "${TS_DIR}/lib/src/." DESTINATION "${TSH_RUNTIME_PERF_OVERLAY_DIR}")
+set(TSH_TREE_SITTER_LIB_SOURCE "${TSH_RUNTIME_PERF_OVERLAY_DIR}/lib.c")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+    "${TS_DIR}/lib/src/alloc.c" "${TS_DIR}/lib/src/stack.c"
+    "${TS_DIR}/lib/src/parser.c" "${TS_DIR}/lib/src/subtree.c"
+    "${TS_DIR}/lib/src/reusable_node.h"
+    "${TS_DIR}/lib/src/lib.c" "${TS_DIR}/lib/src/query.c")
 
-# Keep allocator failure handling cold and skip a halted-version scan for the
-# common single-stack parse path. These are branch/loop reductions, not limits.
-string(REPLACE "if (size > 0 && !result)" "if (__builtin_expect(size > 0 && !result, 0))"
-    TSH_TREE_SITTER_LIB_AMALGAMATION "${TSH_TREE_SITTER_LIB_AMALGAMATION}")
-string(REPLACE "if (count > 0 && !result)" "if (__builtin_expect(count > 0 && !result, 0))"
-    TSH_TREE_SITTER_LIB_AMALGAMATION "${TSH_TREE_SITTER_LIB_AMALGAMATION}")
+# Thread-safe size-class recycling for short-lived parser allocations. The
+# cache is globally bounded and flushed before the final OOM path.
+set(TSH_ALLOC_SOURCE [=[
+#include "alloc.h"
+#include "tree_sitter/api.h"
+#include <pthread.h>
+#include <stdint.h>
+#include <stddef.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+typedef union TsAllocHeader TsAllocHeader;
+union TsAllocHeader {
+  struct { size_t capacity; size_t requested; int32_t class_index; TsAllocHeader *next; } meta;
+  max_align_t alignment;
+};
+static const size_t ts_pool_sizes[] = {32, 64, 128, 256, 512, 1024};
+#define TS_POOL_CLASS_COUNT (sizeof(ts_pool_sizes) / sizeof(ts_pool_sizes[0]))
+#define TS_POOL_MAX_BLOCKS_PER_CLASS 128u
+#define TS_POOL_MAX_CACHED_BYTES (512u * 1024u)
+static pthread_mutex_t ts_pool_mutex = PTHREAD_MUTEX_INITIALIZER;
+static TsAllocHeader *ts_pool_heads[TS_POOL_CLASS_COUNT];
+static size_t ts_pool_counts[TS_POOL_CLASS_COUNT];
+static size_t ts_pool_cached_bytes;
+static uint64_t ts_alloc_calls, ts_alloc_cache_hits, ts_alloc_requested_bytes;
+static uint64_t ts_alloc_live_bytes, ts_alloc_peak_live_bytes;
+
+static int32_t ts_pool_class_for_size(size_t size) {
+  for (uint32_t i = 0; i < TS_POOL_CLASS_COUNT; i++)
+    if (size <= ts_pool_sizes[i]) return (int32_t)i;
+  return -1;
+}
+static void *ts_alloc_block(size_t capacity, size_t requested, int32_t class_index) {
+  if (capacity > SIZE_MAX - sizeof(TsAllocHeader)) return NULL;
+  TsAllocHeader *h = (TsAllocHeader *)malloc(sizeof(TsAllocHeader) + capacity);
+  if (!h) return NULL;
+  h->meta.capacity = capacity; h->meta.requested = requested;
+  h->meta.class_index = class_index; h->meta.next = NULL;
+  return (void *)(h + 1);
+}
+static void ts_pool_flush(void) {
+  pthread_mutex_lock(&ts_pool_mutex);
+  for (uint32_t i = 0; i < TS_POOL_CLASS_COUNT; i++) {
+    TsAllocHeader *h = ts_pool_heads[i]; ts_pool_heads[i] = NULL; ts_pool_counts[i] = 0;
+    while (h) { TsAllocHeader *next = h->meta.next; free(h); h = next; }
+  }
+  ts_pool_cached_bytes = 0;
+  pthread_mutex_unlock(&ts_pool_mutex);
+}
+static void ts_record_live(size_t requested) {
+  uint64_t live = __atomic_add_fetch(&ts_alloc_live_bytes, requested, __ATOMIC_RELAXED);
+  uint64_t peak = __atomic_load_n(&ts_alloc_peak_live_bytes, __ATOMIC_RELAXED);
+  while (live > peak && !__atomic_compare_exchange_n(
+      &ts_alloc_peak_live_bytes, &peak, live, 1, __ATOMIC_RELAXED, __ATOMIC_RELAXED)) {}
+}
+static void *ts_malloc_default(size_t size) {
+  const size_t requested = size;
+  if (size == 0) size = 1;
+  int32_t ci = ts_pool_class_for_size(size);
+  size_t capacity = ci >= 0 ? ts_pool_sizes[ci] : size;
+  TsAllocHeader *h = NULL;
+  __atomic_add_fetch(&ts_alloc_calls, 1, __ATOMIC_RELAXED);
+  __atomic_add_fetch(&ts_alloc_requested_bytes, requested, __ATOMIC_RELAXED);
+  if (ci >= 0) {
+    pthread_mutex_lock(&ts_pool_mutex);
+    h = ts_pool_heads[ci];
+    if (h) {
+      ts_pool_heads[ci] = h->meta.next; ts_pool_counts[ci]--;
+      ts_pool_cached_bytes -= sizeof(TsAllocHeader) + h->meta.capacity;
+      h->meta.next = NULL;
+    }
+    pthread_mutex_unlock(&ts_pool_mutex);
+    if (h) {
+      __atomic_add_fetch(&ts_alloc_cache_hits, 1, __ATOMIC_RELAXED);
+      h->meta.requested = requested;
+    }
+  }
+  void *result = h ? (void *)(h + 1) : ts_alloc_block(capacity, requested, ci);
+  if (!result) { ts_pool_flush(); result = ts_alloc_block(capacity, requested, ci); }
+  if (!result) {
+    fprintf(stderr, "tree-sitter OOM requested=%zu capacity=%zu calls=%llu cache_hits=%llu total=%llu live=%llu peak=%llu\n",
+      requested, capacity,
+      (unsigned long long)__atomic_load_n(&ts_alloc_calls, __ATOMIC_RELAXED),
+      (unsigned long long)__atomic_load_n(&ts_alloc_cache_hits, __ATOMIC_RELAXED),
+      (unsigned long long)__atomic_load_n(&ts_alloc_requested_bytes, __ATOMIC_RELAXED),
+      (unsigned long long)__atomic_load_n(&ts_alloc_live_bytes, __ATOMIC_RELAXED),
+      (unsigned long long)__atomic_load_n(&ts_alloc_peak_live_bytes, __ATOMIC_RELAXED));
+    abort();
+  }
+  ts_record_live(requested);
+  return result;
+}
+static void ts_free_default(void *buffer) {
+  if (!buffer) return;
+  TsAllocHeader *h = ((TsAllocHeader *)buffer) - 1;
+  __atomic_sub_fetch(&ts_alloc_live_bytes, h->meta.requested, __ATOMIC_RELAXED);
+  int32_t ci = h->meta.class_index;
+  size_t bytes = sizeof(TsAllocHeader) + h->meta.capacity;
+  if (ci >= 0 && (uint32_t)ci < TS_POOL_CLASS_COUNT) {
+    pthread_mutex_lock(&ts_pool_mutex);
+    if (ts_pool_counts[ci] < TS_POOL_MAX_BLOCKS_PER_CLASS &&
+        bytes <= TS_POOL_MAX_CACHED_BYTES - ts_pool_cached_bytes) {
+      h->meta.next = ts_pool_heads[ci]; ts_pool_heads[ci] = h;
+      ts_pool_counts[ci]++; ts_pool_cached_bytes += bytes;
+      pthread_mutex_unlock(&ts_pool_mutex); return;
+    }
+    pthread_mutex_unlock(&ts_pool_mutex);
+  }
+  free(h);
+}
+static void *ts_calloc_default(size_t count, size_t size) {
+  if (size && count > SIZE_MAX / size) { fprintf(stderr, "tree-sitter calloc overflow\n"); abort(); }
+  size_t total = count * size;
+  void *result = ts_malloc_default(total);
+  if (total) memset(result, 0, total);
+  return result;
+}
+static void *ts_realloc_default(void *buffer, size_t size) {
+  if (!buffer) return ts_malloc_default(size);
+  if (!size) { ts_free_default(buffer); return NULL; }
+  TsAllocHeader *h = ((TsAllocHeader *)buffer) - 1;
+  if (size <= h->meta.capacity) {
+    size_t old = h->meta.requested; h->meta.requested = size;
+    if (size > old) ts_record_live(size - old);
+    else if (old > size) __atomic_sub_fetch(&ts_alloc_live_bytes, old - size, __ATOMIC_RELAXED);
+    return buffer;
+  }
+  size_t old = h->meta.requested;
+  void *replacement = ts_malloc_default(size);
+  memcpy(replacement, buffer, old);
+  ts_free_default(buffer);
+  return replacement;
+}
+TS_PUBLIC void *(*ts_current_malloc)(size_t) = ts_malloc_default;
+TS_PUBLIC void *(*ts_current_calloc)(size_t, size_t) = ts_calloc_default;
+TS_PUBLIC void *(*ts_current_realloc)(void *, size_t) = ts_realloc_default;
+TS_PUBLIC void (*ts_current_free)(void *) = ts_free_default;
+void ts_set_allocator(void *(*m)(size_t), void *(*c)(size_t,size_t),
+                      void *(*r)(void *,size_t), void (*f)(void *)) {
+  // Partial external allocators retain libc-compatible fallback callbacks.
+  if (m || c || r || f) {
+    ts_current_malloc = m ? m : malloc;
+    ts_current_calloc = c ? c : calloc;
+    ts_current_realloc = r ? r : realloc;
+    ts_current_free = f ? f : free;
+  } else {
+    ts_current_malloc = ts_malloc_default;
+    ts_current_calloc = ts_calloc_default;
+    ts_current_realloc = ts_realloc_default;
+    ts_current_free = ts_free_default;
+  }
+}
+]=])
+
+file(READ "${TS_DIR}/lib/src/stack.c" TSH_STACK_SOURCE)
+file(READ "${TS_DIR}/lib/src/parser.c" TSH_PARSER_SOURCE)
+file(READ "${TS_DIR}/lib/src/subtree.c" TSH_SUBTREE_SOURCE)
+file(READ "${TS_DIR}/lib/src/reusable_node.h" TSH_REUSABLE_NODE_HEADER)
+
+string(REPLACE
+    "array_reserve(&self->heads, 4);\n  array_reserve(&self->slices, 4);\n  array_reserve(&self->iterators, 4);"
+    "array_reserve(&self->heads, 8);\n  array_reserve(&self->slices, MAX_ITERATOR_COUNT);\n  array_reserve(&self->iterators, MAX_ITERATOR_COUNT);"
+    TSH_STACK_SOURCE "${TSH_STACK_SOURCE}")
+
+set(TSH_SUBTREE_COPY_OLD [=[void ts_subtree_array_copy(SubtreeArray self, SubtreeArray *dest) {
+  dest->size = self.size;
+  dest->capacity = self.capacity;
+  dest->contents = self.contents;
+  if (self.capacity > 0) {
+    dest->contents = ts_calloc(self.capacity, sizeof(Subtree));
+    memcpy(dest->contents, self.contents, self.size * sizeof(Subtree));
+    for (uint32_t i = 0; i < self.size; i++) {
+      ts_subtree_retain(*array_get(dest, i));
+    }
+  }
+}]=])
+set(TSH_SUBTREE_COPY_NEW [=[void ts_subtree_array_copy(SubtreeArray self, SubtreeArray *dest) {
+  // Copy only live children; spare capacity was repeatedly allocated and zeroed
+  // for every GLR iterator fork although the copied array contains no spare data.
+  dest->size = self.size;
+  dest->capacity = self.size;
+  dest->contents = NULL;
+  if (self.size > 0) {
+    dest->contents = ts_malloc((size_t)self.size * sizeof(Subtree));
+    memcpy(dest->contents, self.contents, (size_t)self.size * sizeof(Subtree));
+    for (uint32_t i = 0; i < self.size; i++) ts_subtree_retain(*array_get(dest, i));
+  }
+}]=])
+string(REPLACE "${TSH_SUBTREE_COPY_OLD}" "${TSH_SUBTREE_COPY_NEW}"
+    TSH_SUBTREE_SOURCE "${TSH_SUBTREE_SOURCE}")
+
 string(REPLACE
     "uint32_t halted_version_count = ts_stack_halted_version_count(self->stack);"
     "uint32_t halted_version_count = initial_version_count > 1 ? ts_stack_halted_version_count(self->stack) : 0;"
-    TSH_TREE_SITTER_LIB_AMALGAMATION "${TSH_TREE_SITTER_LIB_AMALGAMATION}")
+    TSH_PARSER_SOURCE "${TSH_PARSER_SOURCE}")
 
-if(TSH_TREE_SITTER_HAS_RUNTIME_PERF_OVERLAY)
-    set(TSH_RUNTIME_PERF_OVERLAY_DIR "${CMAKE_CURRENT_BINARY_DIR}/tree-sitter-runtime-perf")
-    file(MAKE_DIRECTORY "${TSH_RUNTIME_PERF_OVERLAY_DIR}")
-    file(WRITE "${TSH_RUNTIME_PERF_OVERLAY_DIR}/lib.c" "${TSH_TREE_SITTER_LIB_AMALGAMATION}")
-    set(TSH_TREE_SITTER_LIB_SOURCE "${TSH_RUNTIME_PERF_OVERLAY_DIR}/lib.c")
-endif()
+file(WRITE "${TSH_RUNTIME_PERF_OVERLAY_DIR}/alloc.c" "${TSH_ALLOC_SOURCE}")
+file(WRITE "${TSH_RUNTIME_PERF_OVERLAY_DIR}/stack.c" "${TSH_STACK_SOURCE}")
+file(WRITE "${TSH_RUNTIME_PERF_OVERLAY_DIR}/parser.c" "${TSH_PARSER_SOURCE}")
+set(TSH_REUSABLE_NODE_OLD [=[static inline ReusableNode reusable_node_new(void) {
+  return (ReusableNode) {array_new(), NULL_SUBTREE};
+}]=])
+set(TSH_REUSABLE_NODE_NEW [=[static inline ReusableNode reusable_node_new(void) {
+  ReusableNode result = {array_new(), NULL_SUBTREE};
+  // This stack survives reusable_node_clear/reset across incremental edits.
+  // Reserve common nesting depth once instead of reallocating on every descent.
+  array_reserve(&result.stack, 32);
+  return result;
+}]=])
+string(REPLACE "${TSH_REUSABLE_NODE_OLD}" "${TSH_REUSABLE_NODE_NEW}"
+    TSH_REUSABLE_NODE_HEADER "${TSH_REUSABLE_NODE_HEADER}")
+file(WRITE "${TSH_RUNTIME_PERF_OVERLAY_DIR}/subtree.c" "${TSH_SUBTREE_SOURCE}")
+file(WRITE "${TSH_RUNTIME_PERF_OVERLAY_DIR}/reusable_node.h" "${TSH_REUSABLE_NODE_HEADER}")
 
 set(TSH_QUERY_STEP_FIELD_MARKER "  unsigned work_count;\n")
 set(TSH_QUERY_STEP_INIT_MARKER "    .work_count = 0,\n  };\n")
@@ -176,9 +354,7 @@ bool ts_query_cursor_did_exceed_step_limit(const TSQueryCursor *self) {
         TSH_TREE_SITTER_QUERY_SOURCE
         "${TSH_TREE_SITTER_QUERY_SOURCE}"
     )
-    set(TSH_QUERY_STEP_BUDGET_OVERLAY "${CMAKE_CURRENT_BINARY_DIR}/tree-sitter-query-step-budget")
-    file(MAKE_DIRECTORY "${TSH_QUERY_STEP_BUDGET_OVERLAY}")
-    file(WRITE "${TSH_QUERY_STEP_BUDGET_OVERLAY}/lib.c" "${TSH_TREE_SITTER_LIB_AMALGAMATION}")
+    set(TSH_QUERY_STEP_BUDGET_OVERLAY "${TSH_RUNTIME_PERF_OVERLAY_DIR}")
     file(WRITE "${TSH_QUERY_STEP_BUDGET_OVERLAY}/query.c" "${TSH_TREE_SITTER_QUERY_SOURCE}")
     set(TSH_TREE_SITTER_LIB_SOURCE "${TSH_QUERY_STEP_BUDGET_OVERLAY}/lib.c")
     set(TSH_TREE_SITTER_HAS_EXACT_QUERY_STEP_BUDGET TRUE)

@@ -1,5 +1,6 @@
 package com.zerostudio.idea.androidtreesitter
 
+import android.content.Context
 import android.os.Looper
 import android.text.SpannableStringBuilder
 import android.text.Spanned
@@ -10,6 +11,11 @@ import com.zerostudio.idea.treesitter.largefile.ByteBudgetLruCache
 import com.zerostudio.idea.treesitter.tsh.WindbellTshEngine
 import com.zerostudio.idea.treesitter.tsh.HighlightCaptureBatch
 import com.zerostudio.idea.treesitter.tsh.NativeTextWindowReader
+import com.zerostudio.idea.treesitter.tsh.TshDocumentRuntime
+import com.zerostudio.idea.treesitter.tsh.TshParserFactory
+import com.zerostudio.idea.treesitter.tsh.TshGrammarProvider
+import com.zerostudio.idea.treesitter.tsh.TshGrammarRegistry
+import com.zerostudio.idea.treesitter.tsh.TshLanguageRequest
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -79,11 +85,35 @@ class TshSyntaxHighlighter(
             onEntryRemoved = { key, _ -> captureRangeIndex.remove(key) },
             onCapacityEvicted = { key, index -> displayRetentionCache.put(key, index) }
         )
+
+        /**
+         * Resolves the file's Grammar through APK/external providers, then enters
+         * the same binding-validated highlighter and Native ParserSession pipeline.
+         * Returns null when no compatible Grammar can be resolved.
+         */
+        fun forFile(
+            context: Context,
+            request: TshLanguageRequest,
+            temporaryDirectory: File,
+            externalGrammarDirectories: List<File> = emptyList(),
+            engine: WindbellTshEngine = WindbellTshEngine.instance
+        ): TshSyntaxHighlighter? {
+            val provider = TshGrammarProvider(context, TshGrammarRegistry(), engine)
+            provider.discover(externalGrammarDirectories)
+            val binding = provider.resolve(request) ?: return null
+            return TshSyntaxHighlighter(
+                language = binding.language,
+                extension = binding.extension,
+                engine = engine,
+                temporaryDirectory = temporaryDirectory
+            )
+        }
     }
 
     private data class LargeSession(
         /** Native-owned PieceTreeSource + incremental Tree-sitter tree. */
         val nativeHandle: Long,
+        val documentRuntime: TshDocumentRuntime,
         val lengthChars: AtomicLong,
         val cacheSessionId: Long,
         val ticket: Long,
@@ -638,6 +668,7 @@ class TshSyntaxHighlighter(
 
     private suspend fun initializeLargeSession(snapshot: EditorTextSnapshot, ticket: Long) {
         var nativeHandle = 0L
+        var documentRuntime: TshDocumentRuntime? = null
         var cacheSessionId = 0L
         try {
             // Native owns the canonical Piece Tree and sparse partition index. Kotlin
@@ -668,30 +699,31 @@ class TshSyntaxHighlighter(
                 destination.position(byteCount)
                 byteCount
             }
-            nativeHandle = engine.createNativeDocument(
-                language = language,
-                extension = extension,
-                byteLength = snapshot.length.toLong() * 2L,
-                temporaryDirectory = temporaryDirectory,
+            val parserSession = TshParserFactory(engine).create(
+                binding = grammarBinding,
+                bytes = snapshot.length.toLong() * 2L,
+                directory = temporaryDirectory,
                 reader = reader
             )
+            nativeHandle = parserSession.handle
+            documentRuntime = TshDocumentRuntime(grammarBinding, parserSession)
             check(nativeHandle != 0L) { "Native TSH document creation returned a null handle" }
             currentCoroutineContext().ensureActive()
             if (generation.get() != ticket) throw CancellationException("Stale native document")
 
             cacheSessionId = nextSessionId.getAndIncrement()
             val active = LargeSession(
-                nativeHandle, AtomicLong(snapshot.length.toLong()),
-                cacheSessionId, ticket
+                nativeHandle, checkNotNull(documentRuntime),
+                AtomicLong(snapshot.length.toLong()), cacheSessionId, ticket
             )
             if (generation.get() == ticket) {
                 synchronized(nativeEditLock) {
                     val queued = pendingNativeEdits.toList()
                     pendingNativeEdits.clear()
                     for (edit in queued) {
-                        check(engine.applyNativeDocumentEdit(
-                            nativeHandle, edit.startByte, edit.oldEndByte, edit.insertedUtf16Le
-                        )) { "Unable to replay edit into newly-created native document" }
+                        checkNotNull(documentRuntime).applyEdit(
+                            edit.startByte, edit.oldEndByte, edit.insertedUtf16Le
+                        )
                         active.lengthChars.addAndGet(edit.insertedChars.toLong() - edit.deletedChars.toLong())
                     }
                     // Consume the initial replay's accumulated native invalidations
@@ -712,6 +744,7 @@ class TshSyntaxHighlighter(
                     largeSession = active
                 }
                 nativeHandle = 0L
+                documentRuntime = null
                 cacheSessionId = 0L
                 parsing = false
                 Log.i(
@@ -731,7 +764,9 @@ class TshSyntaxHighlighter(
                 host?.invalidateStyles()
             }
         } finally {
-            if (nativeHandle != 0L) engine.closeNativeDocument(nativeHandle)
+            documentRuntime?.close() ?: run {
+                if (nativeHandle != 0L) engine.closeNativeDocument(nativeHandle)
+            }
             if (cacheSessionId != 0L) {
                 captureCache.invalidate { key, _ -> key.sessionId == cacheSessionId }
                 displayRetentionCache.invalidate { key, _ -> key.sessionId == cacheSessionId }
@@ -1228,10 +1263,9 @@ class TshSyntaxHighlighter(
                     }
                     val queryStarted = System.nanoTime()
                     try {
-                        engine.highlightNativeDocument(
-                            documentHandle = active.nativeHandle,
-                            startByte = missingStart.toLong() * 2L,
-                            endByte = missingEnd.toLong() * 2L
+                        active.documentRuntime.parser.highlight(
+                            start = missingStart.toLong() * 2L,
+                            end = missingEnd.toLong() * 2L
                         ) ?: throw IllegalStateException("Native viewport TSH returned null for visible range")
                     } finally {
                         nativeRangeQueries.incrementAndGet()
@@ -1506,9 +1540,9 @@ class TshSyntaxHighlighter(
             try {
                 active.nativeMutex.withLock {
                     for (edit in edits) {
-                        check(engine.applyNativeDocumentEdit(
-                            active.nativeHandle, edit.startByte, edit.oldEndByte, edit.insertedUtf16Le
-                        )) { "Native incremental Tree-sitter edit failed" }
+                        active.documentRuntime.applyEdit(
+                            edit.startByte, edit.oldEndByte, edit.insertedUtf16Le
+                        )
                         active.lengthChars.addAndGet(
                             edit.insertedChars.toLong() - edit.deletedChars.toLong()
                         )
@@ -1689,7 +1723,7 @@ class TshSyntaxHighlighter(
         scope.launch(Dispatchers.IO) {
             runCatching {
                 active.nativeMutex.withLock {
-                    engine.closeNativeDocument(active.nativeHandle)
+                    active.documentRuntime.close()
                 }
             }.onFailure { Log.w(TAG, "Failed to close native TSH document", it) }
             captureCache.invalidate { key, _ -> key.sessionId == active.cacheSessionId }

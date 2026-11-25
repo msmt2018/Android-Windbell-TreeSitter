@@ -368,6 +368,24 @@ static const char *nativeDocumentRead(
         return nullptr;
     }
 
+    // Untouched mmap/contiguous Piece Tree documents can be exposed directly.
+    // Tree-sitter consumes the stable backing view without per-callback memcpy,
+    // 128 KiB staging writes, or repeated source-window lookups. Edited piece
+    // trees transparently fall back to the reusable bounded input buffer.
+    const char *contiguous_data = nullptr;
+    uint64_t contiguous_size = 0;
+    if (input->source->contiguousData(&contiguous_data, &contiguous_size) &&
+        contiguous_data != nullptr && contiguous_size == document_size) {
+        const uint64_t remaining = document_size - byte_index;
+        if (remaining == 0) return nullptr;
+        if (remaining > std::numeric_limits<uint32_t>::max()) {
+            input->read_failed = true;
+            return nullptr;
+        }
+        *bytes_read = static_cast<uint32_t>(remaining);
+        return contiguous_data + byte_index;
+    }
+
     uint32_t stable_bytes = 0;
     if (!windbell::largefile::copyTreeSitterInputChunk(
             *input->source, byte_index, input->input_buffer.data(),
