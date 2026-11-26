@@ -675,10 +675,11 @@ class WindbellTshEngine private constructor() {
 
     /**
      * Computes captures intersecting a UTF-16LE byte range. Native Tree-sitter
-     * queries are range-restricted; regex and Monarch retain document-start
-     * context to preserve multiline matching and tokenizer state, then their
-     * emitted spans are clipped to this range. This bounds returned results,
-     * but is not yet a fully windowed regex/Monarch execution path.
+     * queries are range-restricted. Regex retains the complete document as the
+     * Oniguruma input so anchors/look-behind and long matches keep their semantics,
+     * but context-dependent MATCH rules recover only a preceding match that can
+     * cross the viewport's left edge and scan forward only through the viewport.
+     * Stateful Regex tokenizers still restore their state from document checkpoints.
      */
     fun computeHighlights(
         tree: TSTree?,
