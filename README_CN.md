@@ -2,7 +2,7 @@
   <img src="logo.png" alt="Android Windbell Tree-sitter 标志" width="180" />
   <h1>Android Windbell Tree-sitter</h1>
   <p><strong>面向 Android 的 Tree-sitter JNI 绑定、多语言语法模块与 Windbell TSH 高亮引擎。</strong></p>
-  <p><a href="README.md">English</a> · <a href="https://github.com/msmt2018/Android-Windbell-TreeSitter">GitHub 仓库</a> · <a href="https://tree-sitter.github.io/tree-sitter/">Tree-sitter</a> · <a href="https://jitpack.io/#msmt2018/Android-Windbell-TreeSitter">JitPack</a></p>
+  <p><a href="README.md">English</a> · <a href="docs/README.md">文档中心</a> · <a href="https://github.com/msmt2018/Android-Windbell-TreeSitter">GitHub 仓库</a> · <a href="https://tree-sitter.github.io/tree-sitter/">Tree-sitter</a> · <a href="https://jitpack.io/#msmt2018/Android-Windbell-TreeSitter">JitPack</a></p>
 </div>
 
 ---
@@ -627,6 +627,7 @@ dependencies {
 
 ## 更多文档
 
+- [完整文档中心](docs/README.md) —— 架构、Java/Kotlin API 参考、TSH DSL v2 规范与语法、SCM 迁移、引擎指南、诊断规范和开发路线图。
 - [Grammar 模块元数据与生成说明](README_grammars.md)
 - [TSH DSL v2 规范](docs/TSH_DSL_V2_SPEC.md)
 - [TSH 大文本 Native Token 架构](docs/TSH_LARGE_TEXT_NATIVE_TOKEN_ARCHITECTURE.md)
@@ -639,4 +640,4 @@ dependencies {
 
 ## 许可证
 
-许可证文本及仓库适用的授权条款请查看 [LICENSE](LICENSE)。
+本仓库由项目维护者持有版权的代码采用 **GNU Affero 通用公共许可证第 3 版（AGPL-3.0-only）**。完整许可证文本见 [LICENSE](LICENSE)。第三方组件（包括 Git Submodule 和 Grammar 源码）仍遵循各自上游的许可证条款，请查看对应目录中的许可证文件及版权声明。
