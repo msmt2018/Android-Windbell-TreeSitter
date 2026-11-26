@@ -1487,7 +1487,9 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                 const uint64_t window_bytes = window_end - core_start;
                 if (window_bytes == 0 || (window_bytes & 1u) != 0 ||
                     window_bytes > static_cast<uint64_t>(std::numeric_limits<size_t>::max()) /
-                        sizeof(UChar)) break;
+                        sizeof(UChar)) {
+                    throw std::runtime_error("Invalid bounded TSH Regex window geometry");
+                }
                 regex_window.resize(static_cast<size_t>(window_bytes / sizeof(UChar)));
                 if (!windbell::largefile::copyTextRange(
                         *text_source, core_start, window_bytes, regex_window.data())) {
@@ -1502,7 +1504,10 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                     const int hit = onig_search(
                         rule.onig_start, window_start, window_end_ptr,
                         current, window_end_ptr, region, ONIG_OPTION_NONE);
-                    if (hit < 0) break;
+                    if (hit == ONIG_MISMATCH) break;
+                    if (hit < 0) {
+                        throw std::runtime_error("Oniguruma failed during bounded TSH Regex execution");
+                    }
                     const int64_t local_start = region->beg[0];
                     const int64_t local_end = region->end[0];
                     if (local_start < 0 || local_end < local_start) break;
