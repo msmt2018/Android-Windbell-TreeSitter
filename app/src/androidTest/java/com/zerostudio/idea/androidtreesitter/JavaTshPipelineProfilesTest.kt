@@ -89,6 +89,28 @@ class JavaTshPipelineProfilesTest {
                     val pipelineTree = if (profile == 0) null else parsedTree
                     val diagnostics = engine.computePipelineDiagnostics(pipelineTree, sample, extension)
                     val captures = diagnostics.captures
+                    if (profile != 0) {
+                        val expectedQueryPriorities = listOf(
+                            136, 135, 132, 128, 127, 125, 123, 122, 121, 120,
+                            119, 118, 117, 116, 115, 112, 98, 96, 92, 66, 56
+                        )
+                        expectedQueryPriorities.forEach { priority ->
+                            assertTrue(
+                                "$label must execute SCM query priority=$priority",
+                                captures.any { it.source == 3 && it.priority == priority }
+                            )
+                        }
+                    }
+                    if (profile == 2) {
+                        val cacheNameStart = sample.indexOf("MAX_CACHE_CAPACITY")
+                        assertTrue(
+                            "Hybrid must execute the SCM #match? predicate on MAX_CACHE_CAPACITY",
+                            captures.any {
+                                it.source == 3 && it.priority == 120 &&
+                                    it.startByte.toLong() == cacheNameStart.toLong() * 2L
+                            }
+                        )
+                    }
                     val regex = captures.count { it.source == 0 }
                     val regexState = captures.count { it.source == 1 }
                     val regexTotal = regex + regexState
