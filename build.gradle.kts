@@ -205,8 +205,6 @@ subprojects {
     }
 
     plugins.withId("maven-publish") {
-      apply(plugin = "signing")
-
       afterEvaluate {
         extensions.configure<PublishingExtension> {
           publications {
@@ -232,8 +230,6 @@ subprojects {
                 }
               }
             }
-          }
-
           }
         }
       }
