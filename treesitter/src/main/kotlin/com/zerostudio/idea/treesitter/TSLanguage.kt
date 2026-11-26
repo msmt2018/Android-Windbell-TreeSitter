@@ -242,7 +242,7 @@ class TSLanguage internal constructor(val self: Long) {
     private companion object {
         /** note here requires load the native library */
         init {
-            System.loadLibrary("android_tree_sitter")
+            System.loadLibrary("android-tree-sitter")
         }
         
         /**
