@@ -87,4 +87,40 @@ class CaptureRangeLookupIndexTest {
             assertEquals(expected, index.findContaining(session, start, end) != null)
         }
     }
+
+    @Test fun continuousAdjacentRangesCoverShiftedViewport() {
+        val index = CaptureRangeLookupIndex()
+        index.add(CaptureRangeKey(7, 0, 100))
+        index.add(CaptureRangeKey(7, 100, 200))
+        assertEquals(
+            listOf(CaptureRangeKey(7, 0, 100), CaptureRangeKey(7, 100, 200)),
+            index.findCovering(7, 50, 180)
+        )
+    }
+
+    @Test fun overlappingRangesCoverViewportAndSkipRedundantNarrowIntervals() {
+        val index = CaptureRangeLookupIndex()
+        index.add(CaptureRangeKey(7, 0, 120))
+        index.add(CaptureRangeKey(7, 80, 260))
+        index.add(CaptureRangeKey(7, 100, 140))
+        assertEquals(
+            listOf(CaptureRangeKey(7, 0, 120), CaptureRangeKey(7, 80, 260)),
+            index.findCovering(7, 50, 240)
+        )
+    }
+
+    @Test fun anyGapRejectsPartialCoverage() {
+        val index = CaptureRangeLookupIndex()
+        index.add(CaptureRangeKey(7, 0, 100))
+        index.add(CaptureRangeKey(7, 110, 200))
+        assertNull(index.findCovering(7, 50, 180))
+    }
+
+    @Test fun rangesFromDifferentSessionsAreNeverCombined() {
+        val index = CaptureRangeLookupIndex()
+        index.add(CaptureRangeKey(7, 0, 100))
+        index.add(CaptureRangeKey(8, 100, 200))
+        assertNull(index.findCovering(7, 50, 180))
+    }
+
 }
