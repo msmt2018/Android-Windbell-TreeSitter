@@ -751,6 +751,80 @@ class TshEditorPipelineRenderingTest {
     }
 
     @Test
+    fun nestedExplicitFontClearOverridesEnclosingCaptureAtFinalSpannable() {
+        val engine = WindbellTshEngine.instance
+        val extension = "nested-font-clear-render-regression"
+        val dsl = """
+            tsh 2 {
+                language { id: "nested-font-clear-render-regression" extensions: [".nfcr"] }
+                styles {
+                    base { scope: "comment.block" }
+                    keyword { scope: "comment.block.keyword" parent: "base" }
+                }
+                schemes {
+                    plain {
+                        light [ base: #FF0000 @bold @italic, keyword: #0000FF @no-bold ]
+                        dark [ base: #AA0000 @bold @italic, keyword: #0000AA @no-bold ]
+                    }
+                }
+                defaultScheme: "plain"
+            }
+        """.trimIndent()
+        assertTrue(
+            "Nested font-clear DSL must compile: ${engine.lastCompileDiagnostics}",
+            engine.loadTshSource(extension, dsl, null)
+        )
+
+        val catalog = engine.getStyleCatalog(extension)
+        val baseId = catalog.first { it.name == "base" }.styleId
+        val keywordId = catalog.first { it.name == "keyword" }.styleId
+        val keywordPalette = engine.getStylePalette(extension, "keyword")
+        assertNotNull(keywordPalette)
+        assertEquals(0x01, keywordPalette!!.lightFontDefinedMask and 0x01)
+        assertEquals(0x01, keywordPalette.darkFontDefinedMask and 0x01)
+        assertEquals(0x02, keywordPalette.lightFontFlags and 0x02)
+
+        val source = "abcdefgh"
+        val captures = listOf(
+            WindbellTshEngine.HighlightSpan(
+                startByte = 0, endByte = 16, styleId = baseId, fontFlags = 0,
+                priority = 10, declarationOrder = 0, source = 0
+            ),
+            WindbellTshEngine.HighlightSpan(
+                startByte = 4, endByte = 12, styleId = keywordId, fontFlags = 0,
+                priority = 20, declarationOrder = 1, source = 0
+            )
+        )
+        val styled = SpannableStringBuilder(source)
+        engine.setAppearance(extension, false)
+        try {
+            engine.applyHighlightSpansToSpannable(
+                spans = captures,
+                documentOffset = 0,
+                text = source,
+                extension = extension,
+                spannable = styled
+            )
+
+            fun fontStyles(start: Int, end: Int): List<Int> =
+                styled.getSpans(start, end, StyleSpan::class.java)
+                    .filter { styled.getSpanStart(it) < end && styled.getSpanEnd(it) > start }
+                    .map { it.style }
+
+            assertTrue("Enclosing comment remains bold before nested keyword", 
+                fontStyles(0, 2).contains(android.graphics.Typeface.BOLD))
+            assertFalse("Nested @no-bold keyword must suppress enclosing bold capture",
+                fontStyles(2, 6).contains(android.graphics.Typeface.BOLD))
+            assertTrue("Unspecified child italic must remain inherited",
+                fontStyles(2, 6).contains(android.graphics.Typeface.ITALIC))
+            assertTrue("Enclosing comment bold resumes after nested keyword",
+                fontStyles(6, 8).contains(android.graphics.Typeface.BOLD))
+        } finally {
+            engine.clearAppearanceOverride(extension)
+        }
+    }
+
+    @Test
     fun repeatedSchemeEntriesOverlayOnlyExplicitPaintAttributes() {
         val engine = WindbellTshEngine.instance
         val dsl = """
