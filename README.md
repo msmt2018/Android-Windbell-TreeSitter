@@ -401,7 +401,7 @@ Prefer packaging the grammar library as an application dependency. Runtime loadi
 
 The root `LICENSE` file contains the GNU Affero General Public License, version 3 (AGPL-3.0-only). The AGPL requires preservation of notices and corresponding source obligations when conveying covered works; section 13 adds source-offer requirements for modified versions used for remote network interaction.
 
-The grammar directories are upstream projects maintained by their respective authors. A Git submodule does not automatically change its upstream license. Review each grammar's license and notices before redistribution. The same applies to vendored or nested third-party components, including Tree-sitter and Oniguruma.
+The grammar directories are upstream projects maintained by their respective authors. A Git submodule does not automatically change its upstream license. Review each grammar's license and notices before redistribution. The same applies to vendored or nested third-party components, including Tree-sitter and Oniguruma. The root LICENSE replacement does not automatically rewrite existing per-file license headers or upstream-derived source notices; this repository still contains source files with older GPL/LGPL notices, and the Gradle publication POM metadata must also be reconciled before describing every artifact as uniformly AGPL-3.0-only.
 
 - [Full license text](LICENSE)
 - [GNU AGPL v3 — official text](https://www.gnu.org/licenses/agpl-3.0.html)
