@@ -26,6 +26,12 @@ before_install:
     sudo apt-get install -y build-essential cargo nodejs npm ninja-build
 
 install:
+  # Grammar generation has runtime npm dependencies. Install them before Gradle
+  # configures/builds the dynamic grammar modules.
   - npm install --prefix grammars/cpp
   - npm install --prefix grammars/starlark --ignore-scripts --omit=dev
-  - ./gradlew publishToMavenLocal --no-daemon --stacktrace
+  # Phase 1: build the complete project and all configured Maven modules.
+  - ./gradlew clean build --parallel --no-daemon --stacktrace
+  # Phase 2: publish every configured MavenPublication into the local Maven
+  # repository. JitPack collects these artifacts and serves them as Maven files.
+  - ./gradlew publishToMavenLocal --parallel --no-daemon --stacktrace
