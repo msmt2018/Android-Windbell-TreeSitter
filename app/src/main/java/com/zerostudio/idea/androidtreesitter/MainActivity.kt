@@ -909,7 +909,7 @@ class MainActivity : AppCompatActivity() {
                     String text = ${"\"\"\""}
                         Java text block
                         Unicode: 中文 👨‍👩‍👧‍👦 𠮷
-                        ${"\\"\\"\\""};
+                        ${"\"\"\""};
                     throw new IllegalStateException(text);
                 }
             }
