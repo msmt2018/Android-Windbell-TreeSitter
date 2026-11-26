@@ -1,0 +1,367 @@
+/* Java TSH isolation profile: REGEX ONLY. No AST selectors or Tree-sitter SCM queries. */
+{
+    language {
+        id: "java"
+        name: "Java"
+        extensions: [".java", ".jav"]
+        aliases: ["Java"]
+        mimeTypes: ["text/x-java-source", "text/x-java"]
+        firstLine: /^#!.*\bjava\b/
+    }
+    name: ["Java", ".java", ".jav"],
+    ignoreCase: false,
+
+    // =========================================================================
+    // 1. Editor language metadata
+    // =========================================================================
+    editor {
+        tabSize: 4
+        fontSize: 14
+        insertSpaces: true
+        autoIndent: true
+        trimTrailingWhitespace: true
+        formatOnType: false
+        renderWhitespace: "selection"
+        lineNumbers: true
+        comments {
+            line: ["//"]
+            block: [["/*", "*/"]]
+        }
+        brackets: ["{}", "[]", "()", "<>"]
+        bracketNotIn: ["string", "comment"]
+        autoClosingPairs: [
+            { open: "(", close: ")", notIn: ["string", "comment"] }
+            { open: "[", close: "]", notIn: ["string", "comment"] }
+            { open: "{", close: "}", notIn: ["string", "comment"] }
+            { open: "\"", close: "\"", notIn: ["string", "comment"] }
+        ]
+        surroundingPairs: ["{}", "[]", "()", "\"\""]
+        wordPattern: /[A-Za-z_$][A-Za-z0-9_$]*/
+        indentation {
+            increaseIndentPattern: /\{[^}]*$/
+            decreaseIndentPattern: /^\s*\}/
+            indentNextLine: /=>\s*$/
+            unIndentedLinePattern: /^\s*(\/\/|\*)/
+        }
+        completion {
+            triggerCharacters: [".", "@", ":"]
+        }
+        electricCharacters: ["}", ";"]
+        autoCloseBefore: /[\s)\]};,]/
+        onEnterRules: [
+            {
+                beforeText: /\{[^}]*$/
+                afterText: /^\s*\}/
+                action: { indent: "indentOutdent" }
+            }
+        ]
+    },
+
+    // =========================================================================
+    // 2. Semantic style catalog and unlimited named schemes
+    // =========================================================================
+    isDark: false,
+    defaultScheme: "darcula",
+    styles {
+        keyword       { scope: "keyword.control", tags: ["keyword", "control"] }
+        keyword2      { scope: "keyword.context", tags: ["keyword", "contextual"] }
+        type          { scope: "entity.name.type", tags: ["type", "declaration"] }
+        typeBuiltin   { scope: "support.type", tags: ["type", "builtin"] }
+        string        { scope: "string.quoted", tags: ["string"] }
+        stringBlock   { scope: "string.quoted.block", tags: ["string", "multiline"] }
+        comment       { scope: "comment", tags: ["comment"] }
+        docComment    { scope: "comment.block.documentation", tags: ["comment", "documentation"] }
+        docTag        { scope: "keyword.other.documentation", tags: ["documentation", "tag"] }
+        number        { scope: "constant.numeric", tags: ["constant", "number"] }
+        annotation    { scope: "storage.type.annotation", tags: ["annotation", "metadata"] }
+        constant      { scope: "constant.language", tags: ["constant"] }
+        variable      { scope: "variable.other", tags: ["variable"] }
+        function      { scope: "entity.name.function", tags: ["function"] }
+        operator      { scope: "keyword.operator", tags: ["operator"] }
+    },
+
+    schemes {
+        darcula {
+            light [
+                keyword: #0000FF @bold,
+                keyword2: #7F0055,
+                type: #2B91AF,
+                typeBuiltin: #0000FF,
+                string: #A31515,
+                stringBlock: #800000,
+                comment: #008000,
+                docComment: #3F5FBF @no-bold,
+                docTag: #7F0055 @bold,
+                number: #098658,
+                annotation: #2B91AF,
+                constant: #6F42C1 @bold,
+                variable: #001080,
+                function: #795E26,
+                operator: #000000
+            ]
+            dark [
+                keyword: #CC7832 @bold,
+                keyword2: #6897BB,
+                type: #4EC9B0,
+                typeBuiltin: #E06C75,
+                string: #6A8759,
+                stringBlock: #497B51,
+                comment: #808080,
+                docComment: #629755 @no-bold,
+                docTag: #C69D48 @bold,
+                number: #6897BB,
+                annotation: #BBB529,
+                constant: #9876AA @bold,
+                variable: #A9B7C6,
+                function: #FFC66D,
+                operator: #A9B7C6
+            ]
+            ui {
+                light {
+                    editor.background: #FFFFFF
+                    editor.foreground: #202020
+                    editor.selection: #ADD6FF
+                    editor.lineHighlight: #F2F2F2
+                    editor.gutter: #858585
+                    editor.caret: #000000
+                    activity.background: #FFFFFF
+                    activity.surface: #F4F4F4
+                    activity.toolbar.background: #F4F4F4
+                    activity.toolbar.foreground: #202020
+                    activity.tabs.background: #F4F4F4
+                    activity.tabs.foreground: #666666
+                    activity.tabs.selected: #202020
+                    activity.tabs.indicator: #3F51B5
+                    activity.statusBar: #EAEAEA
+                    activity.navigationBar: #FFFFFF
+                }
+                dark {
+                    editor.background: #2B2B2B
+                    editor.foreground: #A9B7C6
+                    editor.selection: #214283
+                    editor.lineHighlight: #323232
+                    editor.gutter: #6B6B6B
+                    editor.caret: #FFFFFF
+                    activity.background: #1E1E1E
+                    activity.surface: #252526
+                    activity.toolbar.background: #252526
+                    activity.toolbar.foreground: #E8E8E8
+                    activity.tabs.background: #252526
+                    activity.tabs.foreground: #9DA0A6
+                    activity.tabs.selected: #FFFFFF
+                    activity.tabs.indicator: #CC7832
+                    activity.statusBar: #1E1E1E
+                    activity.navigationBar: #1E1E1E
+                }
+            }
+        }
+
+        github {
+            light [
+                keyword: #0550AE @bold,
+                keyword2: #8250DF,
+                type: #953800,
+                typeBuiltin: #0550AE,
+                string: #0A3069,
+                stringBlock: #0A3069,
+                comment: #6E7781,
+                docComment: #6E7781 @no-bold,
+                docTag: #8250DF,
+                number: #0550AE,
+                annotation: #8250DF,
+                constant: #0550AE,
+                variable: #24292F,
+                function: #8250DF,
+                operator: #24292F
+            ]
+            dark [
+                keyword: #79C0FF @bold,
+                keyword2: #D2A8FF,
+                type: #FFA657,
+                typeBuiltin: #79C0FF,
+                string: #A5D6FF,
+                stringBlock: #A5D6FF,
+                comment: #8B949E,
+                docComment: #8B949E @no-bold,
+                docTag: #D2A8FF,
+                number: #79C0FF,
+                annotation: #D2A8FF,
+                constant: #79C0FF,
+                variable: #E6EDF3,
+                function: #D2A8FF,
+                operator: #E6EDF3
+            ]
+            ui {
+                light {
+                    editor.background: #FFFFFF
+                    editor.foreground: #24292F
+                    editor.selection: #B6E3FF
+                    editor.lineHighlight: #F6F8FA
+                    editor.gutter: #6E7781
+                    editor.caret: #24292F
+                    activity.background: #FFFFFF
+                    activity.surface: #F6F8FA
+                    activity.toolbar.background: #F6F8FA
+                    activity.toolbar.foreground: #24292F
+                    activity.tabs.background: #F6F8FA
+                    activity.tabs.foreground: #6E7781
+                    activity.tabs.selected: #24292F
+                    activity.tabs.indicator: #0969DA
+                    activity.statusBar: #F6F8FA
+                    activity.navigationBar: #FFFFFF
+                }
+                dark {
+                    editor.background: #0D1117
+                    editor.foreground: #E6EDF3
+                    editor.selection: #264F78
+                    editor.lineHighlight: #161B22
+                    editor.gutter: #8B949E
+                    editor.caret: #E6EDF3
+                    activity.background: #0D1117
+                    activity.surface: #161B22
+                    activity.toolbar.background: #161B22
+                    activity.toolbar.foreground: #E6EDF3
+                    activity.tabs.background: #161B22
+                    activity.tabs.foreground: #8B949E
+                    activity.tabs.selected: #E6EDF3
+                    activity.tabs.indicator: #2F81F7
+                    activity.statusBar: #0D1117
+                    activity.navigationBar: #0D1117
+                }
+            }
+        }
+    },
+
+    // =========================================================================
+    // 3. 复用宏词典 (Defines: 词法片段)
+    // =========================================================================
+    defines: [
+        "identifier": /[a-zA-Z_$][a-zA-Z0-9_$]*/,
+        "docTags": /(?:@param|@return|@throws|@exception|@see|@since|@deprecated|@author|@version|@serial)\b/,
+    ],
+
+    // =========================================================================
+    // 4. 原生 AST 节点选择器规则 (Native AST Selectors: 100% 解耦 SCM，内核寄存器直连)
+    // =========================================================================
+
+    ],
+
+
+    },
+
+    // =========================================================================
+    // 5. 微观正则流与下推自动机 Block 匹配流 (Contains)
+    // =========================================================================
+    contains: [
+        // ---------- 5.1 文本块 Text Block (Java 15+，最高优先级) ----------
+        {
+            style: "stringBlock",
+            priority: 150,
+            start: {match: /"""/},
+            end: {match: /"""/},
+            contains: [
+                {match: /\\[sntbrf\\"']/, 0: "operator", priority: 155}
+            ]
+        },
+
+        // ---------- 5.2 Javadoc 结构注释块 ----------
+        {
+            style: "docComment",
+            priority: 140,
+            start: {match: /\/\*\*/},
+            end: {match: /\*\//},
+            contains: [
+                {match: include("docTags"), 0: "docTag", priority: 145},
+                {match: /\{@\w{1,32}[^}]{0,4096}\}/, 0: "annotation", priority: 145}
+            ]
+        },
+
+        // ---------- 5.3 字符串与数值复合内置模式 ----------
+
+        // ---------- 5.4 单行与普通多行注释 ----------
+        {
+            style: "comment",
+            priority: 130,
+            start: {match: /\/\//},
+            end: {match: /\r?\n/},
+            contains: [
+                {match: /\b(?:TODO|FIXME|XXX|BUG|NOTE)\b/, 0: "constant", priority: 135}
+            ]
+        },
+        {
+            style: "comment",
+            priority: 130,
+            start: {match: /\/\*/},
+            end: {match: /\*\//},
+            contains: [
+                {match: /\b(?:TODO|FIXME|XXX|BUG|NOTE)\b/, 0: "constant", priority: 135}
+            ]
+        },
+
+        // ---------- 5.5 元数据注解 (Annotations) ----------
+        // The leading @ token is captured by Tree-sitter queries above. Do not
+        // use a global Regex marker: it also matches email addresses, strings,
+        // comments and malformed/non-annotation source text.
+
+        // ---------- 5.6 静态常量规范 (SCREAMING_SNAKE_CASE) ----------
+
+        // ---------- 5.7 基础原始数据类型 (Primitive Types) ----------
+        {match: keywordsToRegex("boolean byte char short int long float double void"), 0: "typeBuiltin", priority: 95},
+
+        // ---------- 5.8 核心控制流与结构关键字 ----------
+        {match: keywordsToRegex(
+            "if else switch case default for while do break continue return yield "
+            "try catch finally throw throws "
+            "class interface enum record extends implements permits "
+            "public protected private abstract static final strictfp "
+            "synchronized volatile transient "
+            "new this super instanceof "
+            "package import module open opens requires exports provides uses with to "
+            "native assert"
+        ), 0: "keyword", priority: 95},
+
+        // ---------- 5.9 上下文与现代演进关键字 (Java 10/14/17/21+) ----------
+        {match: keywordsToRegex("var non-sealed sealed record when"), 0: "keyword2", priority: 90},
+
+        // ---------- 5.10 字面量常量 ----------
+        {match: keywordsToRegex("true false null"), 0: "constant", priority: 90},
+
+        // ---------- 5.11 方法调用微观补充 ----------
+
+        // ---------- 5.12 常用核心类自动高亮 ----------
+        {match: keywordsToRegex(
+            "String Object Class System Math Thread Runnable AutoCloseable "
+            "Integer Long Short Byte Double Float Character Boolean Void "
+            "List Map Set Queue Deque Collection ArrayList HashMap HashSet LinkedList "
+            "Optional CompletableFuture Stream Arrays Collections Objects "
+            "Exception RuntimeException Throwable Error IOException"
+        ), 0: "type", priority: 85},
+
+        // 驼峰命名类名
+
+        // ---------- 5.13 操作符、方法引用与标点符号 ----------
+        {match: /::/, 0: "operator", priority: 60},
+        {match: /->/, 0: "operator", priority: 60},
+        {match: /[?:]/, 0: "operator", priority: 50},
+        {match: /[=+\-*\/%&|^!~<>]/, 0: "operator", priority: 50},
+        {match: /[{}()\[\],;.]/, 0: "operator", priority: 40}
+
+        // Java quoted strings and character literals (single lexical matches).
+        { match: /"(?:\\.|[^"\\])*"/, 0: "string", priority: 126 },
+        { match: /'(?:\\.|[^'\\])'/, 0: "string", priority: 126 },
+
+        // Java numeric literal families, including separators, radix prefixes and suffixes.
+        { match: /(?:0[xX][0-9a-fA-F](?:_?[0-9a-fA-F])*(?:[lL])?|0[bB][01](?:_?[01])*(?:[lL])?|0[0-7](?:_?[0-7])*(?:[lL])?|[0-9](?:_?[0-9])*(?:\.[0-9](?:_?[0-9])*)?(?:[eE][+-]?[0-9](?:_?[0-9])*)?[fFdDlL]?)/, 0: "number", priority: 92 },
+
+        // Annotation names, declaration-like type names and identifier contexts.
+        { match: /@[A-Za-z_$][A-Za-z0-9_$]*/, 0: "annotation", priority: 88 },
+        { match: /\b[A-Z][A-Za-z0-9_$]*\b/, 0: "type", priority: 82 },
+        { match: /\b[A-Za-z_$][A-Za-z0-9_$]*(?=\s*\()/, 0: "function", priority: 78 },
+        { match: /\b[A-Za-z_$][A-Za-z0-9_$]*(?=\s*(?:=|;|,))/, 0: "variable", priority: 74 },
+        { match: /\b[A-Z][A-Z0-9_]{2,}\b/, 0: "constant", priority: 84 },
+
+        // Java operator and punctuation coverage outside higher-priority lexical regions.
+        { match: /\.\.\./, 0: "operator", priority: 65 },
+        { match: /(?:>>>?=?|<<=?|->|::|\+\+|--|&&|\|\||==|!=|<=|>=|\+=|-=|\*=|\/=|%=|&=|\|=|\^=)/, 0: "operator", priority: 64 },
+    ]
+}
