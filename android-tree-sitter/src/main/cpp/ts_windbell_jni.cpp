@@ -1249,9 +1249,11 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeGetThemeTokens(
 
 /**
  * Export palette for the explicitly selected scheme.
- * Layout v2: [styleId, lightFg, darkFg, lightFlags, darkFlags, hasLightFg, hasDarkFg,
- *              lightBg, darkBg, hasLightBg, hasDarkBg] * N.
+ * Layout v3: [styleId, lightFg, darkFg, lightFlags, darkFlags, hasLightFg, hasDarkFg,
+ *              lightBg, darkBg, hasLightBg, hasDarkBg, lightFontDefinedMask,
+ *              darkFontDefinedMask] * N.
  * Presence flags distinguish an absent value from an explicit transparent color.
+ * Font masks preserve explicit clears (for example @no-bold) across JNI.
  */
 JNIEXPORT jintArray JNICALL
 Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeGetPalette(
@@ -1285,7 +1287,7 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeGetPalette(
         const auto scheme_it = grammar->schemes.find(selected_scheme);
         if (scheme_it == grammar->schemes.end()) return env->NewIntArray(0);
 
-        constexpr jsize kPaletteFields = 11;
+        constexpr jsize kPaletteFields = 13;
         const size_t style_count = grammar->styles.size();
         if (style_count > static_cast<size_t>(std::numeric_limits<jsize>::max() / kPaletteFields)) {
             throw_illegal_state(env, "Native TSH palette exceeds the JNI array length limit");
@@ -1317,6 +1319,8 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeGetPalette(
             values[base + 8] = static_cast<jint>(dark.background.argb);
             values[base + 9] = light.background.present ? 1 : 0;
             values[base + 10] = dark.background.present ? 1 : 0;
+            values[base + 11] = static_cast<jint>(light.font.defined_mask);
+            values[base + 12] = static_cast<jint>(dark.font.defined_mask);
         }
         if (value_count > 0) {
             env->SetIntArrayRegion(result, 0, value_count, values.data());
