@@ -56,6 +56,23 @@ class JavaTshPipelineProfilesTest {
                 profiles.forEach { (asset, label, profile) ->
                     val source = context.assets.open("tsh/$asset")
                         .bufferedReader(Charsets.UTF_8).use { it.readText() }
+                    when (profile) {
+                        0 -> {
+                            assertTrue("Regex-only must not declare AST selectors", !source.contains("ast: ["))
+                            assertTrue("Regex-only must not declare Tree-sitter SCM queries", !source.contains("treeSitter {"))
+                        }
+                        1 -> {
+                            assertTrue("ATS-only must not declare Regex contains rules", !source.contains("contains: ["))
+                            assertTrue("ATS-only must not declare Regex defines", !source.contains("defines: ["))
+                            assertTrue("ATS-only must not use regex SCM predicates", !source.contains("#match?"))
+                            assertTrue("ATS-only must not use regex editor metadata", !source.contains("wordPattern:") && !source.contains("firstLine:") && !source.contains("onEnterRules:"))
+                        }
+                        2 -> {
+                            assertTrue("Hybrid must include AST selectors", source.contains("ast: ["))
+                            assertTrue("Hybrid must include native SCM queries", source.contains("treeSitter {"))
+                            assertTrue("Hybrid must include Regex rules", source.contains("contains: ["))
+                        }
+                    }
                     assertTrue(
                         "$label must compile: ${engine.lastCompileDiagnostics}",
                         engine.loadTshSource("java", source, language)
