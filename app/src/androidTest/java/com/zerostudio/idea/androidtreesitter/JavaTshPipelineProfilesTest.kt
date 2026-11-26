@@ -81,23 +81,24 @@ class JavaTshPipelineProfilesTest {
                     val diagnostics = engine.computePipelineDiagnostics(parsedTree, sample, "java")
                     val captures = diagnostics.captures
                     val regex = captures.count { it.source == 0 }
-                    val monarch = captures.count { it.source == 1 }
+                    val regexState = captures.count { it.source == 1 }
+                    val regexTotal = regex + regexState
                     val ats = captures.count { it.source == 2 }
                     val query = captures.count { it.source == 3 }
-                    assertEquals("$label must not activate Monarch", 0, monarch)
+                    assertTrue("$label must not declare a Monarch tokenizer", !source.contains("monarch {"))
                     when (profile) {
                         0 -> {
-                            assertTrue("Regex-only must produce Regex captures", regex > 0)
+                            assertTrue("Regex-only must produce Regex / Regex State captures", regexTotal > 0)
                             assertEquals("Regex-only must not produce ATS captures", 0, ats)
                             assertEquals("Regex-only must not produce SCM captures", 0, query)
                         }
                         1 -> {
-                            assertEquals("ATS-only must not produce Regex captures", 0, regex)
+                            assertEquals("ATS-only must not produce Regex captures", 0, regexTotal)
                             assertTrue("ATS-only must produce AST Selector captures", ats > 0)
                             assertTrue("ATS-only must produce native SCM captures", query > 0)
                         }
                         2 -> {
-                            assertTrue("Hybrid must produce Regex captures", regex > 0)
+                            assertTrue("Hybrid must produce Regex / Regex State captures", regexTotal > 0)
                             assertTrue("Hybrid must produce AST Selector captures", ats > 0)
                             assertTrue("Hybrid must produce native SCM captures", query > 0)
                         }
