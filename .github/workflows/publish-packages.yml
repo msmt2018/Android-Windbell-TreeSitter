@@ -156,7 +156,7 @@ jobs:
             :tree-sitter-vue:publishReleasePublicationToGitHubPackagesRepository \\
             :tree-sitter-xml:publishReleasePublicationToGitHubPackagesRepository \\
             :tree-sitter-yaml:publishReleasePublicationToGitHubPackagesRepository \\
-            :tree-sitter-zsh:publishReleasePublicationToGitHubPackagesRepository
+            :tree-sitter-zsh:publishReleasePublicationToGitHubPackagesRepository \\
             -PreleaseVersion=${{ inputs.version }} \\
             --no-daemon \\
             --parallel \\
