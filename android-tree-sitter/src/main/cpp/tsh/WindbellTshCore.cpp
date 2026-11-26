@@ -1565,7 +1565,7 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                     const int64_t next = local_end > local_start
                         ? local_end : local_start + 2;
                     if (next <= 0 || (next & 1LL) != 0 ||
-                        static_cast<uint64_t>(next) >= window.size()) break;
+                        static_cast<uint64_t>(next) >= regex_window.size()) break;
                     current = window_start + next;
                 }
                 core_start = core_end;
