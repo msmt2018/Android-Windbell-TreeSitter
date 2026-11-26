@@ -25,6 +25,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
+import org.junit.BeforeClass
 import org.junit.Test
 import org.junit.runner.RunWith
 import x.github.module.editor.render.StyledTextPainter
@@ -37,6 +38,16 @@ import kotlin.math.abs
  */
 @RunWith(AndroidJUnit4::class)
 class TshEditorPipelineRenderingTest {
+    companion object {
+        @BeforeClass
+        @JvmStatic
+        fun loadNativeTreeSitterLibraries() {
+            // Test methods are independently scheduled; never rely on a later test
+            // method to initialize JNI before the first TSH engine access.
+            TreeSitter.loadLibrary()
+            System.loadLibrary("tree-sitter-java")
+        }
+    }
 
 
     @Test
