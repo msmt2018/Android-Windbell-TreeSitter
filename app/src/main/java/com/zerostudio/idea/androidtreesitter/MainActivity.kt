@@ -119,6 +119,7 @@ class MainActivity : AppCompatActivity() {
 
     companion object {
         private const val TAG = "Windbell_MainActivity"
+        @Volatile private var processJavaTshProfileId: String? = null
         // Keep Java first and make the console language spinner deterministic.
         private val languageMap = java.util.Collections.synchronizedMap(linkedMapOf<String, TSLanguage>())
 
@@ -222,10 +223,15 @@ class MainActivity : AppCompatActivity() {
                     return@forEach
                 }
                 val engine = WindbellTshEngine.instance
-                if (engine.isGrammarLoaded(extension)) {
+                val javaProfileAlreadyLoaded =
+                    extension != "java" || processJavaTshProfileId == activeJavaTshProfile.id
+                if (engine.isGrammarLoaded(extension) && javaProfileAlreadyLoaded) {
                     tshConfigurationStates[extension] = "READY"
                     Log.i(TAG, "Reusing compiled native TSH grammar .$extension; skip recompilation on Activity recreation")
                     return@forEach
+                }
+                if (extension == "java" && engine.isGrammarLoaded(extension)) {
+                    Log.i(TAG, "Reloading Java TSH profile ${activeJavaTshProfile.id}; process profile marker differs")
                 }
                 val result = runCatching {
                     val source = assets.open("tsh/$assetName").bufferedReader().use { it.readText() }
@@ -240,6 +246,7 @@ class MainActivity : AppCompatActivity() {
                 }
                 result.onSuccess {
                     tshConfigurationStates[extension] = "READY"
+                    if (extension == "java") processJavaTshProfileId = activeJavaTshProfile.id
                     Log.i(TAG, "TSH config ready: .$extension")
                 }.onFailure { error ->
                     tshConfigurationStates[extension] = "FAILED: ${error.message}"
@@ -833,6 +840,7 @@ class MainActivity : AppCompatActivity() {
             withContext(Dispatchers.Main) {
                 if (compilation.isSuccess) {
                     activeJavaTshProfile = profile
+                    processJavaTshProfileId = profile.id
                     getSharedPreferences("tsh_pipeline_profiles", MODE_PRIVATE)
                         .edit().putString("java.profile", profile.id).apply()
                     tshConfigurationStates["java"] = "READY"
