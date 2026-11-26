@@ -265,6 +265,12 @@
                 id: "java-not-direct-field-parent"
                 priority: 115
                 source: `(method_declaration name: (identifier) @function (#not-has-parent? @function "field_declaration"))`
+            },
+
+            {
+                id: "java-generic-identifiers"
+                priority: 60
+                source: `(identifier) @variable`
             }
 
 
