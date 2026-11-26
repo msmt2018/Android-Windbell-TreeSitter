@@ -7,7 +7,6 @@ import org.gradle.api.publish.PublishingExtension
 import org.gradle.api.publish.maven.MavenPublication
 import com.zerostudio.idea.treesitter.CleanTreeSitterBuildTask
 import com.zerostudio.idea.treesitter.projectVersionCode
-import org.gradle.plugins.signing.SigningExtension
 import java.io.ByteArrayOutputStream
 import java.time.LocalDate
 import java.time.LocalDateTime
@@ -61,17 +60,6 @@ val buildVersionCode = timestamp.substring(2).toLong().let {
 // val releaseVersion = providers.gradleProperty("releaseVersion").orElse("1.0.0")
 // version = "v${releaseVersion.get().removePrefix("v")}"
 
-fun Project.githubPackagesOwner(): String =
-  providers.gradleProperty("gpr.owner")
-    .orElse(providers.environmentVariable("GITHUB_REPOSITORY_OWNER"))
-    .orElse("YOUR_GITHUB_OWNER")
-    .get()
-
-fun Project.githubPackagesRepository(): String =
-  providers.gradleProperty("gpr.repository")
-    .orElse(providers.environmentVariable("GITHUB_REPOSITORY").map { it.substringAfter('/') })
-    .orElse("android-tree-sitter")
-    .get()
 
 val pinnedNdkVersion = libs.versions.ndk.get()
 val pinnedCmakeVersion = libs.versions.cmake.get()
@@ -128,7 +116,7 @@ subprojects {
     }
   }
 
-  val githubPackageModules = setOf(
+  val jitPackModules = setOf(
     "android-tree-sitter",
     "annotations",
     "tree-sitter-aidl",
@@ -191,9 +179,12 @@ subprojects {
     "tree-sitter-zsh",
   )
 
-  if (name in githubPackageModules) {
-    group = "io.github.msmt2018"
-    version = buildVersionName
+  if (name in jitPackModules) {
+    group = "com.github.msmt2018.Android-Windbell-TreeSitter"
+    version = providers.gradleProperty("jitpackVersion")
+      .orElse(providers.environmentVariable("JITPACK_TAG"))
+      .orElse(buildVersionName)
+      .get()
 
     plugins.withId("com.android.library") {
       extensions.configure<LibraryExtension> {
@@ -227,7 +218,7 @@ subprojects {
                 name.set(project.name)
                 description.set(project.description
                   ?: "${project.name} for Android Tree-sitter")
-                url.set("https://github.com/${githubPackagesOwner()}/${githubPackagesRepository()}")
+                url.set("https://github.com/msmt2018/Android-Windbell-TreeSitter")
                 licenses {
                   license {
                     name.set("GNU Affero General Public License v3.0")
@@ -236,39 +227,13 @@ subprojects {
                   }
                 }
                 scm {
-                  url.set("https://github.com/${githubPackagesOwner()}/${githubPackagesRepository()}")
-                  connection.set("scm:git:https://github.com/${githubPackagesOwner()}/${githubPackagesRepository()}.git")
+                  url.set("https://github.com/msmt2018/Android-Windbell-TreeSitter")
+                  connection.set("scm:git:https://github.com/msmt2018/Android-Windbell-TreeSitter.git")
                 }
               }
             }
           }
 
-          repositories {
-            maven {
-              name = "GitHubPackages"
-              url = uri("https://maven.pkg.github.com/${githubPackagesOwner()}/${githubPackagesRepository()}")
-              credentials {
-                username = providers.environmentVariable("GITHUB_ACTOR").orNull
-                password = providers.environmentVariable("GITHUB_TOKEN").orNull
-              }
-            }
-            maven {
-              name = "MavenCentral"
-              url = uri("https://sonatype.com")
-              credentials {
-                username = providers.environmentVariable("MAVEN_USERNAME").orNull
-                password = providers.environmentVariable("MAVEN_PASSWORD").orNull
-              }
-            }
-          }
-        }
-
-        extensions.configure<SigningExtension> {
-          val signingKey = providers.environmentVariable("GPG_SIGNING_KEY").orNull
-          val signingPassword = providers.environmentVariable("GPG_PASSWORD").orNull
-          if (signingKey != null && signingPassword != null) {
-            useInMemoryPgpKeys(signingKey, signingPassword)
-            sign(extensions.getByType<PublishingExtension>().publications["release"])
           }
         }
       }
