@@ -46,6 +46,7 @@ class JavaTshPipelineProfilesTest {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val engine = WindbellTshEngine.instance
         val language = TSLanguageJava.getInstance()
+        val extension = "java-profile-pipeline-test"
         val parser = TSParser.create().apply { setLanguage(language) }
         try {
             val tree = parser.parseString(sample)
@@ -76,12 +77,15 @@ class JavaTshPipelineProfilesTest {
                             assertTrue("Hybrid must include Regex rules", source.contains("contains: ["))
                         }
                     }
-                    val compiled = engine.loadTshSource("java", source, language)
+                    val isolatedSource = source
+                        .replace("id: \"java\"", "id: \"$extension\"")
+                        .replace("extensions: [\".java\"]", "extensions: [\".java-profile-test\"]")
+                    val compiled = engine.loadTshSource(extension, isolatedSource, language)
                     assertTrue(
                         "$label must compile: ${engine.lastCompileDiagnostics}",
                         compiled
                     )
-                    val diagnostics = engine.computePipelineDiagnostics(parsedTree, sample, "java")
+                    val diagnostics = engine.computePipelineDiagnostics(parsedTree, sample, extension)
                     val captures = diagnostics.captures
                     val regex = captures.count { it.source == 0 }
                     val regexState = captures.count { it.source == 1 }
@@ -106,7 +110,7 @@ class JavaTshPipelineProfilesTest {
                             assertTrue("Hybrid must produce native SCM captures", query > 0)
                         }
                     }
-                    val spans = engine.computeHighlights(parsedTree, sample, "java")
+                    val spans = engine.computeHighlights(parsedTree, sample, extension)
                     assertTrue("$label must produce final render spans", spans.isNotEmpty())
                     val styled = android.text.SpannableStringBuilder(sample)
                     engine.applyHighlightSpansToSpannable(spans, 0, sample, "java", styled)
