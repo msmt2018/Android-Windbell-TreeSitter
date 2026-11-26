@@ -7,6 +7,10 @@ before_install:
   - sudo apt-get install -y build-essential cargo cmake ninja-build curl
   - curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
   - sudo apt-get install -y nodejs
+  - sdk_root="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"; test -n "$sdk_root"
+  - sdkmanager="$sdk_root/cmdline-tools/latest/bin/sdkmanager"; test -x "$sdkmanager"
+  - yes | "$sdkmanager" --licenses >/dev/null || true
+  - "$sdkmanager" --install "ndk;29.0.14206865" "cmake;3.31.6" "build-tools;35.0.0"
   - node --version
   - npm --version
   - chmod +x ./gradlew scripts/install-grammar-node-dependencies.sh
