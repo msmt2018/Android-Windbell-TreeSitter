@@ -48,6 +48,69 @@ internal class CaptureRangeLookupIndex {
         return synchronized(lock) { find(root, sessionId, startUtf16, endUtf16) }
     }
 
+    /**
+     * Returns the smallest ordered set of cached ranges whose union continuously
+     * covers [startUtf16, endUtf16). A gap is a cache miss: callers must never
+     * mistake partial coverage for a complete viewport result.
+     */
+    fun findCovering(
+        sessionId: Long,
+        startUtf16: Int,
+        endUtf16: Int
+    ): List<CaptureRangeKey>? {
+        if (sessionId < 0L || startUtf16 < 0 || endUtf16 <= startUtf16) return null
+        return synchronized(lock) {
+            val candidates = ArrayList<CaptureRangeKey>()
+            collectOverlaps(root, sessionId, startUtf16, endUtf16, candidates)
+            if (candidates.isEmpty()) return@synchronized null
+            candidates.sortWith(
+                compareBy<CaptureRangeKey> { it.startUtf16 }
+                    .thenByDescending { it.endUtf16 }
+            )
+            val selected = ArrayList<CaptureRangeKey>()
+            var coveredUntil = startUtf16
+            for (candidate in candidates) {
+                if (candidate.startUtf16 > coveredUntil) break
+                if (candidate.endUtf16 <= coveredUntil) continue
+                selected += candidate
+                coveredUntil = candidate.endUtf16
+                if (coveredUntil >= endUtf16) return@synchronized selected
+            }
+            null
+        }
+    }
+
+    private fun collectOverlaps(
+        node: Node?,
+        sessionId: Long,
+        start: Int,
+        end: Int,
+        destination: MutableList<CaptureRangeKey>
+    ) {
+        if (node == null || node.maxEnd <= start ||
+            sessionId < node.minSession || sessionId > node.maxSession) return
+
+        val left = node.left
+        if (left != null && left.maxEnd > start &&
+            sessionId >= left.minSession && sessionId <= left.maxSession) {
+            collectOverlaps(left, sessionId, start, end, destination)
+        }
+
+        val key = node.key
+        if (key.sessionId == sessionId &&
+            key.startUtf16 < end && key.endUtf16 > start) {
+            destination += key
+        }
+
+        // The tree is ordered by session and then start offset. The right
+        // subtree cannot contain this session's overlap once its root key
+        // starts at or beyond the requested end.
+        if (key.sessionId < sessionId ||
+            (key.sessionId == sessionId && key.startUtf16 < end)) {
+            collectOverlaps(node.right, sessionId, start, end, destination)
+        }
+    }
+
     private fun find(node: Node?, sessionId: Long, start: Int, end: Int): CaptureRangeKey? {
         if (node == null || node.maxEnd < end ||
             sessionId < node.minSession || sessionId > node.maxSession) return null
