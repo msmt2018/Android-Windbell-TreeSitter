@@ -796,11 +796,15 @@ class WindbellTshEngine private constructor() {
                 } else {
                     style?.lightFontDefinedMask ?: 0
                 }
-                captureFontFlags[index] = captures.fontFlags(sourceIndex) or schemeFlags
+                val rawCaptureFlags = captures.fontFlags(sourceIndex)
+                // Scheme declarations override raw capture flags only for attributes
+                // they explicitly define. Unspecified scheme attributes preserve the
+                // capture's own flags; explicit clears remain represented by the mask.
+                captureFontFlags[index] =
+                    (rawCaptureFlags and schemeDefinedMask.inv()) or schemeFlags
                 // A defined-but-disabled attribute is still an active winner:
                 // it must suppress a lower-priority enclosing capture's style.
-                captureFontDefinedMasks[index] =
-                    captures.fontFlags(sourceIndex) or schemeDefinedMask
+                captureFontDefinedMasks[index] = rawCaptureFlags or schemeDefinedMask
                 if (hasForeground[index]) activeHeapCapacities[0]++
                 if (hasBackground[index]) activeHeapCapacities[1]++
                 for (bitIndex in 0 until 5) {
