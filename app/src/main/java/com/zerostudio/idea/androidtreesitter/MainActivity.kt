@@ -1463,7 +1463,7 @@ class MainActivity : AppCompatActivity() {
             val bindingState = languageRegistrationStates[name] ?: "NOT_REGISTERED"
             report.appendLine(
                 "$name (.$extension): parser=$parserState · binding=$bindingClass ($bindingState) · " +
-                    "native=lib$extension.so ($nativeState) · tsh=$configState · schemes=${schemes.size} · styles=$styles"
+                    "native=lib$libraryName.so ($nativeState) · tsh=$configState · schemes=${schemes.size} · styles=$styles"
             )
             if (schemes.isNotEmpty()) report.appendLine("   " + schemes.joinToString())
         }
