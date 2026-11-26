@@ -21,8 +21,9 @@ class JavaTshPipelineProfilesTest {
          * @param value input value
          * @return result
          */
+        class Base { void base() {} }
         @Deprecated
-        public class Demo<T extends Number> {
+        public class Demo<T extends Number> extends Base {
             private static final int MAX_SIZE = 0x7FFF;
             private String value = "hello";
             public Demo(String value) { this.value = value; }
@@ -32,8 +33,12 @@ class JavaTshPipelineProfilesTest {
             }
             public void same(int same) {}
             public void run() {
+                super.base();
                 Runnable action = this::execute;
                 action.run();
+                boolean enabled = true;
+                boolean disabled = false;
+                Object absent = null;
                 int count = 42;
                 double hexRatio = 0x1.8p1;
                 if (count > 0) execute();
@@ -116,6 +121,27 @@ class JavaTshPipelineProfilesTest {
                                 captures.any { it.source == 3 && it.priority == priority }
                             )
                         }
+                    }
+                    if (profile == 1) {
+                        fun assertQueryCapture(text: String, priority: Int) {
+                            val start = sample.indexOf(text)
+                            assertTrue("Fixture token '$text' must exist", start >= 0)
+                            assertTrue(
+                                "$label must capture '$text' through native Query priority=$priority",
+                                captures.any {
+                                    it.source == 3 && it.priority == priority &&
+                                        it.startByte.toLong() == start.toLong() * 2L &&
+                                        it.endByte.toLong() == (start + text.length).toLong() * 2L
+                                }
+                            )
+                        }
+                        assertQueryCapture("this", 96)
+                        assertQueryCapture("super", 96)
+                        assertQueryCapture("true", 96)
+                        assertQueryCapture("false", 96)
+                        assertQueryCapture("null", 96)
+                        assertQueryCapture("int", 98)
+                        assertQueryCapture("double", 98)
                     }
                     if (profile == 2) {
                         val cacheNameStart = sample.indexOf("MAX_CACHE_CAPACITY")
