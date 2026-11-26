@@ -26,6 +26,220 @@ The TSH highlighting model is deliberately limited to **Tree-sitter ATS / Tree-s
 
 > Large-file support is an architectural capability, not a universal performance guarantee. Actual parsing, capture, and final on-screen rendering performance depends on the grammar, document structure, device memory, and editor integration. Use the included tests and device measurements when evaluating a target workload.
 
+
+## Windbell TSH — Tree-sitter Highlighting Engine
+
+**Windbell TSH** is the repository's declarative syntax-highlighting and language-presentation engine. It is designed for Android code editors: a language package supplies its Tree-sitter grammar, a `.tsh` profile declares how that language should be recognized and styled, the native runtime produces source-ranged captures, and the editor adapter turns the resolved styles into actual line-rendering instructions.
+
+TSH is not a hard-coded collection of language colors. The `.tsh` document is the source of truth for language metadata, semantic styles, color schemes, ATS selectors, embedded Tree-sitter queries, optional Regex rules, and editor-facing metadata. The native runtime is language- and theme-neutral.
+
+### Design goals and defining characteristics
+
+- **Grammar-aware highlighting:** use the real Tree-sitter syntax tree rather than relying on keyword lists alone. Rules can distinguish declarations, references, fields, nested syntax, comments, literals, and other grammar-defined structures.
+- **Two matching backends, one result model:** ATS / Tree-sitter Query is the structural path; optional Oniguruma Regex is an independent text-pattern path. Their captures are normalized into a common range/style model before arbitration. Regex is not mixed into the Tree-sitter query engine.
+- **Configuration-first styling:** semantic style names, palettes, typography flags, and UI theme tokens come from the profile. C++ does not assign language-specific colors or infer meaning from numeric style IDs.
+- **Embedded queries:** Tree-sitter query source is stored in the `.tsh` profile and compiled against the selected `TSLanguage`. No generated or external `.scm` highlighting file is required.
+- **Explicit precedence:** rules can declare priority and overlap behavior. Declaration order provides a stable tie-breaker; nested and non-conflicting intervals are retained rather than being discarded by arbitrary last-write-wins behavior.
+- **Theme switching without reparsing:** named schemes and light/dark appearance are presentation data. Changing the selected scheme or appearance reloads palette data; it does not require rebuilding the syntax tree.
+- **Large-document-aware execution:** the native-document path reads text through bounded windows, can be connected to a Piece Tree-backed source, and supports edit synchronization, dirty-range reporting, viewport capture, and reusable capture ranges.
+- **Real editor integration:** TSH output is consumed by the editor's syntax-highlighter / line-styling path. A successful compile or capture is not itself proof of a pixel being drawn; the host renderer owns the final draw.
+
+### TSH processing architecture
+
+The following diagram shows the intended and implemented high-level data flow. ATS and Regex remain independent until their results are normalized.
+
+```mermaid
+flowchart TD
+    A["Language package + .tsh profile"] --> B["TSH lexer / parser"]
+    B --> C["Validation and compiled profile"]
+    C --> D["Style catalog + named schemes"]
+    C --> E["ATS compiler"]
+    C --> F["Optional Oniguruma Regex compiler"]
+    G["Tree-sitter Grammar / TSLanguage"] --> E
+    H["Document TextSource / Piece Tree"] --> I["Native document + Tree-sitter parse"]
+    I --> J["Syntax tree"]
+    J --> K["ATS selectors"]
+    J --> L["Embedded Tree-sitter Query"]
+    E --> K
+    E --> L
+    F --> M["Regex MATCH / BLOCK execution"]
+    H --> M
+    K --> N["Normalized captures"]
+    L --> N
+    M --> N
+    N --> O["Priority / overlap arbitration"]
+    D --> P["Scheme and style resolution"]
+    O --> P
+    P --> Q["Kotlin TSH API / editor adapter"]
+    Q --> R["Line-local spans / render instructions"]
+    R --> S["EditorView renderer / Canvas"]
+```
+
+#### Runtime layers
+
+| Layer | Responsibility |
+| --- | --- |
+| `.tsh` profile | Declares language identity, file associations, semantic styles, schemes, ATS / Query rules, optional Regex rules, and editor metadata |
+| Lexer and parser | Tokenizes the configuration, parses its sections, and reports malformed syntax with source diagnostics |
+| Compiler and validator | Resolves style references, validates grammar symbols and fields, compiles embedded Tree-sitter queries and Oniguruma expressions, and builds immutable runtime rule structures |
+| Tree-sitter / ATS | Traverses the parsed syntax tree, evaluates node/field/relationship selectors, and executes embedded native Tree-sitter queries |
+| Oniguruma Regex | Independently evaluates optional text patterns, captures, and begin/end block regions |
+| Capture normalization | Converts results into document-relative ranges while retaining source, style, priority, declaration order, and overlap metadata |
+| Style and scheme resolver | Resolves semantic style names, inherited style properties, the selected named scheme, and light/dark palette values |
+| Kotlin / editor adapter | Exposes profile metadata and captures, maintains document/editor integration, and projects styles into line-local rendering data |
+| Host renderer | Applies supported text attributes and paints the actual editor frame |
+
+### What a TSH profile can describe
+
+A profile is declarative. It describes the language and its presentation; it does not embed language-specific color decisions in the native engine.
+
+#### 1. Language identity and file association
+
+The language section can identify a language by stable ID and display name, and declare extensions, aliases, MIME types, and an optional first-line matcher. The runtime can use this metadata to associate a file with a grammar/profile. The repository also contains a grammar registry/provider and a language resolver that can use filename suffixes, MIME type, shebang, first-line patterns, and supported content-prefix heuristics.
+
+A grammar library and a TSH profile are separate resources: installing a parser does not automatically create a complete language-highlighting profile.
+
+#### 2. Semantic style catalog
+
+The `styles` section defines semantic names such as `keyword`, `type`, `function`, `variable`, `string`, `comment`, and `number`. A style can carry:
+
+- a TextMate-style dotted `scope`;
+- open-ended semantic `tags`;
+- a human-readable description;
+- a parent style for property-by-property inheritance;
+- deprecation information and string metadata.
+
+Style IDs are runtime handles only. Applications and themes should use semantic names, not depend on numeric IDs.
+
+#### 3. Named schemes, light/dark palettes, and UI tokens
+
+A profile can declare multiple named schemes. Each scheme can provide independent light and dark colors for semantic styles, plus UI tokens such as editor background, foreground, selection, current-line highlight, gutter, caret, toolbar, tabs, and status/navigation surfaces.
+
+Supported design properties include scheme inheritance, semantic-style inheritance, explicit color-presence tracking, ARGB colors (including alpha), and typography flags such as bold, italic, underline, strikethrough, and dim where supported by the active renderer.
+
+A missing color means **no color override**. TSH must not invent black, white, or a theme-dependent replacement. This preserves the exact configured palette and lets the host editor retain its existing foreground when a style does not specify one.
+
+Scheme selection and light/dark appearance are runtime presentation choices. They should update resolved paint data without recompiling the grammar, query, or syntax tree.
+
+#### 4. ATS — Tree-sitter AST selectors
+
+ATS selectors match actual Tree-sitter nodes and their structural relationships. The implemented selector model includes node type, field, parent, ancestor, child, previous/next sibling, child indexes, named/missing/extra/error flags, and selected text conditions such as exact text, prefix, suffix, and Regex checks.
+
+A field selector styles the selected child node associated with that field, not the parent declaration node. Symbol resolution accounts for grammar/public symbol identities so aliases do not silently make a selector miss its target.
+
+ATS is useful when a style depends on grammatical meaning or structure—for example, distinguishing a class declaration's name from an identifier used in an expression.
+
+#### 5. Embedded Tree-sitter Query
+
+A profile can embed native Tree-sitter S-expression query source under `treeSitter.queries`. At compile time, each query is compiled against the supplied grammar's `TSLanguage`; capture names are bound to semantic style names and can carry rule/pattern priority and enablement metadata.
+
+The query source stays inside `.tsh`. It is not converted into generated `.scm` files. Query captures retain their document ranges and pattern/capture provenance through the native result path.
+
+ATS selectors and embedded Tree-sitter queries are both structural Tree-sitter-based mechanisms, but they serve different rule-authoring needs: ATS expresses selector constraints, while Query expresses Tree-sitter's native pattern language.
+
+#### 6. Optional Oniguruma Regex
+
+Regex is an optional, independent text-matching backend. The current native rule model distinguishes:
+
+- **MATCH rules:** find text-pattern matches in the source;
+- **BLOCK rules:** use start/end delimiters to track a region, with optional region/content styling and nested rules.
+
+Regex rules can bind numeric or named capture groups to semantic styles, define explicit priority and overlap behavior, enable/disable rules, and use reusable profile-defined fragments where supported by the compiler. Nested `contains` rules allow patterns such as TODO markers inside comments or strings inside a larger region.
+
+Regex execution must preserve the difference between a local window and the full document. The compiler conservatively classifies whether a pattern has a proven finite match width. Patterns whose context requirements cannot be proven safe for bounded-window execution must use an appropriate full-context path or report a limitation; the runtime must not silently skip a match because it falls across a window boundary. BLOCK state checkpoints are a separate state-restoration mechanism from ordinary Regex MATCH execution.
+
+#### 7. Rule precedence and capture arbitration
+
+ATS and Regex results are normalized before visual style arbitration. Capture records retain the source backend, style ID, priority, declaration order, and overlap policy. The native arbitration path uses deterministic ordering rather than relying on collection iteration order.
+
+Higher-priority captures take precedence where exclusive ranges conflict; properly nested scopes and non-conflicting fragments can coexist. Explicit overlap allowance preserves both ranges. Adjacent compatible output segments can be coalesced to reduce downstream span work.
+
+Color and background are resolved independently from font attributes. A capture that only defines a font property must not accidentally erase an explicitly configured foreground color from another active capture.
+
+### Large-document and incremental editor path
+
+The large-document path is designed to avoid repeatedly materializing the entire document as a Kotlin `String` or a second full-size native byte array for every viewport request.
+
+```mermaid
+flowchart TD
+    A["Editor document / Piece Tree snapshot"] --> B["NativeTextWindowReader"]
+    B --> C["Bounded UTF-16LE window reads"]
+    C --> D["Native document / TextSource"]
+    D --> E["Tree-sitter parser and syntax tree"]
+    E --> F["Incremental edit synchronization"]
+    F --> G["Dirty byte / line ranges"]
+    G --> H["Viewport capture request"]
+    H --> I["ATS + embedded Query"]
+    H --> J["Optional Regex execution"]
+    I --> K["Capture cache + dependency metadata"]
+    J --> K
+    K --> L["Reusable ranges / cache lookup"]
+    L --> M["Line-local editor styling"]
+```
+
+Key characteristics of this path:
+
+- **Windowed text access:** the native document reads bounded UTF-16LE byte windows from a host-provided reader. The current native document contract uses UTF-16LE byte offsets; offsets and lengths must be even.
+- **Piece Tree integration:** the editor can supply snapshots and text windows from its Piece Tree instead of flattening the whole buffer for every capture request.
+- **Incremental parsing:** the editor-side `TshPieceTreeIncrementalSession` serializes initial parsing and edit transactions on a worker, coalesces pending work, and retires old native trees after active work is complete.
+- **Dirty-range propagation:** native document edits can report dirty byte and line ranges so the editor can target invalidated work rather than treating every edit as a full-document style reset.
+- **Viewport-oriented capture:** the editor highlighter requests the ranges needed for visible lines and queues uncovered ranges for background work.
+- **Capture reuse:** cached capture intervals and native dependency metadata help determine whether previously computed ranges remain valid across viewport movement and edits. Cache reuse must be rejected when document, grammar, query, source, or partition revisions cannot be proven compatible.
+- **Unicode-safe boundaries:** the native document path uses UTF-16LE byte coordinates. Conversion to editor UTF-16 code-unit / line coordinates must be explicit; do not mix these units or pass odd byte offsets.
+
+This is not a claim that every possible Regex expression can be evaluated in a fixed-size window, or that all large-file workloads have a guaranteed latency. Correctness takes precedence over bounded execution: context-dependent rules must retain sufficient document context or take a conservative fallback.
+
+### Android rendering and supported presentation
+
+The repository includes a Kotlin TSH engine and an editor adapter that connects TSH output to the editor's syntax-highlighter / line-styling path. The current `StyledTextPainter` integration directly paints:
+
+- foreground color;
+- background color;
+- bold and italic;
+- underline;
+- strikethrough.
+
+Properties not implemented by that Painter (for example font family and font size) must be treated as host metadata or unsupported rendering attributes, not described as already painted. The adapter resolves spans for editor lines; the host `EditorView` / Canvas remains responsible for the final draw. A successful compile, capture, RenderPlan update, or invalidation request alone does not prove that the expected pixels have appeared on screen.
+
+### TSH scope: what it does and does not do
+
+| Capability | TSH responsibility |
+| --- | --- |
+| Syntax highlighting | Yes — ATS selectors and embedded Tree-sitter Query, with optional Regex |
+| Language metadata and file association | Yes — profile metadata and grammar/profile resolution support |
+| Semantic styles and themes | Yes — named style catalog, schemes, light/dark palettes, UI tokens |
+| Editor behavior metadata | Yes — declares options such as comments, brackets, auto-closing pairs, indentation and Enter rules; the host must implement/consume each option |
+| Incremental document integration | Yes — native document/edit APIs and editor-side Piece Tree integration are present |
+| Viewport capture and reuse | Yes — range capture and cache/reuse paths are present; validity depends on recorded dependencies and revisions |
+| Final pixels and every editor feature | Host responsibility — the editor renderer must support and draw each requested attribute |
+| Language-server features, completion providers, folding, outline extraction | Not provided by the TSH highlighting core |
+
+### Current implementation boundaries
+
+The following distinctions are important when integrating the engine:
+
+1. The repository contains a working Java ATS-only profile and a Java hybrid profile demonstrating structural highlighting plus optional Regex. Other grammar modules provide parsers; they do not automatically provide a complete, language-specific `.tsh` profile.
+2. The current compiler entry points are the implemented profile sections (including `ast`, `treeSitter.queries`, and Regex `contains` rules). A unified `rules { ats { ... } regex { ... } } facade described in design material is not yet the current public syntax; do not copy planned-only syntax into a production profile without checking compiler support.
+3. The DSL specification contains both implemented and planned constructs. A construct appearing in a design specification is not proof that the current compiler/runtime accepts it. Check the current sample profiles, compiler implementation, and tests for the supported subset.
+4. The newer unified TSH API foundation is being introduced incrementally. The existing `WindbellTshEngine` remains the active compatibility execution entry point for native highlighting; the newer facade must not be mistaken for a fully migrated replacement.
+5. Native document, large-file, cache, and incremental code paths are present in source. Their performance and correctness still require the relevant Gradle, native, Android device, and workload-specific validation before making quantitative claims.
+
+### TSH source and implementation references
+
+- [TSH DSL v2 specification](docs/TSH_DSL_V2_SPEC.md)
+- [TSH rework plan and implementation status](docs/TSH_REWORK_PLAN.md)
+- [TSH highlighting accuracy and rendering integrity](docs/TSH_HIGHLIGHT_ACCURACY_AND_RENDERING_INTEGRITY.md)
+- [Large-text Native Token architecture](docs/TSH_LARGE_TEXT_NATIVE_TOKEN_ARCHITECTURE.md)
+- [TSH engine completion and performance roadmap](android-tree-sitter/TSH_ENGINE_COMPLETION_AND_PERFORMANCE_ROADMAP.md)
+- [Java ATS-only profile](app/src/main/assets/tsh/java-ats-only.tsh)
+- [Java hybrid profile](app/src/main/assets/tsh/java-hybrid.tsh)
+- [Native TSH Kotlin engine](android-tree-sitter/src/main/java/com/zerostudio/idea/treesitter/tsh/WindbellTshEngine.kt)
+- [Piece Tree incremental session](editor/src/main/java/x/github/module/editor/tsh/TshPieceTreeIncrementalSession.kt)
+- [Android editor TSH highlighter](app/src/main/java/com/zerostudio/idea/androidtreesitter/TshSyntaxHighlighter.kt)
+
+---
+
+
 ## Architecture
 
 ~~~text
