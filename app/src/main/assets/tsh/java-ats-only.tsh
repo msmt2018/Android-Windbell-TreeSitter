@@ -108,8 +108,7 @@
                 priority: 120
                 source: `(marker_annotation "@" @annotationMarker)`
                 captures: { annotationMarker: annotation }
-            }
-
+            },
             {
                 id: "java-type-declarations"
                 priority: 135
@@ -211,106 +210,7 @@
                 source: `(class_declaration name: (identifier) @type (#eq? @type "Demo"))`
             },
 
-            {
-                id: "java-type-declarations"
-                priority: 135
-                source: `[(class_declaration name: (identifier) @type) (interface_declaration name: (identifier) @type) (enum_declaration name: (identifier) @type) (record_declaration name: (identifier) @type) (annotation_type_declaration name: (identifier) @type)]`
-            },
-            {
-                id: "java-method-declarations"
-                priority: 132
-                source: `(method_declaration name: (identifier) @function (#kind-eq? @function "identifier"))`
-            },
-            {
-                id: "java-constructor-declarations"
-                priority: 132
-                source: `(constructor_declaration name: (identifier) @function)`
-            },
-            {
-                id: "java-formal-parameters"
-                priority: 128
-                source: `(formal_parameter name: (identifier) @variable (#has-parent? @variable "formal_parameter"))`
-            },
-            {
-                id: "java-method-invocations"
-                priority: 126
-                source: `(method_invocation name: (identifier) @function)`
-            },
-            {
-                id: "java-field-access"
-                priority: 124
-                source: `(field_access field: (identifier) @variable)`
-            },
-            {
-                id: "java-javadoc-blocks"
-                priority: 145
-                source: `((block_comment) @docComment (#contains? @docComment "@"))`
-            },
-            {
-                id: "java-line-comments"
-                priority: 130
-                source: `(line_comment) @comment`
-            },
-            {
-                id: "java-string-literals"
-                priority: 140
-                source: `(string_literal) @string`
-            },
-            {
-                id: "java-character-literals"
-                priority: 140
-                source: `(character_literal) @string`
-            },
-            {
-                id: "java-number-literals"
-                priority: 120
-                source: `[(decimal_integer_literal) (hex_integer_literal) (octal_integer_literal) (binary_integer_literal) (decimal_floating_point_literal) (hex_floating_point_literal)] @number`
-            },
-            {
-                id: "java-keyword-tokens"
-                priority: 96
-                source: `["public" "protected" "private" "abstract" "static" "final" "native" "synchronized" "volatile" "transient" "strictfp" "class" "interface" "enum" "record" "extends" "implements" "permits" "return" "throw" "throws" "new" "this" "super" "if" "else" "switch" "case" "default" "for" "while" "do" "break" "continue" "try" "catch" "finally" "yield" "assert" "package" "import"] @keyword`
-            },
-            {
-                id: "java-literal-constants"
-                priority: 96
-                source: `["true" "false" "null"] @constant`
-            },
-            {
-                id: "java-annotation-names"
-                priority: 138
-                source: `[(annotation name: (identifier) @annotation) (marker_annotation name: (identifier) @annotation)]`
-            },
-            {
-                id: "java-selected-entry-points"
-                priority: 127
-                source: `(method_declaration name: (identifier) @function (#any-of? @function "main" "run" "execute" "invoke"))`
-            },
-            {
-                id: "java-exclude-object-method-name"
-                priority: 125
-                source: `(method_declaration name: (identifier) @function (#not-eq? @function "toString"))`
-            },
-            {
-                id: "java-methods-inside-types"
-                priority: 123
-                source: `(method_declaration name: (identifier) @function (#has-ancestor? @function "class_declaration"))`
-            },
-            {
-                id: "java-non-test-method-names"
-                priority: 122
-                source: `(method_declaration name: (identifier) @function (#not-contains? @function "test"))`
-            },
-            {
-                id: "java-getter-method-names"
-                priority: 121
-                source: `(method_declaration name: (identifier) @function (#contains? @function "get"))`
-            },
-            {
-                id: "java-exact-demo-type"
-                priority: 136
-                source: `(class_declaration name: (identifier) @type (#eq? @type "Demo"))`
-            },
+
         ]
     },
 
