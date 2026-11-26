@@ -75,6 +75,10 @@ private enum class JavaTshPipelineProfile(
     HYBRID(
         "hybrid", "java-hybrid.tsh", "Hybrid",
         "同时启用 ATS / SCM Query 与 Oniguruma Regex"
+    ),
+    CUSTOM(
+        "custom", "", "External TSH File",
+        "从 Android 文件选择器载入的外部 .tsh 配置"
     );
 
     companion object {
@@ -96,6 +100,11 @@ class MainActivity : AppCompatActivity() {
             uri?.let(::loadExternalDocument)
         }
 
+    private val openTshConfigurationLauncher =
+        registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+            uri?.let(::loadExternalTshConfiguration)
+        }
+
     private var externalDocumentLoadJob: Job? = null
 
     // 解析与高亮作业句柄
@@ -115,6 +124,8 @@ class MainActivity : AppCompatActivity() {
     private var editorTree: TSTree? = null
     @Volatile private var javaTshReady: Boolean = false
     @Volatile private var activeJavaTshProfile: JavaTshPipelineProfile = JavaTshPipelineProfile.BASELINE
+    @Volatile private var activeJavaTshConfigUri: Uri? = null
+    @Volatile private var activeJavaTshConfigName: String? = null
     private var javaTshProfileLoadJob: Job? = null
     private var activeTshHighlighter: TshSyntaxHighlighter? = null
     private val tshConfigurationStates = java.util.concurrent.ConcurrentHashMap<String, String>()
@@ -203,11 +214,17 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        val profilePreferences = getSharedPreferences("tsh_pipeline_profiles", MODE_PRIVATE)
         activeJavaTshProfile = JavaTshPipelineProfile.fromId(
             savedInstanceState?.getString("tsh.pipelineProfile")
-                ?: getSharedPreferences("tsh_pipeline_profiles", MODE_PRIVATE)
-                    .getString("java.profile", JavaTshPipelineProfile.BASELINE.id)
+                ?: profilePreferences.getString("java.profile", JavaTshPipelineProfile.BASELINE.id)
         )
+        activeJavaTshConfigUri = (
+            savedInstanceState?.getString("tsh.externalConfigUri")
+                ?: profilePreferences.getString("java.externalConfigUri", null)
+            )?.let(Uri::parse)
+        activeJavaTshConfigName = savedInstanceState?.getString("tsh.externalConfigName")
+            ?: profilePreferences.getString("java.externalConfigName", null)
         restoredTshScheme = savedInstanceState?.getString("tsh.selectedScheme")
         if (savedInstanceState?.containsKey("tsh.isDark") == true) {
             restoredTshDark = savedInstanceState.getBoolean("tsh.isDark")
@@ -299,15 +316,22 @@ class MainActivity : AppCompatActivity() {
                     emptySet()
                 }
             languages.forEach { (extension, language) ->
+                val isExternalJavaProfile =
+                    extension == "java" && activeJavaTshProfile == JavaTshPipelineProfile.CUSTOM
                 val assetName = if (extension == "java") activeJavaTshProfile.assetName else "$extension.tsh"
-                if (assetName !in availableAssets) {
+                if (!isExternalJavaProfile && assetName !in availableAssets) {
                     tshConfigurationStates[extension] = "MISSING"
                     Log.i(TAG, "TSH config unavailable: assets/tsh/$assetName (Parser is registered; highlighting config is not)")
                     return@forEach
                 }
                 val engine = WindbellTshEngine.instance
+                val activeJavaProfileKey = if (isExternalJavaProfile) {
+                    "custom:" + (activeJavaTshConfigUri?.toString() ?: "missing-uri")
+                } else {
+                    activeJavaTshProfile.id
+                }
                 val javaProfileAlreadyLoaded =
-                    extension != "java" || processJavaTshProfileId == activeJavaTshProfile.id
+                    extension != "java" || processJavaTshProfileId == activeJavaProfileKey
                 if (engine.isGrammarLoaded(extension) && javaProfileAlreadyLoaded) {
                     tshConfigurationStates[extension] = "READY"
                     Log.i(TAG, "Reusing compiled native TSH grammar .$extension; skip recompilation on Activity recreation")
@@ -317,7 +341,15 @@ class MainActivity : AppCompatActivity() {
                     Log.i(TAG, "Reloading Java TSH profile ${activeJavaTshProfile.id}; process profile marker differs")
                 }
                 val result = runCatching {
-                    val source = assets.open("tsh/$assetName").bufferedReader().use { it.readText() }
+                    val source = if (isExternalJavaProfile) {
+                        val uri = checkNotNull(activeJavaTshConfigUri) {
+                            "External Java TSH profile has no persisted document URI."
+                        }
+                        contentResolver.openInputStream(uri)?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }
+                            ?: error("Unable to reopen the selected TSH document: " + uri)
+                    } else {
+                        assets.open("tsh/$assetName").bufferedReader(Charsets.UTF_8).use { it.readText() }
+                    }
                     val compiled = synchronized(engine) {
                         engine.loadTshSource(extension, source, language)
                     }
@@ -329,7 +361,7 @@ class MainActivity : AppCompatActivity() {
                 }
                 result.onSuccess {
                     tshConfigurationStates[extension] = "READY"
-                    if (extension == "java") processJavaTshProfileId = activeJavaTshProfile.id
+                    if (extension == "java") processJavaTshProfileId = activeJavaProfileKey
                     Log.i(TAG, "TSH config ready: .$extension")
                 }.onFailure { error ->
                     tshConfigurationStates[extension] = "FAILED: ${error.message}"
@@ -883,6 +915,10 @@ class MainActivity : AppCompatActivity() {
                 showJavaTshPipelineProfileDialog()
                 return true
             }
+            R.id.action_open_tsh_file -> {
+                openTshConfigurationLauncher.launch(arrayOf("*/*"))
+                return true
+            }
             R.id.test_tsh_cursor_capture -> {
                 runCursorCaptureDiagnostic()
                 return true
@@ -908,7 +944,7 @@ class MainActivity : AppCompatActivity() {
      * compiled profile through a stale grammar binding.
      */
     private fun showJavaTshPipelineProfileDialog() {
-        val profiles = JavaTshPipelineProfile.values()
+        val profiles = JavaTshPipelineProfile.values().filter { it != JavaTshPipelineProfile.CUSTOM }
         val labels = profiles.map { profile ->
             val marker = if (profile == activeJavaTshProfile) " ✓" else ""
             "${profile.displayName}$marker\n${profile.description}"
@@ -922,6 +958,88 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
+    /**
+     * Compile a user-selected .tsh file and bind it to the real EditorView highlighter.
+     * The persisted SAF read grant keeps the selection valid after Activity recreation.
+     */
+    private fun loadExternalTshConfiguration(uri: Uri) {
+        runCatching {
+            contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        val language = languageMap["Java"]
+        if (language == null) {
+            showResultDialog("TSH 配置加载失败", "Java Tree-sitter Parser 尚未注册。\\n\\n" + nativeBootstrapReport())
+            return
+        }
+        val displayName = runCatching {
+            contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+                if (cursor.moveToFirst()) cursor.getString(0) else null
+            }
+        }.getOrNull()?.takeIf { it.isNotBlank() }
+            ?: uri.lastPathSegment?.substringAfterLast('/')?.takeIf { it.isNotBlank() }
+            ?: "selected.tsh"
+        if (!displayName.endsWith(".tsh", ignoreCase = true)) {
+            showResultDialog("文件类型不受支持", "请选择扩展名为 .tsh 的配置文件。\\n当前文件：" + displayName)
+            return
+        }
+
+        javaTshProfileLoadJob?.cancel()
+        val engine = WindbellTshEngine.instance
+        val previousScheme = engine.getSelectedScheme("java")
+        val previousDarkAppearance = engine.isDark("java")
+        editorView?.setSyntaxHighlighter(null)
+        activeTshHighlighter = null
+        javaTshReady = false
+
+        javaTshProfileLoadJob = activityScope.launch(Dispatchers.IO) {
+            val compilation = runCatching {
+                val source = contentResolver.openInputStream(uri)?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }
+                    ?: error("The selected document provider returned no readable stream.")
+                val compiled = synchronized(engine) { engine.loadTshSource("java", source, language) }
+                if (!compiled) {
+                    val diagnostics = engine.lastCompileDiagnostics.joinToString("\\n") { diagnostic ->
+                        diagnostic.code + "@" + diagnostic.line + ":" + diagnostic.column + ": " + diagnostic.message
+                    }
+                    error(diagnostics.ifBlank { "Native TSH compiler returned false without diagnostics." })
+                }
+                previousScheme?.let { engine.selectScheme("java", it) }
+                engine.setAppearance("java", previousDarkAppearance)
+            }
+            val probe = if (compilation.isSuccess) {
+                runCatching { runJavaTshPipelineProfileProbe(JavaTshPipelineProfile.CUSTOM, language) }
+            } else null
+            withContext(Dispatchers.Main) {
+                if (compilation.isSuccess) {
+                    activeJavaTshProfile = JavaTshPipelineProfile.CUSTOM
+                    activeJavaTshConfigUri = uri
+                    activeJavaTshConfigName = displayName
+                    processJavaTshProfileId = "custom:" + uri.toString()
+                    getSharedPreferences("tsh_pipeline_profiles", MODE_PRIVATE).edit()
+                        .putString("java.profile", JavaTshPipelineProfile.CUSTOM.id)
+                        .putString("java.externalConfigUri", uri.toString())
+                        .putString("java.externalConfigName", displayName)
+                        .apply()
+                    tshConfigurationStates["java"] = "READY"
+                    javaTshReady = true
+                    installTshHighlighterIfReady()
+                    editorView?.invalidate()
+                    applyTshThemeTokens()
+                    val report = probe?.getOrElse { diagnosticError ->
+                        "PIPELINE DIAGNOSTICS ERROR\\n" + diagnosticError.stackTraceToString()
+                    } ?: "Pipeline probe did not run."
+                    showResultDialog("已加载外部 TSH：" + displayName, report +
+                        "\\n\\n当前编辑器文档未更换；新配置已编译并绑定到实际 EditorView 高亮器。")
+                } else {
+                    javaTshReady = engine.isGrammarLoaded("java")
+                    if (javaTshReady) installTshHighlighterIfReady()
+                    val error = compilation.exceptionOrNull()
+                    showResultDialog("外部 TSH 配置加载失败",
+                        "目标文件：" + displayName + "\\nURI：" + uri + "\\n\\n" +
+                            (error?.stackTraceToString() ?: "Unknown compiler failure"))
+                }
+            }
+        }
+    }
     private fun switchJavaTshPipelineProfile(profile: JavaTshPipelineProfile) {
         val language = languageMap["Java"]
         if (language == null) {
@@ -966,9 +1084,15 @@ class MainActivity : AppCompatActivity() {
             withContext(Dispatchers.Main) {
                 if (compilation.isSuccess) {
                     activeJavaTshProfile = profile
+                    activeJavaTshConfigUri = null
+                    activeJavaTshConfigName = null
                     processJavaTshProfileId = profile.id
                     getSharedPreferences("tsh_pipeline_profiles", MODE_PRIVATE)
-                        .edit().putString("java.profile", profile.id).apply()
+                        .edit()
+                        .putString("java.profile", profile.id)
+                        .remove("java.externalConfigUri")
+                        .remove("java.externalConfigName")
+                        .apply()
                     tshConfigurationStates["java"] = "READY"
                     javaTshReady = true
                     installTshHighlighterIfReady()
@@ -1104,6 +1228,8 @@ class MainActivity : AppCompatActivity() {
                     JavaTshPipelineProfile.HYBRID,
                     JavaTshPipelineProfile.BASELINE ->
                         regexTotal > 0 && ats > 0 && query > 0
+                    JavaTshPipelineProfile.CUSTOM ->
+                        regexTotal + ats + query > 0
                 }
                 val passed = producerIsolationPassed &&
                     finalSpans.isNotEmpty() && foregroundSpans.isNotEmpty()
@@ -1683,6 +1809,8 @@ class MainActivity : AppCompatActivity() {
 
     override fun onSaveInstanceState(outState: Bundle) {
         outState.putString("tsh.pipelineProfile", activeJavaTshProfile.id)
+        activeJavaTshConfigUri?.let { outState.putString("tsh.externalConfigUri", it.toString()) }
+        activeJavaTshConfigName?.let { outState.putString("tsh.externalConfigName", it) }
         if (javaTshReady && WindbellTshEngine.instance.isGrammarLoaded("java")) {
             outState.putString("tsh.selectedScheme", WindbellTshEngine.instance.getSelectedScheme("java"))
             outState.putBoolean("tsh.isDark", WindbellTshEngine.instance.isDark("java"))
