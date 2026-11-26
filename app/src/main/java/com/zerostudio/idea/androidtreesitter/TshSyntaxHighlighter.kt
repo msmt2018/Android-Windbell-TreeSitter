@@ -362,7 +362,7 @@ class TshSyntaxHighlighter(
         if (renderedLineCache.get(renderedKey) != null) return true
 
         val key = CaptureRangeKey(active.cacheSessionId, boundedStart.toInt(), boundedEnd.toInt())
-        if (findContainingCaptureRange(key) != null) return true
+        if (hasCachedCaptureCoverage(key)) return true
         enqueueViewportRange(key)
         return false
     }
@@ -576,12 +576,14 @@ class TshSyntaxHighlighter(
     ): List<WindbellTshEngine.HighlightSpan> {
         if (generation.get() != active.ticket || largeSession !== active) return emptyList()
         val key = CaptureRangeKey(active.cacheSessionId, start.toInt(), end.toInt())
-        val index = findContainingCaptureRange(key) ?: run {
+        val indexes = findCaptureCoverage(key) ?: run {
             enqueueViewportRange(key)
             return emptyList()
         }
-        return ArrayList<WindbellTshEngine.HighlightSpan>().also {
-            index.appendQuery(queryStartUtf16, queryEndUtf16, it)
+        return ArrayList<WindbellTshEngine.HighlightSpan>().also { destination ->
+            indexes.forEach { index ->
+                index.appendQuery(queryStartUtf16, queryEndUtf16, destination)
+            }
         }
     }
 
@@ -597,17 +599,27 @@ class TshSyntaxHighlighter(
         return buffer.getEOL().length
     }
 
-    private fun findContainingCaptureRange(key: CaptureRangeKey): CaptureIntervalIndex? {
-        val cachedKey = captureRangeIndex.findContaining(
+    private fun findCaptureCoverage(key: CaptureRangeKey): List<CaptureIntervalIndex>? {
+        val cachedKeys = captureRangeIndex.findCovering(
             key.sessionId, key.startUtf16, key.endUtf16
         ) ?: return null
-        // Touch the selected LRU entry after leaving the interval-index lock. An
-        // eviction racing this lookup simply becomes a cache miss, never stale data.
-        return captureCache.get(cachedKey) ?: run {
-            captureRangeIndex.remove(cachedKey)
-            null
+        // Touch selected LRU entries after leaving the interval-index lock. If
+        // eviction races this lookup, reject the whole composition rather than
+        // returning a partial capture set.
+        val indexes = ArrayList<CaptureIntervalIndex>(cachedKeys.size)
+        for (cachedKey in cachedKeys) {
+            val index = captureCache.get(cachedKey)
+            if (index == null) {
+                captureRangeIndex.remove(cachedKey)
+                return null
+            }
+            indexes += index
         }
+        return indexes
     }
+
+    private fun hasCachedCaptureCoverage(key: CaptureRangeKey): Boolean =
+        findCaptureCoverage(key) != null
 
     private fun enqueueViewportRange(key: CaptureRangeKey) {
         if (key.startUtf16 >= key.endUtf16) return
@@ -790,7 +802,7 @@ class TshSyntaxHighlighter(
                     if (generation.get() == active.ticket && largeSession === active &&
                         work.state == RangeWorkState.FAILED &&
                         active.rangeWork[key] === work &&
-                        findContainingCaptureRange(key) == null
+                        !hasCachedCaptureCoverage(key)
                     ) {
                         host?.invalidateStyles()
                     }
