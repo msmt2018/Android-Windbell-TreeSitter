@@ -1390,9 +1390,19 @@ void WindbellEngine::matchBlockRecursive(
                 static_cast<int64_t>(viewport_start_byte))) {
             checkpoint_safe = false;
         }
+        // A closing delimiter that overlaps the viewport start is still
+        // part of the block's emitted span (BLOCK styles include both
+        // delimiters). Keep the opening offset active so this viewport emits
+        // the clipped tail of the block, even when the closing delimiter is
+        // the most recent delimiter event.
+        const bool closing_delimiter_intersects_viewport =
+            end_hit >= 0 &&
+            previous_end->beg[0] <= static_cast<int64_t>(viewport_start_byte) &&
+            previous_end->end[0] > static_cast<int64_t>(viewport_start_byte);
         if (start_hit >= 0 &&
             (end_hit == ONIG_MISMATCH ||
-             previous_start->beg[0] > previous_end->beg[0])) {
+             previous_start->beg[0] > previous_end->beg[0] ||
+             closing_delimiter_intersects_viewport)) {
             active_start_byte = static_cast<uint32_t>(previous_start->beg[0]);
         }
     }
