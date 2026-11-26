@@ -580,11 +580,19 @@ class TshSyntaxHighlighter(
             enqueueViewportRange(key)
             return emptyList()
         }
-        return ArrayList<WindbellTshEngine.HighlightSpan>().also { destination ->
-            indexes.forEach { index ->
-                index.appendQuery(queryStartUtf16, queryEndUtf16, destination)
-            }
+        val unique = LinkedHashSet<WindbellTshEngine.HighlightSpan>()
+        indexes.forEach { index ->
+            index.appendQuery(queryStartUtf16, queryEndUtf16, unique)
         }
+        // Overlapping cached viewports can contain the same long-lived block or
+        // token capture. Deduplicate exact spans and restore source ordering before
+        // the palette resolver applies rule precedence.
+        return unique.sortedWith(
+            compareBy<WindbellTshEngine.HighlightSpan> { it.startByteUnsigned }
+                .thenByDescending { it.priority }
+                .thenBy { it.declarationOrder }
+                .thenBy { it.endByteUnsigned }
+        )
     }
 
     /**
