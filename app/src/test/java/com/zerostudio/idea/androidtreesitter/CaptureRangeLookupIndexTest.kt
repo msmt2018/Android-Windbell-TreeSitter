@@ -123,4 +123,44 @@ class CaptureRangeLookupIndexTest {
         assertNull(index.findCovering(7, 50, 180))
     }
 
+
+    @Test fun coverageUsesFarthestReachToAvoidRedundantCachedRanges() {
+        val index = CaptureRangeLookupIndex()
+        index.add(CaptureRangeKey(7, 0, 60))
+        index.add(CaptureRangeKey(7, 10, 300))
+        index.add(CaptureRangeKey(7, 50, 90))
+        assertEquals(
+            listOf(CaptureRangeKey(7, 10, 300)),
+            index.findCovering(7, 40, 250)
+        )
+    }
+
+    @Test fun randomizedCoverageMatchesLinearUnionOracle() {
+        val random = Random(0x434F564552L)
+        repeat(100) {
+            val index = CaptureRangeLookupIndex()
+            val ranges = LinkedHashSet<CaptureRangeKey>()
+            repeat(80) {
+                val start = random.nextInt(1000)
+                val end = start + random.nextInt(180) + 1
+                val key = CaptureRangeKey(3, start, end)
+                ranges += key
+                index.add(key)
+            }
+            repeat(100) {
+                val start = random.nextInt(1000)
+                val end = start + random.nextInt(100) + 1
+                val sorted = ranges.filter { it.endUtf16 > start && it.startUtf16 < end }
+                    .sortedWith(compareBy<CaptureRangeKey> { it.startUtf16 }.thenByDescending { it.endUtf16 })
+                var covered = start
+                for (range in sorted) {
+                    if (range.startUtf16 > covered) break
+                    covered = maxOf(covered, range.endUtf16)
+                }
+                val expected = covered >= end
+                assertEquals(expected, index.findCovering(3, start, end) != null)
+            }
+        }
+    }
+
 }
