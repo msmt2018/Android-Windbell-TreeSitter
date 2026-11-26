@@ -2,6 +2,7 @@ package com.zerostudio.idea.androidtreesitter
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import com.zerostudio.idea.treesitter.TreeSitter
 import com.zerostudio.idea.treesitter.TSParser
 import com.zerostudio.idea.treesitter.java.TSLanguageJava
 import com.zerostudio.idea.treesitter.tsh.WindbellTshEngine
@@ -44,8 +45,12 @@ class JavaTshPipelineProfilesTest {
     """.trimIndent()
 
     @Test
-    fun allThreeProfilesCompileAndKeepTheirProducerPipelinesIsolated() {
+    fun allPackagedJavaProfilesCompileAndKeepTheirProducerPipelinesIsolated() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
+        // Instrumentation tests do not instantiate MainActivity. Load the JNI core
+        // before the generated grammar binding, matching the production bootstrap order.
+        TreeSitter.loadLibrary()
+        System.loadLibrary("tree-sitter-java")
         val engine = WindbellTshEngine.instance
         val language = TSLanguageJava.getInstance()
         val extension = "java-profile-pipeline-test"
@@ -55,6 +60,7 @@ class JavaTshPipelineProfilesTest {
             assertTrue("Java fixture must parse", tree != null)
             tree!!.use { parsedTree ->
                 val profiles = listOf(
+                    Triple("java.tsh", "Java Default", 3),
                     Triple("java-regex-only.tsh", "Regex Only", 0),
                     Triple("java-ats-only.tsh", "Tree-sitter ATS Only", 1),
                     Triple("java-hybrid.tsh", "Hybrid", 2)
@@ -81,6 +87,11 @@ class JavaTshPipelineProfilesTest {
                             assertTrue("Hybrid must include native SCM queries", source.contains("treeSitter {"))
                             assertTrue("Hybrid must include Regex rules", source.contains("contains: [") && source.contains("defines: ["))
                         }
+                        3 -> {
+                            assertTrue("Java Default must include AST selectors", source.contains("ast: ["))
+                            assertTrue("Java Default must include native SCM queries", source.contains("treeSitter {"))
+                            assertTrue("Java Default must include Regex rules", source.contains("contains: [") && source.contains("defines: ["))
+                        }
                     }
                     val isolatedSource = source
                         .replace("id: \"java\"", "id: \"$extension\"")
@@ -93,7 +104,7 @@ class JavaTshPipelineProfilesTest {
                     val pipelineTree = if (profile == 0) null else parsedTree
                     val diagnostics = engine.computePipelineDiagnostics(pipelineTree, sample, extension)
                     val captures = diagnostics.captures
-                    if (profile != 0) {
+                    if (profile == 1 || profile == 2) {
                         val expectedQueryPriorities = listOf(
                             145, 140, 138, 136, 135, 132, 130, 128, 127, 125,
                             123, 122, 121, 120, 119, 118, 117, 116, 115, 112,
@@ -133,10 +144,10 @@ class JavaTshPipelineProfilesTest {
                             assertTrue("ATS-only must produce AST Selector captures", ats > 0)
                             assertTrue("ATS-only must produce native SCM captures", query > 0)
                         }
-                        2 -> {
-                            assertTrue("Hybrid must produce Regex / Regex State captures", regexTotal > 0)
-                            assertTrue("Hybrid must produce AST Selector captures", ats > 0)
-                            assertTrue("Hybrid must produce native SCM captures", query > 0)
+                        2, 3 -> {
+                            assertTrue("$label must produce Regex / Regex State captures", regexTotal > 0)
+                            assertTrue("$label must produce AST Selector captures", ats > 0)
+                            assertTrue("$label must produce native SCM captures", query > 0)
                         }
                     }
                     val spans = engine.computeHighlights(pipelineTree, sample, extension)
