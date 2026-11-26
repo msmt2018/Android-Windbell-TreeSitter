@@ -221,6 +221,19 @@ class TshSyntaxHighlighter(
     private val nativeRangeQueryNanos = AtomicLong()
     private val lastPipelineMetricsLogNanos = AtomicLong()
 
+    // One-shot first-open timeline. These timestamps are diagnostic only and do
+    // not affect scheduling, cache validity, or rendering decisions.
+    private val firstOpenStartNanos = AtomicLong()
+    private val firstSnapshotReadyNanos = AtomicLong()
+    private val firstNativeCreateStartedNanos = AtomicLong()
+    private val firstStyleCallbackNanos = AtomicLong()
+    private val firstNativeReadyNanos = AtomicLong()
+    private val firstViewportQueuedNanos = AtomicLong()
+    private val firstViewportQueryCompletedNanos = AtomicLong()
+    private val firstViewportCaptureCount = AtomicLong(-1L)
+    private val firstStyledLineNanos = AtomicLong()
+    private val firstOpenMetricsLogged = AtomicBoolean(false)
+
     // Structure is invalidated only when a lexical-scope lookup (bracket/auto-pair)
     // was waiting for this viewport's captures. Ordinary syntax capture completion
     // must not rebuild editor structure for every scroll frame.
@@ -388,6 +401,7 @@ class TshSyntaxHighlighter(
         end: Int
     ): Spanned? {
         val styleStartedNanos = System.nanoTime()
+        firstStyleCallbackNanos.compareAndSet(0L, styleStartedNanos)
         val visibleStart = start.coerceIn(0, text.length)
         val visibleEnd = end.coerceIn(visibleStart, text.length)
         if (visibleStart >= visibleEnd || lineStartOffset < 0) return null
@@ -514,8 +528,14 @@ class TshSyntaxHighlighter(
             Log.w(TAG, "No Android CharacterStyle applied: extension=.$extension line=$bufferLine captures=${spans.size}")
             return null
         }
+        val styledAtNanos = System.nanoTime()
+        if (firstStyledLineNanos.compareAndSet(0L, styledAtNanos)) {
+            logFirstOpenColorReady(
+                bufferLine, spans.size, applied.size, styledAtNanos
+            )
+        }
         styleLineCalls.incrementAndGet()
-        styleLineNanos.addAndGet(System.nanoTime() - styleStartedNanos)
+        styleLineNanos.addAndGet(styledAtNanos - styleStartedNanos)
         logPipelineMetricsIfDue()
         return styled
     }
@@ -649,10 +669,23 @@ class TshSyntaxHighlighter(
             scope.launch(Dispatchers.Main.immediate) { scheduleParse(buffer) }
             return
         }
+        val openStartedNanos = System.nanoTime()
+        firstOpenStartNanos.set(openStartedNanos)
+        firstSnapshotReadyNanos.set(0L)
+        firstNativeCreateStartedNanos.set(0L)
+        firstStyleCallbackNanos.set(0L)
+        firstNativeReadyNanos.set(0L)
+        firstViewportQueuedNanos.set(0L)
+        firstViewportQueryCompletedNanos.set(0L)
+        firstViewportCaptureCount.set(-1L)
+        firstStyledLineNanos.set(0L)
+        firstOpenMetricsLogged.set(false)
+
         // PieceTreeBuffer snapshots retain their backing chunks. The unified
         // native pipeline never calls getText() or snapshot.toString() for the
         // complete document, regardless of its size.
         val snapshot = buffer.createTextSnapshot()
+        firstSnapshotReadyNanos.set(System.nanoTime())
         structureRefreshPending.set(false)
         synchronized(nativeEditLock) {
             pendingNativeEdits.clear()
@@ -672,6 +705,7 @@ class TshSyntaxHighlighter(
     }
 
     private suspend fun initializeLargeSession(snapshot: EditorTextSnapshot, ticket: Long) {
+        firstNativeCreateStartedNanos.compareAndSet(0L, System.nanoTime())
         var nativeHandle = 0L
         var documentRuntime: TshDocumentRuntime? = null
         var cacheSessionId = 0L
@@ -747,6 +781,7 @@ class TshSyntaxHighlighter(
                             "version=${initialDirty.documentVersion} dirtyLines=${initialDirty.ranges.size}"
                     )
                     largeSession = active
+                    firstNativeReadyNanos.compareAndSet(0L, System.nanoTime())
                 }
                 nativeHandle = 0L
                 documentRuntime = null
@@ -796,6 +831,52 @@ class TshSyntaxHighlighter(
      * display-retention tier. Both tiers share one range index and one total byte
      * budget; no capture objects or duplicate page copies are created on lookup.
      */
+    private fun logFirstOpenColorReady(
+        line: Int,
+        lineCaptureCount: Int,
+        androidSpanCount: Int,
+        styledAtNanos: Long
+    ) {
+        if (!firstOpenMetricsLogged.compareAndSet(false, true)) return
+        val started = firstOpenStartNanos.get()
+        if (started <= 0L) return
+        fun elapsedMillis(end: Long): Long =
+            if (end > 0L && end >= started) (end - started) / 1_000_000L else -1L
+
+        val snapshotReady = firstSnapshotReadyNanos.get()
+        val createStarted = firstNativeCreateStartedNanos.get()
+        val nativeReady = firstNativeReadyNanos.get()
+        val rendererCallback = firstStyleCallbackNanos.get()
+        val viewportQueued = firstViewportQueuedNanos.get()
+        val queryCompleted = firstViewportQueryCompletedNanos.get()
+        val nativeReadyToQueueMs =
+            if (nativeReady > 0L && viewportQueued >= nativeReady) {
+                (viewportQueued - nativeReady) / 1_000_000L
+            } else -1L
+        val queueToQueryMs =
+            if (viewportQueued > 0L && queryCompleted >= viewportQueued) {
+                (queryCompleted - viewportQueued) / 1_000_000L
+            } else -1L
+        val queryToSpansMs =
+            if (queryCompleted > 0L && styledAtNanos >= queryCompleted) {
+                (styledAtNanos - queryCompleted) / 1_000_000L
+            } else -1L
+
+        Log.i(
+            TAG,
+            "firstOpenColorReady extension=.$extension line=$line " +
+                "totalMs=${elapsedMillis(styledAtNanos)} " +
+                "snapshotMs=${if (snapshotReady > 0L) (snapshotReady - started) / 1_000_000L else -1L} " +
+                "scheduleToNativeStartMs=${if (createStarted > 0L) (createStarted - started) / 1_000_000L else -1L} " +
+                "nativeReadyMs=${elapsedMillis(nativeReady)} " +
+                "firstRendererCallbackMs=${elapsedMillis(rendererCallback)} " +
+                "nativeReadyToViewportQueueMs=$nativeReadyToQueueMs " +
+                "viewportNativeQueryMs=$queueToQueryMs queryToAndroidSpansMs=$queryToSpansMs " +
+                "viewportCaptures=${firstViewportCaptureCount.get()} " +
+                "lineCaptures=$lineCaptureCount androidSpans=$androidSpanCount"
+        )
+    }
+
     private fun logPipelineMetricsIfDue() {
         val now = System.nanoTime()
         val previous = lastPipelineMetricsLogNanos.get()
@@ -913,6 +994,7 @@ class TshSyntaxHighlighter(
         val active = largeSession ?: return
         if (generation.get() != active.ticket || active.cacheSessionId != key.sessionId) return
         if (hasCachedCoverage(key)) return
+        firstViewportQueuedNanos.compareAndSet(0L, System.nanoTime())
         val flushNow = synchronized(viewportRequestLock) {
             if (pendingViewportRanges.none {
                 it.sessionId == key.sessionId && it.startUtf16 <= key.startUtf16 && it.endUtf16 >= key.endUtf16
@@ -1268,10 +1350,14 @@ class TshSyntaxHighlighter(
                     }
                     val queryStarted = System.nanoTime()
                     try {
-                        active.documentRuntime.parser.highlight(
+                        val result = active.documentRuntime.parser.highlight(
                             start = missingStart.toLong() * 2L,
                             end = missingEnd.toLong() * 2L
                         ) ?: throw IllegalStateException("Native viewport TSH returned null for visible range")
+                        if (firstViewportQueryCompletedNanos.compareAndSet(0L, System.nanoTime())) {
+                            firstViewportCaptureCount.set((result.size / 6).toLong())
+                        }
+                        result
                     } finally {
                         nativeRangeQueries.incrementAndGet()
                         nativeRangeQueryNanos.addAndGet(System.nanoTime() - queryStarted)
