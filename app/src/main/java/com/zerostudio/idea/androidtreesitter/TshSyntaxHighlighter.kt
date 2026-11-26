@@ -513,13 +513,14 @@ class TshSyntaxHighlighter(
             if (generation.get() != ticket) throw CancellationException("Stale native document")
 
             cacheSessionId = nextSessionId.getAndIncrement()
-            diskCaptureStore = TshCaptureDiskStore(
+            val sessionDiskCaptureStore = TshCaptureDiskStore(
                 File(temporaryDirectory, "tsh-captures-$cacheSessionId"),
                 cacheSessionId
             )
+            diskCaptureStore = sessionDiskCaptureStore
             val active = LargeSession(
                 nativeHandle, AtomicLong(snapshot.length.toLong()),
-                cacheSessionId, ticket, diskCaptureStore
+                cacheSessionId, ticket, sessionDiskCaptureStore
             )
             if (generation.get() == ticket) {
                 synchronized(nativeEditLock) {
