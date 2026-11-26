@@ -26,6 +26,220 @@ TSH 高亮体系严格采用 **Tree-sitter ATS / Tree-sitter Query + 可选 Rege
 
 > 大文件支持属于架构能力，不代表所有设备、语法和编辑器场景都具有固定性能保证。实际解析、捕获和最终屏幕绘制性能取决于语法复杂度、文档结构、设备内存和编辑器集成方式。评估目标工作负载时应以仓库测试和真实设备测量为准。
 
+
+## Windbell TSH —— Tree-sitter Highlighting 高亮引擎
+
+**Windbell TSH** 是本仓库面向 Android 代码编辑器开发的声明式语法高亮与语言呈现引擎。语言包提供 Tree-sitter Grammar，`.tsh` 配置文件声明语言如何识别、匹配和着色，Native Runtime 生成带有源码范围的 Capture，最后由编辑器适配层将解析后的样式转换为真实的行渲染指令。
+
+TSH 不是一套写死语言关键字和颜色的高亮规则集合。`.tsh` 是语言元数据、语义样式、主题方案、ATS 选择器、内嵌 Tree-sitter Query、可选 Regex 规则以及编辑器元数据的唯一配置来源。Native 核心保持通用，不内置某种语言的颜色或主题语义。
+
+### 设计目标与核心特点
+
+- **语法树感知高亮：** 基于真实 Tree-sitter Syntax Tree 进行结构匹配，不只依赖关键字列表。可以区分声明、引用、字段、嵌套结构、注释、字面量及 Grammar 定义的其他语法对象。
+- **两条匹配管线、统一结果模型：** ATS / Tree-sitter Query 负责结构化语法匹配；可选 Oniguruma Regex 是独立的文本模式匹配管线。两者的结果在统一 Capture 模型中归一化后再进行仲裁。Regex 不混入 Tree-sitter Query 执行器。
+- **配置驱动样式：** 语义样式名称、调色板、字体标志和 UI 主题 Token 均来自 TSH 配置。C++ 不写死语言颜色，也不通过数字 Style ID 推断样式含义。
+- **Query 内嵌：** Tree-sitter Query 源码直接写在 `.tsh` 文件中，并针对所选 `TSLanguage` 编译，不需要生成或读取外部 `.scm` 高亮文件。
+- **明确的规则优先级：** 规则可以声明 priority 和 overlap 行为；声明顺序提供稳定的次级排序。嵌套范围和互不冲突的区间不会被任意的“最后写入覆盖”策略丢弃。
+- **切换主题不重新解析：** 命名 Scheme 与浅色 / 深色外观属于呈现数据。切换方案或外观时重新解析调色板即可，不需要重建语法树。
+- **面向大文档的执行路径：** Native Document 支持有界窗口读取，可连接 Piece Tree 文本源，并提供编辑同步、脏区间报告、视口捕获和可复用捕获范围。
+- **接入真实编辑器绘制：** TSH 结果进入编辑器 SyntaxHighlighter / 行样式链路。编译成功或捕获成功不等于像素已经绘制，最终 Draw 由宿主 Renderer 负责。
+
+### TSH 工作原理与处理架构
+
+下图展示 TSH 的整体数据流。ATS 与 Regex 在执行阶段相互独立，直到结果归一化后才进入统一样式仲裁。
+
+```mermaid
+flowchart TD
+    A["语言包 + .tsh 配置"] --> B["TSH Lexer / Parser"]
+    B --> C["配置校验与编译模型"]
+    C --> D["语义 Style Catalog + 命名 Scheme"]
+    C --> E["ATS Compiler"]
+    C --> F["可选 Oniguruma Regex Compiler"]
+    G["Tree-sitter Grammar / TSLanguage"] --> E
+    H["Document TextSource / Piece Tree"] --> I["Native Document + Tree-sitter Parse"]
+    I --> J["Syntax Tree"]
+    J --> K["ATS AST 选择器"]
+    J --> L["内嵌 Tree-sitter Query"]
+    E --> K
+    E --> L
+    F --> M["Regex MATCH / BLOCK 执行"]
+    H --> M
+    K --> N["归一化 Captures"]
+    L --> N
+    M --> N
+    N --> O["Priority / Overlap 仲裁"]
+    D --> P["Scheme 与 Style 解析"]
+    O --> P
+    P --> Q["Kotlin TSH API / 编辑器适配层"]
+    Q --> R["行级 Span / Render Instructions"]
+    R --> S["EditorView Renderer / Canvas"]
+```
+
+#### 运行时分层
+
+| 层级 | 主要职责 |
+| --- | --- |
+| `.tsh` 配置 | 声明语言身份、文件关联、语义样式、主题方案、ATS / Query 规则、可选 Regex 规则和编辑器元数据 |
+| Lexer / Parser | 解析配置词法与语法，发现格式错误并提供源码诊断 |
+| Compiler / Validator | 解析 Style 引用、校验 Grammar 节点与字段、编译内嵌 Tree-sitter Query 和 Oniguruma 表达式，构建运行时规则 |
+| Tree-sitter / ATS | 遍历语法树，执行节点 / 字段 / 关系选择器及内嵌 Native Query |
+| Oniguruma Regex | 独立执行可选文本模式、Capture 和 begin/end 块区域规则 |
+| Capture 归一化 | 将结果转换为文档相对范围，同时保留来源、样式、优先级、声明顺序和 overlap 元数据 |
+| Style / Scheme Resolver | 解析语义 Style、继承属性、当前命名 Scheme 和浅色 / 深色调色板 |
+| Kotlin / Editor Adapter | 暴露配置元数据与捕获结果，连接文档 / 编辑器，并将样式投影为行级渲染数据 |
+| 宿主 Renderer | 应用支持的文本属性并绘制实际编辑器画面 |
+
+### TSH 配置可以描述什么
+
+TSH 配置采用声明式设计。配置负责描述语言和呈现规则，Native 引擎不内置语言专属颜色。
+
+#### 1. 语言身份与文件关联
+
+语言配置可以声明稳定的语言 ID、显示名称、文件扩展名、别名、MIME 类型和可选的首行匹配表达式。运行时可利用这些元数据将文件关联到 Grammar / Profile。仓库还提供 Grammar Registry / Provider 和语言解析器，可综合文件后缀、MIME、Shebang、首行规则及支持的内容前缀特征进行识别。
+
+Grammar Library 和 TSH Profile 是两个独立资源：安装某种 Parser 并不意味着自动获得了完整的语言高亮配置。
+
+#### 2. 语义 Style Catalog
+
+`styles` 用于声明语义样式名称，例如 `keyword`、`type`、`function`、`variable`、`string`、`comment` 和 `number`。每个 Style 可以声明：
+
+- TextMate 风格的点分隔 `scope`；
+- 开放式语义 `tags`；
+- 描述文本；
+- 用于逐属性继承的 parent Style；
+- 弃用标记和字符串类型 metadata。
+
+Style ID 仅作为运行时句柄。应用和主题应通过语义名称访问样式，不应依赖数字 ID 的具体值。
+
+#### 3. 命名 Scheme、浅色 / 深色调色板与 UI Token
+
+一个 TSH 配置可以定义多个命名 Scheme。每个 Scheme 可以分别为浅色和深色外观提供语义样式颜色，也可以提供 UI Token，例如编辑器背景、前景、选区、当前行高亮、Gutter、光标、工具栏、Tab 和状态栏 / 导航栏表面颜色。
+
+支持的设计能力包括 Scheme 继承、语义 Style 继承、显式颜色存在性标记、包含 Alpha 的 ARGB 颜色，以及在当前 Renderer 支持范围内的粗体、斜体、下划线、删除线和 dim 等字体属性。
+
+缺失颜色表示 **不覆盖颜色**。TSH 不应擅自补成黑色、白色或依赖系统主题的替代色。这样才能保留配置文件中的精确颜色，并允许宿主编辑器在该 Style 没有声明前景色时继续使用原有前景色。
+
+Scheme 和浅色 / 深色外观属于运行时呈现选择。切换它们应更新解析后的 Paint 数据，而不应重新编译 Grammar、Query 或 Syntax Tree。
+
+#### 4. ATS —— Tree-sitter AST 节点选择器
+
+ATS 选择器匹配真实 Tree-sitter 节点及其语法结构关系。当前实现的选择器模型包含节点类型、字段、父节点、祖先、子节点、前后兄弟节点、子节点索引、named / missing / extra / error 标记，以及精确文本、前缀、后缀和 Regex 文本条件等。
+
+Field 选择器着色的是该字段对应的子节点，而不是父级声明节点。符号解析同时考虑 Grammar Symbol 与 Public Symbol 身份，避免节点别名导致选择器无声失配。
+
+当着色规则依赖语法含义或结构时，ATS 尤其有用。例如：区分类声明中的类型名称与表达式中普通使用的标识符。
+
+#### 5. 内嵌 Tree-sitter Query
+
+TSH 配置可以在 `treeSitter.queries` 中直接声明 Native Tree-sitter S-expression Query。编译阶段使用当前 Grammar 的 `TSLanguage` 编译每条 Query，并将 Capture 名称绑定到语义 Style；Query Pattern 还可以携带优先级和启用状态等元数据。
+
+Query 源码始终保存在 `.tsh` 中，不会转换成生成的 `.scm` 文件。Native 结果路径会保留 Query 捕获的文档范围及 Pattern / Capture 来源信息。
+
+ATS 选择器与内嵌 Tree-sitter Query 都属于 Tree-sitter 结构化匹配，但面向不同的规则表达需求：ATS 用于声明节点关系约束，Query 用于表达 Tree-sitter 原生模式语言。
+
+#### 6. 可选 Oniguruma Regex
+
+Regex 是可选的独立文本匹配后端。当前 Native 规则模型区分：
+
+- **MATCH 规则：** 在源文本中查找符合模式的文本；
+- **BLOCK 规则：** 通过开始 / 结束分隔符跟踪一个区域，可分别配置区域样式、内容样式及嵌套规则。
+
+Regex 规则可以将数字或命名 Capture Group 绑定到语义 Style，声明优先级和 overlap 行为，启用 / 禁用规则，并在编译器支持范围内复用配置文件中定义的正则片段。嵌套 `contains` 规则可用于实现注释或字符串区域内部的 TODO 标记等场景。
+
+Regex 执行必须区分局部窗口和完整文档。编译器会保守判断某个模式是否具有已证明的有限匹配宽度。无法证明窗口执行安全性的模式必须使用足够的完整上下文路径或明确报告限制；不能因为匹配跨越窗口边界就静默漏掉结果。BLOCK 状态检查点属于独立的状态恢复机制，不等同于普通 Regex MATCH 执行。
+
+#### 7. 规则优先级与 Capture 仲裁
+
+ATS 与 Regex 的结果在统一视觉样式仲裁前先进行归一化。Capture 记录保留来源后端、Style ID、priority、declaration order 和 overlap 策略。Native 仲裁采用确定性排序，不依赖集合遍历顺序。
+
+独占范围发生冲突时，高优先级 Capture 优先；合法的嵌套 Scope 和不冲突的区间片段可以共存。显式允许 overlap 时保留双方范围。相邻且兼容的输出片段可以合并，减少后续 Span 处理工作。
+
+前景色、背景色与字体属性分别解析。一个只声明字体属性的 Capture 不应意外清除另一个活动 Capture 已明确配置的前景色。
+
+### 大文档与增量编辑器处理路径
+
+大文档路径的目标是避免每次视口请求都把整个文档重新物化为 Kotlin `String`，或复制成另一份完整 Native 字节数组。
+
+```mermaid
+flowchart TD
+    A["Editor Document / Piece Tree Snapshot"] --> B["NativeTextWindowReader"]
+    B --> C["有界 UTF-16LE 窗口读取"]
+    C --> D["Native Document / TextSource"]
+    D --> E["Tree-sitter Parser 与 Syntax Tree"]
+    E --> F["增量编辑同步"]
+    F --> G["Dirty Byte / Line Ranges"]
+    G --> H["Viewport Capture 请求"]
+    H --> I["ATS + 内嵌 Query"]
+    H --> J["可选 Regex 执行"]
+    I --> K["Capture Cache + Dependency Metadata"]
+    J --> K
+    K --> L["可复用范围 / 缓存查询"]
+    L --> M["编辑器行级样式"]
+```
+
+这条路径的主要特性：
+
+- **窗口化文本访问：** Native Document 通过宿主提供的 Reader 读取有界 UTF-16LE 字节窗口。当前 Native Document 契约使用 UTF-16LE 字节偏移量，偏移量和长度必须为偶数。
+- **Piece Tree 集成：** 编辑器可以从 Piece Tree Snapshot 提供文本窗口，不必为了每次捕获请求而展平整个缓冲区。
+- **增量解析：** 编辑器侧 `TshPieceTreeIncrementalSession` 在 Worker 上串行处理首次解析和编辑事务，合并待处理任务，并在活动 Native 工作结束后回收旧语法树。
+- **脏区间传播：** Native Document 编辑接口可以报告 Dirty Byte / Line Ranges，使编辑器针对失效范围处理，而不是每次编辑都重置全文样式。
+- **视口捕获：** 编辑器 Highlighter 请求可见行所需范围，并将尚未覆盖的区间交由后台任务处理。
+- **捕获复用：** Capture 区间缓存与 Native Dependency Metadata 用于判断视口移动或编辑后，之前计算的范围是否仍然有效。当文档、Grammar、Query、Source 或 Partition 版本无法证明兼容时，必须拒绝复用。
+- **Unicode 安全边界：** Native Document 使用 UTF-16LE 字节坐标。转换为编辑器 UTF-16 code unit / 行坐标时必须显式处理，不能混用坐标单位，也不能传入奇数 Byte Offset。
+
+这并不意味着任意 Regex 表达式都能在固定大小窗口内执行，也不意味着所有大文件工作负载都具有固定延迟。正确性优先于有界执行：依赖完整上下文的规则必须保留足够上下文，或采用保守回退。
+
+### Android 渲染与样式支持范围
+
+仓库包含 Kotlin TSH Engine 和编辑器适配器，可将 TSH 结果接入编辑器 SyntaxHighlighter / 行样式链路。当前 `StyledTextPainter` 集成直接绘制：
+
+- 前景色；
+- 背景色；
+- 粗体与斜体；
+- 下划线；
+- 删除线。
+
+该 Painter 尚未实现的属性（例如字体族、字体大小）必须作为宿主元数据或未支持的渲染属性处理，不能描述为已经绘制。适配器负责为编辑器行解析 Span；最终 Draw 仍由宿主 `EditorView` / Canvas 负责。编译成功、Capture 成功、RenderPlan 更新或 invalidate 请求，都不能单独证明目标像素已经显示。
+
+### TSH 的职责边界与支持性
+
+| 能力 | TSH 的职责 |
+| --- | --- |
+| 语法高亮 | 支持 —— ATS 选择器、内嵌 Tree-sitter Query，以及可选 Regex |
+| 语言元数据与文件关联 | 支持 —— Profile 元数据及 Grammar / Profile 解析能力 |
+| 语义样式与主题 | 支持 —— 命名 Style Catalog、Scheme、浅色 / 深色调色板、UI Token |
+| 编辑器行为元数据 | 支持声明 —— 注释、括号、自动闭合、缩进和 Enter 规则等；具体行为由宿主消费和实现 |
+| 增量文档集成 | 已有源码路径 —— Native Document / Edit API 与编辑器 Piece Tree 集成 |
+| 视口捕获与复用 | 已有源码路径 —— 范围捕获和缓存复用；是否有效取决于依赖记录和版本校验 |
+| 最终像素和全部编辑器功能 | 宿主职责 —— Renderer 必须支持对应属性并实际完成绘制 |
+| Language Server、补全 Provider、折叠、Outline 提取 | 不属于 TSH 高亮核心提供的功能 |
+
+### 当前实现边界与使用注意事项
+
+以下区别在接入引擎时必须明确：
+
+1. 仓库目前包含 Java ATS-only 配置和 Java Hybrid 配置，分别演示纯结构化高亮以及 ATS + 可选 Regex 的组合。其他 Grammar 模块提供 Parser，并不会自动附带完整的语言专属 `.tsh` 高亮配置。
+2. 当前编译器入口以已经实现的配置结构为准（包括 `ast`、`treeSitter.queries` 和 Regex `contains` 规则）。设计资料中描述的统一 `rules { ats { ... } regex { ... } } 门面并不是当前实际配置语法；生产配置不要直接使用尚未实现的语法。
+3. DSL 规范同时记录已实现能力与规划能力。某个构造出现在设计规范中，并不代表当前 Compiler / Runtime 已经接受它。应以当前示例配置、编译器源码和测试为准。
+4. 新的统一 TSH API Foundation 正在逐步接入。当前 Native 高亮仍以既有 `WindbellTshEngine` 作为兼容执行入口；不能将新门面已初始化误认为整个 Native 高亮链路已完成迁移。
+5. Native Document、大文件、缓存和增量处理源码路径已经存在，但其性能和正确性仍需通过对应 Gradle、Native、Android 设备和目标工作负载验证后，才能给出量化结论。
+
+### TSH 源码与实现文档
+
+- [TSH DSL v2 规范](docs/TSH_DSL_V2_SPEC.md)
+- [TSH 重构计划与实现状态](docs/TSH_REWORK_PLAN.md)
+- [TSH 高亮准确性与渲染完整性](docs/TSH_HIGHLIGHT_ACCURACY_AND_RENDERING_INTEGRITY.md)
+- [大文本 Native Token 架构](docs/TSH_LARGE_TEXT_NATIVE_TOKEN_ARCHITECTURE.md)
+- [TSH 引擎完成度与性能路线图](android-tree-sitter/TSH_ENGINE_COMPLETION_AND_PERFORMANCE_ROADMAP.md)
+- [Java ATS-only 配置](app/src/main/assets/tsh/java-ats-only.tsh)
+- [Java Hybrid 配置](app/src/main/assets/tsh/java-hybrid.tsh)
+- [TSH Native Kotlin Engine](android-tree-sitter/src/main/java/com/zerostudio/idea/treesitter/tsh/WindbellTshEngine.kt)
+- [Piece Tree 增量会话](editor/src/main/java/x/github/module/editor/tsh/TshPieceTreeIncrementalSession.kt)
+- [Android 编辑器 TSH Highlighter](app/src/main/java/com/zerostudio/idea/androidtreesitter/TshSyntaxHighlighter.kt)
+
+---
+
+
 ## 引擎架构
 
 ~~~text
