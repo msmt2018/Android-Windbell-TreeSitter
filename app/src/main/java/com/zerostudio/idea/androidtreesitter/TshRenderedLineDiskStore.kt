@@ -92,7 +92,7 @@ internal class TshRenderedLineDiskStore(
         val key = fileKey(
             documentRevision, lineStartOffset, visibleStart, visibleEnd, scheme, dark
         )
-        entries.containsKey(key)
+        entries[key] != null
     }
 
     fun put(
