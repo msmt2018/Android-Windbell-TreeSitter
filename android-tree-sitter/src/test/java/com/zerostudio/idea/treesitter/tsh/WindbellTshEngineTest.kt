@@ -95,7 +95,7 @@ class WindbellTshLinkageTest {
                 assertTrue(
                     found,
                     "BLOCK style must include closing-delimiter code unit at UTF-16 offset $viewportStart; " +
-                        "spans=\${encoded.contentToString()}"
+                        "spans=" + encoded.contentToString()"
                 )
             }
         } finally {
