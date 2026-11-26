@@ -29,6 +29,7 @@ class JavaTshPipelineProfilesTest {
                 // TODO: exercise comment capture
                 return value + index;
             }
+            public void same(int same) {}
             public void run() {
                 Runnable action = this::execute;
                 action.run();
