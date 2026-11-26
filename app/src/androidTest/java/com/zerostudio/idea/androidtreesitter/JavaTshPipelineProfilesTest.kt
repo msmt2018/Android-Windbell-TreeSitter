@@ -73,9 +73,10 @@ class JavaTshPipelineProfilesTest {
                             assertTrue("Hybrid must include Regex rules", source.contains("contains: ["))
                         }
                     }
+                    val compiled = engine.loadTshSource("java", source, language)
                     assertTrue(
                         "$label must compile: ${engine.lastCompileDiagnostics}",
-                        engine.loadTshSource("java", source, language)
+                        compiled
                     )
                     val diagnostics = engine.computePipelineDiagnostics(parsedTree, sample, "java")
                     val captures = diagnostics.captures
