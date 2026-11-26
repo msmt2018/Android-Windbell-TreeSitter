@@ -70,6 +70,16 @@ interface SyntaxHighlighter : LineStyler {
         fun invalidateStyles(startLine: Int, endLine: Int) = invalidateStyles()
 
         /**
+         * Invalidates several disjoint line ranges as one style-generation change.
+         * Hosts with row caches should invalidate only the listed ranges.
+         */
+        fun invalidateStyles(ranges: List<Pair<Int, Int>>) {
+            ranges.forEach { (startLine, endLine) ->
+                invalidateStyles(startLine, endLine)
+            }
+        }
+
+        /**
          * What the engine knows about the structure of the text has changed (parsing
          * finished): if it also provides matching brackets, indent guides or folding
          * ranges (see the structure package), they are asked again. Any thread.

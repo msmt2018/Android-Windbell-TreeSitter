@@ -201,11 +201,14 @@ public class TSLanguage extends TSNativeObject {
 
   @Override
   public void close() {
-    if (isExternal()) {
-      Native.dlclose(getLibHandle());
-      setLibHandle(0);
+    // Multiple owners may race to close a shared cached language. Transfer the
+    // loader handle to exactly one caller before invoking dlclose; checking
+    // isExternal() followed by getLibHandle()/setLibHandle(0) can double-close.
+    final long handle = libHandle.getAndSet(0);
+    if (handle != 0) {
+      Native.dlclose(handle);
 
-      // Language instance loaded using loadLanguage(...) must not be reused
+      // Language instance loaded using loadLanguage(...) must not be reused.
       TSLanguageCache.remove(this);
     }
 
@@ -260,18 +263,25 @@ public class TSLanguage extends TSNativeObject {
   public static TSLanguage loadLanguage(String libraryPath, String lang) {
     validateLangName(lang);
 
-    var language = TSLanguageCache.get(lang);
-    if (language != null) {
+    final String canonicalPath;
+    try {
+      canonicalPath = new java.io.File(libraryPath).getCanonicalPath();
+    } catch (java.io.IOException ignored) {
+      throw new IllegalArgumentException("Cannot canonicalize grammar library path: " + libraryPath, ignored);
+    }
+
+    var language = TSLanguageCache.get(lang, canonicalPath);
+    if (language != null && language.getNativeObject() != 0) {
       return language;
     }
 
-    final long[] pointers = Native.loadLanguage(libraryPath, "tree_sitter_" + lang);
+    final long[] pointers = Native.loadLanguage(canonicalPath, "tree_sitter_" + lang);
     if (pointers == null) {
       return null;
     }
 
     language = TSLanguage.create(lang, pointers);
-    TSLanguageCache.cache(lang, language);
+    TSLanguageCache.cache(lang, canonicalPath, language);
     return language;
   }
 
@@ -315,10 +325,8 @@ public class TSLanguage extends TSNativeObject {
     @FastNative
     static native int[] supertypes(long ptr);
 
-    @FastNative
     static native long[] loadLanguage(String sharedLib, String func);
 
-    @FastNative
     static native void dlclose(long libhandle);
 
     @FastNative

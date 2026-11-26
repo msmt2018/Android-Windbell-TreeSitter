@@ -23,11 +23,10 @@ import java.lang.reflect.Type;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.function.Function;
-import java.util.stream.Collectors;
 import javax.lang.model.element.Element;
 import javax.lang.model.element.ElementKind;
 import javax.lang.model.element.ExecutableElement;
@@ -200,19 +199,27 @@ public class JNIWriter {
     final var _writer = new StringWriter();
     final var writer = new PrintWriter(_writer);
 
-    // Remove duplicates
-    results = new ArrayList<>(results.stream()
-      .collect(Collectors.toMap(JNIWriterResult::getHeaderFilename, Function.identity(),
-        (existing, replacement) -> existing))
-      .values());
+    // Multiple annotated inner classes in a composite grammar intentionally
+    // share one generated header file. A source scan may encounter the same
+    // nested type more than once, so deduplicate by JNI class identity rather
+    // than by header filename (which would drop sibling registrations).
+    final var uniqueTypeResults = new ArrayList<JNIWriterResult>();
+    final var seenTypeRefs = new HashSet<String>();
+    for (final var result : results) {
+      if (seenTypeRefs.add(result.getTypeRef().toString())) uniqueTypeResults.add(result);
+    }
+    final var uniqueHeaderFilenames = uniqueTypeResults.stream()
+      .map(JNIWriterResult::getHeaderFilename)
+      .distinct()
+      .toList();
 
     fileTop(writer);
     includes(writer);
 
-    // Add '#include "filename" for all generated files
+    // Include each aggregated header exactly once.
     writer.println();
     writer.println(String.join(System.lineSeparator(),
-      results.stream().map(result -> "#include \"" + result.getHeaderFilename() + "\"").toList()));
+      uniqueHeaderFilenames.stream().map(filename -> "#include \"" + filename + "\"").toList()));
     writer.println();
     writer.println();
 
@@ -220,7 +227,7 @@ public class JNIWriter {
 
     writer.println("#define TS_JNI_ONLOAD__AUTO_REGISTER(env) \\");
 
-    for (final var result : results) {
+    for (final var result : uniqueTypeResults) {
       final var typeName = result.getTypeName();
       indent(writer, 4);
       writer.print(typeName_AutoRegisterNatives(typeName));
@@ -231,7 +238,7 @@ public class JNIWriter {
 
     writer.println("#define TS_JNI_ONLOAD__DEFINE_METHODS_ARR \\");
 
-    for (final var result : results) {
+    for (final var result : uniqueTypeResults) {
       final var typeName = result.getTypeName();
       indent(writer, 4);
       writer.print(typeName_DefMethodsArray(typeName));

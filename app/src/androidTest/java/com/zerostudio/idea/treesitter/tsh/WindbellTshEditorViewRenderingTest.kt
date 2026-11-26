@@ -13,6 +13,8 @@ import com.zerostudio.idea.androidtreesitter.TshSyntaxHighlighter
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import x.github.module.editor.view.EditorView
 
 /**
@@ -27,7 +29,12 @@ class WindbellTshEditorViewRenderingTest {
     private val keywordColor = Color.rgb(255, 0, 127)
 
     private fun dsl() = """
-        name: ["Java", ".java"]
+        language {
+            id: "java"
+            name: "Java"
+            extensions: [".java", ".java-editor-e2e"]
+        }
+        name: ["Java", ".java", ".java-editor-e2e"]
         styles: [
             "keyword", #FF007F, #CC7832, @B,
             "string", #007F00, #6A8759,
@@ -77,9 +84,12 @@ class WindbellTshEditorViewRenderingTest {
         lateinit var highlighter: TshSyntaxHighlighter
         instrumentation.runOnMainSync {
             editor = EditorView(context)
+            assertTrue(
+                "EditorView refused the initial TSH rendering fixture",
+                editor.setText("public class Demo {\n    String value = \"hello\";\n}")
+            )
             editor.setTextSize(48f)
             editor.setTextColor(plainColor)
-            editor.setText("public class Demo {\n    String value = \"hello\";\n}")
             highlighter = TshSyntaxHighlighter(
                 language = TSLanguageJava.getInstance(),
                 extension = extension,

@@ -1,4 +1,5 @@
 import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 /*
  *  This file is part of android-tree-sitter.
@@ -43,6 +44,8 @@ gradlePlugin {
 
 repositories {
     google()
+    // Kotlin DSL transitive artifacts are mirrored by Google Cloud Storage.
+    maven { url = uri("https://maven-central.storage-download.googleapis.com/maven2/") }
     gradlePluginPortal()
     mavenCentral()
 }
@@ -52,9 +55,9 @@ java {
     targetCompatibility = JavaVersion.VERSION_17
 }
 
-tasks.withType<KotlinCompile> {
-    kotlinOptions {
-        jvmTarget = "17"
+tasks.withType<KotlinCompile>().configureEach {
+    compilerOptions {
+        jvmTarget.set(JvmTarget.JVM_17)
     }
 }
 

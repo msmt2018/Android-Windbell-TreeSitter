@@ -22,22 +22,27 @@ import java.util.concurrent.atomic.AtomicBoolean
 /**
  * Host document facade for the repository's PieceTreeTextBuffer.
  *
- * [snapshotFactory] MUST create the PieceTreeSnapshot while the host excludes concurrent edits
- * to the live PieceTreeTextBuffer. After it returns, PieceTreeSnapshot is immutable and can be
- * read concurrently while the live buffer changes.
+ * [snapshotFactory] MUST coordinate snapshot creation with concurrent edits and concurrent
+ * snapshot requests against the live PieceTreeTextBuffer. After it returns, PieceTreeSnapshot is
+ * immutable and can be read concurrently while the live buffer changes.
  *
  * The factory is intentionally supplied by the host rather than locking on the buffer here:
  * synchronizing on an object does not coordinate with editor mutations that use another lock.
+ * EditorDocument supplies the shared reentrant transaction lock used by this repository's binding.
  */
 class TshPieceTreeDocument(
     val documentId: String,
     val languageId: String?,
-    private val snapshotThread: Thread? = null,
+    internal val snapshotThread: Thread? = null,
     private val snapshotFactory: () -> PieceTreeSnapshot
 ) {
     private val changeListeners = CopyOnWriteArrayList<TshTextChangeListener>()
     private val disposedListeners = CopyOnWriteArrayList<TshTextDocumentDisposedListener>()
     private val disposed = AtomicBoolean(false)
+    // Subscription and disposal transitions must be atomic with one another. The
+    // copy-on-write lists alone do not prevent a listener being added just after
+    // dispose() has cleared them.
+    private val lifecycleLock = Any()
 
     fun createSnapshot(): PieceTreeSnapshot {
         check(!disposed.get()) { "PieceTree document $documentId is disposed" }
@@ -48,36 +53,47 @@ class TshPieceTreeDocument(
     }
 
     fun publishChange(change: TshTextChange) {
-        check(!disposed.get()) { "Cannot publish a change for a disposed document" }
-        require(change.documentId == documentId) { "Change belongs to another document" }
-        changeListeners.forEach { listener -> runCatching { listener.onChanged(change) } }
+        synchronized(lifecycleLock) {
+            check(!disposed.get()) { "Cannot publish a change for a disposed document" }
+            require(change.documentId == documentId) { "Change belongs to another document" }
+            for (listener in changeListeners) {
+                if (disposed.get()) break
+                runCatching { listener.onChanged(change) }
+            }
+        }
     }
 
     fun dispose(finalVersion: Long) {
-        if (!disposed.compareAndSet(false, true)) return
-        changeListeners.clear()
-        disposedListeners.forEach { listener -> runCatching { listener.onDisposed(documentId, finalVersion) } }
-        disposedListeners.clear()
+        val listeners = synchronized(lifecycleLock) {
+            if (!disposed.compareAndSet(false, true)) return
+            changeListeners.clear()
+            disposedListeners.toList().also { disposedListeners.clear() }
+        }
+        listeners.forEach { listener -> runCatching { listener.onDisposed(documentId, finalVersion) } }
     }
 
     fun isDisposed(): Boolean = disposed.get()
 
     internal fun addChangeListener(listener: TshTextChangeListener) {
-        check(!disposed.get()) { "Cannot subscribe to a disposed document" }
-        changeListeners.addIfAbsent(listener)
+        synchronized(lifecycleLock) {
+            check(!disposed.get()) { "Cannot subscribe to a disposed document" }
+            changeListeners.addIfAbsent(listener)
+        }
     }
 
     internal fun removeChangeListener(listener: TshTextChangeListener) {
-        changeListeners.remove(listener)
+        synchronized(lifecycleLock) { changeListeners.remove(listener) }
     }
 
     internal fun addDisposedListener(listener: TshTextDocumentDisposedListener) {
-        check(!disposed.get()) { "Cannot subscribe to a disposed document" }
-        disposedListeners.addIfAbsent(listener)
+        synchronized(lifecycleLock) {
+            check(!disposed.get()) { "Cannot subscribe to a disposed document" }
+            disposedListeners.addIfAbsent(listener)
+        }
     }
 
     internal fun removeDisposedListener(listener: TshTextDocumentDisposedListener) {
-        disposedListeners.remove(listener)
+        synchronized(lifecycleLock) { disposedListeners.remove(listener) }
     }
 }
 
@@ -103,7 +119,8 @@ class TshPieceTreeTextAccessProvider(
             TshCapability("text.disposal-notification", 1)
         )
 
-    override fun supports(instance: Any): Boolean = instance is TshPieceTreeDocument
+    override fun supports(instance: Any): Boolean =
+        instance is TshPieceTreeDocument && instance.snapshotThread == null
 
     override fun supports(instance: Any, descriptor: TshObjectDescriptor): Boolean =
         supports(instance)
@@ -117,6 +134,10 @@ class TshPieceTreeTextAccessProvider(
             if (host.documentId.isBlank()) return failure(
                 "TSH-PIECETREE-006",
                 "PieceTree documentId must not be blank"
+            )
+            if (host.snapshotThread != null) return failure(
+                "TSH-PIECETREE-011",
+                "The concurrent PieceTree provider requires a thread-neutral snapshot factory"
             )
             val pieceTreeSnapshot = host.createSnapshot()
             val version = pieceTreeSnapshot.versionId.toLong()

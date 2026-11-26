@@ -261,7 +261,16 @@ static jobject TSQuery_extractBounded(
       throwTagsOutOfMemory(env);
       return nullptr;
     }
-    const jsize value_count = static_cast<jsize>(spans.size() * 6);
+    // JNI array lengths are signed jsize values. Validate the packed element
+    // count before multiplication/casting so a dense query cannot wrap into a
+    // smaller Java array and overwrite its bounds during marshaling.
+    const size_t max_packed_spans =
+        static_cast<size_t>(std::numeric_limits<jsize>::max()) / 6u;
+    if (spans.size() > max_packed_spans) {
+      throwTagsOutOfMemory(env);
+      return nullptr;
+    }
+    const jsize value_count = static_cast<jsize>(spans.size() * 6u);
     jlongArray result = env->NewLongArray(value_count);
     if (!result) return nullptr;
     if (!spans.empty()) {
@@ -277,6 +286,10 @@ static jobject TSQuery_extractBounded(
     return result;
   }
 
+  if (matches.size() > static_cast<size_t>(std::numeric_limits<jsize>::max())) {
+    throwTagsOutOfMemory(env);
+    return nullptr;
+  }
   jclass match_class = env->FindClass(
       "com/zerostudio/idea/treesitter/TSQueryMatch");
   if (!match_class) return nullptr;
@@ -291,7 +304,16 @@ static jobject TSQuery_extractBounded(
     TSQueryMatch native_match{};
     native_match.id = owned.id;
     native_match.pattern_index = owned.pattern_index;
-    native_match.capture_count = static_cast<uint32_t>(owned.captures.size());
+    using NativeCaptureCount = decltype(native_match.capture_count);
+    if (owned.captures.size() >
+        static_cast<size_t>(std::numeric_limits<NativeCaptureCount>::max())) {
+      env->PopLocalFrame(nullptr);
+      throwTagsIllegalState(env,
+          "Query match capture count exceeds the Tree-sitter ABI representation");
+      return nullptr;
+    }
+    native_match.capture_count =
+        static_cast<NativeCaptureCount>(owned.captures.size());
     native_match.captures = owned.captures.empty()
         ? nullptr : const_cast<TSQueryCapture *>(owned.captures.data());
     jobject java_match = _marshalMatch(env, native_match);

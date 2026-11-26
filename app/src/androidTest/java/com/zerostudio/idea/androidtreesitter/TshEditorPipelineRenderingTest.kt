@@ -14,6 +14,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.SdkSuppress
 import androidx.test.platform.app.InstrumentationRegistry
 import com.zerostudio.idea.treesitter.TreeSitter
+import com.zerostudio.idea.treesitter.TSParser
 import com.zerostudio.idea.treesitter.java.TSLanguageJava
 import com.zerostudio.idea.treesitter.tsh.WindbellTshEngine
 import com.zerostudio.idea.piecetable.PieceTreeTextBufferBuilder
@@ -21,8 +22,10 @@ import com.zerostudio.idea.piecetable.common.Range
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
+import org.junit.BeforeClass
 import org.junit.Test
 import org.junit.runner.RunWith
 import x.github.module.editor.render.StyledTextPainter
@@ -35,7 +38,369 @@ import kotlin.math.abs
  */
 @RunWith(AndroidJUnit4::class)
 class TshEditorPipelineRenderingTest {
+    companion object {
+        @BeforeClass
+        @JvmStatic
+        fun loadNativeTreeSitterLibraries() {
+            // Test methods are independently scheduled; never rely on a later test
+            // method to initialize JNI before the first TSH engine access.
+            TreeSitter.loadLibrary()
+            System.loadLibrary("tree-sitter-java")
+        }
+    }
 
+
+    @Test
+    fun darkAppearancePreservesExplicitYellowAnnotationMarkerThroughCanvas() {
+        val engine = WindbellTshEngine.instance
+        val extension = "dark-annotation-explicit-yellow"
+        val language = TSLanguageJava.getInstance()
+        val dsl = """
+            tsh 2 {
+                language { id: "dark-annotation-explicit-yellow" extensions: [".day"] }
+                styles {
+                    annotation { scope: "storage.type.annotation", tags: ["annotation"] }
+                }
+                schemes {
+                    plain {
+                        light [ annotation: #00FFFF ]
+                        dark [ annotation: #FFFF00 ]
+                    }
+                }
+                defaultScheme: "plain"
+                treeSitter {
+                    queries: [
+                        {
+                            id: "annotation-marker"
+                            priority: 120
+                            source: `(marker_annotation "@" @marker)`
+                            captures: { marker: annotation }
+                        }
+                    ]
+                }
+            }
+        """.trimIndent()
+        assertTrue("Explicit dark-yellow TSH must compile: ${engine.lastCompileDiagnostics}",
+            engine.loadTshSource(extension, dsl, language))
+
+        val parser = TSParser.create().apply { setLanguage(language) }
+        val source = "class Demo { @Override void run() {} }"
+        val tree = parser.parseString(source)
+        try {
+            assertNotNull(tree)
+            val captures = engine.computeHighlights(tree, source, extension)
+            val palette = engine.getStylePalette(extension, "annotation")
+            assertNotNull(palette)
+            assertTrue("The explicit dark override must be present", palette!!.hasDarkColor)
+            assertEquals(0xFFFFFF00.toInt(), palette.darkColor)
+            engine.setAppearance(extension, true)
+
+            val markerOffset = source.indexOf('@')
+            val styled = SpannableStringBuilder(source)
+            engine.applyHighlightSpansToSpannable(
+                spans = captures,
+                documentOffset = 0,
+                text = source,
+                extension = extension,
+                spannable = styled
+            )
+            val markerSpan = styled.getSpans(
+                markerOffset, markerOffset + 1, ForegroundColorSpan::class.java
+            ).firstOrNull {
+                styled.getSpanStart(it) <= markerOffset &&
+                    styled.getSpanEnd(it) >= markerOffset + 1
+            }
+            assertEquals(0xFFFFFF00.toInt(), markerSpan?.foregroundColor)
+
+            val bitmap = Bitmap.createBitmap(420, 88, Bitmap.Config.ARGB_8888)
+            try {
+                val canvas = Canvas(bitmap).apply { drawColor(Color.BLACK) }
+                val basePaint = android.text.TextPaint(android.text.TextPaint.ANTI_ALIAS_FLAG).apply {
+                    color = Color.GREEN
+                    textSize = 48f
+                }
+                val glyphX = 8f + basePaint.measureText(source.substring(0, markerOffset))
+                StyledTextPainter().draw(
+                    canvas = canvas,
+                    text = source,
+                    spans = styled,
+                    start = markerOffset,
+                    end = markerOffset + 1,
+                    x = glyphX,
+                    baseline = 60f,
+                    rowTop = 0f,
+                    rowBottom = 88f,
+                    basePaint = basePaint
+                )
+                var yellowPixels = 0
+                val left = glyphX.toInt().coerceAtLeast(0)
+                val right = (glyphX + basePaint.measureText("@")).toInt().coerceAtMost(bitmap.width)
+                for (y in 0 until bitmap.height) {
+                    for (x in left until right) {
+                        val pixel = bitmap.getPixel(x, y)
+                        if (Color.red(pixel) > 180 &&
+                            Color.green(pixel) > 180 &&
+                            Color.blue(pixel) < 100) yellowPixels++
+                    }
+                }
+                assertTrue(
+                    "Explicit dark TSH yellow must reach Canvas, not inherit the green base paint",
+                    yellowPixels > 0
+                )
+            } finally {
+                bitmap.recycle()
+            }
+        } finally {
+            tree?.close()
+            parser.close()
+            engine.clearAppearanceOverride(extension)
+        }
+    }
+
+    @Test
+    fun darkAppearanceKeepsConfiguredLightAnnotationColorWhenDarkOverrideIsAbsent() {
+        val engine = WindbellTshEngine.instance
+        val extension = "dark-annotation-fallback"
+        val language = TSLanguageJava.getInstance()
+        val dsl = """
+            tsh 2 {
+                language { id: "dark-annotation-fallback" extensions: [".dann"] }
+                styles {
+                    annotation { scope: "storage.type.annotation", tags: ["annotation"] }
+                }
+                schemes {
+                    plain {
+                        light [ annotation: #FFFF00 ]
+                    }
+                }
+                defaultScheme: "plain"
+                treeSitter {
+                    queries: [
+                        {
+                            id: "annotation-marker"
+                            priority: 120
+                            source: `(marker_annotation "@" @marker)`
+                            captures: { marker: annotation }
+                        }
+                    ]
+                }
+            }
+        """.trimIndent()
+        assertTrue("Annotation marker TSH must compile: ${engine.lastCompileDiagnostics}",
+            engine.loadTshSource(extension, dsl, language))
+
+        val parser = TSParser.create().apply { setLanguage(language) }
+        val source = "class Demo { @Override void run() {} }"
+        val tree = parser.parseString(source)
+        try {
+            assertNotNull("Java source must parse", tree)
+            val captures = engine.computeHighlights(tree, source, extension)
+            val annotationId = engine.getStyleCatalog(extension)
+                .first { it.name == "annotation" }.styleId
+            val markerOffset = source.indexOf('@')
+            assertTrue(
+                "The native Tree-sitter Query must capture the literal @ marker",
+                captures.any {
+                    it.styleId == annotationId &&
+                        it.startByte == markerOffset * 2 &&
+                        it.endByte == (markerOffset + 1) * 2
+                }
+            )
+
+            val palette = engine.getStylePalette(extension, "annotation")
+            assertTrue("The configured light yellow must be present", palette?.hasLightColor == true)
+            assertFalse("This fixture deliberately omits a dark override", palette?.hasDarkColor == true)
+            engine.setAppearance(extension, true)
+
+            val styled = SpannableStringBuilder(source)
+            engine.applyHighlightSpansToSpannable(
+                spans = captures,
+                documentOffset = 0,
+                text = source,
+                extension = extension,
+                spannable = styled
+            )
+            val markerSpan = styled.getSpans(
+                markerOffset, markerOffset + 1, ForegroundColorSpan::class.java
+            ).firstOrNull {
+                styled.getSpanStart(it) <= markerOffset &&
+                    styled.getSpanEnd(it) >= markerOffset + 1
+            }
+            assertEquals(
+                "Missing dark color must inherit the explicitly configured TSH yellow, " +
+                    "not fall through to the editor's green base TextPaint",
+                0xFFFFFF00.toInt(),
+                markerSpan?.foregroundColor
+            )
+
+            val bitmap = Bitmap.createBitmap(420, 88, Bitmap.Config.ARGB_8888)
+            try {
+                val canvas = Canvas(bitmap).apply { drawColor(Color.BLACK) }
+                val basePaint = android.text.TextPaint(android.text.TextPaint.ANTI_ALIAS_FLAG).apply {
+                    color = Color.GREEN
+                    textSize = 48f
+                }
+                val glyphX = 8f + basePaint.measureText(source.substring(0, markerOffset))
+                StyledTextPainter().draw(
+                    canvas = canvas,
+                    text = source,
+                    spans = styled,
+                    start = markerOffset,
+                    end = markerOffset + 1,
+                    x = glyphX,
+                    baseline = 60f,
+                    rowTop = 0f,
+                    rowBottom = 88f,
+                    basePaint = basePaint
+                )
+                var yellowPixels = 0
+                val left = glyphX.toInt().coerceAtLeast(0)
+                val right = (glyphX + basePaint.measureText("@")).toInt().coerceAtMost(bitmap.width)
+                for (y in 0 until bitmap.height) {
+                    for (x in left until right) {
+                        val pixel = bitmap.getPixel(x, y)
+                        if (Color.red(pixel) > 180 &&
+                            Color.green(pixel) > 180 &&
+                            Color.blue(pixel) < 100) yellowPixels++
+                    }
+                }
+                assertTrue(
+                    "The final Canvas must render the TSH yellow instead of the green base color",
+                    yellowPixels > 0
+                )
+            } finally {
+                bitmap.recycle()
+            }
+        } finally {
+            tree?.close()
+            parser.close()
+            engine.clearAppearanceOverride(extension)
+        }
+    }
+
+    @Test
+    fun packedPainterEventsKeepAdjacentCaptureBoundariesDisjoint() {
+        val engine = WindbellTshEngine.instance
+        val extension = "packed-boundary-events"
+        val dsl = """
+            tsh 2 {
+                language { id: "packed-boundary-events" extensions: [".pbe"] }
+                styles {
+                    first { scope: "keyword.control" }
+                    second { scope: "string.quoted" }
+                }
+                schemes {
+                    plain {
+                        light [ first: #FFFF0000, second: #FF00FF00 ]
+                        dark [ first: #FFFF0000, second: #FF00FF00 ]
+                    }
+                }
+                defaultScheme: "plain"
+            }
+        """.trimIndent()
+        assertTrue("Adjacent-boundary fixture must compile: ${engine.lastCompileDiagnostics}",
+            engine.loadTshSource(extension, dsl, null))
+        assertTrue(engine.ensurePalette(extension))
+        engine.setAppearance(extension, false)
+        try {
+            val catalog = engine.getStyleCatalog(extension)
+            val firstId = catalog.first { it.name == "first" }.styleId
+            val secondId = catalog.first { it.name == "second" }.styleId
+            val source = "AB"
+            val captures = listOf(
+                WindbellTshEngine.HighlightSpan(
+                    startByte = 0, endByte = 2, styleId = firstId, fontFlags = 0,
+                    priority = 10, declarationOrder = 0, source = 0
+                ),
+                WindbellTshEngine.HighlightSpan(
+                    startByte = 2, endByte = 4, styleId = secondId, fontFlags = 0,
+                    priority = 10, declarationOrder = 1, source = 0
+                )
+            )
+            val styled = SpannableStringBuilder(source)
+            engine.applyHighlightSpansToSpannable(
+                spans = captures,
+                documentOffset = 0,
+                text = source,
+                extension = extension,
+                spannable = styled
+            )
+            val foreground = styled.getSpans(
+                0, source.length, ForegroundColorSpan::class.java
+            )
+            val first = foreground.single {
+                styled.getSpanStart(it) == 0 && styled.getSpanEnd(it) == 1
+            }
+            val second = foreground.single {
+                styled.getSpanStart(it) == 1 && styled.getSpanEnd(it) == 2
+            }
+            assertEquals(0xFFFF0000.toInt(), first.foregroundColor)
+            assertEquals(0xFF00FF00.toInt(), second.foregroundColor)
+        } finally {
+            engine.clearAppearanceOverride(extension)
+        }
+    }
+
+    @Test
+    fun primitivePainterHeapsKeepIndependentFontAttributeWinners() {
+        val engine = WindbellTshEngine.instance
+        val extension = "primitive-font-heaps"
+        val dsl = """
+            tsh 2 {
+                language { id: "primitive-font-heaps" extensions: [".pfh"] }
+                styles {
+                    boldStyle { scope: "keyword.control" }
+                    italicStyle { scope: "string.quoted" }
+                }
+                schemes {
+                    plain {
+                        light [ boldStyle: #FFFF0000, italicStyle: #FF00FF00 ]
+                        dark [ boldStyle: #FFFF0000, italicStyle: #FF00FF00 ]
+                    }
+                }
+                defaultScheme: "plain"
+            }
+        """.trimIndent()
+        assertTrue("Font heap fixture must compile: ${engine.lastCompileDiagnostics}",
+            engine.loadTshSource(extension, dsl, null))
+        assertTrue(engine.ensurePalette(extension))
+        engine.setAppearance(extension, false)
+        try {
+            val catalog = engine.getStyleCatalog(extension)
+            val boldId = catalog.first { it.name == "boldStyle" }.styleId
+            val italicId = catalog.first { it.name == "italicStyle" }.styleId
+            val source = "AB"
+            val captures = listOf(
+                WindbellTshEngine.HighlightSpan(
+                    startByte = 0, endByte = 4, styleId = boldId, fontFlags = 0x01,
+                    priority = 20, declarationOrder = 0, source = 0
+                ),
+                WindbellTshEngine.HighlightSpan(
+                    startByte = 0, endByte = 4, styleId = italicId, fontFlags = 0x02,
+                    priority = 10, declarationOrder = 1, source = 0
+                )
+            )
+            val styled = SpannableStringBuilder(source)
+            engine.applyHighlightSpansToSpannable(
+                spans = captures,
+                documentOffset = 0,
+                text = source,
+                extension = extension,
+                spannable = styled
+            )
+            val fontSpans = styled.getSpans(0, source.length, StyleSpan::class.java)
+            assertTrue("Bold winner must be emitted independently", fontSpans.any {
+                it.style == android.graphics.Typeface.BOLD &&
+                    styled.getSpanStart(it) == 0 && styled.getSpanEnd(it) == source.length
+            })
+            assertTrue("Italic winner must be emitted independently", fontSpans.any {
+                it.style == android.graphics.Typeface.ITALIC &&
+                    styled.getSpanStart(it) == 0 && styled.getSpanEnd(it) == source.length
+            })
+        } finally {
+            engine.clearAppearanceOverride(extension)
+        }
+    }
 
     @Test
     fun nestedTshCapturePriorityReachesFinalCanvasColor() {
@@ -135,10 +500,11 @@ class TshEditorPipelineRenderingTest {
         ).filter {
             styled.getSpanStart(it) <= tokenStart && styled.getSpanEnd(it) >= tokenEnd
         }
-        assertTrue("Both outer and nested styles must cover TOKEN", tokenColors.size >= 2)
-        val winningColor = tokenColors.maxByOrNull {
-            styled.getSpanFlags(it) and Spanned.SPAN_PRIORITY
-        }?.foregroundColor
+        // Foreground overlap is resolved by the native-precedence sweep into
+        // one disjoint winning run. Android must not receive overlapping
+        // foreground spans and be asked to arbitrate them a second time.
+        assertEquals("The nested token must have one resolved foreground run", 1, tokenColors.size)
+        val winningColor = tokenColors.single().foregroundColor
         assertEquals(
             "Android span priority must preserve the native high-priority capture",
             engine.getStylePalette("canvas-priority-regression", "inner")?.lightColor,
@@ -396,6 +762,80 @@ class TshEditorPipelineRenderingTest {
     }
 
     @Test
+    fun nestedExplicitFontClearOverridesEnclosingCaptureAtFinalSpannable() {
+        val engine = WindbellTshEngine.instance
+        val extension = "nested-font-clear-render-regression"
+        val dsl = """
+            tsh 2 {
+                language { id: "nested-font-clear-render-regression" extensions: [".nfcr"] }
+                styles {
+                    base { scope: "comment.block" }
+                    keyword { scope: "comment.block.keyword" parent: "base" }
+                }
+                schemes {
+                    plain {
+                        light [ base: #FF0000 @bold @italic, keyword: #0000FF @no-bold ]
+                        dark [ base: #AA0000 @bold @italic, keyword: #0000AA @no-bold ]
+                    }
+                }
+                defaultScheme: "plain"
+            }
+        """.trimIndent()
+        assertTrue(
+            "Nested font-clear DSL must compile: ${engine.lastCompileDiagnostics}",
+            engine.loadTshSource(extension, dsl, null)
+        )
+
+        val catalog = engine.getStyleCatalog(extension)
+        val baseId = catalog.first { it.name == "base" }.styleId
+        val keywordId = catalog.first { it.name == "keyword" }.styleId
+        val keywordPalette = engine.getStylePalette(extension, "keyword")
+        assertNotNull(keywordPalette)
+        assertEquals(0x01, keywordPalette!!.lightFontDefinedMask and 0x01)
+        assertEquals(0x01, keywordPalette.darkFontDefinedMask and 0x01)
+        assertEquals(0x02, keywordPalette.lightFontFlags and 0x02)
+
+        val source = "abcdefgh"
+        val captures = listOf(
+            WindbellTshEngine.HighlightSpan(
+                startByte = 0, endByte = 16, styleId = baseId, fontFlags = 0,
+                priority = 10, declarationOrder = 0, source = 0
+            ),
+            WindbellTshEngine.HighlightSpan(
+                startByte = 4, endByte = 12, styleId = keywordId, fontFlags = 0,
+                priority = 20, declarationOrder = 1, source = 0
+            )
+        )
+        val styled = SpannableStringBuilder(source)
+        engine.setAppearance(extension, false)
+        try {
+            engine.applyHighlightSpansToSpannable(
+                spans = captures,
+                documentOffset = 0,
+                text = source,
+                extension = extension,
+                spannable = styled
+            )
+
+            fun fontStyles(start: Int, end: Int): List<Int> =
+                styled.getSpans(start, end, StyleSpan::class.java)
+                    .filter { styled.getSpanStart(it) < end && styled.getSpanEnd(it) > start }
+                    .map { it.style }
+
+            assertTrue("Enclosing comment remains bold before nested keyword", 
+                fontStyles(0, 2).contains(android.graphics.Typeface.BOLD))
+            assertFalse("Nested @no-bold keyword must suppress enclosing bold capture",
+                fontStyles(2, 6).contains(android.graphics.Typeface.BOLD))
+            assertTrue("Unspecified child italic must remain inherited",
+                fontStyles(2, 6).contains(android.graphics.Typeface.ITALIC))
+            assertTrue("Enclosing comment bold resumes after nested keyword",
+                fontStyles(6, 8).contains(android.graphics.Typeface.BOLD))
+        } finally {
+            engine.clearAppearanceOverride(extension)
+        }
+    }
+
+    @Test
     fun repeatedSchemeEntriesOverlayOnlyExplicitPaintAttributes() {
         val engine = WindbellTshEngine.instance
         val dsl = """
@@ -479,6 +919,72 @@ class TshEditorPipelineRenderingTest {
     }
 
     @Test
+    fun javaJavadocCommentOccludesLowerPriorityKeywordBold() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        TreeSitter.loadLibrary()
+        System.loadLibrary("tree-sitter-java")
+        val language = TSLanguageJava.getInstance()
+        assertTrue("Java Tree-sitter language must be registered", language.nativeObject != 0L)
+
+        val sourceDsl = context.assets.open("tsh/java.tsh")
+            .bufferedReader(Charsets.UTF_8).use { it.readText() }
+        val engine = WindbellTshEngine.instance
+        assertTrue(
+            "Java TSH must compile: ${engine.lastCompileDiagnostics}",
+            engine.loadTshSource("java", sourceDsl, language)
+        )
+        assertTrue(engine.selectScheme("java", "darcula"))
+        engine.setAppearance("java", false)
+
+        val source = "/** if @param value */\nclass Probe { void f() { if (true) {} } }"
+        val captures = engine.computeHighlights(null, source, "java")
+        val catalog = engine.getStyleCatalog("java")
+        val keywordId = catalog.first { it.name == "keyword" }.styleId
+        val commentIf = source.indexOf("if")
+        val codeIf = source.lastIndexOf("if")
+        val param = source.indexOf("@param")
+        assertTrue(
+            "The low-priority keyword capture must overlap the Javadoc comment for this regression",
+            captures.any {
+                it.styleId == keywordId &&
+                    it.startByteUnsigned <= commentIf.toLong() * 2L &&
+                    it.endByteUnsigned >= (commentIf + 2).toLong() * 2L
+            }
+        )
+
+        val styled = SpannableStringBuilder(source)
+        try {
+            engine.applyHighlightSpansToSpannable(
+                spans = captures,
+                documentOffset = 0,
+                text = source,
+                extension = "java",
+                spannable = styled
+            )
+            fun hasBold(start: Int, end: Int): Boolean =
+                styled.getSpans(start, end, StyleSpan::class.java).any {
+                    it.style == android.graphics.Typeface.BOLD &&
+                        styled.getSpanStart(it) < end && styled.getSpanEnd(it) > start
+                }
+
+            assertFalse(
+                "Javadoc body keyword 'if' must not inherit bold from the lower-priority keyword capture",
+                hasBold(commentIf, commentIf + 2)
+            )
+            assertTrue(
+                "The @param docTag must retain its explicitly configured bold style",
+                hasBold(param, param + "@param".length)
+            )
+            assertTrue(
+                "A Java keyword outside Javadoc must remain bold",
+                hasBold(codeIf, codeIf + 2)
+            )
+        } finally {
+            engine.clearAppearanceOverride("java")
+        }
+    }
+
+    @Test
     fun javaAstSymbolColorReachesEditorCanvas() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         TreeSitter.loadLibrary()
@@ -508,9 +1014,41 @@ class TshEditorPipelineRenderingTest {
                 editor = EditorView(context)
                 editor.setBackgroundColor(Color.WHITE)
                 editor.setTextColor(Color.DKGRAY)
-                editor.setTextSize(48f)
                 editor.setGutterEnabled(false)
-                assertTrue(editor.setText(source))
+                editor.setTextSize(48f)
+                editor.measure(
+                    View.MeasureSpec.makeMeasureSpec(bitmap.width, View.MeasureSpec.EXACTLY),
+                    View.MeasureSpec.makeMeasureSpec(bitmap.height, View.MeasureSpec.EXACTLY)
+                )
+                editor.layout(0, 0, bitmap.width, bitmap.height)
+            }
+
+            // setTextSize schedules a background relayout when called from the main
+            // thread. A measure/layout pass does not wait for that worker, and
+            // EditorView correctly refuses edits until it finishes.
+            val layoutDeadline = SystemClock.uptimeMillis() + 10_000L
+            while (editor.isLayoutBusy() && SystemClock.uptimeMillis() < layoutDeadline) {
+                SystemClock.sleep(10L)
+            }
+            assertFalse("EditorView initial text-size relayout did not finish", editor.isLayoutBusy())
+
+            // The layout coordinator can briefly reject edits while a platform-
+            // scheduled relayout/zoom handoff is being published. isLayoutBusy()
+            // becoming false and runEdit() becoming available are separate events;
+            // retry only the documented non-mutating "refused" result.
+            val setTextDeadline = SystemClock.uptimeMillis() + 10_000L
+            var textAccepted = false
+            while (!textAccepted && SystemClock.uptimeMillis() < setTextDeadline) {
+                InstrumentationRegistry.getInstrumentation().runOnMainSync {
+                    textAccepted = editor.setText(source)
+                }
+                if (!textAccepted) SystemClock.sleep(10L)
+            }
+            assertTrue(
+                "EditorView must accept text once its layout coordinator becomes idle",
+                textAccepted
+            )
+            InstrumentationRegistry.getInstrumentation().runOnMainSync {
                 editor.setSyntaxHighlighter(highlighter)
                 editor.measure(
                     View.MeasureSpec.makeMeasureSpec(bitmap.width, View.MeasureSpec.EXACTLY),
@@ -609,12 +1147,19 @@ class TshEditorPipelineRenderingTest {
 
         // Build a real chunk-backed document larger than the 1 Mi UTF-16
         // small/large threshold. The target declaration is in a distant partition.
-        val fillerLine = "// partition filler 0123456789 abcdefghijklmnopqrstuvwxyz\n"
+        // Preserve a multi-megabyte, multi-chunk Piece Tree and a target beyond the
+        // first large-file partition, but avoid 24k tiny lines: that made layout time
+        // depend mostly on line count rather than the large-file viewport being tested.
+        val fillerLine = buildString {
+            append("// ")
+            repeat(9) { append("partition filler 0123456789 abcdefghijklmnopqrstuvwxyz ") }
+            append('\n')
+        }
         val fillerChunk = buildString {
             repeat(1024) { append(fillerLine) }
         }
         val builder = PieceTreeTextBufferBuilder()
-        val chunkCount = 24
+        val chunkCount = 3
         repeat(chunkCount) { builder.acceptChunk(fillerChunk) }
         val targetStart = fillerChunk.length * chunkCount
         val targetLine = "class DistantRenderProbe { int value; }"
@@ -643,7 +1188,11 @@ class TshEditorPipelineRenderingTest {
                 )
                 editor.layout(0, 0, bitmap.width, bitmap.height)
             }
-            assertTrue("Large document layout did not finish", laidOut.await(60, TimeUnit.SECONDS))
+            assertTrue(
+                "Large document layout did not finish within 60s " +
+                    "(utf16Chars=${targetStart + targetLine.length}, lines=${targetLineNumber}, chunks=${chunkCount})",
+                laidOut.await(60, TimeUnit.SECONDS)
+            )
 
             val deadline = SystemClock.uptimeMillis() + 30_000L
             while (!highlighter.isStyleReady(

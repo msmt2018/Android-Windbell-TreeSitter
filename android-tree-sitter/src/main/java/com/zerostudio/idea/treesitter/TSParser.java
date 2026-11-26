@@ -713,14 +713,11 @@ public class TSParser extends TSNativeObject {
     @FastNative
     static native TSRange[] getIncludedRanges(long parser);
 
-    @FastNative
     static native long parse(long parser, long treePointer, long strPointer);
 
-    @FastNative
     static native long parseBuffers(
         long parser, long treePointer, ByteBuffer[] buffers, long byteLength);
 
-    @FastNative
     static native long parseWindowed(
         long parser, long treePointer, ParseWindowCallback callback, long byteLength);
 

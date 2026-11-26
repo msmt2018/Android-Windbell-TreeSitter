@@ -39,6 +39,57 @@ class TshMemoryBudgetTest {
         assertEquals(0, budget.snapshot().reservations)
     }
 
+    @Test fun reservationResizeIsAtomicAndPreservesCategoryAccounting() {
+        val budget = TshMemoryBudget(TshMemoryBudgetOptions(100, 200))
+        val token = (budget.reserve(TshMemoryCategory.SYNTAX_TREE, 40, "tree") as TshResult.Success).value
+
+        assertTrue(token.resize(70) is TshResult.Success)
+        assertEquals(70L, token.bytes)
+        assertEquals(70L, budget.snapshot().reservedBytes)
+        assertEquals(70L, budget.snapshot().bytesByCategory[TshMemoryCategory.SYNTAX_TREE])
+        assertEquals(70L, budget.snapshot().highWatermarkBytes)
+
+        val rejected = token.resize(101)
+        assertTrue(rejected is TshResult.Failure)
+        assertEquals(70L, token.bytes)
+        assertEquals(70L, budget.snapshot().reservedBytes)
+
+        assertTrue(token.resize(15) is TshResult.Success)
+        assertEquals(15L, budget.snapshot().reservedBytes)
+        budget.close()
+        assertTrue("Shrinking retained memory remains legal after shutdown", token.resize(10) is TshResult.Success)
+        assertTrue("Growing after shutdown must be rejected", token.resize(11) is TshResult.Failure)
+        token.close()
+        assertEquals(0L, budget.snapshot().reservedBytes)
+        assertTrue(token.resize(1) is TshResult.Failure)
+    }
+
+    @Test fun runtimeMemoryPressureLowersAdmissionWithoutInvalidatingRetainedReservations() {
+        val budget = TshMemoryBudget(TshMemoryBudgetOptions(targetBytes = 100, hardLimitBytes = 200))
+        val retained = (budget.reserve(TshMemoryCategory.TEXT_SNAPSHOT, 8) as TshResult.Success).value
+
+        assertTrue(budget.updateAvailableMemory(16) is TshResult.Success)
+        assertEquals(4L, budget.limitBytes)
+        assertEquals(8L, budget.snapshot().reservedBytes)
+        assertTrue("New work must be rejected while retained memory exceeds the new limit",
+            budget.reserve(TshMemoryCategory.QUERY_RESULT, 1) is TshResult.Failure)
+
+        assertTrue("Existing owners must still be able to shrink retained allocations",
+            retained.resize(4) is TshResult.Success)
+        val admitted = budget.reserve(TshMemoryCategory.QUERY_RESULT, 1) as TshResult.Success
+        assertTrue("Null restores the configured baseline", budget.updateAvailableMemory(null) is TshResult.Success)
+        assertEquals(100L, budget.limitBytes)
+        admitted.value.close()
+        retained.close()
+    }
+
+    @Test fun runtimeMemoryPressureRejectsInvalidSamplesAndClosedBudgets() {
+        val budget = TshMemoryBudget(TshMemoryBudgetOptions(targetBytes = 100, hardLimitBytes = 200))
+        assertTrue(budget.updateAvailableMemory(0) is TshResult.Failure)
+        budget.close()
+        assertTrue(budget.updateAvailableMemory(16) is TshResult.Failure)
+    }
+
     @Test fun closingBudgetRejectsNewWorkButAllowsExistingRelease() {
         val budget = TshMemoryBudget(TshMemoryBudgetOptions(100, 200))
         val token = (budget.reserve(TshMemoryCategory.TEXT_SNAPSHOT, 40) as TshResult.Success).value
@@ -68,6 +119,31 @@ class TshMemoryBudgetTest {
         pool.shutdownNow()
         assertEquals(0L, budget.snapshot().reservedBytes)
         assertTrue(budget.snapshot().highWatermarkBytes <= budget.limitBytes)
+    }
+
+    @Test fun activeReservationCountIsBoundedAndReleasedSlotsCanBeReused() {
+        val budget = TshMemoryBudget(
+            TshMemoryBudgetOptions(targetBytes = 100, hardLimitBytes = 200, maxActiveReservations = 2)
+        )
+        val first = (budget.reserve(TshMemoryCategory.OTHER, 1) as TshResult.Success).value
+        val second = (budget.reserve(TshMemoryCategory.OTHER, 1) as TshResult.Success).value
+        val rejected = budget.reserve(TshMemoryCategory.OTHER, 1)
+        assertTrue(rejected is TshResult.Failure)
+        assertEquals("TSH-MEMORY-010", (rejected as TshResult.Failure).diagnostics.single().code)
+        first.close()
+        val third = budget.reserve(TshMemoryCategory.OTHER, 1) as TshResult.Success
+        third.value.close()
+        second.close()
+        assertEquals(0, budget.snapshot().reservations)
+    }
+
+    @Test fun validatesReservationCountLimit() {
+        assertThrows(IllegalArgumentException::class.java) {
+            TshMemoryBudgetOptions(maxActiveReservations = 0)
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            TshMemoryBudgetOptions(maxActiveReservations = TshMemoryBudgetOptions.ABSOLUTE_MAX_ACTIVE_RESERVATIONS + 1)
+        }
     }
 
     @Test fun validatesAbsoluteHardCapAndTargetOrdering() {

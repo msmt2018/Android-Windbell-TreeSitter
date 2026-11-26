@@ -31,19 +31,42 @@ static jlong TSQuery_newQuery(JNIEnv *env,
                               jlong language,
                               jstring source) {
   req_nnp(env, language);
-  const char *c_source;
-  uint32_t source_length = env->GetStringLength(source);
-  c_source = env->GetStringUTFChars(source, nullptr);
-  auto error_offset = new uint32_t;
-  auto error_type = new TSQueryError;
-  TSQuery *query = ts_query_new((TSLanguage *) language,
-                                c_source,
-                                source_length,
-                                error_offset,
-                                error_type);
-  fillQuery(env, queryObject, *error_offset, *error_type);
+  if (source == nullptr) {
+    jclass exception = env->FindClass("java/lang/NullPointerException");
+    if (exception != nullptr) {
+      env->ThrowNew(exception, "query source must not be null");
+      env->DeleteLocalRef(exception);
+    }
+    return 0;
+  }
+  req_nnp(env, queryObject, "query object");
+
+  const char *c_source = env->GetStringUTFChars(source, nullptr);
+  if (c_source == nullptr) return 0;
+
+  // ts_query_new consumes UTF-8 bytes, not Java UTF-16 code units.
+  const jsize utf8_length = env->GetStringUTFLength(source);
+  if (env->ExceptionCheck() || utf8_length < 0) {
+    env->ReleaseStringUTFChars(source, c_source);
+    return 0;
+  }
+
+  uint32_t error_offset = 0;
+  TSQueryError error_type = TSQueryErrorNone;
+  TSQuery *query = ts_query_new(
+      reinterpret_cast<const TSLanguage *>(language),
+      c_source,
+      static_cast<uint32_t>(utf8_length),
+      &error_offset,
+      &error_type);
   env->ReleaseStringUTFChars(source, c_source);
-  return (jlong) query;
+
+  fillQuery(env, queryObject, error_offset, error_type);
+  if (env->ExceptionCheck()) {
+    if (query != nullptr) ts_query_delete(query);
+    return 0;
+  }
+  return reinterpret_cast<jlong>(query);
 }
 
 static void TSQuery_delete(JNIEnv *env, jclass self, jlong query) {
@@ -87,9 +110,15 @@ static jobjectArray TSQuery_predicatesForPattern(JNIEnv *env,
   req_nnp(env, result, "TSQueryPredicateStep[] from factory");
 
   for (uint32_t i = 0; i < count; i++) {
-    const TSQueryPredicateStep *predicate = (predicates + i);
+    const TSQueryPredicateStep *predicate = predicates + i;
     jobject obj = _marshalQueryPredicateStep(env, predicate);
-    env->SetObjectArrayElement(result, i, obj);
+    if (obj == nullptr || env->ExceptionCheck()) {
+      if (obj != nullptr) env->DeleteLocalRef(obj);
+      return nullptr;
+    }
+    env->SetObjectArrayElement(result, static_cast<jsize>(i), obj);
+    env->DeleteLocalRef(obj);
+    if (env->ExceptionCheck()) return nullptr;
   }
 
   return result;
@@ -142,10 +171,22 @@ void fillQuery(JNIEnv *env,
                TSQueryError error_type) {
   req_nnp(env, query);
   jclass klass = env->GetObjectClass(query);
+  if (klass == nullptr) return;
   jfieldID offsetField = env->GetFieldID(klass, "errorOffset", "I");
+  if (offsetField == nullptr || env->ExceptionCheck()) {
+    env->DeleteLocalRef(klass);
+    return;
+  }
   jfieldID errorTypeField = env->GetFieldID(klass, "errorType", "I");
-  env->SetIntField(query, offsetField, (jint) error_offset);
-  env->SetIntField(query, errorTypeField, getErrorType(error_type));
+  if (errorTypeField == nullptr || env->ExceptionCheck()) {
+    env->DeleteLocalRef(klass);
+    return;
+  }
+  env->SetIntField(query, offsetField, static_cast<jint>(error_offset));
+  if (!env->ExceptionCheck()) {
+    env->SetIntField(query, errorTypeField, getErrorType(error_type));
+  }
+  env->DeleteLocalRef(klass);
 }
 
 jint getErrorType(TSQueryError error) {

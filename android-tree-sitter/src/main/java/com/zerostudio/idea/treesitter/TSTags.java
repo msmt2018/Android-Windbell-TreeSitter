@@ -11,6 +11,7 @@ package com.zerostudio.idea.treesitter;
 
 import com.zerostudio.idea.treesitter.annotations.GenerateNativeHeaders;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
@@ -44,6 +45,7 @@ public final class TSTags {
    * @param maxPendingMatches Tree-sitter in-progress match limit
    * @return query matches, including their original pattern and capture data
    */
+  @Deprecated
   public static TSQueryMatch[] extract(
       TSQuery query,
       TSNode root,
@@ -170,6 +172,134 @@ public final class TSTags {
       throw new IllegalStateException("A tag match contains multiple @" + role + " captures");
     }
     return candidate;
+  }
+
+
+  /**
+   * Opens a resumable tag/query cursor. Results are delivered in batches and are never
+   * accumulated into one document-sized native or Java array.
+   *
+   * <p>A zero pending-match limit preserves Tree-sitter's default dynamically-growing cursor.
+   * A positive limit is an explicit caller resource policy; if Tree-sitter reports that it was
+   * exceeded, batches already returned remain valid but the overall result is incomplete.
+   */
+  public static Cursor openCursor(
+      TSQuery query, TSNode root, long startByte, long endByte) {
+    return openCursor(query, root, startByte, endByte, 0, null);
+  }
+
+  public static Cursor openCursor(
+      TSQuery query, TSNode root, long startByte, long endByte,
+      int maxPendingMatches) {
+    return openCursor(query, root, startByte, endByte, maxPendingMatches, null);
+  }
+
+  public static Cursor openCursor(
+      TSQuery query, TSNode root, long startByte, long endByte,
+      int maxPendingMatches, TSQueryCursor.ProgressCallback progressCallback) {
+    if (query == null || !query.canAccess()) {
+      throw new IllegalArgumentException("Cannot extract tags with an invalid query");
+    }
+    if (root == null || !root.canAccess() || root.getTree() == null
+        || !root.getTree().canAccess() || root.hasChanges()) {
+      throw new IllegalArgumentException("Cannot extract tags from an invalid or changed root");
+    }
+    if (startByte < 0L || endByte < startByte || endByte > 0xFFFF_FFFFL ||
+        startByte < Integer.toUnsignedLong(root.getStartByte()) ||
+        endByte > Integer.toUnsignedLong(root.getEndByte())) {
+      throw new IllegalArgumentException("Tag byte range must be inside the root and fit uint32");
+    }
+    if (maxPendingMatches < 0) {
+      throw new IllegalArgumentException("maxPendingMatches must be zero (unlimited) or positive");
+    }
+
+    final TSQueryCursor nativeCursor = TSQueryCursor.create();
+    final boolean[] cancelled = new boolean[1];
+    try {
+      nativeCursor.setByteRange(startByte, endByte);
+      if (maxPendingMatches > 0) nativeCursor.setMatchLimit(maxPendingMatches);
+      if (progressCallback == null) {
+        nativeCursor.exec(query, root);
+      } else {
+        nativeCursor.exec(query, root, currentOffset -> {
+          final boolean stop = progressCallback.onProgress(currentOffset);
+          if (stop) cancelled[0] = true;
+          return stop;
+        });
+      }
+      return new Cursor(nativeCursor, cancelled);
+    } catch (RuntimeException | Error error) {
+      nativeCursor.close();
+      throw error;
+    }
+  }
+
+  /** Stateful tag cursor. Close it when the scan is complete or abandoned. */
+  public static final class Cursor implements AutoCloseable {
+    private final TSQueryCursor cursor;
+    private final boolean[] cancelled;
+    private boolean exhausted;
+    private boolean closed;
+
+    private Cursor(TSQueryCursor cursor, boolean[] cancelled) {
+      this.cursor = cursor;
+      this.cancelled = cancelled;
+    }
+
+    /**
+     * Returns at most maxMatches results. This is a delivery batch size, not a total result cap.
+     */
+    public synchronized Batch nextBatch(int maxMatches) {
+      checkOpen();
+      if (maxMatches <= 0) throw new IllegalArgumentException("maxMatches batch size must be positive");
+      final TSQueryMatch[] buffer = new TSQueryMatch[maxMatches];
+      int count = 0;
+      while (count < maxMatches && !exhausted) {
+        final TSQueryMatch match = cursor.nextMatch();
+        if (match == null) {
+          exhausted = true;
+          break;
+        }
+        buffer[count++] = match;
+      }
+      final boolean exceeded = exhausted && cursor.didExceedMatchLimit();
+      return new Batch(
+          count == 0 ? new TSQueryMatch[0] : Arrays.copyOf(buffer, count),
+          exhausted && !exceeded && !cancelled[0],
+          exceeded,
+          cancelled[0]);
+    }
+
+    private void checkOpen() {
+      if (closed) throw new IllegalStateException("Tag cursor is closed");
+    }
+
+    @Override
+    public synchronized void close() {
+      if (closed) return;
+      closed = true;
+      cursor.close();
+    }
+  }
+
+  /** One resumable tag/query result batch. */
+  public static final class Batch {
+    private final TSQueryMatch[] matches;
+    private final boolean complete;
+    private final boolean exceededMatchLimit;
+    private final boolean cancelled;
+
+    private Batch(TSQueryMatch[] matches, boolean complete, boolean exceededMatchLimit, boolean cancelled) {
+      this.matches = matches;
+      this.complete = complete;
+      this.exceededMatchLimit = exceededMatchLimit;
+      this.cancelled = cancelled;
+    }
+
+    public TSQueryMatch[] getMatches() { return matches; }
+    public boolean isComplete() { return complete; }
+    public boolean didExceedMatchLimit() { return exceededMatchLimit; }
+    public boolean isCancelled() { return cancelled; }
   }
 
   @GenerateNativeHeaders(fileName = "tags")

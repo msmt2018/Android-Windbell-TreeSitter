@@ -42,11 +42,15 @@ fun interface TshNativeTreeMemoryEstimator {
 /** Shared validation and reservation path used by full and snapshot-backed parser entry points. */
 internal object TshNativeTreeMemoryReservations {
     fun reserve(
-        budget: TshMemoryBudget,
+        budget: TshMemoryBudget?,
         estimator: TshNativeTreeMemoryEstimator?,
         request: TshNativeTreeMemoryRequest
     ): TshResult<TshMemoryReservation?> {
         if (estimator == null) return TshResult.Success(null)
+        if (budget == null) return failure(
+            "TSH-MEMORY-011",
+            "A Native tree memory estimator requires an Engine-owned memory budget"
+        )
         val estimate = try {
             estimator.estimateBytes(request)
         } catch (error: Exception) {
@@ -80,7 +84,10 @@ internal object TshNativeTreeMemoryReservations {
         )))
 }
 
-/** Admission accounting for the contiguous UTF-16LE copy used by the legacy String parse path. */
+/**
+ * Conservative input admission for the legacy String parse path. It reserves the full logical
+ * UTF-16LE source size even when TSParser internally switches large String inputs to windows.
+ */
 internal object TshParserInputMemoryReservations {
     private const val ESTIMATED_FIXED_OVERHEAD_BYTES = 64L
 
@@ -109,7 +116,7 @@ internal object TshParserInputMemoryReservations {
         }
     }
 
-    /** Reserves the reusable Java byte[] plus a possible JNI GetByteArrayElements copy. */
+    /** Reserves two bounded byte-window arrays plus fixed overhead for the current JNI callback path. */
     fun reserveStreamingBridge(
         budget: TshMemoryBudget?,
         documentId: String,

@@ -76,13 +76,31 @@ static jint TSLanguage_fldIdForName(JNIEnv *env,
                                     jlong ptr,
                                     jbyteArray name,
                                     jint length) {
-  jbyte *nm = env->GetByteArrayElements(name, nullptr);
   req_nnp(env, ptr);
-  uint32_t id = ts_language_field_id_for_name((TSLanguage *) ptr,
-                                              reinterpret_cast<const char *>(nm),
-                                              length);
+  if (name == nullptr) {
+    jclass exception = env->FindClass("java/lang/NullPointerException");
+    if (exception != nullptr) {
+      env->ThrowNew(exception, "field name bytes must not be null");
+      env->DeleteLocalRef(exception);
+    }
+    return 0;
+  }
+  if (length < 0 || length > env->GetArrayLength(name)) {
+    jclass exception = env->FindClass("java/lang/IllegalArgumentException");
+    if (exception != nullptr) {
+      env->ThrowNew(exception, "Invalid Tree-sitter field-name byte length");
+      env->DeleteLocalRef(exception);
+    }
+    return 0;
+  }
+  jbyte *nm = env->GetByteArrayElements(name, nullptr);
+  if (nm == nullptr) return 0;
+  const uint32_t id = ts_language_field_id_for_name(
+      reinterpret_cast<const TSLanguage *>(ptr),
+      reinterpret_cast<const char *>(nm),
+      static_cast<uint32_t>(length));
   env->ReleaseByteArrayElements(name, nm, JNI_ABORT);
-  return (jint) id;
+  return static_cast<jint>(id);
 }
 
 
@@ -168,51 +186,84 @@ static jlongArray TSLanguage_loadLanguage(JNIEnv *env,
                                           jclass clazz,
                                           jstring libpath,
                                           jstring func) {
-  auto lib_path = env->GetStringUTFChars(libpath, nullptr);
-  auto func_name = env->GetStringUTFChars(func, nullptr);
-
-  auto handle = dlopen(lib_path, RTLD_LAZY);
-  if (handle == nullptr) {
-    LOGE(LOG_TAG, "Failed to dlopen library '%s': %s", lib_path, dlerror());
-    env->ReleaseStringUTFChars(libpath, lib_path);
-    env->ReleaseStringUTFChars(func, func_name);
+  if (libpath == nullptr || func == nullptr) {
+    jclass exception = env->FindClass("java/lang/IllegalArgumentException");
+    if (exception != nullptr) env->ThrowNew(exception, "Grammar library path and entry symbol are required");
     return nullptr;
   }
 
-  void *func_addr = dlsym(handle, func_name);
-  if (func_addr == nullptr) {
-    LOGE(LOG_TAG,
-         "Cannot find function '%s' to create language instance: %s",
-         func_name,
-         dlerror());
-    env->ReleaseStringUTFChars(libpath, lib_path);
-    env->ReleaseStringUTFChars(func, func_name);
+  // JNI string pins and the dlopen handle are independently RAII-managed.
+  // Every failure path (including dlsym, grammar entry, and Java array
+  // allocation) now releases all resources acquired before that point.
+  class ScopedUtfChars final {
+  public:
+    ScopedUtfChars(JNIEnv *jni, jstring value) noexcept
+        : env(jni), string(value), chars(jni->GetStringUTFChars(value, nullptr)) {}
+    ~ScopedUtfChars() {
+      if (chars != nullptr) env->ReleaseStringUTFChars(string, chars);
+    }
+    ScopedUtfChars(const ScopedUtfChars &) = delete;
+    ScopedUtfChars &operator=(const ScopedUtfChars &) = delete;
+    const char *get() const noexcept { return chars; }
+    explicit operator bool() const noexcept { return chars != nullptr; }
+  private:
+    JNIEnv *env;
+    jstring string;
+    const char *chars;
+  };
+
+  struct DlCloser {
+    void operator()(void *handle) const noexcept {
+      if (handle != nullptr) dlclose(handle);
+    }
+  };
+
+  ScopedUtfChars library_path(env, libpath);
+  ScopedUtfChars function_name(env, func);
+  if (!library_path || !function_name) return nullptr;
+
+  std::unique_ptr<void, DlCloser> handle(dlopen(library_path.get(), RTLD_NOW | RTLD_LOCAL));
+  if (!handle) {
+    const char *error = dlerror();
+    LOGE(LOG_TAG, "Failed to dlopen library '%s': %s",
+         library_path.get(), error != nullptr ? error : "unknown dynamic-loader error");
     return nullptr;
   }
 
-  auto lang_func = reinterpret_cast<TsLangFunc>(func_addr);
-  if (lang_func == nullptr) {
-    LOGE(LOG_TAG, "Cannot reinterpreset_cast to TsLangFunc");
-    env->ReleaseStringUTFChars(libpath, lib_path);
-    env->ReleaseStringUTFChars(func, func_name);
+  dlerror();
+  void *func_addr = dlsym(handle.get(), function_name.get());
+  const char *symbol_error = dlerror();
+  if (symbol_error != nullptr || func_addr == nullptr) {
+    LOGE(LOG_TAG, "Cannot find grammar entry '%s' in '%s': %s",
+         function_name.get(), library_path.get(),
+         symbol_error != nullptr ? symbol_error : "symbol resolved to null");
     return nullptr;
   }
 
-  auto language = lang_func();
+  const auto lang_func = reinterpret_cast<TsLangFunc>(func_addr);
+  const TSLanguage *language = lang_func();
   if (language == nullptr) {
-    LOGE(LOG_TAG, "Function '%s' returned nullptr", func_name);
+    LOGE(LOG_TAG, "Grammar entry '%s' in '%s' returned nullptr",
+         function_name.get(), library_path.get());
     return nullptr;
   }
 
-  LOGD(LOG_TAG, "Loaded tree sitter language with function '%s'", func_name);
-
-  env->ReleaseStringUTFChars(libpath, lib_path);
-  env->ReleaseStringUTFChars(func, func_name);
-
-  jlong ptrs[2] = {(jlong) language, (jlong) handle};
-
-  auto result = env->NewLongArray(2);
+  jlongArray result = env->NewLongArray(2);
+  if (result == nullptr) return nullptr;
+  const jlong ptrs[2] = {
+      reinterpret_cast<jlong>(const_cast<TSLanguage *>(language)),
+      reinterpret_cast<jlong>(handle.get())
+  };
   env->SetLongArrayRegion(result, 0, 2, ptrs);
+  if (env->ExceptionCheck()) {
+    env->DeleteLocalRef(result);
+    return nullptr;
+  }
+
+  // Transfer dlopen ownership only after the Java result is fully populated.
+  handle.release();
+  LOGD(LOG_TAG, "Loaded tree-sitter grammar entry '%s' from '%s'",
+       function_name.get(), library_path.get());
   return result;
 }
 
@@ -252,4 +303,23 @@ void TSLanguage_Native__SetJniMethods(JNINativeMethod *methods, int count) {
   SET_JNI_METHOD(methods, TSLanguage_Native_dlclose, TSLanguage_dlclose);
   SET_JNI_METHOD(methods, TSLanguage_Native_stateCount, TSLanguage_stateCount);
   SET_JNI_METHOD(methods, TSLanguage_Native_nextState, TSLanguage_nextState);
+}
+
+// Independent loader reference for the image containing a generated language.
+// This outlives Java TSLanguage.close() while TSH grammars/documents still use it.
+std::shared_ptr<void> retainTreeSitterLanguageLibrary(const TSLanguage *language) noexcept {
+  if (language == nullptr) return {};
+  Dl_info image{};
+  if (dladdr(reinterpret_cast<const void *>(language), &image) == 0 ||
+      image.dli_fname == nullptr || image.dli_fname[0] == '\0') return {};
+  void *handle = dlopen(image.dli_fname, RTLD_NOW | RTLD_LOCAL);
+  if (handle == nullptr) return {};
+  try {
+    return std::shared_ptr<void>(handle, [](void *value) noexcept {
+      if (value != nullptr) (void)dlclose(value);
+    });
+  } catch (...) {
+    (void)dlclose(handle);
+    return {};
+  }
 }

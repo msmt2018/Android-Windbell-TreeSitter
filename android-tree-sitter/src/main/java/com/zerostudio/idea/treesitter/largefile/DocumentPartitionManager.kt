@@ -2,6 +2,7 @@ package com.zerostudio.idea.treesitter.largefile
 
 import com.zerostudio.idea.treesitter.TSPoint
 import com.zerostudio.idea.treesitter.TSRange
+import java.util.IdentityHashMap
 import java.util.LinkedHashMap
 import java.util.concurrent.locks.ReentrantReadWriteLock
 import kotlin.concurrent.read
@@ -461,20 +462,176 @@ class ByteBudgetLruCache<K : Any, V : Any>(
     private val weigh: (V) -> Long,
     private val onEvict: (V) -> Unit = {},
     private val onEntryAdded: (K, V) -> Unit = { _, _ -> },
-    private val onEntryRemoved: (K, V) -> Unit = { _, _ -> }
+    private val onEntryRemoved: (K, V) -> Unit = { _, _ -> },
 ) : AutoCloseable {
     private data class Entry<V>(val value: V, val weight: Long)
+
+    /**
+     * Allows a capacity-evicted value to transfer to another owner/cache.
+     * Return true only after ownership has been successfully transferred.
+     *
+     * Kept out of the constructor to preserve the trailing-lambda API where
+     * the final constructor callback is the legacy one-argument onEvict.
+     */
+    private var onCapacityEvicted: (K, V) -> Boolean = { _, _ -> false }
+
+    fun setCapacityEvictionHandler(handler: (K, V) -> Boolean) {
+        onCapacityEvicted = handler
+    }
 
     private val lock = ReentrantReadWriteLock()
     private val entries = LinkedHashMap<K, Entry<V>>(16, 0.75f, true)
     private var usedBytes = 0L
+    private var evictionCountValue = 0L
+    private var rejectedAdmissionCountValue = 0L
 
     init { require(maxBytes >= 0L) }
 
     val size: Int get() = lock.read { entries.size }
     val bytesUsed: Long get() = lock.read { usedBytes }
+    /** Cumulative LRU removals caused by capacity pressure (not explicit invalidation). */
+    val evictionCount: Long get() = lock.read { evictionCountValue }
+    /** Cumulative entries rejected because one payload or the available budget was too large. */
+    val rejectedAdmissionCount: Long get() = lock.read { rejectedAdmissionCountValue }
 
     fun get(key: K): V? = lock.write { entries[key]?.value }
+
+    /** Returns at most [maxEntries] newest matching entries in current LRU order. */
+    fun snapshotMostRecentEntries(
+        predicate: (K, V) -> Boolean,
+        maxEntries: Int
+    ): List<Pair<K, V>> {
+        require(maxEntries >= 0)
+        if (maxEntries == 0) return emptyList()
+        return lock.read {
+            val recent = ArrayList<Pair<K, V>>(maxEntries)
+            for ((key, entry) in entries) {
+                val value = entry.value
+                if (!predicate(key, value)) continue
+                if (recent.size == maxEntries) recent.removeAt(0)
+                recent += key to value
+            }
+            recent
+        }
+    }
+
+    /**
+     * Re-key or replace selected immutable entries without first clearing the cache.
+     *
+     * The transform must produce unique keys. It is evaluated before the live map
+     * changes; a failure therefore leaves the original cache intact. LRU order is
+     * preserved, unchanged key/value pairs retain their existing index membership,
+     * and only keys entering/leaving the map trigger index callbacks.
+     */
+    fun transformEntries(
+        predicate: (K, V) -> Boolean,
+        transform: (K, V) -> Pair<K, V>?
+    ) = lock.write {
+        val transformed = LinkedHashMap<K, Entry<V>>(
+            entries.size.coerceAtLeast(16), 0.75f, true
+        )
+        val createdValues = IdentityHashMap<V, Boolean>()
+        try {
+            for ((key, entry) in entries) {
+                val mapped = (if (predicate(key, entry.value)) {
+                    transform(key, entry.value)
+                } else {
+                    key to entry.value
+                }) ?: continue
+                val nextKey = mapped.first
+                val nextValue = mapped.second
+                if (nextValue !== entry.value) createdValues[nextValue] = true
+                check(!transformed.containsKey(nextKey)) {
+                    "Cache entry transformation produced duplicate keys"
+                }
+                val weight = if (nextValue === entry.value) {
+                    entry.weight
+                } else {
+                    weigh(nextValue).coerceAtLeast(0L)
+                }
+                if (weight > maxBytes || maxBytes == 0L) {
+                    rejectedAdmissionCountValue++
+                    continue
+                }
+                transformed[nextKey] = Entry(nextValue, weight)
+            }
+        } catch (error: Throwable) {
+            createdValues.keys.forEach(onEvict)
+            throw error
+        }
+
+        var nextBytes = 0L
+        var overBudget = false
+        for (entry in transformed.values) {
+            if (entry.weight > maxBytes - nextBytes) {
+                overBudget = true
+                break
+            }
+            nextBytes += entry.weight
+        }
+        val capacityEvictedEntries = ArrayList<Pair<K, V>>()
+        val iterator = transformed.entries.iterator()
+        while (overBudget && iterator.hasNext()) {
+            val removed = iterator.next()
+            capacityEvictedEntries += removed.key to removed.value.value
+            iterator.remove()
+            evictionCountValue++
+            nextBytes = 0L
+            overBudget = false
+            for (entry in transformed.values) {
+                if (entry.weight > maxBytes - nextBytes) {
+                    overBudget = true
+                    break
+                }
+                nextBytes += entry.weight
+            }
+        }
+
+        val retainedValues = IdentityHashMap<V, Boolean>()
+        transformed.values.forEach { retainedValues[it.value] = true }
+
+        // Collect only callback deltas while the old map is still intact. The
+        // previous implementation copied the entire access-ordered map into
+        // previousEntries after already constructing transformed, temporarily
+        // retaining three full map structures during a single local edit.
+        // Cache callbacks are applied after the replacement map is published.
+        val removedEntries = ArrayList<Pair<K, V>>()
+        val addedEntries = ArrayList<Pair<K, V>>()
+        val evictedValues = IdentityHashMap<V, Boolean>()
+        for ((oldKey, oldEntry) in entries) {
+            if (!transformed.containsKey(oldKey)) {
+                removedEntries += oldKey to oldEntry.value
+            }
+            if (!retainedValues.containsKey(oldEntry.value)) {
+                evictedValues[oldEntry.value] = true
+            }
+        }
+        for ((newKey, newEntry) in transformed) {
+            if (!entries.containsKey(newKey)) {
+                addedEntries += newKey to newEntry.value
+            }
+        }
+
+        entries.clear()
+        entries.putAll(transformed)
+        usedBytes = nextBytes
+
+        removedEntries.forEach { (key, value) -> onEntryRemoved(key, value) }
+        val transferredValues = IdentityHashMap<V, Boolean>()
+        for ((key, value) in capacityEvictedEntries) {
+            val transferred = runCatching { onCapacityEvicted(key, value) }.getOrDefault(false)
+            if (transferred) transferredValues[value] = true
+        }
+        evictedValues.keys.forEach { value ->
+            if (!transferredValues.containsKey(value)) onEvict(value)
+        }
+        addedEntries.forEach { (key, value) -> onEntryAdded(key, value) }
+        createdValues.keys.forEach { value ->
+            if (!retainedValues.containsKey(value) && !transferredValues.containsKey(value)) {
+                onEvict(value)
+            }
+        }
+    }
 
     /** Finds and promotes the most-recently-used matching entry. */
     fun getMatching(predicate: (K, V) -> Boolean): V? = lock.write {
@@ -484,19 +641,28 @@ class ByteBudgetLruCache<K : Any, V : Any>(
         entries[key]?.value
     }
 
-    fun put(key: K, value: V) = lock.write {
+    /**
+     * Attempts to retain [value] within the byte budget.
+     *
+     * Returns true only after the entry is present in the cache. An oversized
+     * replacement is rejected before the old value is removed, so a failed
+     * admission cannot destroy a previously valid entry for the same key.
+     */
+    fun put(key: K, value: V): Boolean = lock.write {
         // Freeze the weight at admission. Re-evaluating a mutable value during
         // eviction/removal can otherwise corrupt byte accounting.
         val weight = weigh(value).coerceAtLeast(0L)
+        if (weight > maxBytes || maxBytes == 0L) {
+            rejectedAdmissionCountValue++
+            onEvict(value)
+            return@write false
+        }
+
         val previous = entries.remove(key)
         if (previous != null) {
             usedBytes -= previous.weight
             onEntryRemoved(key, previous.value)
             if (previous.value !== value) onEvict(previous.value)
-        }
-        if (weight > maxBytes || maxBytes == 0L) {
-            onEvict(value)
-            return@write
         }
 
         // Evict before addition so usedBytes + weight can never overflow Long.
@@ -507,15 +673,21 @@ class ByteBudgetLruCache<K : Any, V : Any>(
             iterator.remove()
             usedBytes -= eldest.weight
             onEntryRemoved(eldestEntry.key, eldest.value)
-            onEvict(eldest.value)
+            val retainedElsewhere = runCatching {
+                onCapacityEvicted(eldestEntry.key, eldest.value)
+            }.getOrDefault(false)
+            if (!retainedElsewhere) onEvict(eldest.value)
+            evictionCountValue++
         }
         if (weight > maxBytes - usedBytes) {
+            rejectedAdmissionCountValue++
             onEvict(value)
-            return@write
+            return@write false
         }
         entries[key] = Entry(value, weight)
         usedBytes += weight
         onEntryAdded(key, value)
+        true
     }
 
     fun remove(key: K): V? = lock.write {

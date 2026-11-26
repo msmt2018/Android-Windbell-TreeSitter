@@ -222,4 +222,20 @@ class DocumentPartitionManagerTest {
         assertNull(store.nearest(10L, 1L))
     }
 
+    @Test fun byteBudgetLruCacheReportsCapacityEvictionsAndRejectedAdmissions() {
+        val cache = ByteBudgetLruCache<String, ByteArray>(
+            maxBytes = 5L,
+            weigh = { it.size.toLong() }
+        )
+        cache.put("first", ByteArray(4))
+        cache.put("second", ByteArray(4))
+        assertEquals(1L, cache.evictionCount)
+        assertEquals(0L, cache.rejectedAdmissionCount)
+        cache.put("oversized", ByteArray(6))
+        assertEquals(1L, cache.evictionCount)
+        assertEquals(1L, cache.rejectedAdmissionCount)
+        assertEquals(4L, cache.bytesUsed)
+        cache.close()
+    }
+
 }

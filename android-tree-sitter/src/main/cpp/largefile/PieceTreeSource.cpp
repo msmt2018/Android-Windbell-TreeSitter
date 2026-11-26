@@ -26,7 +26,7 @@ struct PieceTreeSource::Node {
 PieceTreeSource::PieceTreeSource(std::shared_ptr<const TextSource> original,
                                  uint64_t memoryLimitBytes) noexcept
     : original_(std::move(original)), memory_limit_bytes_(memoryLimitBytes) {
-    if (!original_ || (original_->sizeBytes() & 1u) != 0) return;
+    if (!original_ || !original_->isValid() || (original_->sizeBytes() & 1u) != 0) return;
     const uint64_t size = original_->sizeBytes();
     if (size != 0 && memory_limit_bytes_ >= sizeof(Node))
         root_ = makeNode(Buffer::Original, 0, size);
@@ -40,6 +40,7 @@ PieceTreeSource::PieceTreeSource(std::shared_ptr<const TextSource> original,
 PieceTreeSource::~PieceTreeSource() = default;
 
 std::unique_ptr<PieceTreeSource> PieceTreeSource::clone() const noexcept {
+    if (!isValid()) return nullptr;
     auto copy = std::unique_ptr<PieceTreeSource>(
         new (std::nothrow) PieceTreeSource(original_, memory_limit_bytes_, SnapshotTag{}));
     if (!copy) return nullptr;
@@ -65,13 +66,15 @@ std::unique_ptr<PieceTreeSource> PieceTreeSource::clone() const noexcept {
     return copy;
 }
 
-bool PieceTreeSource::isValid() const noexcept { return valid_; }
+bool PieceTreeSource::isValid() const noexcept {
+    return valid_ && original_ && original_->isValid();
+}
 uint64_t PieceTreeSource::sizeBytes() const noexcept { return subtreeBytes(root_); }
 
 bool PieceTreeSource::contiguousData(
     const char **data, uint64_t *sizeBytes
 ) const noexcept {
-    if (!data || !sizeBytes || !valid_) return false;
+    if (!data || !sizeBytes || !isValid()) return false;
     *data = nullptr;
     *sizeBytes = this->sizeBytes();
     if (*sizeBytes == 0) return true;
@@ -314,8 +317,9 @@ bool PieceTreeSource::readAdded(uint64_t offset, uint32_t maxBytes,
     out->data = nullptr;
     out->size = 0;
     constexpr uint64_t chunkBytes = 64u * 1024u;
-    if (offset > added_size_ || (offset & 1u) || maxBytes < 2u) return false;
+    if (offset > added_size_ || (offset & 1u)) return false;
     if (offset == added_size_) return true;
+    if (maxBytes < 2u) return false;
     const uint64_t index64 = offset / chunkBytes;
     if (index64 > static_cast<uint64_t>(std::numeric_limits<size_t>::max())) return false;
     const size_t index = static_cast<size_t>(index64);
@@ -348,8 +352,9 @@ bool PieceTreeSource::read(uint64_t offset, uint32_t maxBytes,
     out->data = nullptr;
     out->size = 0;
     const uint64_t total = sizeBytes();
-    if (!valid_ || (offset & 1u) || offset > total || maxBytes < 2u) return false;
+    if (!isValid() || (offset & 1u) || offset > total) return false;
     if (offset == total) return true;
+    if (maxBytes < 2u) return false;
 
     std::shared_ptr<Node> node = root_;
     uint64_t remaining = offset;
@@ -369,7 +374,10 @@ bool PieceTreeSource::read(uint64_t offset, uint32_t maxBytes,
 
 bool PieceTreeSource::replace(uint64_t startByte, uint64_t oldEndByte,
                               const void *inserted, uint64_t insertedBytes) noexcept {
-    if (!valid_ || (startByte & 1u) || (oldEndByte & 1u) ||
+    // Version is part of every immutable snapshot/cache identity. Never wrap
+    // it and make a new document state appear to be an old version.
+    if (version_ == std::numeric_limits<uint64_t>::max()) return false;
+    if (!isValid() || (startByte & 1u) || (oldEndByte & 1u) ||
         (insertedBytes & 1u) || oldEndByte < startByte ||
         oldEndByte > sizeBytes() || (insertedBytes != 0 && !inserted)) return false;
 

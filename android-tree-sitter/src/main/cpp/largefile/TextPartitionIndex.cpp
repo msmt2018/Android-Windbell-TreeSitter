@@ -6,6 +6,76 @@
 
 namespace windbell::largefile {
 
+namespace {
+
+constexpr size_t kCheckpointMemoryBudget = 2u * 1024u * 1024u;
+constexpr size_t kMaxCheckpointCount =
+    kCheckpointMemoryBudget / sizeof(TextPartitionIndex::Checkpoint);
+
+void compactCheckpointsInPlace(
+    std::vector<TextPartitionIndex::Checkpoint> &checkpoints
+) noexcept {
+    if (checkpoints.size() < kMaxCheckpointCount || checkpoints.empty()) return;
+
+    const auto last = checkpoints.back();
+    size_t write = 0;
+    for (size_t read = 0; read < checkpoints.size(); read += 2u) {
+        checkpoints[write++] = checkpoints[read];
+    }
+    if (write == 0u || checkpoints[write - 1u].byte_offset != last.byte_offset) {
+        checkpoints[write++] = last;
+    }
+    checkpoints.resize(write);
+}
+
+bool ensureCheckpointCapacity(
+    std::vector<TextPartitionIndex::Checkpoint> &checkpoints,
+    size_t required
+) noexcept {
+    if (required > kMaxCheckpointCount) return false;
+    if (checkpoints.capacity() >= required) {
+        return checkpoints.capacity() <= kMaxCheckpointCount;
+    }
+
+    size_t capacity = checkpoints.capacity() == 0u ? 8u : checkpoints.capacity();
+    while (capacity < required && capacity < kMaxCheckpointCount) {
+        capacity = std::min(kMaxCheckpointCount, capacity * 2u);
+    }
+    try {
+        checkpoints.reserve(capacity);
+    } catch (...) {
+        return false;
+    }
+    return checkpoints.capacity() >= required &&
+        checkpoints.capacity() <= kMaxCheckpointCount;
+}
+
+bool appendBoundedCheckpoint(
+    std::vector<TextPartitionIndex::Checkpoint> &checkpoints,
+    const TextPartitionIndex::Checkpoint &checkpoint
+) noexcept {
+    if (!checkpoints.empty()) {
+        if (checkpoint.byte_offset < checkpoints.back().byte_offset) return false;
+        if (checkpoint.byte_offset == checkpoints.back().byte_offset) {
+            checkpoints.back().line = checkpoint.line;
+            return true;
+        }
+    }
+    if (checkpoints.size() >= kMaxCheckpointCount) {
+        compactCheckpointsInPlace(checkpoints);
+    }
+    if (!ensureCheckpointCapacity(checkpoints, checkpoints.size() + 1u)) return false;
+    try {
+        checkpoints.push_back(checkpoint);
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
+} // namespace
+
+
 TextPartitionIndex::TextPartitionIndex(uint32_t strideLines) noexcept
     : stride_lines_(std::max<uint32_t>(1, strideLines)) {
     reset();
@@ -22,29 +92,9 @@ void TextPartitionIndex::reset() noexcept {
 }
 
 void TextPartitionIndex::addCheckpoint(uint64_t byteOffset, uint64_t line) noexcept {
-    // Queries are not guaranteed to arrive in document order: editors can ask
-    // for a distant line and then jump back to the beginning. Keep the vector
-    // sorted because every lookup uses upper_bound().
-    constexpr size_t kCheckpointMemoryBudget = 2u * 1024u * 1024u;
-    const auto compact = [&]() noexcept {
-        if (checkpoints_.size() * sizeof(Checkpoint) <= kCheckpointMemoryBudget) return;
-        try {
-            std::vector<Checkpoint> sparse;
-            sparse.reserve(checkpoints_.size() / 2u + 2u);
-            for (size_t i = 0; i < checkpoints_.size(); i += 2u) {
-                sparse.push_back(checkpoints_[i]);
-            }
-            if (!checkpoints_.empty() &&
-                sparse.back().byte_offset != checkpoints_.back().byte_offset) {
-                sparse.push_back(checkpoints_.back());
-            }
-            checkpoints_.swap(sparse);
-        } catch (...) {
-            // Index density is optional. On allocation pressure, preserve the
-            // last valid index rather than failing a text-source query.
-        }
-    };
-    compact();
+    // Queries can arrive in arbitrary document order. Keep the sparse index
+    // sorted, but cap retained checkpoint storage so distant viewport jumps
+    // cannot grow this optimization without bound.
     auto position = std::lower_bound(
         checkpoints_.begin(), checkpoints_.end(), byteOffset,
         [](const Checkpoint &checkpoint, uint64_t value) {
@@ -54,16 +104,25 @@ void TextPartitionIndex::addCheckpoint(uint64_t byteOffset, uint64_t line) noexc
         position->line = line;
         return;
     }
-    try {
-        if (position == checkpoints_.end()) checkpoints_.push_back({byteOffset, line});
-        else checkpoints_.insert(position, {byteOffset, line});
-    } catch (...) {
-        // The index is an optimization. A failed checkpoint allocation leaves
-        // the preceding valid sparse index usable.
-        return;
+
+    if (checkpoints_.size() >= kMaxCheckpointCount) {
+        compactCheckpointsInPlace(checkpoints_);
     }
-    compact();
+    if (!ensureCheckpointCapacity(checkpoints_, checkpoints_.size() + 1u)) return;
+
+    position = std::lower_bound(
+        checkpoints_.begin(), checkpoints_.end(), byteOffset,
+        [](const Checkpoint &checkpoint, uint64_t value) {
+            return checkpoint.byte_offset < value;
+        });
+    try {
+        checkpoints_.insert(position, {byteOffset, line});
+    } catch (...) {
+        // The index is optional. Keep the preceding valid sparse index on
+        // allocation pressure; callers can still scan from an older checkpoint.
+    }
 }
+
 
 bool TextPartitionIndex::scan(const TextSource &source, uint64_t startByte,
                               uint64_t startLine, uint64_t targetByte,
@@ -179,82 +238,106 @@ bool TextPartitionIndex::byteForLine(const TextSource &source,
 bool TextPartitionIndex::applyEdit(const TextSource &oldSource,
                                    uint64_t startByte, uint64_t oldEndByte,
                                    const void *inserted, uint64_t insertedBytes) noexcept {
+    const uint64_t maximum = static_cast<uint64_t>(
+        std::numeric_limits<int64_t>::max());
     if ((startByte & 1u) || (oldEndByte & 1u) || (insertedBytes & 1u) ||
         oldEndByte < startByte || oldEndByte > oldSource.sizeBytes() ||
-        startByte > static_cast<uint64_t>(std::numeric_limits<int64_t>::max()) || oldEndByte > static_cast<uint64_t>(INT64_MAX) ||
-        insertedBytes > static_cast<uint64_t>(INT64_MAX) ||
-        (insertedBytes && !inserted)) return false;
+        startByte > maximum || oldEndByte > maximum ||
+        insertedBytes > maximum || (insertedBytes && !inserted)) return false;
 
     uint64_t startLine = 0;
-    uint64_t ignoredLineStart = 0;
+    uint64_t oldStartLineStart = 0;
     uint64_t endLine = 0;
+    uint64_t oldEndLineStart = 0;
     uint64_t ignoredOffset = 0;
-    if (!pointForByte(oldSource, startByte, &startLine, &ignoredLineStart) ||
+    if (!pointForByte(oldSource, startByte, &startLine, &oldStartLineStart) ||
         !scan(oldSource, startByte, startLine, oldEndByte, 0, false,
-              &ignoredOffset, &endLine)) return false;
-    // Derive removed newline count from the same bounded scan used to resolve
-    // the old end point; do not reread the replaced text a second time.
+              &ignoredOffset, &endLine, &oldEndLineStart)) return false;
     const uint64_t removedLines = endLine - startLine;
 
     uint64_t insertedLines = 0;
     const auto *bytes = static_cast<const uint8_t *>(inserted);
-    for (uint64_t i = 0; i + 1 < insertedBytes; i += 2) {
+    for (uint64_t i = 0; i + 1u < insertedBytes; i += 2u) {
         const uint16_t unit = static_cast<uint16_t>(bytes[i]) |
-            (static_cast<uint16_t>(bytes[i + 1]) << 8u);
+            (static_cast<uint16_t>(bytes[i + 1u]) << 8u);
         if (unit == '\n') ++insertedLines;
     }
+
+    const uint16_t finalInsertedUnit = insertedBytes >= 2u
+        ? static_cast<uint16_t>(bytes[insertedBytes - 2u]) |
+            (static_cast<uint16_t>(bytes[insertedBytes - 1u]) << 8u)
+        : 0u;
+    const bool insertedEndsWithLineFeed =
+        insertedBytes >= 2u && finalInsertedUnit == '\n';
+    // The old suffix checkpoint at oldEndByte remains a line start only if
+    // the replacement ends in LF, or a deletion joins two old line starts.
+    const bool suffixStartsAtLineBoundary = insertedBytes == 0u
+        ? startByte == oldStartLineStart && oldEndByte == oldEndLineStart
+        : insertedEndsWithLineFeed;
 
     const int64_t byteDelta = static_cast<int64_t>(insertedBytes) -
         static_cast<int64_t>(oldEndByte - startByte);
     const int64_t lineDelta = static_cast<int64_t>(insertedLines) -
         static_cast<int64_t>(removedLines);
+
     std::vector<Checkpoint> updated;
     try {
-        updated.reserve(checkpoints_.size() +
-            static_cast<size_t>(insertedLines / stride_lines_) + 2u);
+        const uint64_t estimated = static_cast<uint64_t>(checkpoints_.size()) +
+            insertedLines / stride_lines_ + 2u;
+        const size_t initialCapacity = static_cast<size_t>(
+            std::min<uint64_t>(estimated, kMaxCheckpointCount));
+        if (initialCapacity > 0u &&
+            !ensureCheckpointCapacity(updated, initialCapacity)) return false;
+
         for (const auto &checkpoint : checkpoints_) {
-            if (checkpoint.byte_offset <= startByte) updated.push_back(checkpoint);
+            if (checkpoint.byte_offset <= startByte &&
+                !appendBoundedCheckpoint(updated, checkpoint)) return false;
         }
+
         uint64_t line = startLine;
-        for (uint64_t i = 0; i + 1 < insertedBytes; i += 2) {
+        for (uint64_t i = 0; i + 1u < insertedBytes; i += 2u) {
             const uint16_t unit = static_cast<uint16_t>(bytes[i]) |
-                (static_cast<uint16_t>(bytes[i + 1]) << 8u);
+                (static_cast<uint16_t>(bytes[i + 1u]) << 8u);
             if (unit == '\n') {
                 ++line;
-                if (line % stride_lines_ == 0) {
-                    const uint64_t offset = startByte + i + 2u;
-                    if (updated.empty() || updated.back().byte_offset != offset)
-                        updated.push_back({offset, line});
+                if (line % stride_lines_ == 0u) {
+                    const uint64_t relativeOffset = i + 2u;
+                    if (relativeOffset > maximum - startByte) return false;
+                    const uint64_t offset = startByte + relativeOffset;
+                    if (!appendBoundedCheckpoint(updated, {offset, line})) return false;
                 }
             }
         }
+
+        const auto shiftOffset = [maximum](uint64_t value, int64_t delta,
+                                           uint64_t *shifted) noexcept {
+            if (!shifted || value > maximum) return false;
+            if (delta >= 0) {
+                const uint64_t amount = static_cast<uint64_t>(delta);
+                if (value > maximum - amount) return false;
+                *shifted = value + amount;
+                return true;
+            }
+            const uint64_t amount = static_cast<uint64_t>(-(delta + 1)) + 1u;
+            if (value < amount) return false;
+            *shifted = value - amount;
+            return true;
+        };
+
         for (const auto &checkpoint : checkpoints_) {
             if (checkpoint.byte_offset < oldEndByte) continue;
-            const auto shiftOffset = [](uint64_t value, int64_t delta,
-                                        uint64_t *shifted) noexcept {
-                const uint64_t maximum = static_cast<uint64_t>(
-                    std::numeric_limits<int64_t>::max());
-                if (!shifted || value > maximum) return false;
-                if (delta >= 0) {
-                    const uint64_t amount = static_cast<uint64_t>(delta);
-                    if (value > maximum - amount) return false;
-                    *shifted = value + amount;
-                    return true;
-                }
-                const uint64_t amount = static_cast<uint64_t>(-(delta + 1)) + 1u;
-                if (value < amount) return false;
-                *shifted = value - amount;
-                return true;
-            };
+            if (checkpoint.byte_offset == oldEndByte &&
+                !suffixStartsAtLineBoundary) continue;
+
             Checkpoint shifted{};
             if (!shiftOffset(checkpoint.byte_offset, byteDelta, &shifted.byte_offset) ||
-                !shiftOffset(checkpoint.line, lineDelta, &shifted.line)) continue;
-            if (updated.empty() || updated.back().byte_offset < shifted.byte_offset)
-                updated.push_back(shifted);
+                !shiftOffset(checkpoint.line, lineDelta, &shifted.line)) return false;
+            if (!appendBoundedCheckpoint(updated, shifted)) return false;
         }
     } catch (...) {
         return false;
     }
+
     checkpoints_.swap(updated);
     ++version_;
     return true;

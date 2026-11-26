@@ -11,7 +11,7 @@ This is an input-resource contract for the independent Regex pipeline. It does n
 A caller supplies `TshRegexWindowConstraints`:
 
 - `coreWindowUtf16`: maximum length of the non-overlapping ownership interval.
-- `maxWindowUtf16`: caller-selected maximum contiguous slice length. It is constrained by the active memory reservation and native coordinate representation, not by a library-wide fixed 1 Mi-unit ceiling.
+- `maxWindowUtf16`: caller-selected maximum contiguous slice length. Its default is `Int.MAX_VALUE`; there is no library-wide 256 Ki-unit window ceiling. The actual slice remains constrained by the shared memory governor, Kotlin/JNI/Oniguruma signed-length representation and any stricter caller-selected value.
 - `maxMatchLengthUtf16`: finite maximum consumed match length. Null is rejected by `acquire()`.
 - `maxLookbehindUtf16` and `maxLookaheadUtf16`: finite context required by the pattern.
 
@@ -36,9 +36,9 @@ Core boundaries that split a surrogate pair are rejected. Returned text must hav
 
 ## Memory and lifetime
 
-If a `TshMemoryBudget` is supplied, the lease reserves `REGEX_WINDOW` before reading the contiguous slice. The estimate allows for both a temporary provider-returned CharSequence and the retained String copy. The reservation remains live until `TshRegexWindowLease.close()`; close is idempotent and drops the lease's reference to its content.
+Every lease reserves `REGEX_WINDOW` before reading the contiguous slice. If the caller supplies a `TshMemoryBudget`, that shared governor is used; otherwise the sequence creates one with the normal 100 MiB target and 512 MiB hard ceiling. The estimate allows for both a temporary provider-returned CharSequence and the retained String copy. The reservation remains live until `TshRegexWindowLease.close()`; close is idempotent and drops the lease's reference to its content.
 
-A budget failure is returned before the full contiguous window read. The tiny boundary probes used to detect surrogate splits happen before reservation.
+The sequence shares one budget across all simultaneously open windows. A budget failure is returned before the full contiguous window read. The tiny boundary probes used to detect surrogate splits happen before reservation.
 
 ## Anchor semantics
 

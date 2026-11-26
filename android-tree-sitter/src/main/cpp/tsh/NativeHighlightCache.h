@@ -6,6 +6,8 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <iterator>
+#include <list>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -22,6 +24,26 @@ public:
             if (bytes > limit_bytes_ - std::min(limit_bytes_, current)) return false;
             if (used_bytes_.compare_exchange_weak(
                     current, current + bytes,
+                    std::memory_order_acq_rel, std::memory_order_relaxed)) return true;
+        }
+    }
+
+    // Atomically exchange an existing reservation for a replacement so failed
+    // shared-budget admission cannot destroy the old valid payload.
+    bool tryReplace(size_t oldBytes, size_t newBytes) noexcept {
+        size_t current = used_bytes_.load(std::memory_order_relaxed);
+        for (;;) {
+            size_t next = current;
+            if (newBytes >= oldBytes) {
+                const size_t increase = newBytes - oldBytes;
+                if (increase > limit_bytes_ - std::min(limit_bytes_, current)) return false;
+                next = current + increase;
+            } else {
+                const size_t decrease = oldBytes - newBytes;
+                next = current - std::min(current, decrease);
+            }
+            if (used_bytes_.compare_exchange_weak(
+                    current, next,
                     std::memory_order_acq_rel, std::memory_order_relaxed)) return true;
         }
     }
@@ -47,9 +69,11 @@ private:
 /**
  * Per-document bounded native highlight result cache.
  *
- * Keys include the document version and the exact UTF-16LE viewport. The
- * caller serializes access with its document lock. Entries are immutable
- * snapshots; edits advance the version, so stale results can never be reused.
+ * Keys include document/source/partition/grammar versions and the exact
+ * UTF-16LE viewport. Span payloads live in a bounded LRU; compact dependency
+ * proofs live in a separately bounded ledger so payload eviction cannot erase
+ * the validity proof needed by Kotlin's capture cache. Edits rebase only ranges
+ * whose captures and dependency envelopes remain valid.
  */
 class NativeHighlightCache final {
 public:
@@ -68,6 +92,27 @@ public:
                 start_byte == other.start_byte &&
                 end_byte == other.end_byte && diagnostics == other.diagnostics;
         }
+    };
+
+    using DependencyRange = HighlightDependencyRange;
+
+    struct RebaseStats {
+        size_t payload_before = 0;
+        size_t payload_after = 0;
+        size_t dependencies_before = 0;
+        size_t dependencies_after = 0;
+        size_t missing_dependency_proof = 0;
+        size_t viewport_intersects_edit = 0;
+        size_t document_wide_dependency = 0;
+        size_t checkpoint_invalidated = 0;
+        size_t boundary_invalidated = 0;
+        size_t dirty_range_invalidated = 0;
+        size_t inserted_range_invalidated = 0;
+        size_t dependency_budget_rejected = 0;
+        size_t payload_without_proof = 0;
+        bool reset_for_invalid_edit = false;
+        bool reset_due_shared_budget = false;
+        bool reset_after_allocation_failure = false;
     };
 
     struct Value {
@@ -92,35 +137,106 @@ public:
         auto found = entries_.find(key);
         if (found == entries_.end()) return nullptr;
         touch(&found->second);
+        auto dependency = dependency_entries_.find(key);
+        if (dependency != dependency_entries_.end()) {
+            dependency_lru_.splice(
+                dependency_lru_.end(), dependency_lru_, dependency->second.lru);
+            dependency->second.lru = std::prev(dependency_lru_.end());
+        }
         return &found->second.value;
     }
 
-    void put(Key key, Value value) {
+    // Snapshot viewport keys whose dependency metadata survived edit rebasing.
+    // This ledger is deliberately independent from the span-payload LRU: Kotlin
+    // may still own a compact capture page after the native payload was evicted.
+    std::vector<std::pair<uint32_t, uint32_t>> snapshotRanges(
+        bool diagnostics,
+        uint64_t grammarRevision,
+        uint64_t documentVersion,
+        uint64_t sourceVersion,
+        uint64_t partitionVersion
+    ) {
+        std::vector<std::pair<uint32_t, uint32_t>> ranges;
+        ranges.reserve(dependency_entries_.size());
+        for (auto& item : dependency_entries_) {
+            if (item.first.diagnostics == diagnostics &&
+                item.first.grammar_revision == grammarRevision &&
+                item.first.version == documentVersion &&
+                item.first.source_version == sourceVersion &&
+                item.first.partition_version == partitionVersion) {
+                ranges.emplace_back(item.first.start_byte, item.first.end_byte);
+                // Snapshotting all reusable keys for an edit is not a cache hit.
+                // Promoting every entry here rewrote LRU recency in unordered_map
+                // iteration order and could evict genuinely hot dependency proofs
+                // on the next admission. Only find()/explicit use may touch recency.
+            }
+        }
+        std::sort(ranges.begin(), ranges.end());
+        ranges.erase(std::unique(ranges.begin(), ranges.end()), ranges.end());
+        return ranges;
+    }
+
+    void put(
+        Key key,
+        Value value,
+        std::vector<DependencyRange> dependencies
+    ) {
+        // Dependency proofs have one owner: the compact ledger. They survive
+        // independently of this larger span-payload LRU and are not duplicated
+        // in every cached value.
+        rememberDependencies(key, std::move(dependencies));
         constexpr size_t kEntryOverhead =
             sizeof(Value) + sizeof(Key) + 5u * sizeof(void *);
-        if (value.spans.capacity() >
-            (static_cast<size_t>(-1) - kEntryOverhead) / sizeof(HighlightSpan)) return;
-        const size_t bytes =
-            value.spans.capacity() * sizeof(HighlightSpan) + kEntryOverhead;
-        if (budget_bytes_ == 0 || bytes > budget_bytes_) return;
-        auto existing = entries_.find(key);
-        if (existing != entries_.end()) erase(existing);
-        if (shared_budget_ && !shared_budget_->tryAcquire(bytes)) return;
-
-        try {
-            const auto inserted = entries_.emplace(
-                key, Entry{std::move(value), nullptr, nullptr, nullptr, bytes});
-            if (!inserted.second) {
-                if (shared_budget_) shared_budget_->release(bytes);
-                return;
-            }
-            inserted.first->second.key = &inserted.first->first;
-            linkFront(&inserted.first->second);
-        } catch (...) {
-            if (shared_budget_) shared_budget_->release(bytes);
+        const size_t span_capacity = value.spans.capacity();
+        if (span_capacity > (static_cast<size_t>(-1) - kEntryOverhead) /
+                sizeof(HighlightSpan)) {
+            ++payload_rejected_count_;
             return;
         }
-        used_bytes_ += bytes;
+        const size_t span_bytes = span_capacity * sizeof(HighlightSpan);
+        const size_t bytes = span_bytes + kEntryOverhead;
+        if (budget_bytes_ == 0 || bytes > budget_bytes_) {
+            ++payload_rejected_count_;
+            return;
+        }
+        auto existing = entries_.find(key);
+        const size_t previousBytes = existing == entries_.end() ? 0u : existing->second.bytes;
+        const bool reserved = shared_budget_
+            ? (existing == entries_.end()
+                ? shared_budget_->tryAcquire(bytes)
+                : shared_budget_->tryReplace(previousBytes, bytes))
+            : true;
+        if (!reserved) {
+            ++payload_rejected_count_;
+            return;
+        }
+
+        if (existing != entries_.end()) {
+            // Keep the existing map node and LRU links. Move-assigning the span
+            // vector replaces its payload without losing the old key on failure.
+            used_bytes_ -= std::min(used_bytes_, previousBytes);
+            existing->second.value = std::move(value);
+            existing->second.bytes = bytes;
+            used_bytes_ += bytes;
+            touch(&existing->second);
+        } else {
+            try {
+                const auto inserted = entries_.emplace(
+                    key, Entry{std::move(value), nullptr, nullptr, nullptr, bytes});
+                if (!inserted.second) {
+                    if (shared_budget_) shared_budget_->release(bytes);
+                    ++payload_rejected_count_;
+                    return;
+                }
+                inserted.first->second.key = &inserted.first->first;
+                linkFront(&inserted.first->second);
+                used_bytes_ += bytes;
+            } catch (...) {
+                if (shared_budget_) shared_budget_->release(bytes);
+                ++payload_rejected_count_;
+                return;
+            }
+        }
         while (used_bytes_ > budget_bytes_ && tail_ != nullptr) {
             const auto victim = entries_.find(*tail_->key);
             if (victim == entries_.end()) {
@@ -128,33 +244,248 @@ public:
                 continue;
             }
             erase(victim);
+            ++payload_eviction_count_;
         }
     }
 
-    // Rebase cached viewport results across one committed text edit. Entries
-    // intersecting the edit or any Tree-sitter changed range are discarded;
-    // unaffected entries keep their spans and receive the new document versions.
-    // If rebuilding the bounded cache fails, clear it rather than expose stale data.
-    void rebaseAfterEdit(
+    // Rebase immutable viewport snapshots into the new document coordinate
+    // space. Every producer must attach its dependency envelope. Missing
+    // dependency metadata is treated as document-wide and therefore evicted.
+    // dirtyRanges are Tree-sitter changed ranges in POST-edit coordinates.
+    RebaseStats rebaseAfterEdit(
         uint64_t newVersion, uint64_t newSourceVersion, uint64_t newPartitionVersion,
         uint32_t editStart, uint32_t oldEditEnd, uint32_t insertedBytes,
         const std::vector<std::pair<uint32_t, uint32_t>> &dirtyRanges
     ) noexcept {
-        // A Tree-sitter query result may depend on syntax outside every emitted
-        // capture (ancestors, siblings, predicates, and surrounding structure).
-        // Capture/viewport overlap therefore cannot prove that an entry is still
-        // valid after an edit. Until query execution records a conservative
-        // dependency envelope per cache entry, invalidate on every edit.
-        // This trades cache hit rate for correctness rather than exposing stale
-        // syntax captures under a new document version.
-        (void)newVersion;
-        (void)newSourceVersion;
-        (void)newPartitionVersion;
-        (void)editStart;
-        (void)oldEditEnd;
-        (void)insertedBytes;
-        (void)dirtyRanges;
-        clear();
+        RebaseStats stats;
+        stats.payload_before = entries_.size();
+        stats.dependencies_before = dependency_entries_.size();
+        if (oldEditEnd < editStart) {
+            clear();
+            stats.reset_for_invalid_edit = true;
+            return stats;
+        }
+        const int64_t delta = static_cast<int64_t>(insertedBytes) -
+            static_cast<int64_t>(oldEditEnd - editStart);
+        const uint64_t insertedEnd64 = static_cast<uint64_t>(editStart) + insertedBytes;
+        if (insertedEnd64 > UINT32_MAX) {
+            clear();
+            stats.reset_for_invalid_edit = true;
+            return stats;
+        }
+        const uint32_t insertedEnd = static_cast<uint32_t>(insertedEnd64);
+
+        auto overlaps = [](uint32_t a0, uint32_t a1, uint32_t b0, uint32_t b1) noexcept {
+            return a0 < b1 && b0 < a1;
+        };
+        auto transformRange = [&](uint32_t *start, uint32_t *end) noexcept -> bool {
+            if (*start > *end) return false;
+            // A dependency/capture crossing replaced text, or containing an
+            // insertion point, cannot be proven reusable.
+            if (oldEditEnd > editStart && overlaps(*start, *end, editStart, oldEditEnd))
+                return false;
+            if (oldEditEnd == editStart && *start < editStart && *end > editStart)
+                return false;
+            if (*end <= editStart) return true;
+            if (*start >= oldEditEnd) {
+                const int64_t shiftedStart = static_cast<int64_t>(*start) + delta;
+                const int64_t shiftedEnd = static_cast<int64_t>(*end) + delta;
+                if (shiftedStart < 0 || shiftedEnd < shiftedStart ||
+                    shiftedEnd > UINT32_MAX) return false;
+                *start = static_cast<uint32_t>(shiftedStart);
+                *end = static_cast<uint32_t>(shiftedEnd);
+                return true;
+            }
+            return false;
+        };
+
+        std::unordered_map<Key, DependencyEntry, KeyHash> rebased_dependencies;
+        std::list<Key> rebased_dependency_lru;
+        size_t rebased_dependency_bytes = 0;
+        std::unordered_map<Key, Entry, KeyHash> rebased;
+        try {
+            // Rebase the compact dependency ledger independently of the span
+            // payload LRU. It contains every admitted viewport proof, including
+            // proofs whose native span vectors have already been evicted.
+            rebased_dependencies.reserve(dependency_entries_.size());
+            for (const Key& old_key : dependency_lru_) {
+                auto found = dependency_entries_.find(old_key);
+                if (found == dependency_entries_.end()) continue;
+                Key next_key = old_key;
+                auto dependencies = std::move(found->second.ranges);
+                bool reusable = !dependencies.empty();
+                if (!reusable) ++stats.missing_dependency_proof;
+                if (reusable && !transformRange(
+                        &next_key.start_byte, &next_key.end_byte)) {
+                    reusable = false;
+                    ++stats.viewport_intersects_edit;
+                }
+                for (auto &dependency : dependencies) {
+                    if (!reusable) break;
+                    if ((dependency.flags & HIGHLIGHT_DEPENDENCY_DOCUMENT_WIDE) != 0) {
+                        reusable = false;
+                        ++stats.document_wide_dependency;
+                        break;
+                    }
+                    if ((dependency.flags & HIGHLIGHT_DEPENDENCY_CHECKPOINT_BASED) != 0 &&
+                        editStart <= dependency.start_byte) {
+                        reusable = false;
+                        ++stats.checkpoint_invalidated;
+                        break;
+                    }
+                    if ((dependency.flags & HIGHLIGHT_DEPENDENCY_BOUNDARY_SENSITIVE) != 0 &&
+                        editStart <= dependency.end_byte &&
+                        oldEditEnd >= dependency.start_byte) {
+                        reusable = false;
+                        ++stats.boundary_invalidated;
+                        break;
+                    }
+                    reusable = transformRange(
+                        &dependency.start_byte, &dependency.end_byte);
+                    if (!reusable) {
+                        ++stats.viewport_intersects_edit;
+                        break;
+                    }
+                    if (insertedBytes != 0 &&
+                        overlaps(dependency.start_byte, dependency.end_byte,
+                                 editStart, insertedEnd)) {
+                        reusable = false;
+                        ++stats.inserted_range_invalidated;
+                        break;
+                    }
+                    for (const auto &dirty : dirtyRanges) {
+                        if (dirty.first < dirty.second &&
+                            overlaps(dependency.start_byte, dependency.end_byte,
+                                     dirty.first, dirty.second)) {
+                            reusable = false;
+                            ++stats.dirty_range_invalidated;
+                            break;
+                        }
+                    }
+                }
+                if (!reusable) continue;
+                next_key.version = newVersion;
+                next_key.source_version = newSourceVersion;
+                next_key.partition_version = newPartitionVersion;
+                const size_t bytes = dependencyWeight(dependencies);
+                if (bytes > kDependencyLedgerBudgetBytes ||
+                    bytes > kDependencyLedgerBudgetBytes - rebased_dependency_bytes) {
+                    ++stats.dependency_budget_rejected;
+                    continue;
+                }
+                rebased_dependency_lru.push_back(next_key);
+                auto lru = std::prev(rebased_dependency_lru.end());
+                auto inserted = rebased_dependencies.emplace(
+                    next_key, DependencyEntry{std::move(dependencies), bytes, lru});
+                if (inserted.second) rebased_dependency_bytes += bytes;
+                else rebased_dependency_lru.erase(lru);
+            }
+            const size_t previous_dependency_bytes = dependency_used_bytes_;
+            bool additional_shared_budget_acquired = false;
+            if (rebased_dependency_bytes > previous_dependency_bytes && shared_budget_) {
+                const size_t additional = rebased_dependency_bytes - previous_dependency_bytes;
+                additional_shared_budget_acquired = shared_budget_->tryAcquire(additional);
+                if (!additional_shared_budget_acquired) {
+                    // Rebase temporarily holds both the old and new maps. Requiring
+                    // the shared budget to reserve the entire duplicate would turn
+                    // transient peak pressure into a full dependency-ledger reset.
+                    // Keep the hottest rebased proofs that fit within the old
+                    // reservation instead: the list is oldest-first, so evict only
+                    // its front until the replacement can reuse the existing bytes.
+                    while (rebased_dependency_bytes > previous_dependency_bytes &&
+                           !rebased_dependency_lru.empty()) {
+                        const Key oldest = rebased_dependency_lru.front();
+                        rebased_dependency_lru.pop_front();
+                        auto victim = rebased_dependencies.find(oldest);
+                        if (victim == rebased_dependencies.end()) continue;
+                        const size_t released = std::min(
+                            rebased_dependency_bytes, victim->second.bytes);
+                        rebased_dependency_bytes -= released;
+                        rebased_dependencies.erase(victim);
+                        ++stats.dependency_budget_rejected;
+                    }
+                }
+            }
+
+            dependency_entries_.swap(rebased_dependencies);
+            dependency_lru_.swap(rebased_dependency_lru);
+            dependency_used_bytes_ = rebased_dependency_bytes;
+            if (shared_budget_ && !additional_shared_budget_acquired) {
+                // No additional reservation was needed (or available). Reuse the
+                // previous reservation and release only the bytes no longer retained.
+                shared_budget_->release(
+                    previous_dependency_bytes - std::min(
+                        previous_dependency_bytes, rebased_dependency_bytes));
+            }
+
+            rebased.reserve(entries_.size());
+            Entry *entry = head_;
+            while (entry) {
+                Entry *next = entry->next;
+                auto found = entries_.find(*entry->key);
+                if (found == entries_.end()) {
+                    unlink(entry);
+                    entry = next;
+                    continue;
+                }
+
+                Key next_key = found->first;
+                // The requested viewport itself must not include replaced text.
+                bool reusable = transformRange(
+                    &next_key.start_byte, &next_key.end_byte);
+                next_key.version = newVersion;
+                next_key.source_version = newSourceVersion;
+                next_key.partition_version = newPartitionVersion;
+                // The dependency ledger is the single source of truth for whether
+                // this viewport survived the edit. A payload without a retained
+                // proof is conservatively discarded.
+                const auto retained_proof = dependency_entries_.find(next_key);
+                if (retained_proof == dependency_entries_.end()) {
+                    // Count the actual payload-without-proof case here. Empty
+                    // dependency vectors are not admitted to the ledger, so
+                    // they can only be observed while validating the payload.
+                    ++stats.missing_dependency_proof;
+                }
+                reusable = reusable && retained_proof != dependency_entries_.end();
+
+                for (auto &span : entry->value.spans) {
+                    if (!reusable) break;
+                    reusable = transformRange(&span.start_byte, &span.end_byte);
+                }
+
+                if (!reusable) {
+                    ++stats.payload_without_proof;
+                    forgetDependencies(next_key);
+                    erase(found);
+                    entry = next;
+                    continue;
+                }
+
+                auto node = entries_.extract(found);
+                node.key() = next_key;
+                auto inserted = rebased.insert(std::move(node));
+                if (!inserted.inserted) {
+                    Entry *duplicate = &inserted.position->second;
+                    const size_t released = std::min(used_bytes_, entry->bytes);
+                    used_bytes_ -= released;
+                    if (shared_budget_) shared_budget_->release(released);
+                    unlink(entry);
+                    (void)duplicate;
+                } else {
+                    inserted.position->second.key = &inserted.position->first;
+                }
+                entry = next;
+            }
+            entries_.swap(rebased);
+        } catch (...) {
+            // A partially rebased cache is never published. Cache admission is
+            // optional; dropping it is safer than returning mixed-version data.
+            clear();
+            stats.reset_after_allocation_failure = true;
+        }
+        stats.payload_after = entries_.size();
+        stats.dependencies_after = dependency_entries_.size();
+        return stats;
     }
 
     void clear() noexcept {
@@ -163,11 +494,20 @@ public:
         head_ = nullptr;
         tail_ = nullptr;
         used_bytes_ = 0;
+        dependency_entries_.clear();
+        dependency_lru_.clear();
+        if (shared_budget_ && dependency_used_bytes_ != 0) {
+            shared_budget_->release(dependency_used_bytes_);
+        }
+        dependency_used_bytes_ = 0;
     }
 
     size_t usedBytes() const noexcept { return used_bytes_; }
+    size_t dependencyBytesUsed() const noexcept { return dependency_used_bytes_; }
     size_t budgetBytes() const noexcept { return budget_bytes_; }
     size_t size() const noexcept { return entries_.size(); }
+    size_t payloadEvictionCount() const noexcept { return payload_eviction_count_; }
+    size_t payloadRejectedCount() const noexcept { return payload_rejected_count_; }
 
 private:
     struct KeyHash {
@@ -194,6 +534,117 @@ private:
         Entry *next = nullptr;
         size_t bytes = 0;
     };
+
+    struct DependencyEntry {
+        std::vector<DependencyRange> ranges;
+        size_t bytes = 0;
+        std::list<Key>::iterator lru;
+    };
+
+    static constexpr size_t kDependencyLedgerBudgetBytes = 2u * 1024u * 1024u;
+    static constexpr size_t kDependencyLedgerMaxEntries = 32768u;
+
+    static size_t dependencyWeight(
+        const std::vector<DependencyRange>& ranges
+    ) noexcept {
+        constexpr size_t overhead = sizeof(Key) + sizeof(DependencyEntry) + 128u;
+        if (ranges.capacity() >
+            (static_cast<size_t>(-1) - overhead) / sizeof(DependencyRange)) {
+            return static_cast<size_t>(-1);
+        }
+        return overhead + ranges.capacity() * sizeof(DependencyRange);
+    }
+
+    void rememberDependencies(
+        const Key& key,
+        std::vector<DependencyRange> dependencies
+    ) noexcept {
+        size_t pending_shared_bytes = 0;
+        bool shared_budget_acquired = false;
+        try {
+            const size_t bytes = dependencyWeight(dependencies);
+            if (dependencies.empty() || bytes > kDependencyLedgerBudgetBytes) {
+                forgetDependencies(key);
+                return;
+            }
+
+            // Reserve global memory before evicting any existing proof. The old
+            // ordering evicted local LRU entries first and only then attempted the
+            // shared-budget reservation; if another native subsystem exhausted the
+            // shared budget, admission failed after useful proofs had already been
+            // discarded. That caused avoidable Kotlin token-page invalidation and
+            // recapture after unrelated edits.
+            if (shared_budget_) {
+                if (!shared_budget_->tryAcquire(bytes)) return;
+                shared_budget_acquired = true;
+                pending_shared_bytes = bytes;
+            }
+
+            auto existing = dependency_entries_.find(key);
+            if (existing != dependency_entries_.end()) {
+                const size_t released = std::min(
+                    dependency_used_bytes_, existing->second.bytes);
+                dependency_used_bytes_ -= released;
+                if (shared_budget_) shared_budget_->release(released);
+                dependency_lru_.erase(existing->second.lru);
+                dependency_entries_.erase(existing);
+            }
+
+            // Local capacity eviction happens only after the new proof has a
+            // guaranteed global reservation. Keep the newest proof and evict
+            // only older ledger entries.
+            while ((dependency_used_bytes_ > kDependencyLedgerBudgetBytes - bytes ||
+                    dependency_entries_.size() >= kDependencyLedgerMaxEntries) &&
+                   !dependency_lru_.empty()) {
+                const Key oldest = dependency_lru_.front();
+                dependency_lru_.pop_front();
+                auto victim = dependency_entries_.find(oldest);
+                if (victim == dependency_entries_.end()) continue;
+                const size_t released = std::min(
+                    dependency_used_bytes_, victim->second.bytes);
+                dependency_used_bytes_ -= released;
+                if (shared_budget_) shared_budget_->release(released);
+                dependency_entries_.erase(victim);
+            }
+
+            dependency_lru_.push_back(key);
+            auto lru = std::prev(dependency_lru_.end());
+            try {
+                auto inserted = dependency_entries_.emplace(
+                    key, DependencyEntry{std::move(dependencies), bytes, lru});
+                if (!inserted.second) {
+                    dependency_lru_.erase(lru);
+                    if (shared_budget_acquired && shared_budget_) {
+                        shared_budget_->release(pending_shared_bytes);
+                        shared_budget_acquired = false;
+                    }
+                    return;
+                }
+            } catch (...) {
+                dependency_lru_.erase(lru);
+                throw;
+            }
+            dependency_used_bytes_ += bytes;
+            shared_budget_acquired = false;
+        } catch (...) {
+            if (shared_budget_acquired && shared_budget_) {
+                shared_budget_->release(pending_shared_bytes);
+            }
+            // Dependency metadata is an optimization. If it cannot be retained,
+            // the range will be conservatively invalidated on the next edit.
+        }
+    }
+
+    void forgetDependencies(const Key& key) noexcept {
+        auto found = dependency_entries_.find(key);
+        if (found == dependency_entries_.end()) return;
+        const size_t released = std::min(
+            dependency_used_bytes_, found->second.bytes);
+        dependency_used_bytes_ -= released;
+        if (shared_budget_) shared_budget_->release(released);
+        dependency_lru_.erase(found->second.lru);
+        dependency_entries_.erase(found);
+    }
 
     using Iterator = typename std::unordered_map<Key, Entry, KeyHash>::iterator;
 
@@ -235,6 +686,11 @@ private:
     Entry *head_ = nullptr;
     Entry *tail_ = nullptr;
     std::unordered_map<Key, Entry, KeyHash> entries_;
+    std::unordered_map<Key, DependencyEntry, KeyHash> dependency_entries_;
+    std::list<Key> dependency_lru_;
+    size_t dependency_used_bytes_ = 0;
+    size_t payload_eviction_count_ = 0;
+    size_t payload_rejected_count_ = 0;
 };
 
 } // namespace windbell::tsh

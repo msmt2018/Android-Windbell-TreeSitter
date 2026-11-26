@@ -38,7 +38,9 @@ public class TSQueryCursor extends TSNativeObject implements Iterable<TSQueryMat
 
   protected boolean isExecuted = false;
   private boolean allowChangedNodes = false;
-  private boolean predicateEvaluationEnabled = true;
+  // Native Tree-sitter cursors return raw matches; Java-side predicate filtering is opt-in.
+  // Enable it after registering handlers for every predicate used by the query.
+  private boolean predicateEvaluationEnabled = false;
   protected TSNode targetNode = null;
   protected TSQuery execQuery = null;
   protected final Set<TSPredicateHandler> predicateHandlers = new LinkedHashSet<>();
@@ -95,6 +97,9 @@ public class TSQueryCursor extends TSNativeObject implements Iterable<TSQueryMat
     }
 
     predicateHandlers.add(handler);
+    // Preserve the historical handler-driven behavior while keeping raw native
+    // query iteration unfiltered until a caller opts in by registering a handler.
+    predicateEvaluationEnabled = true;
   }
 
   /**
@@ -198,6 +203,36 @@ public class TSQueryCursor extends TSNativeObject implements Iterable<TSQueryMat
   }
 
   /**
+   * Set an exact Tree-sitter query VM work budget for the current execution.
+   *
+   * <p>One work unit is the native query cursor's cost for one VM traversal iteration:
+   * one base transition plus one unit per active in-progress query state. Set this after
+   * {@link #exec(TSQuery, TSNode)} and before retrieving matches.
+   */
+  public void setStepLimit(long maxSteps) {
+    checkAccess();
+    checkExecuted("setStepLimit");
+    if (maxSteps <= 0L) {
+      throw new IllegalArgumentException("maxSteps must be positive");
+    }
+    Native.setStepLimit(getNativeObject(), maxSteps);
+  }
+
+  /** Returns completed native query VM work units, or -1 when the bundled core lacks exact counting. */
+  public long getStepsUsed() {
+    checkAccess();
+    checkExecuted("getStepsUsed");
+    return Native.getStepsUsed(getNativeObject());
+  }
+
+  /** Whether the current execution stopped because its exact native work budget was exhausted. */
+  public boolean didExceedStepLimit() {
+    checkAccess();
+    checkExecuted("didExceedStepLimit");
+    return Native.didExceedStepLimit(getNativeObject());
+  }
+
+  /**
    * Whether the maximum number of in-progress matches allowed by this query cursor has been
    * exceeded or not.
    *
@@ -237,6 +272,18 @@ public class TSQueryCursor extends TSNativeObject implements Iterable<TSQueryMat
   public void setByteRange(int start, int end) {
     checkAccess();
     Native.setByteRange(getNativeObject(), start, end);
+  }
+
+  /**
+   * Set an absolute unsigned Tree-sitter byte range without narrowing through a signed Java int.
+   * Tree-sitter's public byte-offset representation is uint32; values above 2 GiB are valid.
+   */
+  public void setByteRange(long start, long end) {
+    checkAccess();
+    if (start < 0L || end < start || end > 0xFFFF_FFFFL) {
+      throw new IllegalArgumentException("Byte range must fit the unsigned 32-bit Tree-sitter offset domain");
+    }
+    Native.setByteRangeLong(getNativeObject(), start, end);
   }
 
   public void setPointRange(TSPoint start, TSPoint end) {
@@ -372,6 +419,12 @@ public class TSQueryCursor extends TSNativeObject implements Iterable<TSQueryMat
     static native void execWithOptions(
       long cursor, long query, TSNode node, ProgressCallback callback);
 
+    static native void setStepLimit(long cursor, long maxSteps);
+
+    static native long getStepsUsed(long cursor);
+
+    static native boolean didExceedStepLimit(long cursor);
+
     static native boolean exceededMatchLimit(long cursor);
 
     static native void setMatchLimit(long cursor, int newLimit);
@@ -379,6 +432,7 @@ public class TSQueryCursor extends TSNativeObject implements Iterable<TSQueryMat
     static native int getMatchLimit(long cursor);
 
     static native void setByteRange(long cursor, int start, int end);
+    static native void setByteRangeLong(long cursor, long start, long end);
 
     static native void setPointRange(long cursor, TSPoint start, TSPoint end);
 

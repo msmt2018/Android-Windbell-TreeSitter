@@ -25,6 +25,7 @@
 #include "utils/ts_preconditions.h"
 
 #include "ts_query_cursor.h"
+#include "tsh/ts_query_cursor_step_budget.h"
 
 namespace {
 
@@ -105,6 +106,14 @@ void throwOutOfMemory(JNIEnv *env, const char *message) {
 
 void throwIllegalState(JNIEnv *env, const char *message) {
   jclass exception_class = env->FindClass("java/lang/IllegalStateException");
+  if (exception_class) {
+    env->ThrowNew(exception_class, message);
+    env->DeleteLocalRef(exception_class);
+  }
+}
+
+void throwIllegalArgument(JNIEnv *env, const char *message) {
+  jclass exception_class = env->FindClass("java/lang/IllegalArgumentException");
   if (exception_class) {
     env->ThrowNew(exception_class, message);
     env->DeleteLocalRef(exception_class);
@@ -207,6 +216,58 @@ static void TSQueryCursor_execWithOptions(JNIEnv *env,
 #endif
 }
 
+static void TSQueryCursor_setStepLimit(JNIEnv *env,
+                                        jclass self,
+                                        jlong cursor,
+                                        jlong maxSteps) {
+  req_nnp(env, cursor);
+  if (maxSteps <= 0) {
+    throwIllegalArgument(env, "maxSteps must be positive");
+    return;
+  }
+#if defined(TSH_TREE_SITTER_HAS_QUERY_CURSOR_OPTIONS)
+  if (rejectQueryCursorReentry(env, (TSQueryCursor *) cursor)) return;
+#endif
+#if defined(TSH_TREE_SITTER_HAS_EXACT_QUERY_STEP_BUDGET)
+  ts_query_cursor_set_step_limit((TSQueryCursor *) cursor,
+                                 static_cast<uint64_t>(maxSteps));
+#else
+  (void) self;
+  throwUnsupportedOperation(
+      env, "Exact query step budgets require the patched Tree-sitter Query VM");
+#endif
+}
+
+static jlong TSQueryCursor_getStepsUsed(JNIEnv *env, jclass self, jlong cursor) {
+  req_nnp(env, cursor);
+#if defined(TSH_TREE_SITTER_HAS_QUERY_CURSOR_OPTIONS)
+  if (rejectQueryCursorReentry(env, (TSQueryCursor *) cursor)) return 0;
+#endif
+#if defined(TSH_TREE_SITTER_HAS_EXACT_QUERY_STEP_BUDGET)
+  return static_cast<jlong>(
+      ts_query_cursor_steps_used((TSQueryCursor *) cursor));
+#else
+  (void) self;
+  return static_cast<jlong>(-1);
+#endif
+}
+
+static jboolean TSQueryCursor_didExceedStepLimit(JNIEnv *env,
+                                                 jclass self,
+                                                 jlong cursor) {
+  req_nnp(env, cursor);
+#if defined(TSH_TREE_SITTER_HAS_QUERY_CURSOR_OPTIONS)
+  if (rejectQueryCursorReentry(env, (TSQueryCursor *) cursor)) return 0;
+#endif
+#if defined(TSH_TREE_SITTER_HAS_EXACT_QUERY_STEP_BUDGET)
+  return static_cast<jboolean>(
+      ts_query_cursor_did_exceed_step_limit((TSQueryCursor *) cursor));
+#else
+  (void) self;
+  return static_cast<jboolean>(false);
+#endif
+}
+
 static jboolean
 TSQueryCursor_exceededMatchLimit(JNIEnv *env, jclass self, jlong cursor) {
   req_nnp(env, cursor);
@@ -246,6 +307,26 @@ static void TSQueryCursor_setByteRange(JNIEnv *env,
   if (rejectQueryCursorReentry(env, (TSQueryCursor *) cursor)) return;
 #endif
   ts_query_cursor_set_byte_range((TSQueryCursor *) cursor, start, end);
+}
+
+static void TSQueryCursor_setByteRangeLong(JNIEnv *env,
+                                           jclass self,
+                                           jlong cursor,
+                                           jlong start,
+                                           jlong end) {
+  req_nnp(env, cursor);
+  if (start < 0 || end < start || end > 0xFFFFFFFFLL) {
+    throwIllegalArgument(
+        env, "Byte range must fit the unsigned 32-bit Tree-sitter offset domain");
+    return;
+  }
+#if defined(TSH_TREE_SITTER_HAS_QUERY_CURSOR_OPTIONS)
+  if (rejectQueryCursorReentry(env, (TSQueryCursor *) cursor)) return;
+#endif
+  ts_query_cursor_set_byte_range(
+      (TSQueryCursor *) cursor,
+      static_cast<uint32_t>(start),
+      static_cast<uint32_t>(end));
 }
 
 static void TSQueryCursor_setPointRange(JNIEnv *env,
@@ -303,6 +384,12 @@ void TSQueryCursor_Native__SetJniMethods(JNINativeMethod *methods, int count) {
   SET_JNI_METHOD(methods, TSQueryCursor_Native_exec, TSQueryCursor_exec);
   SET_JNI_METHOD(methods, TSQueryCursor_Native_execWithOptions,
                  TSQueryCursor_execWithOptions);
+  SET_JNI_METHOD(methods, TSQueryCursor_Native_setStepLimit,
+                 TSQueryCursor_setStepLimit);
+  SET_JNI_METHOD(methods, TSQueryCursor_Native_getStepsUsed,
+                 TSQueryCursor_getStepsUsed);
+  SET_JNI_METHOD(methods, TSQueryCursor_Native_didExceedStepLimit,
+                 TSQueryCursor_didExceedStepLimit);
   SET_JNI_METHOD(methods, TSQueryCursor_Native_exceededMatchLimit,
                  TSQueryCursor_exceededMatchLimit);
   SET_JNI_METHOD(methods, TSQueryCursor_Native_setMatchLimit,
@@ -310,6 +397,7 @@ void TSQueryCursor_Native__SetJniMethods(JNINativeMethod *methods, int count) {
   SET_JNI_METHOD(methods, TSQueryCursor_Native_getMatchLimit,
                  TSQueryCursor_getMatchLimit);
   SET_JNI_METHOD(methods, TSQueryCursor_Native_setByteRange, TSQueryCursor_setByteRange);
+  SET_JNI_METHOD(methods, TSQueryCursor_Native_setByteRangeLong, TSQueryCursor_setByteRangeLong);
   SET_JNI_METHOD(methods, TSQueryCursor_Native_setPointRange,
                  TSQueryCursor_setPointRange);
   SET_JNI_METHOD(methods, TSQueryCursor_Native_nextMatch, TSQueryCursor_nextMatch);

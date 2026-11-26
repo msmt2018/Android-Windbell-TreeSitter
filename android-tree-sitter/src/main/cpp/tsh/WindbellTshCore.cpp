@@ -5,6 +5,7 @@
 
 #include "WindbellTshCore.h"
 #include <algorithm>
+#include <cctype>
 #include <atomic>
 #include <cstring>
 #include <array>
@@ -24,13 +25,12 @@ namespace windbell::tsh {
 namespace {
 
 // ATS node names may resolve to Tree-sitter supertypes (for example,
-// Java's "expression"). Parsed nodes carry their concrete subtype symbol,
-// so exact symbol equality is insufficient for those selectors.
+// Java's "expression"). Grammar compilation stores the transitive subtype
+// closure in reverse form so every runtime selector check is O(1) average.
 static bool tshAstSymbolMatchesNode(
-    const TSLanguage* language,
+    const TshGrammar& grammar,
     TSNode node,
-    TSSymbol selector_symbol,
-    uint32_t depth = 0
+    TSSymbol selector_symbol
 ) noexcept {
     if (selector_symbol == 0 || ts_node_is_null(node)) return false;
     const TSSymbol visible_symbol = ts_node_symbol(node);
@@ -38,30 +38,23 @@ static bool tshAstSymbolMatchesNode(
     if (selector_symbol == visible_symbol || selector_symbol == grammar_symbol) {
         return true;
     }
-    // Supertype relations can be nested (for example expression ->
-    // primary_expression -> _literal -> decimal_integer_literal). Resolve the
-    // transitive closure rather than assuming a single subtype level.
-    constexpr uint32_t kMaxSupertypeDepth = 64;
-    if (!language || depth >= kMaxSupertypeDepth) return false;
-    uint32_t subtype_count = 0;
-    const TSSymbol* subtypes =
-        ts_language_subtypes(language, selector_symbol, &subtype_count);
-    for (uint32_t i = 0; subtypes && i < subtype_count; ++i) {
-        if (tshAstSymbolMatchesNode(language, node, subtypes[i], depth + 1)) {
-            return true;
-        }
-    }
-    return false;
+    const auto has_selector = [&](TSSymbol concrete_symbol) {
+        const auto found =
+            grammar.ast_supertype_selectors_by_node_symbol.find(concrete_symbol);
+        return found != grammar.ast_supertype_selectors_by_node_symbol.end() &&
+            std::binary_search(found->second.begin(), found->second.end(), selector_symbol);
+    };
+    return has_selector(visible_symbol) || has_selector(grammar_symbol);
 }
 
 static bool tshAstNodeMatchesSelector(
-    const TSLanguage* language,
+    const TshGrammar& grammar,
     TSNode node,
     TSSymbol selector_symbol,
     const std::string& selector_type
 ) noexcept {
     if (ts_node_is_null(node)) return false;
-    if (tshAstSymbolMatchesNode(language, node, selector_symbol)) return true;
+    if (tshAstSymbolMatchesNode(grammar, node, selector_symbol)) return true;
 
     if (!selector_type.empty()) {
         const char* visible_type = ts_node_type(node);
@@ -73,7 +66,6 @@ static bool tshAstNodeMatchesSelector(
     }
     return false;
 }
-
 
 } // namespace
 
@@ -274,7 +266,9 @@ static bool tshSourceMatchesUtf8Literal(
     uint8_t mode // 0=equals, 1=prefix, 2=suffix
 ) {
     if (start_byte > end_byte || end_byte > source.sizeBytes() ||
-        ((start_byte | end_byte) & 1u)) return false;
+        ((start_byte | end_byte) & 1u)) {
+        throw std::runtime_error("TSH AST literal predicate received an invalid TextSource range");
+    }
     if (mode == 0 && end_byte - start_byte > expected.size() * 2ULL) return false;
     if (mode == 1 && start_byte == end_byte) return expected.empty();
     if (mode == 2 && start_byte == end_byte) return expected.empty();
@@ -323,13 +317,17 @@ static bool tshSourceMatchesUtf8Literal(
         const uint32_t request = static_cast<uint32_t>(std::min<uint64_t>(
             windbell::largefile::kTreeSitterInputChunkBytes, end_byte - offset));
         if (!source.read(offset, request, &chunk) || !chunk.data || chunk.size == 0 ||
-            (chunk.size & 1u) || chunk.size > end_byte - offset) return false;
+            (chunk.size & 1u) || chunk.size > end_byte - offset) {
+            throw std::runtime_error("TSH AST literal predicate could not read a valid TextSource chunk");
+        }
         for (uint32_t i = 0; i < chunk.size; i += 2) {
             const auto* bytes = reinterpret_cast<const uint8_t*>(chunk.data);
             const uint16_t unit = static_cast<uint16_t>(bytes[i]) |
                 (static_cast<uint16_t>(bytes[i + 1]) << 8);
             if (pending_high) {
-                if (unit < 0xDC00 || unit > 0xDFFF) return false;
+                if (unit < 0xDC00 || unit > 0xDFFF) {
+                    throw std::runtime_error("TSH AST literal predicate encountered malformed UTF-16");
+                }
                 const uint32_t cp = 0x10000u +
                     ((static_cast<uint32_t>(pending_high) - 0xD800u) << 10) +
                     (static_cast<uint32_t>(unit) - 0xDC00u);
@@ -338,19 +336,21 @@ static bool tshSourceMatchesUtf8Literal(
             } else if (unit >= 0xD800 && unit <= 0xDBFF) {
                 pending_high = unit;
             } else if (unit >= 0xDC00 && unit <= 0xDFFF) {
-                return false;
+                throw std::runtime_error("TSH AST literal predicate encountered an unpaired UTF-16 low surrogate");
             } else if (!emit(unit)) return false;
             if (mode == 1 && prefix_complete) return true;
         }
         offset += chunk.size;
     }
-    if (pending_high) return false;
+    if (pending_high) {
+        throw std::runtime_error("TSH AST literal predicate encountered an unpaired UTF-16 high surrogate");
+    }
     if (mode == 0) return output_index == expected.size();
     if (mode == 1) return prefix_complete;
     return tail == expected;
 }
 
-static bool tshUtf8ToUtf16(const std::string& input, std::vector<UChar>& output) {
+static bool tshUtf8ToUtf16(std::string_view input, std::vector<UChar>& output) {
     output.clear();
     for (size_t i = 0; i < input.size();) {
         const uint8_t first = static_cast<uint8_t>(input[i++]);
@@ -384,8 +384,35 @@ static bool tshUtf8ToUtf16(const std::string& input, std::vector<UChar>& output)
     return true;
 }
 
+struct TshRegexExecutionWorkspace {
+    std::vector<UChar> window;
+    OnigRegion* region = nullptr;
+
+    TshRegexExecutionWorkspace() = default;
+    TshRegexExecutionWorkspace(const TshRegexExecutionWorkspace&) = delete;
+    TshRegexExecutionWorkspace& operator=(const TshRegexExecutionWorkspace&) = delete;
+
+    ~TshRegexExecutionWorkspace() {
+        if (region) onig_region_free(region, 1);
+    }
+
+    bool ensureRegion() noexcept {
+        if (region) return true;
+        region = onig_region_new();
+        return region != nullptr;
+    }
+
+    void resetRegion() noexcept {
+        if (region) onig_region_clear(region);
+    }
+};
+
 static int tshPredicateRegexMatchesContiguous(
     regex_t* regex, const UChar* begin, const UChar* end
+);
+static int tshPredicateRegexMatchesContiguous(
+    regex_t* regex, const UChar* begin, const UChar* end,
+    TshRegexExecutionWorkspace& workspace
 );
 
 static bool tshSourceRegexMatchesBounded(
@@ -393,17 +420,29 @@ static bool tshSourceRegexMatchesBounded(
     uint64_t start_byte,
     uint64_t end_byte,
     regex_t* regex,
-    uint64_t maximum_match_bytes
+    uint64_t maximum_match_bytes,
+    TshRegexExecutionWorkspace& workspace
 ) {
-    if (!regex || start_byte > end_byte || (start_byte & 1u) ||
-        (end_byte & 1u) || maximum_match_bytes == 0) return false;
+    if (!regex || start_byte > end_byte || end_byte > source.sizeBytes() ||
+        (start_byte & 1u) || (end_byte & 1u) || maximum_match_bytes == 0) {
+        throw std::runtime_error("TSH bounded AST Regex received an invalid TextSource range");
+    }
     static const UChar empty_input = 0;
     if (start_byte == end_byte) {
-        return tshPredicateRegexMatchesContiguous(regex, &empty_input, &empty_input);
+        const int matched = tshPredicateRegexMatchesContiguous(
+            regex, &empty_input, &empty_input, workspace);
+        if (matched < 0) {
+            throw std::runtime_error("TSH bounded AST Regex failed on an empty input");
+        }
+        return matched == 1;
     }
     constexpr uint64_t kCoreWindowBytes = 256u * 1024u;
     const uint64_t overlap = maximum_match_bytes >= 2u
         ? maximum_match_bytes - 2u : 0u;
+    // Share one lazy scratch workspace across AST and Query Regex predicates
+    // for the complete highlight pass, not merely across windows of one node.
+    if (!workspace.ensureRegion()) throw std::bad_alloc();
+
     uint64_t core_start = start_byte;
     while (core_start < end_byte) {
         const uint64_t remaining = end_byte - core_start;
@@ -414,36 +453,37 @@ static bool tshSourceRegexMatchesBounded(
             ? end_byte : core_end + overlap;
         const uint64_t window_bytes = window_end - core_start;
         if (window_bytes == 0 || (window_bytes & 1u) != 0 ||
-            window_bytes > static_cast<uint64_t>(std::numeric_limits<size_t>::max()))
-            return false;
-        std::vector<UChar> window;
-        // Oniguruma's UChar is an 8-bit storage byte in this UTF-16LE
-        // adapter. The window length is therefore already the element count;
-        // do not divide by sizeof(UChar) or reinterpret it as native uint16_t.
-        try { window.resize(static_cast<size_t>(window_bytes)); }
-        catch (...) { return false; }
+            window_bytes > static_cast<uint64_t>(std::numeric_limits<size_t>::max())) {
+            throw std::runtime_error("TSH bounded AST Regex window has an invalid size");
+        }
+        try { workspace.window.resize(static_cast<size_t>(window_bytes)); }
+        catch (const std::bad_alloc&) { throw; }
         if (!windbell::largefile::copyTextRange(
-                source, core_start, window_bytes, window.data())) return false;
-        OnigRegion* region = onig_region_new();
-        if (!region) return false;
-        const UChar* begin = window.data();
-        const UChar* end = begin + window.size();
+                source, core_start, window_bytes, workspace.window.data())) {
+            throw std::runtime_error("TSH bounded AST Regex could not read its TextSource window");
+        }
+        const UChar* begin = workspace.window.data();
+        const UChar* end = begin + workspace.window.size();
         const UChar* current = begin;
-        bool matched = false;
+        workspace.resetRegion();
         while (current < end) {
             const int hit = onig_search(
-                regex, begin, end, current, end, region, ONIG_OPTION_NONE);
-            if (hit < 0) break;
-            if (region->beg[0] < 0 || region->end[0] < region->beg[0]) break;
-            const uint64_t local_start = static_cast<uint64_t>(region->beg[0]);
-            if (local_start < core_end - core_start) {
-                matched = true;
-                break;
+                regex, begin, end, current, end, workspace.region, ONIG_OPTION_NONE);
+            if (hit == ONIG_MISMATCH) break;
+            if (hit < 0) {
+                throw std::runtime_error(
+                    "Oniguruma bounded AST Regex execution failed with status " +
+                    std::to_string(hit));
             }
+            if (workspace.region->beg[0] < 0 ||
+                workspace.region->end[0] < workspace.region->beg[0]) {
+                throw std::runtime_error(
+                    "Oniguruma bounded AST Regex returned an invalid match range");
+            }
+            const uint64_t local_start = static_cast<uint64_t>(workspace.region->beg[0]);
+            if (local_start < core_end - core_start) return true;
             break;
         }
-        onig_region_free(region, 1);
-        if (matched) return true;
         core_start = core_end;
     }
     return false;
@@ -635,20 +675,30 @@ static bool tshPredicateNodeHasType(const TSNode& node,
     return false;
 }
 
+
+
 static int tshPredicateRegexMatchesContiguous(
-    regex_t* regex, const UChar* begin, const UChar* end
+    regex_t* regex, const UChar* begin, const UChar* end,
+    TshRegexExecutionWorkspace& workspace
 ) {
     if (!regex) return -1;
     static const UChar empty_input = 0;
     if (!begin && !end) begin = end = &empty_input;
     else if (!begin || !end || end < begin) return -1;
     if (begin == end) begin = end = &empty_input;
-    OnigRegion* region = onig_region_new();
-    if (!region) return -1;
-    const int result = onig_search(regex, begin, end, begin, end, region, ONIG_OPTION_NONE);
-    onig_region_free(region, 1);
+    if (!workspace.ensureRegion()) return -1;
+    workspace.resetRegion();
+    const int result = onig_search(
+        regex, begin, end, begin, end, workspace.region, ONIG_OPTION_NONE);
     if (result >= 0) return 1;
     return result == ONIG_MISMATCH ? 0 : -1;
+}
+
+static int tshPredicateRegexMatchesContiguous(
+    regex_t* regex, const UChar* begin, const UChar* end
+) {
+    TshRegexExecutionWorkspace workspace;
+    return tshPredicateRegexMatchesContiguous(regex, begin, end, workspace);
 }
 
 static int tshPredicateRegexMatchesTextSourceBounded(
@@ -656,19 +706,24 @@ static int tshPredicateRegexMatchesTextSourceBounded(
     uint64_t start_byte,
     uint64_t end_byte,
     regex_t* regex,
-    uint64_t maximum_match_bytes
+    uint64_t maximum_match_bytes,
+    TshRegexExecutionWorkspace& workspace
 ) {
     if (!regex || start_byte > end_byte || (start_byte & 1u) ||
         (end_byte & 1u) || end_byte > source.sizeBytes() ||
-        maximum_match_bytes == 0)
+        maximum_match_bytes == 0 || maximum_match_bytes > 8u * 1024u * 1024u)
         return -1;
     if (start_byte == end_byte) {
         static const UChar empty_input = 0;
-        return tshPredicateRegexMatchesContiguous(regex, &empty_input, &empty_input);
+        return tshPredicateRegexMatchesContiguous(regex, &empty_input, &empty_input, workspace);
     }
     constexpr uint64_t kCoreWindowBytes = 256u * 1024u;
     const uint64_t overlap = maximum_match_bytes >= 2u
         ? maximum_match_bytes - 2u : 0u;
+    // The workspace belongs to one native Query-cursor execution. Reuse its
+    // bounded input capacity and Oniguruma region across captures and windows.
+    if (!workspace.ensureRegion()) return -1;
+
     uint64_t core_start = start_byte;
     while (core_start < end_byte) {
         const uint64_t remaining = end_byte - core_start;
@@ -681,25 +736,25 @@ static int tshPredicateRegexMatchesTextSourceBounded(
         if (window_bytes == 0 || (window_bytes & 1u) != 0 ||
             window_bytes > static_cast<uint64_t>(std::numeric_limits<size_t>::max()))
             return -1;
-        std::vector<UChar> window;
-        try { window.resize(static_cast<size_t>(window_bytes)); }
+        try { workspace.window.resize(static_cast<size_t>(window_bytes)); }
         catch (const std::bad_alloc&) { return -1; }
         if (!windbell::largefile::copyTextRange(
-                source, core_start, window_bytes, window.data())) return -1;
-        const UChar* begin = window.data();
-        const UChar* end = begin + window.size();
-        OnigRegion* region = onig_region_new();
-        if (!region) return -1;
-        const int hit = onig_search(regex, begin, end, begin, end, region, ONIG_OPTION_NONE);
+                source, core_start, window_bytes, workspace.window.data())) return -1;
+        const UChar* begin = workspace.window.data();
+        const UChar* end = begin + workspace.window.size();
+        workspace.resetRegion();
+        const int hit = onig_search(
+            regex, begin, end, begin, end, workspace.region, ONIG_OPTION_NONE);
         bool found_in_core = false;
         bool failed = false;
         if (hit >= 0) {
-            if (region->beg[0] < 0 || region->end[0] < region->beg[0]) failed = true;
-            else found_in_core = static_cast<uint64_t>(region->beg[0]) < core_end - core_start;
+            if (workspace.region->beg[0] < 0 ||
+                workspace.region->end[0] < workspace.region->beg[0]) failed = true;
+            else found_in_core =
+                static_cast<uint64_t>(workspace.region->beg[0]) < core_end - core_start;
         } else if (hit != ONIG_MISMATCH) {
             failed = true;
         }
-        onig_region_free(region, 1);
         if (failed) return -1;
         if (found_in_core) return 1;
         core_start = core_end;
@@ -711,30 +766,32 @@ enum class TshPredicateResult : uint8_t { ACCEPT, REJECT, ERROR };
 
 static TshPredicateResult tshEvaluateNativePredicates(const NativeQueryProgram& program,
     const TSQueryMatch& match, const UChar* utf16_source,
-    const windbell::largefile::TextSource* text_source, uint32_t source_bytes) {
-    const TSQuery* query = program.query;
-    if (match.pattern_index >= program.predicates_by_pattern.size()) return TshPredicateResult::REJECT;
+    const windbell::largefile::TextSource* text_source, uint32_t source_bytes,
+    TshRegexExecutionWorkspace& regex_workspace) {
+    if (match.pattern_index >= program.predicates_by_pattern.size() ||
+        match.pattern_index >= program.compiled_predicates_by_pattern.size())
+        return TshPredicateResult::REJECT;
     const auto& predicates = program.predicates_by_pattern[match.pattern_index];
+    const auto& compiled_predicates = program.compiled_predicates_by_pattern[match.pattern_index];
     if (predicates.empty()) return TshPredicateResult::ACCEPT;
+    if (compiled_predicates.size() != predicates.size()) return TshPredicateResult::ERROR;
     uint32_t predicate_index = 0;
     for (const auto& predicate : predicates) {
+        // Tree-sitter predicate metadata terminates each expression with a
+        // Done step. Treat it as a delimiter, not as an operand; otherwise
+        // every custom predicate is rejected before its evaluator runs.
+        const size_t predicate_size = predicate.size() -
+            (!predicate.empty() && predicate.back().type == TSQueryPredicateStepTypeDone ? 1u : 0u);
         if (predicate.empty() || predicate[0].type != TSQueryPredicateStepTypeString) return TshPredicateResult::REJECT;
 
-        uint32_t op_length = 0;
-        const char* op_text = ts_query_string_value_for_id(query, predicate[0].value_id, &op_length);
-        if (!op_text || predicate.size() < 3 ||
-            predicate[1].type != TSQueryPredicateStepTypeCapture) return TshPredicateResult::REJECT;
-        std::string op;
-        try {
-            op.assign(op_text, op_length);
-        } catch (const std::bad_alloc&) {
-            return TshPredicateResult::ERROR;
-        }
-        if (!op.empty() && op.front() == '#') op.erase(op.begin());
-
-        std::vector<std::vector<UChar>> expected;
-        std::vector<std::string> expected_types;
-        std::vector<std::vector<UChar>> actual;
+        if (predicate_size < 3 ||
+            predicate[1].type != TSQueryPredicateStepTypeCapture ||
+            predicate_index >= compiled_predicates.size())
+            return TshPredicateResult::REJECT;
+        const auto& operands = compiled_predicates[predicate_index];
+        const std::string_view op(operands.operation);
+        const auto& expected = operands.expected_utf16;
+        const auto& expected_types = operands.expected_types;
         const bool contains_operator = op == "contains?" || op == "not-contains?" ||
             op == "any-contains?" || op == "any-not-contains?";
         const bool ancestry_operator = op == "has-ancestor?" || op == "not-has-ancestor?" ||
@@ -744,33 +801,11 @@ static TshPredicateResult tshEvaluateNativePredicates(const NativeQueryProgram& 
         const bool kind_operator = op == "kind-eq?" || op == "not-kind-eq?" ||
             op == "any-kind-eq?" || op == "any-not-kind-eq?";
         const bool structural_operator = ancestry_operator || parent_operator || kind_operator;
-        try {
-            for (size_t i = 2; i < predicate.size(); ++i) {
-                if (predicate[i].type == TSQueryPredicateStepTypeCapture &&
-                    (op == "eq?" || op == "not-eq?" ||
-                     op == "any-eq?" || op == "any-not-eq?")) continue;
-                if (predicate[i].type != TSQueryPredicateStepTypeString)
-                    return TshPredicateResult::REJECT;
-                uint32_t length = 0;
-                const char* value = ts_query_string_value_for_id(query, predicate[i].value_id, &length);
-                if (!value) return TshPredicateResult::REJECT;
-                if (structural_operator) {
-                    expected_types.emplace_back(value, length);
-                } else {
-                    std::vector<UChar> converted;
-                    if (!tshUtf8ToUtf16(std::string(value, length), converted))
-                        return TshPredicateResult::REJECT;
-                    expected.push_back(std::move(converted));
-                }
-            }
-        } catch (const std::bad_alloc&) {
-            return TshPredicateResult::ERROR;
-        }
 
         bool accepted = false;
         const bool equality_predicate = op == "eq?" || op == "not-eq?" ||
             op == "any-eq?" || op == "any-not-eq?";
-        if (equality_predicate && predicate.size() == 3 &&
+        if (equality_predicate && predicate_size == 3 &&
             predicate[2].type == TSQueryPredicateStepTypeCapture) {
             const bool any = op == "any-eq?" || op == "any-not-eq?";
             const bool positive = op == "eq?" || op == "any-eq?";
@@ -831,6 +866,18 @@ static TshPredicateResult tshEvaluateNativePredicates(const NativeQueryProgram& 
             // even for any-* forms: eq? / any-eq? reject, while
             // not-eq? / any-not-eq? accept.
             accepted = !has_capture ? !positive : (any ? any_satisfied : all_satisfied);
+            if (op == "any-not-eq?" || op == "any-eq?") {
+                static std::atomic<uint32_t> missing_capture_debug_count{0};
+                if (!has_capture && missing_capture_debug_count.fetch_add(1, std::memory_order_relaxed) < 16u) {
+                    LOGD("WindbellTSH", "Native equality predicate: op=%.*s pattern=%u predicate=%u capture_id=%u match_captures=%u accepted=%d",
+                        static_cast<int>(op.size()), op.data(), match.pattern_index,
+                        predicate_index, predicate[1].value_id, match.capture_count,
+                        accepted ? 1 : 0);
+                    for (uint32_t capture = 0; capture < match.capture_count; ++capture) {
+                        LOGD("WindbellTSH", "  capture[%u].index=%u", capture, match.captures[capture].index);
+                    }
+                }
+            }
         } else if (op == "any-of?" || op == "not-any-of?") {
             if (expected.empty()) return TshPredicateResult::REJECT;
             bool all_in_set = true;
@@ -914,7 +961,40 @@ static TshPredicateResult tshEvaluateNativePredicates(const NativeQueryProgram& 
             bool has_capture = false;
             bool all_match = true;
             bool all_not_match = true;
-            if (text_source &&
+            // File-backed TextSource implementations may already expose a stable
+            // contiguous mapping. Use it directly before considering window copies
+            // or the bounded fallback materializer; this removes the 8 MiB temporary
+            // capture ceiling for mmap/contiguous sources without changing regex
+            // semantics or allocating another document-sized buffer.
+            const char* contiguous_source_data = nullptr;
+            uint64_t contiguous_source_bytes = 0;
+            const bool has_contiguous_source = text_source &&
+                text_source->contiguousData(&contiguous_source_data, &contiguous_source_bytes) &&
+                contiguous_source_bytes >= source_bytes &&
+                (contiguous_source_data != nullptr || source_bytes == 0);
+            // Keep capture-text scratch local to this uncommon fallback. The
+            // contiguous and bounded-window fast paths never materialize it.
+            std::vector<std::vector<UChar>> actual;
+            if (has_contiguous_source) {
+                for (uint32_t i = 0; i < match.capture_count; ++i) {
+                    if (match.captures[i].index != predicate[1].value_id) continue;
+                    has_capture = true;
+                    const uint32_t start_byte = ts_node_start_byte(match.captures[i].node);
+                    const uint32_t end_byte = ts_node_end_byte(match.captures[i].node);
+                    if (start_byte > end_byte || end_byte > source_bytes ||
+                        (start_byte & 1u) || (end_byte & 1u))
+                        return TshPredicateResult::ERROR;
+                    const UChar* begin = start_byte == end_byte ? nullptr :
+                        reinterpret_cast<const UChar*>(contiguous_source_data + start_byte);
+                    const UChar* end = start_byte == end_byte ? nullptr :
+                        reinterpret_cast<const UChar*>(contiguous_source_data + end_byte);
+                    const int matched = tshPredicateRegexMatchesContiguous(
+                        compiled->regex, begin, end, regex_workspace);
+                    if (matched < 0) return TshPredicateResult::ERROR;
+                    all_match = all_match && (matched == 1);
+                    all_not_match = all_not_match && (matched == 0);
+                }
+            } else if (text_source &&
                 compiled->execution_capability == RegexExecutionCapability::BOUNDED_WINDOW &&
                 compiled->maximum_match_bytes > 0) {
                 for (uint32_t i = 0; i < match.capture_count; ++i) {
@@ -927,7 +1007,7 @@ static TshPredicateResult tshEvaluateNativePredicates(const NativeQueryProgram& 
                         return TshPredicateResult::ERROR;
                     const int matched = tshPredicateRegexMatchesTextSourceBounded(
                         *text_source, start_byte, end_byte, compiled->regex,
-                        compiled->maximum_match_bytes);
+                        compiled->maximum_match_bytes, regex_workspace);
                     if (matched < 0) return TshPredicateResult::ERROR;
                     all_match = all_match && (matched == 1);
                     all_not_match = all_not_match && (matched == 0);
@@ -943,7 +1023,7 @@ static TshPredicateResult tshEvaluateNativePredicates(const NativeQueryProgram& 
                         return TshPredicateResult::ERROR;
                     const int matched = tshPredicateRegexMatchesContiguous(
                         compiled->regex, utf16_source + start_byte,
-                        utf16_source + end_byte);
+                        utf16_source + end_byte, regex_workspace);
                     if (matched < 0) return TshPredicateResult::ERROR;
                     all_match = all_match && (matched == 1);
                     all_not_match = all_not_match && (matched == 0);
@@ -957,7 +1037,7 @@ static TshPredicateResult tshEvaluateNativePredicates(const NativeQueryProgram& 
                     const UChar* begin = value.empty() ? nullptr : value.data();
                     const UChar* end = value.empty() ? nullptr : value.data() + value.size();
                     const int matched = tshPredicateRegexMatchesContiguous(
-                        compiled->regex, begin, end);
+                        compiled->regex, begin, end, regex_workspace);
                     if (matched < 0) return TshPredicateResult::ERROR;
                     all_match = all_match && (matched == 1);
                     all_not_match = all_not_match && (matched == 0);
@@ -1004,14 +1084,25 @@ static void appendRegexCaptureSpans(
         output.push_back(span);
     };
     for (const auto& entry : numeric_styles) append(entry.first, entry.second);
+    // Capture names are usually short ASCII identifiers. Encode those into a
+    // stack buffer instead of allocating a UTF-16 vector for every match.
+    std::array<uint16_t, 128> short_name_buffer{};
+    std::vector<uint16_t> long_name_buffer;
     for (const auto& entry : named_styles) {
-        std::vector<uint16_t> encoded_name(entry.first.begin(), entry.first.end());
+        const size_t name_length = entry.first.size();
+        uint16_t* encoded_name = short_name_buffer.data();
+        if (name_length <= short_name_buffer.size()) {
+            for (size_t i = 0; i < name_length; ++i) {
+                encoded_name[i] = static_cast<unsigned char>(entry.first[i]);
+            }
+        } else {
+            long_name_buffer.assign(entry.first.begin(), entry.first.end());
+            encoded_name = long_name_buffer.data();
+        }
+        const UChar* name_begin = reinterpret_cast<const UChar*>(encoded_name);
+        const UChar* name_end = name_begin + name_length * sizeof(uint16_t);
         const int group = onig_name_to_backref_number(
-            regex,
-            reinterpret_cast<const UChar*>(encoded_name.data()),
-            reinterpret_cast<const UChar*>(encoded_name.data() + encoded_name.size()),
-            region
-        );
+            regex, name_begin, name_end, region);
         append(group, entry.second);
     }
 }
@@ -1088,21 +1179,52 @@ WindbellEngine::~WindbellEngine() {
     onig_end();
 }
 
+namespace {
+static std::string normalizeTshExtension(std::string value) {
+    while (!value.empty() && value.front() == '.') value.erase(value.begin());
+    std::transform(value.begin(), value.end(), value.begin(),
+        [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+    return value;
+}
+} // namespace
+
 bool WindbellEngine::registerGrammar(const std::string& extension, std::shared_ptr<TshGrammar> grammar) {
     if (!grammar) return false;
+    const std::string key = normalizeTshExtension(extension);
+    if (key.empty()) return false;
     static std::atomic<uint64_t> next_revision{1};
     uint64_t revision = next_revision.fetch_add(1, std::memory_order_relaxed);
     if (revision == 0) revision = next_revision.fetch_add(1, std::memory_order_relaxed);
     grammar->revision = revision;
     std::lock_guard<std::mutex> lock(registry_lock_);
-    grammar_registry_[extension] = grammar;
+    grammar_registry_[key] = grammar;
     return true;
 }
 
 std::shared_ptr<const TshGrammar> WindbellEngine::getGrammarByExtension(const std::string& extension) {
+    const std::string key = normalizeTshExtension(extension);
+    if (key.empty()) return nullptr;
     std::lock_guard<std::mutex> lock(registry_lock_);
-    auto it = grammar_registry_.find(extension);
-    return (it != grammar_registry_.end()) ? it->second : nullptr;
+    auto exact = grammar_registry_.find(key);
+    if (exact != grammar_registry_.end()) return exact->second;
+
+    // One compiled .tsh grammar can serve every declared extension. Resolve
+    // those aliases from the immutable grammar metadata instead of compiling
+    // the same DSL repeatedly under .java, .kt, .kts, etc.
+    std::shared_ptr<const TshGrammar> match;
+    for (const auto& entry : grammar_registry_) {
+        const auto& grammar = entry.second;
+        if (!grammar) continue;
+        const bool declares_extension = std::any_of(
+            grammar->file_extensions.begin(), grammar->file_extensions.end(),
+            [&](const std::string& declared) {
+                return normalizeTshExtension(declared) == key;
+            });
+        if (!declares_extension) continue;
+        if (match && match.get() != grammar.get()) return nullptr;
+        match = grammar;
+    }
+    return match;
 }
 
 void WindbellEngine::matchBlockRecursive(
@@ -1115,38 +1237,243 @@ void WindbellEngine::matchBlockRecursive(
     uint32_t output_start_byte,
     uint32_t output_end_byte,
     std::vector<HighlightSpan>& out_spans,
-    uint32_t* regex_match_count
+    uint32_t* regex_match_count,
+    std::vector<RegexBlockCheckpoint>* block_checkpoints,
+    uint64_t grammar_revision,
+    uint64_t source_version,
+    uint64_t partition_version,
+    std::vector<HighlightDependencyRange>* dependency_ranges
 ) {
-    OnigRegion* start_region = onig_region_new();
-    OnigRegion* end_region = onig_region_new();
-    if (!start_region || !end_region) {
-        if (start_region) onig_region_free(start_region, 1);
-        if (end_region) onig_region_free(end_region, 1);
-        return;
-    }
-    // Recover an active block at the viewport boundary with a reverse
-    // delimiter search. This avoids scanning the whole document prefix on each
-    // render while retaining the original block state.
-    const UChar* curr = range_start;
-    if (search_floor < range_start) {
-        OnigRegion* previous_start = onig_region_new();
-        OnigRegion* previous_end = onig_region_new();
-        if (previous_start && previous_end) {
-            const int start_hit = onig_search(
-                rule.onig_start, text_start, text_end,
-                range_start, search_floor, previous_start, ONIG_OPTION_NONE);
-            const int end_hit = onig_search(
-                rule.onig_end, text_start, text_end,
-                range_start, search_floor, previous_end, ONIG_OPTION_NONE);
-            if (start_hit >= 0 && previous_start->beg[0] >= 0 &&
-                (end_hit < 0 || previous_end->beg[0] < 0 ||
-                 previous_start->beg[0] > previous_end->beg[0])) {
-                curr = text_start + previous_start->beg[0];
+    struct RegionOwner {
+        OnigRegion* value;
+        ~RegionOwner() { if (value) onig_region_free(value, 1); }
+    } start_owner{onig_region_new()}, end_owner{onig_region_new()};
+    if (!start_owner.value || !end_owner.value) throw std::bad_alloc();
+    OnigRegion* start_region = start_owner.value;
+    OnigRegion* end_region = end_owner.value;
+
+    constexpr uint32_t kNoActiveBlock = UINT32_MAX;
+    const uint32_t viewport_start_byte =
+        static_cast<uint32_t>(range_start - text_start);
+    uint32_t active_start_byte = kNoActiveBlock;
+    uint32_t checkpoint_byte_offset = viewport_start_byte;
+    uint32_t dependency_start_byte =
+        static_cast<uint32_t>(search_floor - text_start);
+    bool recovered_from_checkpoint = false;
+    bool checkpoint_safe = rule.block_delimiters_bounded;
+
+    // Top-level BLOCK rules retain the state at prior viewport boundaries.
+    // When the viewport advances, scan only the newly crossed interval for
+    // delimiter transitions instead of reverse-searching back to document byte 0.
+    if (block_checkpoints && search_floor == text_start &&
+        rule.block_delimiters_bounded) {
+        const RegexBlockCheckpoint* nearest = nullptr;
+        for (const auto& checkpoint : *block_checkpoints) {
+            if (checkpoint.declaration_order == rule.declaration_order &&
+                checkpoint.grammar_revision == grammar_revision &&
+                checkpoint.source_version == source_version &&
+                checkpoint.partition_version == partition_version &&
+                checkpoint.byte_offset <= viewport_start_byte &&
+                (!nearest || checkpoint.byte_offset > nearest->byte_offset)) {
+                nearest = &checkpoint;
             }
         }
-        if (previous_start) onig_region_free(previous_start, 1);
-        if (previous_end) onig_region_free(previous_end, 1);
+        if (nearest) {
+            active_start_byte = nearest->active_start_byte;
+            dependency_start_byte = nearest->byte_offset;
+            const UChar* scan = text_start + nearest->byte_offset;
+            while (scan < range_start) {
+                const int start_hit = onig_search(
+                    rule.onig_start, text_start, text_end,
+                    scan, range_start, start_region, ONIG_OPTION_NONE);
+                const int end_hit = onig_search(
+                    rule.onig_end, text_start, text_end,
+                    scan, range_start, end_region, ONIG_OPTION_NONE);
+                if (start_hit < 0 && start_hit != ONIG_MISMATCH) {
+                    throw std::runtime_error("Oniguruma block checkpoint start scan failed with status " +
+                        std::to_string(start_hit));
+                }
+                if (end_hit < 0 && end_hit != ONIG_MISMATCH) {
+                    throw std::runtime_error("Oniguruma block checkpoint end scan failed with status " +
+                        std::to_string(end_hit));
+                }
+                if (start_hit == ONIG_MISMATCH && end_hit == ONIG_MISMATCH) break;
+                if (start_hit >= 0 &&
+                    (start_region->beg[0] < 0 || start_region->end[0] < start_region->beg[0])) {
+                    throw std::runtime_error("Oniguruma returned an invalid checkpoint block start");
+                }
+                if (end_hit >= 0 &&
+                    (end_region->beg[0] < 0 || end_region->end[0] < end_region->beg[0])) {
+                    throw std::runtime_error("Oniguruma returned an invalid checkpoint block end");
+                }
+
+                const bool start_precedes_end = start_hit >= 0 &&
+                    (end_hit == ONIG_MISMATCH ||
+                     start_region->beg[0] < end_region->beg[0]);
+                const int64_t event_start = start_precedes_end
+                    ? start_region->beg[0] : end_region->beg[0];
+                const int64_t event_end = start_precedes_end
+                    ? start_region->end[0] : end_region->end[0];
+                // A delimiter beginning at or crossing the viewport boundary
+                // belongs to the viewport execution, not the preceding state.
+                if (event_start >= viewport_start_byte ||
+                    event_end > viewport_start_byte) {
+                    // Keep the checkpoint before a delimiter that crosses the
+                    // boundary; the next viewport must see and finish that event.
+                    checkpoint_byte_offset = static_cast<uint32_t>(event_start);
+                    // The current viewport must also execute a start delimiter
+                    // whose first code unit lies before its boundary. Otherwise
+                    // the normal forward scan begins at range_start, misses the
+                    // opening delimiter entirely, and paints the rest of this
+                    // block as ordinary code until a later viewport is requested.
+                    if (start_precedes_end &&
+                        active_start_byte == kNoActiveBlock) {
+                        active_start_byte = static_cast<uint32_t>(event_start);
+                    }
+                    break;
+                }
+                if (start_precedes_end) {
+                    // Match the block executor: nested start delimiters do not
+                    // replace an already-open top-level block.
+                    if (active_start_byte == kNoActiveBlock) {
+                        active_start_byte = static_cast<uint32_t>(event_start);
+                    }
+                } else {
+                    active_start_byte = kNoActiveBlock;
+                }
+
+                const UChar* next = text_start + event_end;
+                if (next <= scan) next = advanceOneUtf16CodePoint(scan, text_end);
+                if (next <= scan || next > range_start) break;
+                scan = next;
+            }
+            recovered_from_checkpoint = true;
+        }
     }
+
+    // The first viewport (or a backward jump before all retained checkpoints)
+    // performs the authoritative reverse recovery once and seeds future viewports.
+    if (!recovered_from_checkpoint && search_floor < range_start) {
+        RegionOwner previous_start_owner{onig_region_new()};
+        RegionOwner previous_end_owner{onig_region_new()};
+        if (!previous_start_owner.value || !previous_end_owner.value) throw std::bad_alloc();
+        OnigRegion* previous_start = previous_start_owner.value;
+        OnigRegion* previous_end = previous_end_owner.value;
+        const int start_hit = onig_search(
+            rule.onig_start, text_start, text_end,
+            range_start, search_floor, previous_start, ONIG_OPTION_NONE);
+        const int end_hit = onig_search(
+            rule.onig_end, text_start, text_end,
+            range_start, search_floor, previous_end, ONIG_OPTION_NONE);
+        if (start_hit < 0 && start_hit != ONIG_MISMATCH) {
+            throw std::runtime_error("Oniguruma block start recovery failed with status " +
+                std::to_string(start_hit));
+        }
+        if (end_hit < 0 && end_hit != ONIG_MISMATCH) {
+            throw std::runtime_error("Oniguruma block end recovery failed with status " +
+                std::to_string(end_hit));
+        }
+        if (start_hit >= 0 &&
+            (previous_start->beg[0] < 0 || previous_start->end[0] < previous_start->beg[0])) {
+            throw std::runtime_error("Oniguruma returned an invalid recovered block start");
+        }
+        if (end_hit >= 0 &&
+            (previous_end->beg[0] < 0 || previous_end->end[0] < previous_end->beg[0])) {
+            throw std::runtime_error("Oniguruma returned an invalid recovered block end");
+        }
+        // Do not checkpoint a boundary that cuts through a delimiter. The next
+        // viewport can seed a safe checkpoint once the complete delimiter is
+        // behind its start offset.
+        if ((start_hit >= 0 && previous_start->end[0] >
+                static_cast<int64_t>(viewport_start_byte)) ||
+            (end_hit >= 0 && previous_end->end[0] >
+                static_cast<int64_t>(viewport_start_byte))) {
+            checkpoint_safe = false;
+        }
+        // A closing delimiter that overlaps the viewport start is still
+        // part of the block's emitted span (BLOCK styles include both
+        // delimiters). Keep the opening offset active so this viewport emits
+        // the clipped tail of the block, even when the closing delimiter is
+        // the most recent delimiter event.
+        const bool closing_delimiter_intersects_viewport =
+            end_hit >= 0 &&
+            previous_end->beg[0] <= static_cast<int64_t>(viewport_start_byte) &&
+            previous_end->end[0] > static_cast<int64_t>(viewport_start_byte);
+        if (start_hit >= 0 &&
+            (end_hit == ONIG_MISMATCH ||
+             previous_start->beg[0] > previous_end->beg[0] ||
+             closing_delimiter_intersects_viewport)) {
+            active_start_byte = static_cast<uint32_t>(previous_start->beg[0]);
+        }
+    }
+
+    if (block_checkpoints && search_floor == text_start && checkpoint_safe) {
+        try {
+            auto existing = std::find_if(
+                block_checkpoints->begin(), block_checkpoints->end(),
+                [&](const RegexBlockCheckpoint& checkpoint) {
+                    return checkpoint.declaration_order == rule.declaration_order &&
+                        checkpoint.byte_offset == checkpoint_byte_offset &&
+                        checkpoint.grammar_revision == grammar_revision &&
+                        checkpoint.source_version == source_version &&
+                        checkpoint.partition_version == partition_version;
+                });
+            const RegexBlockCheckpoint checkpoint{
+                rule.declaration_order, checkpoint_byte_offset, active_start_byte,
+                grammar_revision, source_version, partition_version
+            };
+            if (existing != block_checkpoints->end()) {
+                *existing = checkpoint;
+            } else {
+                block_checkpoints->push_back(checkpoint);
+            }
+            constexpr size_t kMaxBlockCheckpoints = 512;
+            if (block_checkpoints->size() > kMaxBlockCheckpoints) {
+                block_checkpoints->erase(
+                    block_checkpoints->begin(),
+                    block_checkpoints->begin() +
+                        static_cast<ptrdiff_t>(block_checkpoints->size() - kMaxBlockCheckpoints));
+            }
+        } catch (...) {
+            // Checkpoints are an optimization. Allocation pressure must not turn
+            // a complete TSH result into a failed highlight request.
+            block_checkpoints->clear();
+        }
+    }
+
+    if (dependency_ranges) {
+        const uint64_t source_bytes = static_cast<uint64_t>(text_end - text_start);
+        const uint64_t range_dependency_end =
+            static_cast<uint64_t>(range_end - text_start);
+        const uint64_t context_bytes = rule.block_delimiters_bounded
+            ? rule.maximum_block_delimiter_bytes : 0u;
+        const uint64_t dependency_end_wide =
+            context_bytes > source_bytes - range_dependency_end
+                ? source_bytes : range_dependency_end + context_bytes;
+        const uint32_t dependency_end =
+            static_cast<uint32_t>(dependency_end_wide);
+        if (dependency_start_byte < dependency_end) {
+            dependency_ranges->push_back({
+                dependency_start_byte,
+                dependency_end,
+                rule.declaration_order,
+                static_cast<uint8_t>(HighlightSource::ONIG_REGEX),
+                0xFFu,
+                static_cast<uint8_t>(
+                    HIGHLIGHT_DEPENDENCY_CHECKPOINT_BASED |
+                    HIGHLIGHT_DEPENDENCY_BOUNDARY_SENSITIVE)
+            });
+        }
+    }
+
+    const uint32_t viewport_end_byte =
+        static_cast<uint32_t>(range_end - text_start);
+    uint32_t active_at_viewport_end = active_start_byte;
+    bool viewport_end_checkpoint_safe = checkpoint_safe;
+
+    const UChar* curr = active_start_byte != kNoActiveBlock
+        ? text_start + active_start_byte
+        : range_start;
 
     while (curr < range_end) {
         int hit_start = onig_search(
@@ -1158,21 +1485,62 @@ void WindbellEngine::matchBlockRecursive(
             start_region,
             ONIG_OPTION_NONE
         );
-        if (hit_start < 0) break;
+        if (hit_start == ONIG_MISMATCH) break;
+        if (hit_start < 0) {
+            throw std::runtime_error("Oniguruma block start execution failed with status " +
+                std::to_string(hit_start));
+        }
+        if (start_region->beg[0] < 0 || start_region->end[0] < start_region->beg[0]) {
+            throw std::runtime_error("Oniguruma returned an invalid block start range");
+        }
         if (regex_match_count) ++(*regex_match_count);
 
         uint32_t block_start_byte = static_cast<uint32_t>(start_region->beg[0]);
         const UChar* content_start = text_start + start_region->end[0];
 
-        int hit_end = onig_search(
-            rule.onig_end,
-            text_start,
-            text_end,
-            content_start,
-            text_end,
-            end_region,
-            ONIG_OPTION_NONE
-        );
+        // A checkpoint at the viewport's right edge is valid only when neither
+        // delimiter is split by that boundary. Preserve the block's opening
+        // offset while it remains active; clear it only after a complete end
+        // delimiter has been consumed before the boundary.
+        if (start_region->beg[0] < static_cast<int64_t>(viewport_end_byte) &&
+            start_region->end[0] > static_cast<int64_t>(viewport_end_byte)) {
+            viewport_end_checkpoint_safe = false;
+        }
+        active_at_viewport_end = block_start_byte;
+
+        // Only closing delimiters that can affect this viewport need to be
+        // searched. Keep text_end as the full string boundary for lookahead and
+        // anchor semantics, but cap candidate delimiter starts at range_end.
+        int hit_end = content_start <= range_end
+            ? onig_search(
+                rule.onig_end,
+                text_start,
+                text_end,
+                content_start,
+                range_end,
+                end_region,
+                ONIG_OPTION_NONE
+            )
+            : ONIG_MISMATCH;
+
+        if (hit_end < 0 && hit_end != ONIG_MISMATCH) {
+            throw std::runtime_error("Oniguruma block end execution failed with status " +
+                std::to_string(hit_end));
+        }
+        if (hit_end >= 0 &&
+            (end_region->beg[0] < 0 || end_region->end[0] < end_region->beg[0])) {
+            throw std::runtime_error("Oniguruma returned an invalid block end range");
+        }
+        if (hit_end >= 0) {
+            const int64_t end_begin = end_region->beg[0];
+            const int64_t end_finish = end_region->end[0];
+            if (end_begin < static_cast<int64_t>(viewport_end_byte) &&
+                end_finish > static_cast<int64_t>(viewport_end_byte)) {
+                viewport_end_checkpoint_safe = false;
+            } else if (end_finish <= static_cast<int64_t>(viewport_end_byte)) {
+                active_at_viewport_end = kNoActiveBlock;
+            }
+        }
 
         uint32_t block_end_byte = (hit_end >= 0) ?
             static_cast<uint32_t>(end_region->end[0]) :
@@ -1238,12 +1606,15 @@ void WindbellEngine::matchBlockRecursive(
                         matchBlockRecursive(
                             nested, text_start, text_end,
                             nested_range_start, nested_range_end, inner_start,
-                            output_start_byte, output_end_byte, out_spans, regex_match_count);
+                            output_start_byte, output_end_byte, out_spans, regex_match_count,
+                            nullptr, grammar_revision, source_version, partition_version,
+                            dependency_ranges);
                         continue;
                     }
                     if (nested.type == RegexRuleType::MATCH && nested.onig_start) {
-                        OnigRegion* inner_region = onig_region_new();
-                        if (!inner_region) continue;
+                        RegionOwner inner_region_owner{onig_region_new()};
+                        if (!inner_region_owner.value) throw std::bad_alloc();
+                        OnigRegion* inner_region = inner_region_owner.value;
                         const UChar* nested_scan_start = inner_start;
                         const UChar* nested_scan_end = inner_end;
                         if (nested.execution_capability == RegexExecutionCapability::BOUNDED_WINDOW &&
@@ -1258,7 +1629,27 @@ void WindbellEngine::matchBlockRecursive(
                                 nested_scan_start = viewport_start -
                                     static_cast<ptrdiff_t>(std::min<uint64_t>(overlap, available));
                             }
-                            nested_scan_end = std::min(inner_end, viewport_end);
+                            // Oniguruma's forward-search range is also passed to
+                            // match_at() as its upper match bound. Keep bounded matches
+                            // that begin before the viewport but finish just after its
+                            // right edge by extending the search range with the same
+                            // proven finite-width context. Captures are clipped to the
+                            // viewport in append_nested_capture() below.
+                            if (viewport_end < inner_end) {
+                                const uint64_t available_after_viewport =
+                                    static_cast<uint64_t>(inner_end - viewport_end);
+                                const uint64_t right_context =
+                                    std::min<uint64_t>(overlap, available_after_viewport);
+                                nested_scan_end = viewport_end +
+                                    static_cast<ptrdiff_t>(right_context);
+                            } else {
+                                // For context-sensitive nested matches, retain the
+                                // complete block as the string context but stop
+                                // candidate match starts at the viewport end. A match
+                                // may still finish beyond the viewport.
+                                nested_scan_end = std::min(
+                                    inner_end, text_start + output_end_byte);
+                            }
                         }
                         const UChar* inner_curr = nested_scan_start;
                         while (inner_curr < nested_scan_end) {
@@ -1271,7 +1662,17 @@ void WindbellEngine::matchBlockRecursive(
                                 inner_region,
                                 ONIG_OPTION_NONE
                             );
-                            if (inner_hit < 0) break;
+                            if (inner_hit == ONIG_MISMATCH) break;
+                            if (inner_hit < 0) {
+                                throw std::runtime_error(
+                                    "Oniguruma nested block Regex execution failed with status " +
+                                    std::to_string(inner_hit));
+                            }
+                            if (inner_region->beg[0] < 0 ||
+                                inner_region->end[0] < inner_region->beg[0]) {
+                                throw std::runtime_error(
+                                    "Oniguruma returned an invalid nested Regex match range");
+                            }
                             if (regex_match_count) ++(*regex_match_count);
 
                             auto append_nested_capture = [&](int group, uint16_t style_id) {
@@ -1314,7 +1715,7 @@ void WindbellEngine::matchBlockRecursive(
                                 advanceOneUtf16CodePoint(text_start + inner_region->beg[0], nested_scan_end) :
                                 text_start + inner_region->end[0];
                         }
-                        onig_region_free(inner_region, 1);
+
                     }
                 }
             }
@@ -1331,8 +1732,224 @@ void WindbellEngine::matchBlockRecursive(
         }
     }
 
-    onig_region_free(start_region, 1);
-    onig_region_free(end_region, 1);
+    // Seed the next forward viewport from the state reached at this viewport's
+    // end. This closes the cold-jump gap: after the first scan, a distant jump
+    // resumes from the nearest completed boundary instead of replaying every
+    // delimiter transition from byte zero. Never publish a checkpoint that
+    // bisects an opening or closing delimiter.
+    if (block_checkpoints && search_floor == text_start &&
+        rule.block_delimiters_bounded && viewport_end_checkpoint_safe) {
+        try {
+            auto existing = std::find_if(
+                block_checkpoints->begin(), block_checkpoints->end(),
+                [&](const RegexBlockCheckpoint& checkpoint) {
+                    return checkpoint.declaration_order == rule.declaration_order &&
+                        checkpoint.byte_offset == viewport_end_byte &&
+                        checkpoint.grammar_revision == grammar_revision &&
+                        checkpoint.source_version == source_version &&
+                        checkpoint.partition_version == partition_version;
+                });
+            const RegexBlockCheckpoint checkpoint{
+                rule.declaration_order, viewport_end_byte, active_at_viewport_end,
+                grammar_revision, source_version, partition_version
+            };
+            if (existing != block_checkpoints->end()) {
+                *existing = checkpoint;
+            } else {
+                block_checkpoints->push_back(checkpoint);
+            }
+            constexpr size_t kMaxBlockCheckpoints = 512;
+            if (block_checkpoints->size() > kMaxBlockCheckpoints) {
+                block_checkpoints->erase(
+                    block_checkpoints->begin(),
+                    block_checkpoints->begin() +
+                        static_cast<ptrdiff_t>(block_checkpoints->size() - kMaxBlockCheckpoints));
+            }
+        } catch (...) {
+            block_checkpoints->clear();
+        }
+    }
+}
+
+/**
+ * Collect the smallest source-ordered AST roots needed by rooted-local TSH
+ * Query programs. Tree-sitter's byte-range cursor option filters returned
+ * captures, but its query VM still walks the subtree passed to exec(). Starting
+ * each local query at the relevant candidate roots avoids re-walking unrelated
+ * document prefixes for every viewport.
+ */
+struct TshQueryRootCandidate {
+    TSNode node{};
+    std::vector<TSSymbol> matching_symbols;
+};
+
+static void collectQueryRootCandidates(
+    const TshGrammar& grammar,
+    TSTree* tree,
+    const std::unordered_set<TSSymbol>& root_symbols,
+    uint32_t range_start,
+    uint32_t range_end,
+    std::vector<TshQueryRootCandidate>* candidates
+) {
+    if (!tree || root_symbols.empty() || !candidates || range_start >= range_end) return;
+    TSTreeCursor cursor = ts_tree_cursor_new(ts_tree_root_node(tree));
+    bool done = false;
+    try {
+        while (!done) {
+            const TSNode node = ts_tree_cursor_current_node(&cursor);
+            const uint32_t start = ts_node_start_byte(node);
+            const uint32_t end = ts_node_end_byte(node);
+            const bool zero_width = start == end;
+            if (!zero_width && start >= range_end) break;
+
+            const bool intersects = zero_width
+                ? (start >= range_start && start <= range_end)
+                : (start < range_end && end > range_start);
+            if (intersects) {
+                TshQueryRootCandidate candidate;
+                candidate.node = node;
+                for (TSSymbol selector : root_symbols) {
+                    if (tshAstSymbolMatchesNode(grammar, node, selector)) {
+                        candidate.matching_symbols.push_back(selector);
+                    }
+                }
+                if (!candidate.matching_symbols.empty()) {
+                    candidates->push_back(std::move(candidate));
+                }
+
+                // Jump over preceding sibling subtrees while retaining the
+                // ancestors that can contain a viewport-intersecting root.
+                if (ts_tree_cursor_goto_first_child_for_byte(&cursor, range_start) >= 0)
+                    continue;
+            }
+
+            while (!ts_tree_cursor_goto_next_sibling(&cursor)) {
+                if (!ts_tree_cursor_goto_parent(&cursor)) {
+                    done = true;
+                    break;
+                }
+            }
+        }
+    } catch (...) {
+        ts_tree_cursor_delete(&cursor);
+        throw;
+    }
+    ts_tree_cursor_delete(&cursor);
+}
+
+static bool hasMatchingQueryRootAncestor(
+    const TshGrammar& grammar,
+    TSNode node,
+    const std::unordered_set<TSSymbol>& root_symbols
+) noexcept {
+    TSNode ancestor = ts_node_parent(node);
+    while (!ts_node_is_null(ancestor)) {
+        for (TSSymbol selector : root_symbols) {
+            if (tshAstSymbolMatchesNode(grammar, ancestor, selector)) return true;
+        }
+        ancestor = ts_node_parent(ancestor);
+    }
+    return false;
+}
+
+static void appendQueryPatternDependencies(
+    const TshGrammar& grammar,
+    const TSLanguage* language,
+    uint32_t range_start,
+    uint32_t range_end,
+    uint32_t total_bytes,
+    const std::vector<TshQueryRootCandidate>& candidates,
+    std::vector<HighlightDependencyRange>* output
+) {
+    if (!output) return;
+
+    std::unordered_set<TSSymbol> root_symbols;
+    bool has_active_pattern = false;
+    bool requires_document_scope = false;
+    for (const auto& query : grammar.native_queries) {
+        if (!query.enabled || !query.query) continue;
+        for (const auto& item : query.pattern_metadata) {
+            const auto& metadata = item.second;
+            if (!metadata.enabled) continue;
+            has_active_pattern = true;
+            if (metadata.dependency_scope !=
+                    NativeQueryProgram::QueryDependencyScope::ROOTED_LOCAL ||
+                metadata.root_node_symbol == 0 || language == nullptr) {
+                requires_document_scope = true;
+                break;
+            }
+            root_symbols.insert(metadata.root_node_symbol);
+        }
+        if (requires_document_scope) break;
+    }
+    if (!has_active_pattern) return;
+    if (requires_document_scope || root_symbols.empty()) {
+        output->push_back({
+            0u, total_bytes, UINT32_MAX,
+            static_cast<uint8_t>(HighlightSource::NATIVE_QUERY), 0xFFu,
+            HIGHLIGHT_DEPENDENCY_DOCUMENT_WIDE
+        });
+        return;
+    }
+
+    // Reuse the candidate-root traversal already required by Query execution.
+    // The previous implementation performed a second full viewport AST walk
+    // solely to reconstruct the same root intervals for cache dependencies.
+    std::vector<std::pair<uint32_t, uint32_t>> root_ranges;
+    root_ranges.reserve(candidates.size());
+    for (const auto& candidate : candidates) {
+        const bool relevant = std::any_of(
+            candidate.matching_symbols.begin(), candidate.matching_symbols.end(),
+            [&](TSSymbol symbol) {
+                return root_symbols.find(symbol) != root_symbols.end();
+            });
+        if (!relevant) continue;
+        const uint32_t start = ts_node_start_byte(candidate.node);
+        const uint32_t end = ts_node_end_byte(candidate.node);
+        if (start > end || end > total_bytes || (start & 1u) || (end & 1u)) continue;
+        uint32_t dependency_start = start;
+        uint32_t dependency_end = end;
+        if (dependency_start == dependency_end) {
+            dependency_start = dependency_start >= 2u ? dependency_start - 2u : 0u;
+            dependency_end = static_cast<uint32_t>(std::min<uint64_t>(
+                total_bytes, static_cast<uint64_t>(dependency_end) + 2u));
+        }
+        root_ranges.emplace_back(dependency_start, dependency_end);
+    }
+
+    std::sort(root_ranges.begin(), root_ranges.end());
+    size_t merged_count = 0;
+    for (const auto& range : root_ranges) {
+        if (merged_count != 0 &&
+            range.first <= root_ranges[merged_count - 1u].second) {
+            root_ranges[merged_count - 1u].second =
+                std::max(root_ranges[merged_count - 1u].second, range.second);
+        } else {
+            root_ranges[merged_count++] = range;
+        }
+    }
+    root_ranges.resize(merged_count);
+    const uint8_t viewport_flags = static_cast<uint8_t>(
+        range_start == 0u && range_end == total_bytes
+            ? HIGHLIGHT_DEPENDENCY_DOCUMENT_WIDE : 0u);
+    output->push_back({
+        range_start, range_end, UINT32_MAX,
+        static_cast<uint8_t>(HighlightSource::NATIVE_QUERY),
+        static_cast<uint8_t>(NativeQueryProgram::QueryDependencyScope::ROOTED_LOCAL),
+        viewport_flags
+    });
+    for (const auto& range : root_ranges) {
+        uint8_t flags = HIGHLIGHT_DEPENDENCY_BOUNDARY_SENSITIVE;
+        if (range.first == 0u && range.second == total_bytes) {
+            flags = static_cast<uint8_t>(flags | HIGHLIGHT_DEPENDENCY_DOCUMENT_WIDE);
+        }
+        output->push_back({
+            range.first, range.second, UINT32_MAX,
+            static_cast<uint8_t>(HighlightSource::NATIVE_QUERY),
+            static_cast<uint8_t>(NativeQueryProgram::QueryDependencyScope::ROOTED_LOCAL),
+            flags
+        });
+    }
 }
 
 std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
@@ -1348,9 +1965,13 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
     const windbell::largefile::TextSource* text_source,
     std::vector<RegexStateCheckpoint>* regex_state_checkpoints,
     uint64_t source_version,
-    uint64_t partition_version
+    uint64_t partition_version,
+    std::vector<HighlightDependencyRange>* dependency_ranges,
+    std::vector<RegexBlockCheckpoint>* block_checkpoints
 ) {
     std::vector<HighlightSpan> final_spans;
+    TshRegexExecutionWorkspace regex_workspace;
+    if (dependency_ranges) dependency_ranges->clear();
     if (diagnostic_match_counts) std::fill(diagnostic_match_counts, diagnostic_match_counts + 4, 0u);
     if (length_chars != 0 && input_chars == nullptr && !text_source) return final_spans;
     if (length_chars > (std::numeric_limits<uint32_t>::max() / sizeof(uint16_t))) return final_spans;
@@ -1411,10 +2032,11 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
         (input_chars != nullptr || text_source != nullptr || total_bytes == 0);
 
     std::vector<HighlightSpan> micro_spans;
-    // Do not reserve proportional to document length: a 300 MB source can
-    // contain comparatively few syntax captures, and the old estimate eagerly
-    // reserved hundreds of megabytes before the first rule had matched.
-    micro_spans.reserve(std::min<size_t>(length_chars / 4, 4096));
+    // Size scratch capacity from the requested viewport, not the full document.
+    // A tiny viewport in a huge file should not reserve thousands of spans.
+    const size_t viewport_chars =
+        static_cast<size_t>((range_end_byte - range_start_byte) / sizeof(uint16_t));
+    micro_spans.reserve(std::min<size_t>(viewport_chars / 4, 4096));
 
     // Large Piece Trees do not expose a document-sized contiguous pointer.
     // Execute the compiler-proven finite-width MATCH subset directly against
@@ -1427,6 +2049,10 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
         // proven maximum-match overlap. mmap contiguity must not trigger a full
         // document scan for every editor draw.
         constexpr uint64_t kRegexCoreWindowBytes = 256u * 1024u;
+        // Reuse one bounded PieceTree/file window across all partitions and
+        // Regex rules. Its capacity is released with this highlight call.
+        std::vector<UChar> bounded_regex_window;
+        std::vector<UChar> encoded_group_name;
         for (const auto& rule : grammar->regex_rules) {
             if (!rule.enabled || rule.type != RegexRuleType::MATCH ||
                 !rule.onig_start ||
@@ -1437,6 +2063,24 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
             uint64_t core_start = range_start_byte > overlap
                 ? range_start_byte - overlap : 0u;
             core_start &= ~uint64_t{1};
+            if (core_start != 0) {
+                bool splits_surrogate_pair = false;
+                if (!windbell::largefile::checkUtf16SurrogateBoundary(
+                        *text_source, core_start, &splits_surrogate_pair)) {
+                    throw std::runtime_error(
+                        "TSH could not validate the bounded Regex start boundary");
+                }
+                if (splits_surrogate_pair) core_start -= 2u;
+            }
+            // Reuse one Oniguruma region across all core windows for this rule.
+            // Region allocation is not proportional to the number of 256 KiB
+            // partitions and remains exception-safe for the whole rule execution.
+            OnigRegion* region = onig_region_new();
+            if (!region) throw std::bad_alloc();
+            struct WindowRegionGuard {
+                OnigRegion* value;
+                ~WindowRegionGuard() { if (value) onig_region_free(value, 1); }
+            } region_guard{region};
             while (core_start < range_end_byte) {
                 const uint64_t core_end = std::min<uint64_t>(
                     range_end_byte, core_start + kRegexCoreWindowBytes);
@@ -1446,39 +2090,74 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                 const uint64_t window_bytes = window_end - core_start;
                 if (window_bytes == 0 || (window_bytes & 1u) != 0 ||
                     window_bytes > static_cast<uint64_t>(std::numeric_limits<size_t>::max()) /
-                        sizeof(UChar)) break;
-                std::vector<UChar> window;
-                try { window.resize(static_cast<size_t>(window_bytes / sizeof(UChar))); }
-                catch (...) { break; }
-                if (!windbell::largefile::copyTextRange(
-                        *text_source, core_start, window_bytes, window.data())) break;
-                const UChar* window_start = window.data();
-                const UChar* window_end_ptr = window_start + window.size();
-                const UChar* current = window_start;
-                OnigRegion* region = onig_region_new();
-                if (!region) break;
-                while (current < window_end_ptr) {
+                        sizeof(UChar)) {
+                    throw std::runtime_error("TSH bounded Regex window has an invalid byte range");
+                }
+                uint64_t window_base_byte = core_start;
+                const UChar* window_start = nullptr;
+                const UChar* window_end_ptr = nullptr;
+                const UChar* current = nullptr;
+                const UChar* search_range_end = nullptr;
+                if (has_contiguous_text) {
+                    // Both legacy JNI input_chars and TextSource-backed contiguous
+                    // storage are already UTF-16LE buffers. Use the original bytes
+                    // directly; do not copy a 256 KiB scratch window per rule or
+                    // viewport partition. Keep full-document bounds for anchors
+                    // and lookbehind while restricting match starts to this core.
+                    window_base_byte = 0;
+                    window_start = text_start;
+                    window_end_ptr = text_end;
+                    current = text_start + core_start;
+                    search_range_end = text_start + core_end;
+                } else {
+                    // PieceTree/file-window sources expose borrowed chunks, so
+                    // Oniguruma still needs a bounded contiguous materialization.
+                    // Let bad_alloc reach the JNI boundary; silently breaking here
+                    // would return a partial highlight set as if it were complete.
+                    bounded_regex_window.resize(
+                        static_cast<size_t>(window_bytes / sizeof(UChar)));
+                    if (!windbell::largefile::copyTextRange(
+                            *text_source, core_start, window_bytes, bounded_regex_window.data())) {
+                        throw std::runtime_error("TSH could not read a bounded Regex window");
+                    }
+                    window_start = bounded_regex_window.data();
+                    window_end_ptr = window_start + bounded_regex_window.size();
+                    current = window_start;
+                    search_range_end = window_end_ptr;
+                }
+                while (current < search_range_end) {
                     const int hit = onig_search(
                         rule.onig_start, window_start, window_end_ptr,
-                        current, window_end_ptr, region, ONIG_OPTION_NONE);
-                    if (hit < 0) break;
+                        current, search_range_end, region, ONIG_OPTION_NONE);
+                    if (hit == ONIG_MISMATCH) break;
+                    if (hit < 0) {
+                        throw std::runtime_error(
+                            "Oniguruma bounded Regex execution failed with status " +
+                            std::to_string(hit));
+                    }
                     const int64_t local_start = region->beg[0];
                     const int64_t local_end = region->end[0];
-                    if (local_start < 0 || local_end < local_start) break;
-                    const uint64_t absolute_start = core_start +
+                    if (local_start < 0 || local_end < local_start ||
+                        local_end > static_cast<int64_t>(source_is_contiguous ? total_bytes : window_bytes) ||
+                        (local_start & 1LL) != 0 || (local_end & 1LL) != 0) {
+                        throw std::runtime_error(
+                            "Oniguruma returned an invalid bounded UTF-16 match range");
+                    }
+                    const uint64_t absolute_start = window_base_byte +
                         static_cast<uint64_t>(local_start);
-                    const uint64_t absolute_end = core_start +
+                    const uint64_t absolute_end = window_base_byte +
                         static_cast<uint64_t>(local_end);
                     if (absolute_start >= core_start && absolute_start < core_end &&
-                        absolute_end <= window_end && (absolute_start & 1u) == 0 &&
+                        absolute_end <= (source_is_contiguous ? total_bytes : window_end) &&
+                        (absolute_start & 1u) == 0 &&
                         (absolute_end & 1u) == 0) {
                         if (diagnostic_match_counts) tshIncrementDiagnostic(&diagnostic_match_counts[0]);
                         auto append_window_capture = [&](int group, uint16_t style_id) {
                             if (group < 0 || group >= region->num_regs ||
                                 region->beg[group] < 0 || region->end[group] < 0) return;
-                            const uint64_t capture_start = core_start +
+                            const uint64_t capture_start = window_base_byte +
                                 static_cast<uint64_t>(region->beg[group]);
-                            const uint64_t capture_end = core_start +
+                            const uint64_t capture_end = window_base_byte +
                                 static_cast<uint64_t>(region->end[group]);
                             if (capture_start >= capture_end ||
                                 capture_end <= range_start_byte ||
@@ -1511,27 +2190,25 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                                     append_window_capture(group, style->second);
                             }
                             for (const auto& named : rule.named_group_style_map) {
-                                std::vector<UChar> name;
-                                try {
-                                    name.assign(named.first.begin(), named.first.end());
-                                } catch (...) { continue; }
+                                encoded_group_name.assign(
+                                    named.first.begin(), named.first.end());
                                 const int group = onig_name_to_backref_number(
-                                    rule.onig_start, name.data(),
-                                    name.data() + name.size(), region);
+                                    rule.onig_start, encoded_group_name.data(),
+                                    encoded_group_name.data() + encoded_group_name.size(), region);
                                 append_window_capture(group, named.second);
                             }
                         }
                     }
-                    // Oniguruma offsets are UTF-16LE byte offsets here.
-                    // A zero-width match must advance by one complete code unit;
-                    // advancing one byte would restart inside a UTF-16 code unit.
-                    const int64_t next = local_end > local_start
-                        ? local_end : local_start + 2;
-                    if (next <= 0 || (next & 1LL) != 0 ||
-                        static_cast<uint64_t>(next) >= window.size()) break;
-                    current = window_start + next;
+                    // Oniguruma offsets are UTF-16LE byte offsets. A zero-width
+                    // match must advance by one complete Unicode code point, not
+                    // merely one UTF-16 code unit (which can split a surrogate pair).
+                    const UChar* next = local_end > local_start
+                        ? window_start + local_end
+                        : advanceOneUtf16CodePoint(
+                            window_start + local_start, window_end_ptr);
+                    if (next <= current || next >= search_range_end) break;
+                    current = next;
                 }
-                onig_region_free(region, 1);
                 core_start = core_end;
             }
         }
@@ -1552,7 +2229,9 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                 rule, text_start, text_end,
                 text_start + range_start_byte, text_start + range_end_byte, text_start,
                 range_start_byte, range_end_byte, micro_spans,
-                diagnostic_match_counts ? &diagnostic_match_counts[0] : nullptr);
+                diagnostic_match_counts ? &diagnostic_match_counts[0] : nullptr,
+                block_checkpoints, grammar->revision, source_version, partition_version,
+                dependency_ranges);
             retain_requested_range(micro_spans);
             continue;
         }
@@ -1560,16 +2239,24 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
         if (!rule.onig_start) continue;
 
         OnigRegion* region = onig_region_new();
-        if (!region) continue;
+        if (!region) throw std::bad_alloc();
+        struct ContiguousRegionGuard {
+            OnigRegion* value;
+            ~ContiguousRegionGuard() { if (value) onig_region_free(value, 1); }
+        } region_guard{region};
         const UChar* current = text_start;
+        const UChar* search_range_end = text_start + range_end_byte;
 
-        while (current < text_end) {
+        // Preserve full-document lookahead/anchor context while limiting match
+        // start positions to this viewport. Captures beginning before the viewport
+        // are still discovered; matches starting after it cannot contribute here.
+        while (current < search_range_end) {
             int hit_pos = onig_search(
                 rule.onig_start,
                 text_start,
                 text_end,
                 current,
-                text_end,
+                search_range_end,
                 region,
                 ONIG_OPTION_NONE
             );
@@ -1622,10 +2309,14 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                     advanceOneUtf16CodePoint(text_start + region->beg[0], text_end) :
                     text_start + region->end[0];
             } else {
+                if (hit_pos != ONIG_MISMATCH) {
+                    throw std::runtime_error(
+                        "Oniguruma contiguous Regex execution failed with status " +
+                        std::to_string(hit_pos));
+                }
                 break;
             }
         }
-        onig_region_free(region, 1);
         retain_requested_range(micro_spans);
     }
     retain_requested_range(micro_spans);
@@ -1640,130 +2331,98 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
     // capture ABI as ordinary Regex rules; there is no separate token model.
     constexpr uint64_t kMaxRegexStateContextFallbackBytes = 50ull * 1024ull * 1024ull;
     if (!grammar->regex_states.empty()) {
+        // Keep checkpoint density proportional to document size. 64 KiB is the
+        // minimum stride for ordinary files; larger documents spread the same
+        // target checkpoint count across the full source instead of discarding
+        // the oldest checkpoints after an arbitrary fixed prefix.
+        constexpr uint64_t kMinimumRegexStateCheckpointStrideBytes = 64ull * 1024ull;
+        constexpr uint64_t kTargetRegexStateCheckpointCount = 8192ull;
+        const uint64_t scaled_stride =
+            static_cast<uint64_t>(total_bytes) / kTargetRegexStateCheckpointCount +
+            (static_cast<uint64_t>(total_bytes) % kTargetRegexStateCheckpointCount != 0 ? 1ull : 0ull);
+        const uint64_t regex_state_checkpoint_stride =
+            std::max(kMinimumRegexStateCheckpointStrideBytes, scaled_stride);
         std::vector<std::string> state_stack{grammar->regex_start_state};
         uint32_t position = 0;
-        uint64_t next_checkpoint = 64u * 1024u;
+        uint64_t next_checkpoint = regex_state_checkpoint_stride;
         // Checkpoints are reusable only for the exact immutable source and
         // partition snapshots from which their tokenizer state was produced.
         if (regex_state_checkpoints) {
+            // A checkpoint is valid only for the exact immutable source and
+            // partition snapshots that produced it. Byte offsets alone cannot
+            // establish that an edited suffix is unchanged, so invalidate the
+            // complete checkpoint set whenever either version changes.
+            // Checkpoints are inserted in byte-offset order and the complete
+            // vector is invalidated whenever the source/partition generation
+            // changes. The first/last entries therefore prove the generation
+            // for the entire retained set without scanning up to 8192 records.
+            if (!regex_state_checkpoints->empty()) {
+                const auto& first = regex_state_checkpoints->front();
+                const auto& last = regex_state_checkpoints->back();
+                const bool stale =
+                    first.source_version != source_version ||
+                    first.partition_version != partition_version ||
+                    last.source_version != source_version ||
+                    last.partition_version != partition_version;
+                if (stale) regex_state_checkpoints->clear();
+            }
+
             const RegexStateCheckpoint* nearest = nullptr;
-            for (const auto& checkpoint : *regex_state_checkpoints) {
-                if (checkpoint.source_version != source_version ||
-                    checkpoint.partition_version != partition_version ||
-                    checkpoint.byte_offset > range_start_byte ||
-                    checkpoint.state_stack.empty()) continue;
-                if (!nearest || checkpoint.byte_offset > nearest->byte_offset)
-                    nearest = &checkpoint;
+            const auto after_viewport = std::upper_bound(
+                regex_state_checkpoints->begin(), regex_state_checkpoints->end(),
+                static_cast<uint64_t>(range_start_byte),
+                [](uint64_t offset, const RegexStateCheckpoint& checkpoint) {
+                    return offset < checkpoint.byte_offset;
+                });
+            if (after_viewport != regex_state_checkpoints->begin()) {
+                const auto candidate = std::prev(after_viewport);
+                if (!candidate->state_stack.empty()) nearest = &*candidate;
             }
             if (nearest) {
                 position = static_cast<uint32_t>(nearest->byte_offset);
                 state_stack = nearest->state_stack;
-                next_checkpoint = ((static_cast<uint64_t>(position) / (64u * 1024u)) + 1u) * (64u * 1024u);
-            } else {
-                // Keep stale checkpoints as convergence candidates while
-                // rescanning from the document start. save_regex_state_checkpoint()
-                // will promote the unchanged suffix only after it reaches an
-                // identical byte offset with an identical state stack. Clearing
-                // this set here would make that convergence path unreachable
-                // whenever the edit precedes the first reusable checkpoint.
-            }
-            // Probe the next stale checkpoint exactly, even when no current-
-            // version checkpoint was available. Otherwise an unaligned old
-            // checkpoint could be stepped over by the regular 64 KiB stride.
-            for (const auto& checkpoint : *regex_state_checkpoints) {
-                if (checkpoint.source_version != source_version &&
-                    checkpoint.byte_offset > position) {
-                    next_checkpoint = std::min(next_checkpoint, checkpoint.byte_offset);
-                }
+                next_checkpoint =
+                    ((static_cast<uint64_t>(position) / regex_state_checkpoint_stride) + 1u) *
+                    regex_state_checkpoint_stride;
             }
         }
+        // Dependencies begin at the nearest reusable state checkpoint; the
+        // cached state is valid only from that byte offset through this scan.
+        uint32_t state_dependency_start = position;
         auto save_regex_state_checkpoint = [&]() {
             if (!regex_state_checkpoints || position < next_checkpoint) return;
-            RegexStateCheckpoint checkpoint;
-            checkpoint.byte_offset = position;
-            checkpoint.source_version = source_version;
-            checkpoint.partition_version = partition_version;
-            checkpoint.state_stack = state_stack;
-            bool converged = false;
-            auto stale = std::find_if(
+
+            auto insertion = std::lower_bound(
                 regex_state_checkpoints->begin(), regex_state_checkpoints->end(),
-                [&](const RegexStateCheckpoint& candidate) {
-                    return candidate.source_version != source_version &&
-                        candidate.byte_offset == position;
+                position,
+                [](const RegexStateCheckpoint& candidate, uint64_t offset) {
+                    return candidate.byte_offset < offset;
                 });
-            if (stale != regex_state_checkpoints->end()) {
-                if (stale->state_stack == state_stack) {
-                    const uint64_t stale_version = stale->source_version;
-                    for (auto& candidate : *regex_state_checkpoints) {
-                        if (candidate.source_version == stale_version &&
-                            candidate.byte_offset >= position) {
-                            candidate.source_version = source_version;
-                            candidate.partition_version = partition_version;
-                        }
-                    }
-                    converged = true;
-                } else {
-                    // The edit changed lexical state at this checkpoint. Keep
-                    // later candidates: a subsequent checkpoint may still be
-                    // the first point where the tokenizer state converges.
-                    regex_state_checkpoints->erase(stale);
-                }
+            const bool already_current = insertion != regex_state_checkpoints->end() &&
+                insertion->byte_offset == position &&
+                insertion->source_version == source_version &&
+                insertion->partition_version == partition_version;
+            if (!already_current) {
+                RegexStateCheckpoint checkpoint;
+                checkpoint.byte_offset = position;
+                checkpoint.source_version = source_version;
+                checkpoint.partition_version = partition_version;
+                checkpoint.state_stack = state_stack;
+                regex_state_checkpoints->insert(insertion, std::move(checkpoint));
             }
-            if (!converged) {
-                const bool already_current = std::any_of(
-                    regex_state_checkpoints->begin(), regex_state_checkpoints->end(),
-                    [&](const RegexStateCheckpoint& candidate) {
-                        return candidate.source_version == source_version &&
-                            candidate.partition_version == partition_version &&
-                            candidate.byte_offset == position;
-                    });
-                if (!already_current) {
-                    // The vector can contain stale suffix candidates whose
-                    // offsets are greater than the current rescan position.
-                    // Appending based on back() would then suppress every
-                    // newly generated checkpoint before that stale suffix.
-                    auto insertion = std::lower_bound(
-                        regex_state_checkpoints->begin(), regex_state_checkpoints->end(),
-                        position,
-                        [](const RegexStateCheckpoint& candidate, uint64_t offset) {
-                            return candidate.byte_offset < offset;
-                        });
-                    regex_state_checkpoints->insert(
-                        insertion, std::move(checkpoint));
-                }
-            }
-            // Bound persistent tokenizer metadata independently from the
-            // source size. 8192 checkpoints cover 512 MiB at 64 KiB spacing.
-            constexpr size_t kMaxRegexStateCheckpoints = 8192;
-            if (regex_state_checkpoints->size() > kMaxRegexStateCheckpoints) {
-                regex_state_checkpoints->erase(
-                    regex_state_checkpoints->begin(),
-                    regex_state_checkpoints->begin() +
-                        (regex_state_checkpoints->size() - kMaxRegexStateCheckpoints));
-            }
+
             next_checkpoint =
-                ((static_cast<uint64_t>(position) / (64u * 1024u)) + 1u) *
-                (64u * 1024u);
-            // A mismatching stale checkpoint is discarded above, but later
-            // stale candidates may still converge. Re-arm the exact next
-            // candidate after every checkpoint, not only at scan startup;
-            // otherwise the regular stride can jump over an unaligned one.
-            if (regex_state_checkpoints) {
-                for (const auto& candidate : *regex_state_checkpoints) {
-                    if (candidate.source_version != source_version &&
-                        candidate.byte_offset > position) {
-                        next_checkpoint = std::min(
-                            next_checkpoint, candidate.byte_offset);
-                    }
-                }
-            }
+                ((static_cast<uint64_t>(position) / regex_state_checkpoint_stride) + 1u) *
+                regex_state_checkpoint_stride;
         };
         OnigRegion* state_region = onig_region_new();
         OnigRegion* state_case_region = onig_region_new();
         if (!state_region || !state_case_region) {
             if (state_region) onig_region_free(state_region, 1);
             if (state_case_region) onig_region_free(state_case_region, 1);
-            return final_spans;
+            // Never turn an allocation failure into a successful but incomplete
+            // highlight result. JNI maps this to OutOfMemoryError.
+            throw std::bad_alloc();
         }
         uint32_t zero_width_steps = 0;
         std::vector<UChar> state_window;
@@ -1839,44 +2498,44 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
             const uint32_t local_position = position - state_window_start;
             const UChar* state_position_ptr = state_text_start + local_position;
             const RegexStateRule* matched_rule = nullptr;
-            std::unordered_set<std::string> include_path;
-            std::function<const RegexStateRule*(const std::string&)> find_rule =
-                [&](const std::string& state_name) -> const RegexStateRule* {
-                    if (!include_path.insert(state_name).second) return nullptr;
-                    auto state = grammar->regex_states.find(state_name);
-                    if (state == grammar->regex_states.end()) {
-                        include_path.erase(state_name);
-                        return nullptr;
-                    }
-                    for (const auto& candidate : state->second) {
-                        if (!candidate.enabled) continue;
-                        if (!candidate.include_state.empty()) {
-                            if (const RegexStateRule* included = find_rule(candidate.include_state)) {
-                                include_path.erase(state_name);
-                                return included;
-                            }
-                        }
-                        if (!candidate.pattern) continue;
-                        const int length = onig_match(
-                            candidate.pattern,
-                            state_text_start,
-                            state_text_end,
-                            state_position_ptr,
-                            state_region,
-                            ONIG_OPTION_NONE
-                        );
-                        if (length >= 0) {
-                            include_path.erase(state_name);
-                            return &candidate;
+            // Include cycles and missing states are rejected during Grammar
+            // compilation. Use a self-recursive generic lambda so the hot
+            // per-code-point tokenizer does not construct std::function or an
+            // unordered_set<string> for every token probe.
+            const auto find_rule = [&](auto&& self,
+                                       const std::string& state_name) -> const RegexStateRule* {
+                const auto state = grammar->regex_states.find(state_name);
+                if (state == grammar->regex_states.end()) return nullptr;
+                for (const auto& candidate : state->second) {
+                    if (!candidate.enabled) continue;
+                    if (!candidate.include_state.empty()) {
+                        if (const RegexStateRule* included =
+                                self(self, candidate.include_state)) {
+                            return included;
                         }
                     }
-                    include_path.erase(state_name);
-                    return nullptr;
-                };
+                    if (!candidate.pattern) continue;
+                    const int length = onig_match(
+                        candidate.pattern,
+                        state_text_start,
+                        state_text_end,
+                        state_position_ptr,
+                        state_region,
+                        ONIG_OPTION_NONE
+                    );
+                    if (length >= 0) return &candidate;
+                    if (length != ONIG_MISMATCH) {
+                        throw std::runtime_error(
+                            "Oniguruma Regex State match failed with status " +
+                            std::to_string(length));
+                    }
+                }
+                return nullptr;
+            };
 
-            const std::string active_state = state_stack.empty() ?
+            const std::string& active_state = state_stack.empty() ?
                 grammar->regex_start_state : state_stack.back();
-            matched_rule = find_rule(active_state);
+            matched_rule = find_rule(find_rule, active_state);
             if (!matched_rule) {
                 const UChar* next = advanceOneUtf16CodePoint(state_position_ptr, state_text_end);
                 const uint32_t end = state_window_start + static_cast<uint32_t>(next - state_text_start);
@@ -1927,6 +2586,11 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                         case_matched = true;
                         break;
                     }
+                    if (case_length != ONIG_MISMATCH) {
+                        throw std::runtime_error(
+                            "Oniguruma Regex State case match failed with status " +
+                            std::to_string(case_length));
+                    }
                 }
                 if (!case_matched) {
                     if (default_case) {
@@ -1949,26 +2613,44 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                 micro_spans.push_back(span);
             }
 
-            const std::vector<std::string> old_stack = state_stack;
-            auto strip_at = [](std::string value) {
-                if (!value.empty() && value.front() == '@') value.erase(value.begin());
-                return value;
-            };
+            // Track transition changes directly instead of copying the complete
+            // state stack for every token. Most tokenizer matches do not change
+            // state, so this avoids repeated vector/string allocations on the hot path.
+            bool state_changed = false;
             if (matched_rule->pop || matched_rule->next_state == "@pop") {
-                if (state_stack.size() > 1) state_stack.pop_back();
+                if (state_stack.size() > 1) {
+                    state_stack.pop_back();
+                    state_changed = true;
+                }
             } else if (matched_rule->next_state == "@popall") {
-                state_stack.assign(1, grammar->regex_start_state);
+                state_changed = state_stack.size() != 1 ||
+                    state_stack.front() != grammar->regex_start_state;
+                if (state_changed) state_stack.assign(1, grammar->regex_start_state);
             } else if (matched_rule->next_state == "@push") {
                 state_stack.push_back(state_stack.back());
+                state_changed = true;
             } else if (!matched_rule->next_state.empty()) {
-                state_stack.back() = strip_at(matched_rule->next_state);
+                std::string_view target(matched_rule->next_state);
+                if (!target.empty() && target.front() == '@') target.remove_prefix(1);
+                if (state_stack.back() != target) {
+                    state_stack.back().assign(target.data(), target.size());
+                    state_changed = true;
+                }
             } else if (!matched_rule->push_state.empty()) {
-                state_stack.push_back(strip_at(matched_rule->push_state));
+                std::string_view target(matched_rule->push_state);
+                if (!target.empty() && target.front() == '@') target.remove_prefix(1);
+                state_stack.emplace_back(target);
+                state_changed = true;
             } else if (!matched_rule->switch_state.empty()) {
-                state_stack.back() = strip_at(matched_rule->switch_state);
+                std::string_view target(matched_rule->switch_state);
+                if (!target.empty() && target.front() == '@') target.remove_prefix(1);
+                if (state_stack.back() != target) {
+                    state_stack.back().assign(target.data(), target.size());
+                    state_changed = true;
+                }
             }
 
-            if (matched_rule->rematch && state_stack != old_stack) {
+            if (matched_rule->rematch && state_changed) {
                 if (++zero_width_steps > 64) {
                     const UChar* next = advanceOneUtf16CodePoint(
                         state_text_start + (position - state_window_start), state_text_end);
@@ -1989,6 +2671,36 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
         }
         onig_region_free(state_case_region, 1);
         onig_region_free(state_region, 1);
+        if (dependency_ranges) {
+            if (!grammar->regex_state_graph_bounded || state_full_source_fallback) {
+                dependency_ranges->push_back({
+                    0u, total_bytes, UINT32_MAX,
+                    static_cast<uint8_t>(HighlightSource::REGEX_STATE), 0xFFu,
+                    HIGHLIGHT_DEPENDENCY_DOCUMENT_WIDE
+                });
+            } else {
+                const uint64_t range_lookahead =
+                    state_window_match_width >
+                        std::numeric_limits<uint64_t>::max() - range_end_byte
+                    ? UINT64_MAX
+                    : static_cast<uint64_t>(range_end_byte) + state_window_match_width;
+                const uint64_t lookahead_end = std::max<uint64_t>(
+                    position, range_lookahead);
+                const uint32_t dependency_end = static_cast<uint32_t>(
+                    std::min<uint64_t>(total_bytes, lookahead_end));
+                uint8_t flags = static_cast<uint8_t>(
+                    HIGHLIGHT_DEPENDENCY_CHECKPOINT_BASED |
+                    HIGHLIGHT_DEPENDENCY_BOUNDARY_SENSITIVE);
+                if (state_dependency_start == 0u && dependency_end == total_bytes) {
+                    flags = static_cast<uint8_t>(
+                        flags | HIGHLIGHT_DEPENDENCY_DOCUMENT_WIDE);
+                }
+                dependency_ranges->push_back({
+                    state_dependency_start, dependency_end, UINT32_MAX,
+                    static_cast<uint8_t>(HighlightSource::REGEX_STATE), 0xFFu, flags
+                });
+            }
+        }
     }
     for (size_t i = regex_state_span_begin; i < micro_spans.size(); ++i) {
         micro_spans[i].source = static_cast<uint8_t>(HighlightSource::REGEX_STATE);
@@ -1999,12 +2711,59 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
     if (tree && tree_source_valid && !grammar->ast_selector_rules.empty()) {
         // AST/query capture density is grammar-dependent. Start with a small
         // bounded capacity and grow only when real captures are produced.
-        macro_spans.reserve(std::min<size_t>(length_chars / 6, 4096));
+        macro_spans.reserve(std::min<size_t>(viewport_chars / 6, 4096));
+        std::unordered_set<uint64_t> ast_dependency_keys;
+        auto append_ast_dependency = [&](TSNode dependency_node) {
+            if (!dependency_ranges || ts_node_is_null(dependency_node)) return;
+            uint32_t dependency_start = ts_node_start_byte(dependency_node);
+            uint32_t dependency_end = ts_node_end_byte(dependency_node);
+            if (dependency_start > dependency_end || dependency_end > total_bytes ||
+                (dependency_start & 1u) || (dependency_end & 1u)) return;
+            if (dependency_start == dependency_end) {
+                dependency_start = dependency_start >= 2u ? dependency_start - 2u : 0u;
+                dependency_end = static_cast<uint32_t>(std::min<uint64_t>(
+                    total_bytes, static_cast<uint64_t>(dependency_end) + 2u));
+            }
+            const uint64_t identity =
+                (static_cast<uint64_t>(dependency_start) << 32u) | dependency_end;
+            if (!ast_dependency_keys.insert(identity).second) return;
+            dependency_ranges->push_back({
+                dependency_start, dependency_end, UINT32_MAX,
+                static_cast<uint8_t>(HighlightSource::AST_SELECTOR), 0xFFu,
+                HIGHLIGHT_DEPENDENCY_BOUNDARY_SENSITIVE
+            });
+        };
+        // Even a viewport with no current ATS candidates depends on its own
+        // syntax region: an edit there may create or remove a target node.
+        if (dependency_ranges && range_start_byte < range_end_byte) {
+            const uint64_t identity =
+                (static_cast<uint64_t>(range_start_byte) << 32u) | range_end_byte;
+            ast_dependency_keys.insert(identity);
+            dependency_ranges->push_back({
+                range_start_byte, range_end_byte, UINT32_MAX,
+                static_cast<uint8_t>(HighlightSource::AST_SELECTOR), 0xFFu,
+                HIGHLIGHT_DEPENDENCY_BOUNDARY_SENSITIVE
+            });
+        }
         TSTreeCursor cursor = ts_tree_cursor_new(ts_tree_root_node(tree));
+        // TreeCursor already maintains the active DFS path. Keep its ancestors
+        // here instead of calling ts_node_parent(), which must rediscover the
+        // parent from the tree root for every visited node.
+        std::vector<TSNode> ancestor_path;
+        ancestor_path.reserve(32);
         std::vector<const AstSelectorRule*> candidate_rules;
         candidate_rules.reserve(grammar->ast_wildcard_rules.size() + 16);
+        // Candidate rules are already indexed by node/owner symbol. Deduplicate
+        // those small index lists with an epoch table instead of a linear
+        // std::find for every candidate on every visited syntax node.
+        std::vector<uint32_t> candidate_seen(grammar->ast_selector_rules.size(), 0u);
+        uint32_t candidate_epoch = 0u;
 
         while (true) {
+            if (++candidate_epoch == 0u) {
+                std::fill(candidate_seen.begin(), candidate_seen.end(), 0u);
+                candidate_epoch = 1u;
+            }
             TSNode node = ts_tree_cursor_current_node(&cursor);
             const uint32_t current_start_byte = ts_node_start_byte(node);
             const uint32_t current_end_byte = ts_node_end_byte(node);
@@ -2014,7 +2773,7 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
             TSSymbol sym = ts_node_symbol(node);
             TSFieldId fid = ts_tree_cursor_current_field_id(&cursor);
 
-            TSNode parent = ts_node_parent(node);
+            TSNode parent = ancestor_path.empty() ? TSNode{} : ancestor_path.back();
             TSSymbol parent_sym = ts_node_is_null(parent) ? 0 : ts_node_symbol(parent);
             const TSSymbol parent_grammar_sym = ts_node_is_null(parent) ? 0 :
                 ts_node_grammar_symbol(parent);
@@ -2022,24 +2781,27 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
             candidate_rules.clear();
             auto append_indexed_rules = [&](const std::vector<uint32_t>& indices) {
                 for (uint32_t index : indices) {
-                    if (index >= grammar->ast_selector_rules.size()) continue;
-                    const AstSelectorRule* rule = &grammar->ast_selector_rules[index];
-                    if (std::find(candidate_rules.begin(), candidate_rules.end(), rule) == candidate_rules.end()) {
-                        candidate_rules.push_back(rule);
-                    }
+                    if (index >= grammar->ast_selector_rules.size() ||
+                        candidate_seen[index] == candidate_epoch) continue;
+                    candidate_seen[index] = candidate_epoch;
+                    candidate_rules.push_back(&grammar->ast_selector_rules[index]);
                 }
             };
-            auto append_indexed_type_rules = [&](const AstTypeRuleIndex& index, const char* type) {
+            auto append_indexed_type_rules = [&](const auto& index, const char* type) {
                 if (!type) return;
-                const auto found = index.find(std::string(type));
+                // Both type indexes use transparent std::less<> lookup. Avoid
+                // allocating a temporary std::string for every visited node.
+                const auto found = index.find(std::string_view(type));
                 if (found != index.end()) append_indexed_rules(found->second);
             };
             append_indexed_rules(grammar->ast_wildcard_rules);
             const char* node_type = ts_node_type(node);
             const char* node_grammar_type = ts_node_grammar_type(node);
             append_indexed_type_rules(grammar->ast_rules_by_node_type, node_type);
+            append_indexed_type_rules(grammar->ast_supertype_rules_by_node_type, node_type);
             if (!node_grammar_type || !node_type || std::strcmp(node_grammar_type, node_type) != 0) {
                 append_indexed_type_rules(grammar->ast_rules_by_node_type, node_grammar_type);
+                append_indexed_type_rules(grammar->ast_supertype_rules_by_node_type, node_grammar_type);
             }
             auto node_rules = grammar->ast_rules_by_node_symbol.find(sym);
             if (node_rules != grammar->ast_rules_by_node_symbol.end()) {
@@ -2061,8 +2823,10 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                 const char* parent_type = ts_node_type(parent);
                 const char* parent_grammar_type = ts_node_grammar_type(parent);
                 append_indexed_type_rules(grammar->ast_field_rules_by_parent_type, parent_type);
+                append_indexed_type_rules(grammar->ast_supertype_field_rules_by_parent_type, parent_type);
                 if (!parent_grammar_type || !parent_type || std::strcmp(parent_grammar_type, parent_type) != 0) {
                     append_indexed_type_rules(grammar->ast_field_rules_by_parent_type, parent_grammar_type);
+                    append_indexed_type_rules(grammar->ast_supertype_field_rules_by_parent_type, parent_grammar_type);
                 }
                 // Field selectors are indexed by the compiled owner symbol.
                 // Also dispatch through the original grammar identity when an
@@ -2079,6 +2843,11 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
             for (const AstSelectorRule* ast_rule_ptr : candidate_rules) {
                 const AstSelectorRule& ast_rule = *ast_rule_ptr;
                 if (!ast_rule.enabled) continue;
+                // A candidate's own syntax/text properties influence this rule
+                // even when a later predicate rejects it. Keep that dependency so
+                // edits can invalidate a negative match without clearing unrelated
+                // document partitions.
+                append_ast_dependency(node);
                 if (ast_rule.named >= 0 &&
                     ts_node_is_named(node) != (ast_rule.named != 0)) continue;
                 if (ast_rule.missing >= 0 &&
@@ -2092,33 +2861,37 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                 // A selector with a field names the owner node and styles the
                 // selected child. A selector without a field targets the node itself.
                 if (ast_rule.field_id != 0) {
+                    append_ast_dependency(parent);
                     const char* parent_type = ts_node_is_null(parent) ? nullptr : ts_node_type(parent);
                     const char* parent_grammar_type = ts_node_is_null(parent) ? nullptr : ts_node_grammar_type(parent);
-                    const bool owner_symbol_matches = ast_rule.target_symbol != 0 &&
-                        tshAstNodeMatchesSelector(grammar->ts_language, parent,
-                            ast_rule.target_symbol, ast_rule.target_type);
-                    const bool owner_type_matches = !ast_rule.target_type.empty() &&
-                        ((parent_type && ast_rule.target_type == parent_type) ||
-                         (parent_grammar_type && ast_rule.target_type == parent_grammar_type));
-                    if (ts_node_is_null(parent) ||
-                        (!owner_symbol_matches && !owner_type_matches) ||
-                        ast_rule.field_id != fid) {
+                    // Dispatch indexes are expanded through the complete
+                    // supertype/subtype closure. Revalidate with the immutable
+                    // reverse index (exact symbol/type plus supertype relation),
+                    // not exact symbol equality, or valid subtype owners are
+                    // discarded after dispatch.
+                    const bool owner_matches = !ts_node_is_null(parent) &&
+                        tshAstNodeMatchesSelector(
+                            *grammar, parent, ast_rule.target_symbol,
+                            ast_rule.target_type);
+                    if (!owner_matches || ast_rule.field_id != fid) {
                         continue;
                     }
                 } else {
-                    const bool node_symbol_matches = ast_rule.target_symbol != 0 &&
-                        tshAstNodeMatchesSelector(grammar->ts_language, node,
-                            ast_rule.target_symbol, ast_rule.target_type);
-                    const bool node_type_matches = !ast_rule.target_type.empty() &&
-                        ((node_type && ast_rule.target_type == node_type) ||
-                         (node_grammar_type && ast_rule.target_type == node_grammar_type));
-                    if (!node_symbol_matches && !node_type_matches) continue;
+                    // Candidate dispatch is already narrowed by the compile-time
+                    // symbol/type indexes. Use the same constant-time reverse
+                    // supertype index for the final check; exact equality would
+                    // reject every concrete subtype that reached this rule through
+                    // the expanded dispatch table.
+                    if (!tshAstNodeMatchesSelector(
+                            *grammar, node, ast_rule.target_symbol,
+                            ast_rule.target_type)) continue;
                 }
                 if (ast_rule.parent_symbol != 0 || !ast_rule.parent_type.empty()) {
+                    append_ast_dependency(parent);
                     const char* parent_type = ts_node_is_null(parent) ? nullptr : ts_node_type(parent);
                     const char* parent_grammar_type = ts_node_is_null(parent) ? nullptr : ts_node_grammar_type(parent);
                     const bool parent_symbol_matches = ast_rule.parent_symbol != 0 &&
-                        tshAstNodeMatchesSelector(grammar->ts_language, parent,
+                        tshAstNodeMatchesSelector(*grammar, parent,
                             ast_rule.parent_symbol, ast_rule.parent_type);
                     const bool parent_type_matches = !ast_rule.parent_type.empty() &&
                         ((parent_type && ast_rule.parent_type == parent_type) ||
@@ -2127,15 +2900,19 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                 }
                 if (ast_rule.ancestor_symbol != 0) {
                     bool ancestor_found = false;
-                    TSNode ancestor = parent;
-                    while (!ts_node_is_null(ancestor)) {
+                    for (auto ancestor_it = ancestor_path.rbegin();
+                         ancestor_it != ancestor_path.rend(); ++ancestor_it) {
+                        const TSNode ancestor = *ancestor_it;
+                        // Positive and negative ancestor constraints depend on every
+                        // inspected ancestor up to the first match (or the root).
+                        append_ast_dependency(ancestor);
                         // A node can expose an alias as its public symbol/type while
                         // retaining a different grammar symbol/type. ATS names are
                         // resolved against the grammar, so match both identities.
                         const char* visible_type = ts_node_type(ancestor);
                         const char* grammar_type = ts_node_grammar_type(ancestor);
                         const bool symbol_matches =
-                            tshAstNodeMatchesSelector(grammar->ts_language, ancestor,
+                            tshAstNodeMatchesSelector(*grammar, ancestor,
                                 ast_rule.ancestor_symbol, ast_rule.ancestor_type);
                         const bool type_matches = !ast_rule.ancestor_type.empty() &&
                             ((visible_type && ast_rule.ancestor_type == visible_type) ||
@@ -2144,7 +2921,6 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                             ancestor_found = true;
                             break;
                         }
-                        ancestor = ts_node_parent(ancestor);
                     }
                     if (!ancestor_found) continue;
                 }
@@ -2155,7 +2931,7 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                         TSNode child = ts_node_child(node, child_index);
                         const char* child_visible_type = ts_node_type(child);
                         const char* child_grammar_type = ts_node_grammar_type(child);
-                        if (tshAstNodeMatchesSelector(grammar->ts_language, child,
+                        if (tshAstNodeMatchesSelector(*grammar, child,
                                 ast_rule.child_symbol, ast_rule.child_type) ||
                             (!ast_rule.child_type.empty() &&
                              ((child_visible_type && ast_rule.child_type == child_visible_type) ||
@@ -2206,47 +2982,46 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                         if (!tshSourceRegexMatchesBounded(
                                 *text_source, text_start, text_end,
                                 ast_rule.text_regex,
-                                ast_rule.text_regex_maximum_bytes)) continue;
+                                ast_rule.text_regex_maximum_bytes,
+                                regex_workspace)) continue;
                     } else {
-                    // Context-dependent Regex needs the complete node slice, but a
-                    // mapped TextSource already exposes it without a second large heap
-                    // copy. Materialize only if the source has no contiguous backing;
-                    // convert to UTF-8 only when literal predicates require it.
+                    // Context-dependent AST regexes retain the contiguous adapter,
+                    // but cap the temporary node to prevent a single giant string or
+                    // comment node from allocating a document-sized second copy.
+                    constexpr uint64_t kMaxContiguousAstRegexBytes = 4ULL * 1024ULL * 1024ULL;
+                    if (text_source && ast_rule.text_regex &&
+                        text_end - text_start > kMaxContiguousAstRegexBytes) {
+                        throw std::runtime_error(
+                            "TSH context-dependent AST Regex exceeds the 4 MiB contiguous-node limit; "
+                            "refusing to publish an incomplete highlight result");
+                    }
                     std::string node_text_storage;
-                    std::vector<UChar> node_text_window;
+                    std::vector<UChar> node_text_window((text_end - text_start) / sizeof(UChar));
                     const UChar* node_source = nullptr;
                     if (text_end > text_start) {
                         if (text_source) {
-                            const char* mapped_data = nullptr;
-                            uint64_t mapped_size = 0;
-                            if (text_source->contiguousData(&mapped_data, &mapped_size) &&
-                                mapped_data && text_end <= mapped_size) {
-                                node_source = reinterpret_cast<const UChar*>(mapped_data) + text_start;
-                            } else {
-                                const uint64_t node_bytes = text_end - text_start;
-                                if ((node_bytes & 1u) != 0 ||
-                                    node_bytes > static_cast<uint64_t>(node_text_window.max_size())) continue;
-                                try { node_text_window.resize(static_cast<size_t>(node_bytes)); }
-                                catch (const std::bad_alloc&) { continue; }
-                                if (!windbell::largefile::copyTextRange(
-                                        *text_source, text_start, node_bytes, node_text_window.data())) continue;
-                                node_source = node_text_window.data();
+                            if (!windbell::largefile::copyTextRange(
+                                    *text_source, text_start, text_end - text_start,
+                                    node_text_window.data())) {
+                                throw std::runtime_error(
+                                    "TSH could not read the AST text predicate's TextSource range");
                             }
+                            node_source = node_text_window.data();
                         } else if (has_contiguous_text) {
                             const UChar *document_source = input_chars
                                 ? reinterpret_cast<const UChar*>(input_chars)
                                 : reinterpret_cast<const UChar*>(contiguous_source_data);
                             node_source = document_source + text_start;
+                        } else {
+                            throw std::runtime_error(
+                                "TSH AST text predicate has no readable source buffer");
                         }
-                        else continue;
                     } else node_source = &kEmptyInput;
-                    const bool needs_utf8_literals = ast_rule.has_text_equals ||
-                        ast_rule.has_text_prefix || ast_rule.has_text_suffix;
-                    std::string_view node_text;
-                    if (needs_utf8_literals) {
-                        if (!tshUtf16SliceToUtf8(node_source, text_end - text_start, node_text_storage)) continue;
-                        node_text = node_text_storage;
+                    if (!tshUtf16SliceToUtf8(node_source, text_end - text_start, node_text_storage)) {
+                        throw std::runtime_error(
+                            "TSH AST text predicate encountered malformed UTF-16 input");
                     }
+                    const std::string_view node_text(node_text_storage);
                     if (ast_rule.has_text_equals && node_text != ast_rule.text_equals) continue;
                     if (ast_rule.has_text_prefix &&
                         (node_text.size() < ast_rule.text_prefix.size() ||
@@ -2267,74 +3042,100 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                         const UChar* regex_end = node_source +
                             (text_end - text_start) / sizeof(UChar);
                         OnigRegion* regex_region = onig_region_new();
-                        if (!regex_region) continue;
+                        if (!regex_region) throw std::bad_alloc();
                         const int regex_result = onig_search(
                             ast_rule.text_regex, regex_begin, regex_end,
                             regex_begin, regex_end, regex_region, ONIG_OPTION_NONE);
                         onig_region_free(regex_region, 1);
-                        if (regex_result < 0) continue;
+                        if (regex_result == ONIG_MISMATCH) continue;
+                        if (regex_result < 0) {
+                            throw std::runtime_error(
+                                "Oniguruma AST text Regex execution failed with status " +
+                                std::to_string(regex_result));
+                        }
                     }
                     }
                     }
                 }
 
-                if (ast_rule.child_index != UINT32_MAX ||
+                // Resolve position and both adjacent siblings in one cursor pass.
+                // ts_node_prev_sibling/next_sibling each perform their own tree walk;
+                // using both independently repeats work. A TreeCursor visits the
+                // parent's visible children once and preserves anonymous-node order.
+                const bool needs_child_position =
+                    ast_rule.child_index != UINT32_MAX ||
                     ast_rule.named_child_index != UINT32_MAX ||
-                    ast_rule.first_child >= 0 || ast_rule.last_child >= 0 ||
-                    ast_rule.previous_sibling_symbol != 0 || ast_rule.next_sibling_symbol != 0) {
+                    ast_rule.first_child >= 0 ||
+                    ast_rule.last_child >= 0;
+                const bool needs_previous_sibling =
+                    ast_rule.previous_sibling_symbol != 0 ||
+                    !ast_rule.previous_sibling_type.empty();
+                const bool match_next_sibling =
+                    ast_rule.next_sibling_symbol != 0 ||
+                    !ast_rule.next_sibling_type.empty();
+                const bool needs_next_sibling =
+                    match_next_sibling || ast_rule.last_child >= 0;
+                if (needs_child_position || needs_previous_sibling || needs_next_sibling) {
+                    append_ast_dependency(parent);
                     if (ts_node_is_null(parent)) continue;
-                    const uint32_t sibling_count = ts_node_child_count(parent);
+
+                    uint32_t sibling_count = 0;
                     uint32_t current_index = UINT32_MAX;
                     uint32_t current_named_index = UINT32_MAX;
                     uint32_t named_seen = 0;
-                    for (uint32_t sibling_index = 0; sibling_index < sibling_count; ++sibling_index) {
-                        TSNode sibling = ts_node_child(parent, sibling_index);
-                        if (ts_node_eq(sibling, node)) {
-                            current_index = sibling_index;
-                            if (ts_node_is_named(sibling)) current_named_index = named_seen;
-                            break;
+                    TSNode previous{};
+                    TSNode next{};
+                    bool found_current = false;
+                    TSTreeCursor sibling_cursor = ts_tree_cursor_new(parent);
+                    if (ts_tree_cursor_goto_first_child(&sibling_cursor)) {
+                        do {
+                            const TSNode sibling =
+                                ts_tree_cursor_current_node(&sibling_cursor);
+                            if (ts_node_eq(sibling, node)) {
+                                found_current = true;
+                                current_index = sibling_count;
+                                if (ts_node_is_named(sibling)) {
+                                    current_named_index = named_seen;
+                                }
+                                if (needs_next_sibling &&
+                                    ts_tree_cursor_goto_next_sibling(&sibling_cursor)) {
+                                    next = ts_tree_cursor_current_node(&sibling_cursor);
+                                }
+                                break;
+                            }
+                            previous = sibling;
+                            ++sibling_count;
+                            if (ts_node_is_named(sibling)) ++named_seen;
+                        } while (ts_tree_cursor_goto_next_sibling(&sibling_cursor));
+                    }
+                    ts_tree_cursor_delete(&sibling_cursor);
+                    if (!found_current) continue;
+
+                    ++sibling_count;
+                    if (needs_child_position) {
+                        // Continue from the current index to determine whether it is
+                        // the final child without rescanning the prefix.
+                        if (ast_rule.child_index != UINT32_MAX &&
+                            current_index != ast_rule.child_index) continue;
+                        if (ast_rule.named_child_index != UINT32_MAX &&
+                            current_named_index != ast_rule.named_child_index) continue;
+                        if (ast_rule.first_child >= 0 &&
+                            (current_index == 0u) != (ast_rule.first_child != 0)) continue;
+                        if (ast_rule.last_child >= 0) {
+                            const bool is_last = ts_node_is_null(next);
+                            if (is_last != (ast_rule.last_child != 0)) continue;
                         }
-                        if (ts_node_is_named(sibling)) ++named_seen;
                     }
-                    if (current_index == UINT32_MAX) continue;
-                    if (ast_rule.child_index != UINT32_MAX &&
-                        current_index != ast_rule.child_index) continue;
-                    if (ast_rule.named_child_index != UINT32_MAX &&
-                        current_named_index != ast_rule.named_child_index) continue;
-                    if (ast_rule.first_child >= 0 &&
-                        (current_index == 0) != (ast_rule.first_child != 0)) continue;
-                    if (ast_rule.last_child >= 0 &&
-                        (current_index + 1 == sibling_count) != (ast_rule.last_child != 0)) continue;
-                    if (ast_rule.previous_sibling_symbol != 0) {
-                        if (current_index == 0) continue;
-                        TSNode previous = ts_node_child(parent, current_index - 1);
-                        const char* previous_type = ts_node_type(previous);
-                        const char* previous_grammar_type = ts_node_grammar_type(previous);
-                        const bool previous_symbol_matches =
-                            tshAstNodeMatchesSelector(grammar->ts_language, previous,
-                                ast_rule.previous_sibling_symbol, ast_rule.previous_sibling_type);
-                        const bool previous_type_matches =
-                            (!ast_rule.previous_sibling_type.empty() && previous_type &&
-                                ast_rule.previous_sibling_type == previous_type) ||
-                            (!ast_rule.previous_sibling_type.empty() && previous_grammar_type &&
-                                ast_rule.previous_sibling_type == previous_grammar_type);
-                        if (!previous_symbol_matches && !previous_type_matches) continue;
-                    }
-                    if (ast_rule.next_sibling_symbol != 0) {
-                        if (current_index + 1 >= sibling_count) continue;
-                        TSNode next = ts_node_child(parent, current_index + 1);
-                        const char* next_type = ts_node_type(next);
-                        const char* next_grammar_type = ts_node_grammar_type(next);
-                        const bool next_symbol_matches =
-                            tshAstNodeMatchesSelector(grammar->ts_language, next,
-                                ast_rule.next_sibling_symbol, ast_rule.next_sibling_type);
-                        const bool next_type_matches =
-                            (!ast_rule.next_sibling_type.empty() && next_type &&
-                                ast_rule.next_sibling_type == next_type) ||
-                            (!ast_rule.next_sibling_type.empty() && next_grammar_type &&
-                                ast_rule.next_sibling_type == next_grammar_type);
-                        if (!next_symbol_matches && !next_type_matches) continue;
-                    }
+                    if (needs_previous_sibling &&
+                        !tshAstNodeMatchesSelector(
+                            *grammar, previous,
+                            ast_rule.previous_sibling_symbol,
+                            ast_rule.previous_sibling_type)) continue;
+                    if (match_next_sibling &&
+                        !tshAstNodeMatchesSelector(
+                            *grammar, next,
+                            ast_rule.next_sibling_symbol,
+                            ast_rule.next_sibling_type)) continue;
                 }
 
                 if (diagnostic_match_counts) tshIncrementDiagnostic(&diagnostic_match_counts[2]);
@@ -2375,15 +3176,22 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                 current_start_byte < range_start_byte &&
                 current_end_byte > range_start_byte &&
                 ts_tree_cursor_goto_first_child_for_byte(&cursor, range_start_byte) >= 0) {
+                ancestor_path.push_back(node);
                 continue;
             }
-            if (!subtree_before_viewport && ts_tree_cursor_goto_first_child(&cursor)) continue;
+            if (!subtree_before_viewport && ts_tree_cursor_goto_first_child(&cursor)) {
+                ancestor_path.push_back(node);
+                continue;
+            }
             if (ts_tree_cursor_goto_next_sibling(&cursor)) continue;
 
-            // Advance to the next sibling of the nearest ancestor. This is
-            // shared by normal DFS completion and whole-subtree viewport skips.
+            // Advance to the next sibling of the nearest ancestor. Each successful
+            // cursor ascent removes the node that just became the current parent
+            // from the cached path; no parent reconstruction or sibling rescan is
+            // needed for ATS parent/ancestor constraints.
             bool retraced = false;
             while (ts_tree_cursor_goto_parent(&cursor)) {
+                if (!ancestor_path.empty()) ancestor_path.pop_back();
                 if (ts_tree_cursor_goto_next_sibling(&cursor)) {
                     retraced = true;
                     break;
@@ -2403,97 +3211,173 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
     }
     const size_t native_query_span_begin = macro_spans.size();
     if (tree && tree_source_valid && !grammar->native_queries.empty()) {
-        // Each .tsh query block has its own native TSQuery and capture namespace.
-        // This preserves per-block priority/order and avoids concatenating query
-        // sources into a synthetic aggregate program.
+        // Build one viewport-local candidate-root set for every rooted-local
+        // query program. The same traversal also supplies dependency envelopes,
+        // avoiding a second walk of the viewport AST.
+        std::unordered_set<TSSymbol> local_query_root_symbols;
+        for (const auto& program : grammar->native_queries) {
+            if (!program.enabled || !program.query) continue;
+            for (const auto& item : program.pattern_metadata) {
+                const auto& metadata = item.second;
+                if (metadata.enabled &&
+                    metadata.dependency_scope ==
+                        NativeQueryProgram::QueryDependencyScope::ROOTED_LOCAL &&
+                    metadata.root_node_symbol != 0) {
+                    local_query_root_symbols.insert(metadata.root_node_symbol);
+                }
+            }
+        }
+        std::vector<TshQueryRootCandidate> query_root_candidates;
+        if (!local_query_root_symbols.empty()) {
+            collectQueryRootCandidates(
+                *grammar, tree, local_query_root_symbols,
+                range_start_byte, range_end_byte, &query_root_candidates);
+        }
+        appendQueryPatternDependencies(
+            *grammar, language, range_start_byte, range_end_byte,
+            total_bytes, query_root_candidates, dependency_ranges);
+
+        // Each .tsh query block keeps its own TSQuery and capture namespace.
+        // Non-local, unrooted, unknown-root, or ancestor-context patterns retain
+        // the original full-tree execution path; only fully-proven rooted-local
+        // programs use viewport candidate roots.
         for (const auto& native_query : grammar->native_queries) {
             if (!native_query.enabled || !native_query.query) continue;
 #if defined(TSH_TREE_SITTER_HAS_QUERY_CURSOR_OPTIONS)
+            bool has_active_pattern = false;
+            bool rooted_local = true;
+            std::unordered_set<TSSymbol> query_root_symbols;
+            for (const auto& item : native_query.pattern_metadata) {
+                const auto& metadata = item.second;
+                if (!metadata.enabled) continue;
+                has_active_pattern = true;
+                if (metadata.dependency_scope !=
+                        NativeQueryProgram::QueryDependencyScope::ROOTED_LOCAL ||
+                    metadata.root_node_symbol == 0) {
+                    rooted_local = false;
+                    break;
+                }
+                query_root_symbols.insert(metadata.root_node_symbol);
+            }
+            if (!has_active_pattern) continue;
+
+            std::vector<TSNode> execution_roots;
+            if (rooted_local) {
+                std::unordered_set<const void*> seen_root_nodes;
+                for (const auto& candidate : query_root_candidates) {
+                    const bool relevant = std::any_of(
+                        candidate.matching_symbols.begin(),
+                        candidate.matching_symbols.end(),
+                        [&](TSSymbol symbol) {
+                            return query_root_symbols.find(symbol) != query_root_symbols.end();
+                        });
+                    if (!relevant || hasMatchingQueryRootAncestor(
+                            *grammar, candidate.node, query_root_symbols)) {
+                        continue;
+                    }
+                    if (seen_root_nodes.insert(candidate.node.id).second) {
+                        execution_roots.push_back(candidate.node);
+                    }
+                }
+            } else {
+                execution_roots.push_back(ts_tree_root_node(tree));
+            }
+            if (execution_roots.empty()) continue;
+
             std::unique_ptr<TSQueryCursor, decltype(&ts_query_cursor_delete)> q_cursor(
                 ts_query_cursor_new(), &ts_query_cursor_delete);
-            if (!q_cursor) continue;
+            if (!q_cursor) throw std::bad_alloc();
             TSQueryCursor* cursor = q_cursor.get();
 
-            // Restrict query traversal to the requested range while retaining the
-            // complete document AST and absolute node coordinates. A fixed match
-            // limit or artificial progress timeout would remove valid captures
-            // from dense files, so use the maximum representable pending capacity.
-            if (!ts_query_cursor_set_byte_range(cursor, range_start_byte, range_end_byte)) {
-                continue;
-            }
-            ts_query_cursor_set_match_limit(cursor, UINT32_MAX);
-            ts_query_cursor_exec(cursor, native_query.query, ts_tree_root_node(tree));
-
             // Keep each query block transactional without staging a second
-            // full-sized capture vector. Record a checkpoint in the shared macro
-            // output, append captures directly, and roll back this block if the
-            // cursor reports an incomplete traversal. This halves the transient
-            // storage attributable to the per-block capture staging vector while
-            // preserving all-or-nothing publication semantics.
+            // full-sized capture vector. Any incomplete candidate-root traversal
+            // rolls the entire block back before the result can be published.
             const size_t query_span_checkpoint = macro_spans.size();
-            TSQueryMatch match;
-            uint64_t match_order = 0;
             uint64_t accepted_match_count = 0;
-            while (ts_query_cursor_next_match(cursor, &match)) {
-                const uint64_t current_order = match_order++;
-                auto pattern_metadata = native_query.pattern_metadata.find(match.pattern_index);
-                if (pattern_metadata != native_query.pattern_metadata.end() &&
-                    !pattern_metadata->second.enabled) {
-                    continue;
-                }
-                // text_start is a sentinel pointer when a PieceTree/TextSource
-                // is non-contiguous. Never pass that sentinel as readable UTF-16
-                // memory to predicate helpers; let them use the TextSource window API.
-                const TshPredicateResult predicate_result = tshEvaluateNativePredicates(
-                    native_query, match,
-                    has_contiguous_text ? text_start : nullptr,
-                    has_contiguous_text ? nullptr : text_source, total_bytes);
-                if (predicate_result == TshPredicateResult::ERROR) {
+            bool query_incomplete = false;
+            for (TSNode execution_root : execution_roots) {
+                if (!ts_query_cursor_set_byte_range(
+                        cursor, range_start_byte, range_end_byte)) {
                     throw std::runtime_error(
-                        "TSH native query predicate evaluation failed while reading capture text");
+                        "TSH could not apply the requested byte range to a Tree-sitter query cursor");
                 }
-                if (predicate_result == TshPredicateResult::REJECT) continue;
-                ++accepted_match_count;
-                const int32_t pattern_priority =
-                    pattern_metadata != native_query.pattern_metadata.end() &&
-                    pattern_metadata->second.has_priority
-                        ? pattern_metadata->second.priority : native_query.priority;
-                const uint32_t pattern_order =
-                    pattern_metadata != native_query.pattern_metadata.end()
-                        ? pattern_metadata->second.declaration_order : 0;
-                for (uint32_t capture_index = 0; capture_index < match.capture_count; ++capture_index) {
-                    const TSQueryCapture& capture = match.captures[capture_index];
-                    auto style_binding = native_query.capture_style_ids.find(capture.index);
-                    if (style_binding == native_query.capture_style_ids.end()) continue;
-                    HighlightSpan span;
-                    const uint32_t capture_start = ts_node_start_byte(capture.node);
-                    const uint32_t capture_end = ts_node_end_byte(capture.node);
-                    if (capture_start > capture_end || capture_end > total_bytes ||
-                        (capture_start & 1u) || (capture_end & 1u)) continue;
-                    span.start_byte = capture_start;
-                    span.end_byte = capture_end;
-                    span.style_id = style_binding->second;
-                    span.flags = 0;
-                    span.priority = pattern_priority;
-                    const uint64_t order = static_cast<uint64_t>(native_query.declaration_order) +
-                        pattern_order + current_order + capture_index;
-                    span.declaration_order = static_cast<uint32_t>(
-                        std::min<uint64_t>(order, UINT32_MAX));
-                    macro_spans.push_back(span);
+                // Keep the existing unbounded match capacity: dense valid queries
+                // must not silently lose captures because of an arbitrary limit.
+                ts_query_cursor_set_match_limit(cursor, UINT32_MAX);
+                ts_query_cursor_exec(cursor, native_query.query, execution_root);
+
+                TSQueryMatch match;
+                while (ts_query_cursor_next_match(cursor, &match)) {
+                    auto pattern_metadata =
+                        native_query.pattern_metadata.find(match.pattern_index);
+                    if (pattern_metadata != native_query.pattern_metadata.end() &&
+                        !pattern_metadata->second.enabled) {
+                        continue;
+                    }
+                    // PieceTree-backed documents expose no contiguous UTF-16
+                    // pointer. Predicate helpers must read their bounded source
+                    // windows rather than dereference the non-contiguous sentinel.
+                    const TshPredicateResult predicate_result = tshEvaluateNativePredicates(
+                        native_query, match,
+                        has_contiguous_text ? text_start : nullptr,
+                        has_contiguous_text ? nullptr : text_source, total_bytes,
+                        regex_workspace);
+                    if (predicate_result == TshPredicateResult::ERROR) {
+                        throw std::runtime_error(
+                            "TSH native query predicate evaluation failed while reading capture text");
+                    }
+                    if (predicate_result == TshPredicateResult::REJECT) continue;
+                    ++accepted_match_count;
+                    const int32_t pattern_priority =
+                        pattern_metadata != native_query.pattern_metadata.end() &&
+                        pattern_metadata->second.has_priority
+                            ? pattern_metadata->second.priority : native_query.priority;
+                    const uint32_t pattern_order =
+                        pattern_metadata != native_query.pattern_metadata.end()
+                            ? pattern_metadata->second.declaration_order : 0;
+                    for (uint32_t capture_index = 0;
+                         capture_index < match.capture_count; ++capture_index) {
+                        const TSQueryCapture& capture = match.captures[capture_index];
+                        if (capture.index >= native_query.capture_style_ids_by_index.size()) continue;
+                        const int32_t style_id =
+                            native_query.capture_style_ids_by_index[capture.index];
+                        if (style_id < 0) continue;
+                        HighlightSpan span;
+                        const uint32_t capture_start = ts_node_start_byte(capture.node);
+                        const uint32_t capture_end = ts_node_end_byte(capture.node);
+                        if (capture_start > capture_end || capture_end > total_bytes ||
+                            (capture_start & 1u) || (capture_end & 1u)) continue;
+                        span.start_byte = capture_start;
+                        span.end_byte = capture_end;
+                        span.style_id = static_cast<uint16_t>(style_id);
+                        span.flags = 0;
+                        span.priority = pattern_priority;
+                        span.allow_overlap = pattern_metadata != native_query.pattern_metadata.end() &&
+                            pattern_metadata->second.allow_overlap ? 1u : 0u;
+                        // Declaration precedence is a property of the compiled
+                        // query/pattern/capture, not of how many earlier matches
+                        // happened to fall inside this viewport. Using match order
+                        // made the same capture receive different precedence in
+                        // full-document and partial-range execution.
+                        const uint64_t order =
+                            static_cast<uint64_t>(native_query.declaration_order) +
+                            pattern_order + capture_index;
+                        span.declaration_order = static_cast<uint32_t>(
+                            std::min<uint64_t>(order, UINT32_MAX));
+                        macro_spans.push_back(span);
+                    }
+                }
+                if (ts_query_cursor_did_exceed_match_limit(cursor)) {
+                    query_incomplete = true;
+                    break;
                 }
             }
-            const bool query_incomplete = ts_query_cursor_did_exceed_match_limit(cursor);
+
             if (!query_incomplete) {
                 if (diagnostic_match_counts) {
                     tshIncrementDiagnostic(&diagnostic_match_counts[3], accepted_match_count);
                 }
             } else {
-                // A Tree-sitter cursor drops the earliest in-progress match when
-                // its capture-list pool is exhausted. Returning the remaining
-                // matches as an ordinary highlight result would therefore make
-                // the output look complete while silently omitting valid
-                // captures. Roll back this block and fail the whole highlight
-                // operation so JNI/Kotlin can report the incomplete execution.
                 macro_spans.resize(query_span_checkpoint);
                 throw std::runtime_error(
                     "TSH native query '" + native_query.id +
@@ -2545,12 +3429,8 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
     } else if (micro_spans.empty()) {
         final_spans = std::move(macro_spans);
     } else {
-        std::sort(macro_spans.begin(), macro_spans.end(), [](const HighlightSpan& a, const HighlightSpan& b) {
-            return (a.start_byte != b.start_byte) ? a.start_byte < b.start_byte : a.end_byte < b.end_byte;
-        });
-        std::sort(micro_spans.begin(), micro_spans.end(), [](const HighlightSpan& a, const HighlightSpan& b) {
-            return (a.start_byte != b.start_byte) ? a.start_byte < b.start_byte : a.end_byte < b.end_byte;
-        });
+        // Do not sort producer vectors independently: the precedence sort
+        // below orders the combined candidate set once and is authoritative.
 
         // Keep overlapping captures. Their precedence is a rule-level concern,
         // not an accidental consequence of numeric style IDs.

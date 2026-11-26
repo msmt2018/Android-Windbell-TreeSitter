@@ -87,4 +87,49 @@ class CaptureRangeLookupIndexTest {
             assertEquals(expected, index.findContaining(session, start, end) != null)
         }
     }
+
+    @Test
+    fun overlappingRangesAreOrderedAndScopedToTheRequestedSession() {
+        val index = CaptureRangeLookupIndex()
+        val expected = listOf(
+            CaptureRangeKey(7, 5, 20),
+            CaptureRangeKey(7, 12, 18)
+        )
+
+        // Deliberately insert out of order and interleave other sessions.
+        index.add(CaptureRangeKey(9, 10, 40))
+        index.add(expected[1])
+        index.add(CaptureRangeKey(7, 25, 30))
+        index.add(CaptureRangeKey(3, 0, 100))
+        index.add(expected[0])
+        index.add(CaptureRangeKey(7, 0, 10))
+
+        assertEquals(expected, index.findOverlappingRanges(7, 15, 25))
+    }
+
+    @Test
+    fun touchingBoundariesAreNotOverlaps() {
+        val index = CaptureRangeLookupIndex()
+        index.add(CaptureRangeKey(1, 0, 10))
+        index.add(CaptureRangeKey(1, 20, 30))
+
+        assertEquals(emptyList<CaptureRangeKey>(), index.findOverlappingRanges(1, 10, 20))
+        assertEquals(emptyList<CaptureRangeKey>(), index.findOverlappingRanges(2, 0, 30))
+    }
+
+    @Test
+    fun coveringAndUncoveredQueriesUseTheSameOrderedIntervals() {
+        val index = CaptureRangeLookupIndex()
+        index.add(CaptureRangeKey(4, 20, 30))
+        index.add(CaptureRangeKey(4, 0, 10))
+        index.add(CaptureRangeKey(4, 10, 20))
+
+        assertEquals(
+            listOf(CaptureRangeKey(4, 0, 10), CaptureRangeKey(4, 10, 20), CaptureRangeKey(4, 20, 30)),
+            index.findCoveringRanges(4, 5, 25)
+        )
+        assertEquals(emptyList<IntRange>(), index.findUncoveredRanges(4, 5, 25))
+        assertNull(index.findCoveringRanges(4, 5, 35))
+        assertEquals(listOf(30 until 35), index.findUncoveredRanges(4, 5, 35))
+    }
 }

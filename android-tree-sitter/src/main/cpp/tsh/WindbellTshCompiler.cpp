@@ -30,7 +30,9 @@
 #include <unordered_set>
 #include <cstdint>
 #include <new>
+#include <string_view>
 #include "ts__log.h"
+#include "QueryDependencyAnalyzer.h"
 
 namespace windbell::tsh {
 
@@ -258,16 +260,37 @@ static bool analyzeBoundedRegexWidth(
     return true;
 }
 static void annotateRegexRuleExecution(CompiledRegexRule& rule) {
-    uint64_t width = 0;
-    const bool bounded = rule.type == RegexRuleType::MATCH &&
-        analyzeBoundedRegexWidth(rule.raw_match_pattern, &width);
-    rule.execution_capability = bounded ?
-        RegexExecutionCapability::BOUNDED_WINDOW :
-        RegexExecutionCapability::DOCUMENT_CONTEXT_REQUIRED;
-    rule.maximum_match_bytes = bounded && width <= std::numeric_limits<uint64_t>::max() / sizeof(uint16_t) ?
-        width * sizeof(uint16_t) : 0;
-    if (bounded && rule.maximum_match_bytes == 0) {
+    if (rule.type == RegexRuleType::BLOCK) {
+        uint64_t start_width = 0;
+        uint64_t end_width = 0;
+        const bool bounded_start =
+            analyzeBoundedRegexWidth(rule.raw_start_pattern, &start_width);
+        const bool bounded_end =
+            analyzeBoundedRegexWidth(rule.raw_end_pattern, &end_width);
+        const uint64_t maximum_width = std::max(start_width, end_width);
+        rule.block_delimiters_bounded = bounded_start && bounded_end &&
+            maximum_width > 0 &&
+            maximum_width <= std::numeric_limits<uint64_t>::max() / sizeof(uint16_t);
+        rule.maximum_block_delimiter_bytes = rule.block_delimiters_bounded
+            ? maximum_width * sizeof(uint16_t) : 0;
+        // BLOCK execution still needs the complete string context, but bounded
+        // delimiters permit a finite checkpoint dependency envelope.
         rule.execution_capability = RegexExecutionCapability::DOCUMENT_CONTEXT_REQUIRED;
+        rule.maximum_match_bytes = 0;
+    } else {
+        uint64_t width = 0;
+        const bool bounded = analyzeBoundedRegexWidth(rule.raw_match_pattern, &width);
+        rule.execution_capability = bounded ?
+            RegexExecutionCapability::BOUNDED_WINDOW :
+            RegexExecutionCapability::DOCUMENT_CONTEXT_REQUIRED;
+        rule.maximum_match_bytes =
+            bounded && width <= std::numeric_limits<uint64_t>::max() / sizeof(uint16_t)
+                ? width * sizeof(uint16_t) : 0;
+        if (bounded && rule.maximum_match_bytes == 0) {
+            rule.execution_capability = RegexExecutionCapability::DOCUMENT_CONTEXT_REQUIRED;
+        }
+        rule.block_delimiters_bounded = false;
+        rule.maximum_block_delimiter_bytes = 0;
     }
     for (auto& nested : rule.nested_rules) annotateRegexRuleExecution(nested);
 }
@@ -886,9 +909,13 @@ static void splitSelectorAlternatives(
     }
 }
 
-static bool expandSelectorGroups(
+// Visit selector-group expansions one at a time. Materializing the Cartesian
+// product in vectors imposed an unrelated 256-alternative ceiling and amplified
+// peak memory by retaining every intermediate expansion. Streaming keeps memory
+// proportional to the current expansion path while preserving every alternative.
+static bool visitSelectorGroupExpansions(
     const std::string& input,
-    std::vector<std::string>& output,
+    const std::function<bool(std::string&&)>& visitor,
     size_t depth = 0
 ) {
     if (depth > 32) return false;
@@ -905,8 +932,7 @@ static bool expandSelectorGroups(
     }
     if (nesting != 0) return false;
     if (open == std::string::npos) {
-        output.push_back(trimScopeToken(input));
-        return true;
+        return visitor(trimScopeToken(input));
     }
 
     std::vector<std::string> alternatives;
@@ -915,10 +941,8 @@ static bool expandSelectorGroups(
     const std::string prefix = input.substr(0, open);
     const std::string suffix = input.substr(close + 1);
     for (const auto& alternative : alternatives) {
-        std::vector<std::string> expanded;
-        if (!expandSelectorGroups(prefix + alternative + suffix, expanded, depth + 1)) return false;
-        output.insert(output.end(), expanded.begin(), expanded.end());
-        if (output.size() > 256) return false;
+        if (!visitSelectorGroupExpansions(
+                prefix + alternative + suffix, visitor, depth + 1)) return false;
     }
     return true;
 }
@@ -928,15 +952,16 @@ static int textMateSelectorSpecificity(const std::string& selector, const std::v
     splitSelectorAlternatives(selector, top_level);
     int best = -1;
     for (const auto& alternative : top_level) {
-        std::vector<std::string> expanded;
-        if (!expandSelectorGroups(alternative, expanded)) continue;
-        for (std::string candidate : expanded) {
-            candidate = trimScopeToken(candidate);
-            if (candidate.rfind("L:", 0) == 0 || candidate.rfind("R:", 0) == 0) {
-                candidate.erase(0, 2);
-            }
-            best = std::max(best, matchOneTextMateSelector(candidate, scopes));
-        }
+        const bool valid = visitSelectorGroupExpansions(
+            alternative,
+            [&](std::string&& candidate) {
+                if (candidate.rfind("L:", 0) == 0 || candidate.rfind("R:", 0) == 0) {
+                    candidate.erase(0, 2);
+                }
+                best = std::max(best, matchOneTextMateSelector(candidate, scopes));
+                return true;
+            });
+        if (!valid) continue;
     }
     return best;
 }
@@ -1185,10 +1210,8 @@ static regex_t* compileOnigurumaUtf16(const std::string& pattern_str, OnigOption
 
 std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& source, const TSLanguage* ts_lang) {
     auto grammar = std::make_shared<TshGrammar>();
-    // ATS symbol matching runs after compilation and needs the same grammar
-    // metadata used to resolve selectors and build the subtype dispatch index.
-    // Keep the language identity on the immutable compiled grammar snapshot;
-    // omitting it disables every runtime supertype/subtype comparison.
+    // ATS supertype matching needs the language's ABI-15 subtype metadata at runtime.
+    // The caller supplies the same long-lived language used to parse the source tree.
     grammar->ts_language = ts_lang;
     std::unordered_map<std::string, std::string> defines_map;
     std::unordered_map<std::string, bool> tree_sitter_query_ids;
@@ -2697,6 +2720,10 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                                                 if (consumed != pattern_value.text.size()) return nullptr;
                                                 metadata.has_priority = true;
                                             } catch (...) { return nullptr; }
+                                        } else if (pattern_field.text == "overlap") {
+                                            if (pattern_value.text == "allow") metadata.allow_overlap = true;
+                                            else if (pattern_value.text == "deny") metadata.allow_overlap = false;
+                                            else return nullptr;
                                         } else if (pattern_field.text == "order") {
                                             if (pattern_value.type != TshLexer::TokenType::TOK_NUMBER) return nullptr;
                                             try {
@@ -2771,7 +2798,9 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                             if (!program.query) {
                                 g_tsh_last_source_offset = error_offset;
                                 g_tsh_last_error_detail =
-                                    "native Tree-sitter query compilation failed (error " +
+                                    "native Tree-sitter query compilation failed for '" +
+                                    (program.id.empty() ? std::string("<unnamed>") : program.id) +
+                                    "' (error " +
                                     std::to_string(static_cast<int>(error_type)) + ")";
                                 return nullptr;
                             }
@@ -2779,7 +2808,52 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                             // Predicate steps are evaluated by TSH at complete-match
                             // granularity. Reject unsupported or malformed forms at compile time.
                             const uint32_t compiled_pattern_count = ts_query_pattern_count(program.query);
+                            // A predicate is metadata attached to a structural query
+                            // pattern, not an independent top-level pattern. If a DSL
+                            // author writes:
+                            //   [(node_a) (node_b)] (#any-eq? @capture "value")
+                            // Tree-sitter parses the alternation and predicate as two
+                            // separate top-level patterns. The first then runs without
+                            // its filter and can emit false-positive captures. Reject
+                            // this malformed shape instead of silently weakening the
+                            // query; the intended form is:
+                            //   ([(node_a) (node_b)] (#any-eq? @capture "value"))
+                            for (uint32_t pattern = 0;
+                                 pattern < compiled_pattern_count; ++pattern) {
+                                const uint32_t pattern_start =
+                                    ts_query_start_byte_for_pattern(program.query, pattern);
+                                const uint32_t pattern_end =
+                                    ts_query_end_byte_for_pattern(program.query, pattern);
+                                if (pattern_start >= pattern_end ||
+                                    pattern_end > query_source.size()) {
+                                    g_tsh_last_error_detail =
+                                        "native query returned an invalid top-level pattern source range";
+                                    release_predicate_regexes();
+                                    ts_query_delete(program.query);
+                                    program.query = nullptr;
+                                    return nullptr;
+                                }
+                                const std::string_view pattern_source(
+                                    query_source.data() + pattern_start,
+                                    pattern_end - pattern_start);
+                                size_t first = pattern_source.find_first_not_of(" \t\r\n");
+                                if (first == std::string_view::npos ||
+                                    pattern_source[first] != '(') continue;
+                                ++first;
+                                first = pattern_source.find_first_not_of(" \t\r\n", first);
+                                if (first != std::string_view::npos &&
+                                    pattern_source[first] == '#') {
+                                    g_tsh_last_error_detail =
+                                        "native query predicate is detached from its structural pattern; "
+                                        "wrap the node alternation and predicate in one grouped expression";
+                                    release_predicate_regexes();
+                                    ts_query_delete(program.query);
+                                    program.query = nullptr;
+                                    return nullptr;
+                                }
+                            }
                             program.predicates_by_pattern.resize(compiled_pattern_count);
+                            program.compiled_predicates_by_pattern.resize(compiled_pattern_count);
                             for (uint32_t pattern = 0;
                                  pattern < compiled_pattern_count; ++pattern) {
                                 uint32_t step_count = 0;
@@ -2844,6 +2918,64 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                                         program.query = nullptr;
                                         return nullptr;
                                     }
+                                    // Decode immutable query operands once rather than once per AST match.
+                                    NativeQueryProgram::CompiledPredicateOperands operands;
+                                    operands.operation = op;
+                                    if (!operands.operation.empty() && operands.operation.front() == '#')
+                                        operands.operation.erase(operands.operation.begin());
+                                    try {
+                                        for (size_t arg = 2; arg < predicate.size(); ++arg) {
+                                            if (predicate[arg].type == TSQueryPredicateStepTypeCapture && equality)
+                                                continue;
+                                            uint32_t literal_length = 0;
+                                            const char* literal = ts_query_string_value_for_id(
+                                                program.query, predicate[arg].value_id, &literal_length);
+                                            if (!literal) {
+                                                g_tsh_last_error_detail = "invalid native query predicate literal";
+                                                release_predicate_regexes();
+                                                ts_query_delete(program.query);
+                                                program.query = nullptr;
+                                                return nullptr;
+                                            }
+                                            if (structural) {
+                                                operands.expected_types.emplace_back(literal, literal_length);
+                                            } else if (!regex_match) {
+                                                // Regex text is owned by its compiled Oniguruma object;
+                                                // retaining a second UTF-16 copy would only waste memory.
+                                                std::vector<uint16_t> decoded;
+                                                if (!decodePatternUtf8ToUtf16(
+                                                        std::string(literal, literal_length), decoded)) {
+                                                    g_tsh_last_error_detail =
+                                                        "invalid UTF-8 in native query predicate literal";
+                                                    release_predicate_regexes();
+                                                    ts_query_delete(program.query);
+                                                    program.query = nullptr;
+                                                    return nullptr;
+                                                }
+                                                // Predicate match helpers compare UTF-16LE source bytes
+                                                // (Tree-sitter byte offsets), not uint16_t code-unit arrays.
+                                                // Preserve both bytes of every decoded code unit; directly
+                                                // emplacing uint16_t values into vector<UChar> truncated
+                                                // non-ASCII units and made even ASCII literals lose their
+                                                // zero high byte.
+                                                std::vector<UChar> utf16le;
+                                                utf16le.reserve(decoded.size() * sizeof(uint16_t));
+                                                for (const uint16_t code_unit : decoded) {
+                                                    utf16le.push_back(static_cast<UChar>(code_unit & 0xFFu));
+                                                    utf16le.push_back(static_cast<UChar>(code_unit >> 8u));
+                                                }
+                                                operands.expected_utf16.emplace_back(std::move(utf16le));
+                                            }
+                                        }
+                                        program.compiled_predicates_by_pattern[pattern].push_back(std::move(operands));
+                                    } catch (const std::bad_alloc&) {
+                                        g_tsh_last_error_detail =
+                                            "out of memory compiling native query predicate operands";
+                                        release_predicate_regexes();
+                                        ts_query_delete(program.query);
+                                        program.query = nullptr;
+                                        return nullptr;
+                                    }
                                     if (regex_match) {
                                         uint32_t pattern_length = 0;
                                         const char* pattern_text = ts_query_string_value_for_id(
@@ -2876,7 +3008,7 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                                                 &maximum_width_units) &&
                                             maximum_width_units > 0 &&
                                             maximum_width_units <=
-                                                std::numeric_limits<uint64_t>::max() / sizeof(uint16_t)) {
+                                                (8u * 1024u * 1024u) / sizeof(uint16_t)) {
                                             entry.execution_capability =
                                                 RegexExecutionCapability::BOUNDED_WINDOW;
                                             entry.maximum_match_bytes =
@@ -2908,7 +3040,75 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                                 }
                             }
 
+                            // Materialize Tree-sitter's structural locality proof for
+                            // every compiled pattern. Missing user metadata must not
+                            // mean missing dependency metadata: each pattern gets an
+                            // immutable record before the grammar is published.
+                            for (uint32_t pattern = 0; pattern < pattern_count; ++pattern) {
+                                auto inserted = program.pattern_metadata.emplace(
+                                    pattern, NativeQueryProgram::PatternMetadata{});
+                                auto& metadata = inserted.first->second;
+                                metadata.pattern_index = pattern;
+                                metadata.is_rooted =
+                                    ts_query_is_pattern_rooted(program.query, pattern);
+                                metadata.is_non_local =
+                                    ts_query_is_pattern_non_local(program.query, pattern);
+                                if (metadata.is_non_local) {
+                                    metadata.dependency_scope =
+                                        NativeQueryProgram::QueryDependencyScope::NON_LOCAL;
+                                } else if (metadata.is_rooted) {
+                                    metadata.dependency_scope =
+                                        NativeQueryProgram::QueryDependencyScope::ROOTED_LOCAL;
+                                } else {
+                                    metadata.dependency_scope =
+                                        NativeQueryProgram::QueryDependencyScope::UNROOTED;
+                                }
+
+                                // These TSH structural predicates inspect the
+                                // capture's parent/ancestor chain, which can lie
+                                // outside the query root node. A root-node-only
+                                // envelope would be unsound for them.
+                                if (pattern < program.predicates_by_pattern.size()) {
+                                    for (const auto& predicate :
+                                         program.predicates_by_pattern[pattern]) {
+                                        if (predicate.empty() ||
+                                            predicate[0].type != TSQueryPredicateStepTypeString)
+                                            continue;
+                                        uint32_t op_length = 0;
+                                        const char* op_text = ts_query_string_value_for_id(
+                                            program.query, predicate[0].value_id, &op_length);
+                                        if (!op_text) continue;
+                                        if (queryPredicateRequiresAncestorContext(
+                                                std::string_view(op_text, op_length))) {
+                                            metadata.dependency_scope =
+                                                NativeQueryProgram::QueryDependencyScope::UNKNOWN;
+                                            break;
+                                        }
+                                    }
+                                }
+
+                                const uint32_t pattern_start =
+                                    ts_query_start_byte_for_pattern(program.query, pattern);
+                                const uint32_t pattern_end =
+                                    ts_query_end_byte_for_pattern(program.query, pattern);
+                                if (metadata.dependency_scope ==
+                                        NativeQueryProgram::QueryDependencyScope::ROOTED_LOCAL &&
+                                    pattern_start < pattern_end &&
+                                    pattern_end <= query_source.size()) {
+                                    const QueryRootDescriptor root = analyzeSimpleQueryRoot(
+                                        std::string_view(query_source).substr(
+                                            pattern_start, pattern_end - pattern_start));
+                                    if (root.valid) {
+                                        metadata.root_node_symbol = ts_language_symbol_for_name(
+                                            ts_lang, root.node_type.data(),
+                                            static_cast<uint32_t>(root.node_type.size()),
+                                            root.is_named);
+                                    }
+                                }
+                            }
+
                             const uint32_t capture_count = ts_query_capture_count(program.query);
+                            program.capture_style_ids_by_index.assign(capture_count, -1);
                             for (uint32_t capture_id = 0; capture_id < capture_count; ++capture_id) {
                                 uint32_t name_length = 0;
                                 const char* capture_name = ts_query_capture_name_for_id(
@@ -2953,8 +3153,8 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                                     program.query = nullptr;
                                     return nullptr;
                                 }
-                                program.capture_style_ids.emplace(
-                                    static_cast<uint32_t>(capture_id), style->second);
+                                program.capture_style_ids_by_index[capture_id] =
+                                    static_cast<int32_t>(style->second);
                             }
                             for (const auto& binding : program.capture_bindings) {
                                 bool found = false;
@@ -3565,11 +3765,14 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
     // rules that can target the current node (plus intentionally generic rules).
     grammar->ast_rules_by_node_symbol.clear();
     grammar->ast_rules_by_node_type.clear();
+    grammar->ast_supertype_rules_by_node_type.clear();
+    grammar->ast_supertype_selectors_by_node_symbol.clear();
     grammar->ast_field_rules_by_parent_symbol.clear();
     grammar->ast_field_rules_by_parent_type.clear();
+    grammar->ast_supertype_field_rules_by_parent_type.clear();
     grammar->ast_wildcard_rules.clear();
-    auto index_symbol_and_subtypes = [&](auto& index, TSSymbol symbol,
-                                          uint32_t rule_index) {
+    auto index_symbol_and_subtypes = [&](auto& index, auto& subtype_type_index,
+                                          TSSymbol symbol, uint32_t rule_index) {
         if (symbol == 0) return;
         // Supertype relations may be nested. Expand the complete subtype closure
         // once at compile time so large-document traversal remains O(1) indexed.
@@ -3580,6 +3783,12 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
             pending.pop_back();
             if (!visited.insert(current).second) continue;
             index[current].push_back(rule_index);
+            if (current != symbol) {
+                const char* subtype_name = ts_language_symbol_name(ts_lang, current);
+                if (subtype_name && subtype_name[0] != '\0') {
+                    subtype_type_index[subtype_name].push_back(rule_index);
+                }
+            }
             uint32_t subtype_count = 0;
             const TSSymbol* subtypes =
                 ts_language_subtypes(ts_lang, current, &subtype_count);
@@ -3593,7 +3802,9 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
         const AstSelectorRule& rule = grammar->ast_selector_rules[rule_index];
         if (rule.field_id != 0) {
             index_symbol_and_subtypes(
-                grammar->ast_field_rules_by_parent_symbol, rule.target_symbol, rule_index);
+                grammar->ast_field_rules_by_parent_symbol,
+                grammar->ast_supertype_field_rules_by_parent_type,
+                rule.target_symbol, rule_index);
             if (!rule.target_type.empty()) {
                 grammar->ast_field_rules_by_parent_type[rule.target_type].push_back(rule_index);
             }
@@ -3602,7 +3813,9 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
             }
         } else {
             index_symbol_and_subtypes(
-                grammar->ast_rules_by_node_symbol, rule.target_symbol, rule_index);
+                grammar->ast_rules_by_node_symbol,
+                grammar->ast_supertype_rules_by_node_type,
+                rule.target_symbol, rule_index);
             if (!rule.target_type.empty()) {
                 grammar->ast_rules_by_node_type[rule.target_type].push_back(rule_index);
             }
@@ -3610,6 +3823,54 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                 grammar->ast_wildcard_rules.push_back(rule_index);
             }
         }
+    }
+
+    // Relational selectors are evaluated on parent/ancestor/child/sibling
+    // nodes, not only on the indexed target. Precompute their complete nested
+    // supertype closures once, then reverse-index concrete symbols to the
+    // selector symbols they satisfy. This removes recursive grammar traversal
+    // from the per-node viewport hot path.
+    std::unordered_set<TSSymbol> indexed_relation_symbols;
+    auto index_relation_supertype = [&](TSSymbol selector_symbol) {
+        if (selector_symbol == 0 ||
+            !indexed_relation_symbols.insert(selector_symbol).second) return;
+        std::vector<TSSymbol> pending{selector_symbol};
+        std::unordered_set<TSSymbol> visited;
+        while (!pending.empty()) {
+            const TSSymbol current = pending.back();
+            pending.pop_back();
+            if (!visited.insert(current).second) continue;
+            uint32_t subtype_count = 0;
+            const TSSymbol* subtypes =
+                ts_language_subtypes(ts_lang, current, &subtype_count);
+            for (uint32_t i = 0; subtypes && i < subtype_count; ++i) {
+                pending.push_back(subtypes[i]);
+            }
+        }
+        for (const TSSymbol concrete_symbol : visited) {
+            if (concrete_symbol == selector_symbol) continue;
+            grammar->ast_supertype_selectors_by_node_symbol[concrete_symbol]
+                .push_back(selector_symbol);
+        }
+    };
+    for (const AstSelectorRule& rule : grammar->ast_selector_rules) {
+        // Target selectors also use the reverse index for the final runtime
+        // check after compile-time candidate dispatch. Without this entry a
+        // supertype target is dispatched to its subtypes, then rejected by the
+        // exact-symbol fast path.
+        index_relation_supertype(rule.target_symbol);
+        index_relation_supertype(rule.parent_symbol);
+        index_relation_supertype(rule.ancestor_symbol);
+        index_relation_supertype(rule.child_symbol);
+        index_relation_supertype(rule.previous_sibling_symbol);
+        index_relation_supertype(rule.next_sibling_symbol);
+    }
+    // A compact sorted vector is cheaper to retain than one hash table per
+    // concrete grammar symbol, while binary_search keeps runtime checks bounded.
+    for (auto& entry : grammar->ast_supertype_selectors_by_node_symbol) {
+        auto& selectors = entry.second;
+        std::sort(selectors.begin(), selectors.end());
+        selectors.erase(std::unique(selectors.begin(), selectors.end()), selectors.end());
     }
 
     // Each native query block was compiled independently by Tree-sitter's

@@ -165,6 +165,67 @@ class TshEngineNativeResourceLifecycleTest {
     }
 
     @Test
+    fun engineOwnsTheConfiguredSharedMemoryBudget() {
+        val engine = TshEngine.create(
+            TshEngineOptions(
+                memoryBudgetOptions = TshMemoryBudgetOptions(
+                    targetBytes = 80,
+                    hardLimitBytes = 160,
+                    availableMemoryBytes = 120
+                )
+            )
+        )
+        assertEquals(30L, engine.memoryBudget.limitBytes)
+        engine.close()
+        assertTrue(engine.memoryBudget.snapshot().closed)
+    }
+
+    @Test
+    fun engineRefreshesMemoryPressureOnlyWhileInitialized() {
+        val engine = TshEngine.create(
+            TshEngineOptions(
+                memoryBudgetOptions = TshMemoryBudgetOptions(targetBytes = 100, hardLimitBytes = 200)
+            )
+        )
+        assertTrue(engine.updateAvailableMemory(16) is TshResult.Failure)
+        assertTrue(engine.initialize() is TshResult.Success)
+
+        val retained = (engine.memoryBudget.reserve(TshMemoryCategory.TEXT_SNAPSHOT, 8) as TshResult.Success).value
+        assertTrue(engine.updateAvailableMemory(16) is TshResult.Success)
+        assertEquals(4L, engine.memoryBudget.limitBytes)
+        assertTrue(engine.memoryBudget.reserve(TshMemoryCategory.QUERY_RESULT, 1) is TshResult.Failure)
+        assertTrue(retained.resize(4) is TshResult.Success)
+
+        engine.close()
+        assertTrue(engine.updateAvailableMemory(null) is TshResult.Failure)
+        retained.close()
+        assertEquals(0L, engine.memoryBudget.snapshot().reservedBytes)
+    }
+
+    @Test
+    fun treeResourceReservationLivesUntilNativeTreeActuallyCloses() {
+        val engine = TshEngine.create()
+        val tree = FakeTree()
+        val reservation = (engine.memoryBudget.reserve(
+            TshMemoryCategory.SYNTAX_TREE, 48, "syntax-tree:doc:1:1"
+        ) as TshResult.Success).value
+        val registration = engine.nativeResources.register(
+            tree, "syntax-tree", dependencies = listOf(reservation)
+        )
+        val activeLease = engine.nativeResources.acquire(registration.handle)!!
+
+        engine.close()
+
+        assertEquals(48L, engine.memoryBudget.snapshot().reservedBytes)
+        assertEquals(0, tree.closeCalls)
+        activeLease.close()
+
+        assertEquals(1, tree.closeCalls)
+        assertEquals(0L, engine.memoryBudget.snapshot().reservedBytes)
+        assertTrue(engine.memoryBudget.snapshot().closed)
+    }
+
+    @Test
     fun engineCannotOpenParserAfterClose() {
         val engine = TshEngine.create()
         val language = FakeLanguage()

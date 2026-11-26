@@ -30,7 +30,14 @@ import java.util.concurrent.ConcurrentHashMap;
 public final class TSLanguageCache {
 
   private static final Map<String, TSLanguage> languagesByName = new ConcurrentHashMap<>();
+  // External grammars are identified by both logical name and canonical .so path.
+  // A name-only cache aliases different binaries that export the same entry symbol.
+  private static final Map<String, TSLanguage> languagesByPath = new ConcurrentHashMap<>();
   private static final Map<Long, TSLanguage> languagesByPtr = new ConcurrentHashMap<>();
+
+  private static String pathKey(String name, String path) {
+    return name + "\\u0000" + path;
+  }
 
   private TSLanguageCache() {
   }
@@ -43,8 +50,19 @@ public final class TSLanguageCache {
    * @param language The {@link TSLanguage} instance to cache.
    */
   public static void cache(String name, TSLanguage language) {
-    languagesByName.computeIfAbsent(name, key -> language);
+    languagesByName.putIfAbsent(name, language);
     languagesByPtr.put(language.getNativeObject(), language);
+  }
+
+  public static void cache(String name, String libraryPath, TSLanguage language) {
+    languagesByPath.put(pathKey(name, libraryPath), language);
+    languagesByName.putIfAbsent(name, language);
+    languagesByPtr.put(language.getNativeObject(), language);
+  }
+
+  public static TSLanguage get(String name, String libraryPath) {
+    if (name == null || libraryPath == null) return null;
+    return languagesByPath.get(pathKey(name, libraryPath));
   }
 
   /**
@@ -91,9 +109,11 @@ public final class TSLanguageCache {
 
     for (Pair<String, Long> lang : toRemove) {
       //noinspection resource
-      languagesByName.remove(lang.first);
-      //noinspection resource
-      languagesByPtr.remove(lang.second);
+      TSLanguage removed = languagesByPtr.remove(lang.second);
+      if (removed != null) {
+        languagesByName.values().removeIf(value -> value == removed);
+        languagesByPath.values().removeIf(value -> value == removed);
+      }
     }
   }
 
@@ -107,18 +127,10 @@ public final class TSLanguageCache {
       return;
     }
 
-    if (language.getName() != null) {
-      //noinspection resource
-      languagesByName.remove(language.getName());
-    } else {
-      languagesByName.entrySet().removeIf(entry -> language.equals(entry.getValue()));
-    }
-
-    if (language.getNativeObject() != 0) {
-      //noinspection resource
-      languagesByPtr.remove(language.getNativeObject());
-    } else {
-      languagesByPtr.entrySet().removeIf(entry -> language.equals(entry.getValue()));
-    }
+    // Remove only entries that still point at this exact object. Another .so
+    // may have been loaded under the same logical grammar name in the meantime.
+    languagesByName.entrySet().removeIf(entry -> entry.getValue() == language);
+    languagesByPath.entrySet().removeIf(entry -> entry.getValue() == language);
+    languagesByPtr.entrySet().removeIf(entry -> entry.getValue() == language);
   }
 }

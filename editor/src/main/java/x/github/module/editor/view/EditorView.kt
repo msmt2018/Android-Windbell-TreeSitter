@@ -70,6 +70,7 @@ import kotlin.text.Regex
 
 import x.github.module.editor.R
 
+import com.zerostudio.idea.piecetable.PieceTreeSnapshot
 import com.zerostudio.idea.piecetable.PieceTreeTextBuffer
 import com.zerostudio.idea.piecetable.SliceEdit
 import com.zerostudio.idea.piecetable.common.Position
@@ -2094,6 +2095,13 @@ open class EditorView @JvmOverloads constructor(
         }
         return buffer.pieceTree
     }
+
+    /**
+     * Creates an immutable snapshot through EditorDocument's mutation/snapshot lock.
+     * Safe from any thread; the document lock serializes it with complete edit transactions.
+     */
+    fun createPieceTreeSnapshot(): PieceTreeSnapshot =
+        document.createPieceTreeSnapshot()
     
     // find matches by regex
     fun find(
@@ -3093,6 +3101,8 @@ open class EditorView @JvmOverloads constructor(
         override fun invalidateStyles() = this@EditorView.invalidateStyles()
         override fun invalidateStyles(startLine: Int, endLine: Int) =
             this@EditorView.invalidateStyles(startLine, endLine)
+        override fun invalidateStyles(ranges: List<Pair<Int, Int>>) =
+            this@EditorView.invalidateStyles(ranges)
         override fun invalidateStructure() = this@EditorView.invalidateStructure()
     }
     
@@ -3147,6 +3157,23 @@ open class EditorView @JvmOverloads constructor(
         }
     }
     
+    /**
+     * Like the line-range overload, but advances stylesGeneration only once for
+     * a batch of disjoint dirty ranges. Unlisted recorded rows remain untouched.
+     */
+    fun invalidateStyles(ranges: List<Pair<Int, Int>>) {
+        if (ranges.isEmpty()) return
+        runOnMainThread {
+            stylesGeneration++
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && renderer.hasRenderNodes) {
+                ranges.forEach { (startLine, endLine) ->
+                    invalidateRowsOfLines(startLine, endLine, stylesOnly = true)
+                }
+            }
+            invalidate()
+        }
+    }
+
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
         // a frame of its own: the budget for styling and structure starts again

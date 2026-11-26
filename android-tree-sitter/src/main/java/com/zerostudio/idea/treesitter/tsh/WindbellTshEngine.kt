@@ -45,11 +45,52 @@ fun interface NativeTextWindowReader {
     /** Fill a reusable direct native window and return the number of UTF-16LE bytes written. */
     fun read(byteOffset: Long, maxBytes: Int, destination: ByteBuffer): Int
 }
+private interface HighlightCaptureSource {
+    val size: Int
+    fun startByteUnsigned(index: Int): Long
+    fun endByteUnsigned(index: Int): Long
+    fun styleId(index: Int): Int
+    fun fontFlags(index: Int): Int
+    fun priority(index: Int): Int
+    fun declarationOrder(index: Int): Int
+    fun source(index: Int): Int
+}
+private class ListHighlightCaptureSource(private val values: List<WindbellTshEngine.HighlightSpan>) : HighlightCaptureSource {
+    override val size get() = values.size
+    override fun startByteUnsigned(index: Int) = values[index].startByteUnsigned
+    override fun endByteUnsigned(index: Int) = values[index].endByteUnsigned
+    override fun styleId(index: Int) = values[index].styleId
+    override fun fontFlags(index: Int) = values[index].fontFlags
+    override fun priority(index: Int) = values[index].priority
+    override fun declarationOrder(index: Int) = values[index].declarationOrder
+    override fun source(index: Int) = values[index].source
+}
+private class BatchHighlightCaptureSource(private val values: HighlightCaptureBatch) : HighlightCaptureSource {
+    override val size get() = values.size
+    override fun startByteUnsigned(index: Int) = values.startByteUnsignedAt(index)
+    override fun endByteUnsigned(index: Int) = values.endByteUnsignedAt(index)
+    override fun styleId(index: Int) = values.styleIdAt(index)
+    override fun fontFlags(index: Int) = values.fontFlagsAt(index)
+    override fun priority(index: Int) = values.priorityAt(index)
+    override fun declarationOrder(index: Int) = values.declarationOrderAt(index)
+    override fun source(index: Int) = values.sourceAt(index)
+}
 /**
  * Windbell Treesitter Highlighting Configuration Engine (Windbell-TSH)
  * Provides the dual-backend highlighting bridge and DSL-backed style rendering.
  */
 class WindbellTshEngine private constructor() {
+    private fun packBoundaryEvent(offset: Int, captureIndex: Int, starts: Boolean): Long {
+        require(offset >= 0 && captureIndex >= 0)
+        return (offset.toLong() shl 32) or
+            (if (starts) (1L shl 31) else 0L) or (captureIndex.toLong() and 0x7FFF_FFFFL)
+    }
+
+    private fun boundaryEventOffset(event: Long): Int = (event ushr 32).toInt()
+    private fun boundaryEventCaptureIndex(event: Long): Int =
+        (event and 0x7FFF_FFFFL).toInt()
+    private fun boundaryEventStarts(event: Long): Boolean =
+        (event and (1L shl 31)) != 0L
 
     data class LanguageMetadata(
         val id: String = "",
@@ -71,6 +112,13 @@ class WindbellTshEngine private constructor() {
     @Volatile
     var lastCompileDiagnostics: List<CompileDiagnostic> = emptyList()
         private set
+
+    data class NativeHighlightRange(val startByte: Long, val endByte: Long) {
+        init {
+            require(startByte >= 0L && endByte >= startByte)
+            require((startByte and 1L) == 0L && (endByte and 1L) == 0L)
+        }
+    }
 
     data class HighlightSpan(
         val startByte: Int,
@@ -140,7 +188,10 @@ class WindbellTshEngine private constructor() {
         val lightBackground: Int = 0,
         val darkBackground: Int = 0,
         val hasLightBackground: Boolean = false,
-        val hasDarkBackground: Boolean = false
+        val hasDarkBackground: Boolean = false,
+        /** Per-appearance attributes explicitly set or cleared by this style. */
+        val lightFontDefinedMask: Int = lightFontFlags,
+        val darkFontDefinedMask: Int = darkFontFlags
     )
 
     private val paletteCache = ConcurrentHashMap<String, Map<Int, StylePalette>>()
@@ -218,7 +269,8 @@ class WindbellTshEngine private constructor() {
     }
 
     private fun decodePalette(flatPalette: IntArray): Map<Int, StylePalette> {
-        val fields = 11
+        val fields = 13
+        require(flatPalette.size % fields == 0) { "Native palette has an invalid field count" }
         val map = LinkedHashMap<Int, StylePalette>(flatPalette.size / fields)
         val count = flatPalette.size / fields
         for (i in 0 until count) {
@@ -235,7 +287,9 @@ class WindbellTshEngine private constructor() {
                 lightBackground = flatPalette[base + 7],
                 darkBackground = flatPalette[base + 8],
                 hasLightBackground = flatPalette[base + 9] != 0,
-                hasDarkBackground = flatPalette[base + 10] != 0
+                hasDarkBackground = flatPalette[base + 10] != 0,
+                lightFontDefinedMask = flatPalette[base + 11],
+                darkFontDefinedMask = flatPalette[base + 12]
             )
         }
         return map.toMap()
@@ -257,7 +311,8 @@ class WindbellTshEngine private constructor() {
 
     private fun readSchemePalette(extension: String, schemeName: String): Map<Int, StylePalette> {
         val flatPalette = nativeGetPalette(extension, schemeName) ?: return emptyMap()
-        val fields = 11
+        val fields = 13
+        require(flatPalette.size % fields == 0) { "Native palette has an invalid field count" }
         val map = HashMap<Int, StylePalette>(flatPalette.size / fields)
         val count = flatPalette.size / fields
         for (i in 0 until count) {
@@ -274,7 +329,9 @@ class WindbellTshEngine private constructor() {
                 lightBackground = flatPalette[base + 7],
                 darkBackground = flatPalette[base + 8],
                 hasLightBackground = flatPalette[base + 9] != 0,
-                hasDarkBackground = flatPalette[base + 10] != 0
+                hasDarkBackground = flatPalette[base + 10] != 0,
+                lightFontDefinedMask = flatPalette[base + 11],
+                darkFontDefinedMask = flatPalette[base + 12]
             )
         }
         return map
@@ -567,109 +624,438 @@ class WindbellTshEngine private constructor() {
         start: Int = 0,
         end: Int = spannable.length
     ) {
-        // SpannableStringBuilder is mutable and is not thread-safe. A caller may
-        // schedule rendering from several workers; serialize only mutations of the
-        // same document buffer, never the native tokenizer or unrelated documents.
-        // Rendering may be the first consumer attached after a grammar was
-        // restored/registered. Never silently treat a valid styleId as an
-        // uncoloured token merely because this process-local palette cache is cold.
-        // ensurePalette resolves the selected/default scheme from the compiled
-        // native grammar and populates the immutable palette before drawing.
+        applyCaptureSourceToSpannable(ListHighlightCaptureSource(spans), documentOffset, text, extension, spannable, start, end)
+    }
+
+    fun applyHighlightCaptureBatchToSpannable(
+        batch: HighlightCaptureBatch,
+        documentOffset: Int,
+        text: String,
+        extension: String,
+        spannable: SpannableStringBuilder,
+        start: Int = 0,
+        end: Int = spannable.length
+    ) {
+        applyCaptureSourceToSpannable(BatchHighlightCaptureSource(batch), documentOffset, text, extension, spannable, start, end)
+    }
+
+    private fun applyCaptureSourceToSpannable(
+        captures: HighlightCaptureSource,
+        documentOffset: Int,
+        text: String,
+        extension: String,
+        spannable: SpannableStringBuilder,
+        start: Int,
+        end: Int
+    ) {
         ensurePalette(extension)
         synchronized(spannable) {
             val palette = paletteCache[extension].orEmpty()
             val darkMode = isDark(extension)
             val visibleStart = start.coerceIn(0, spannable.length)
             val visibleEnd = end.coerceIn(visibleStart, spannable.length)
+            if (visibleStart >= visibleEnd) return@synchronized
 
-            // Incremental/viewport rendering must not erase styles outside the
-            // requested range. Only spans intersecting this range are invalidated.
-            if (visibleStart < visibleEnd) {
-                val oldSpans = spannable.getSpans(
-                    visibleStart,
-                    visibleEnd,
-                    CharacterStyle::class.java
-                )
-                for (old in oldSpans) spannable.removeSpan(old)
+            // Remove only the old styles intersecting this render slice. The caller
+            // supplies a fresh line builder, so no document-global span ownership is
+            // involved here.
+            spannable.getSpans(
+                visibleStart, visibleEnd, CharacterStyle::class.java
+            ).forEach(spannable::removeSpan)
+
+            // Resolve overlap before creating Android spans. Android's SPAN_PRIORITY
+            // field is only eight bits; assigning priorities to hundreds of distinct
+            // captures necessarily creates collisions. StyledTextPainter then has no
+            // deterministic way to choose the intended foreground/background.
+            // A sweep-line produces disjoint runs, so the renderer never has to arbitrate
+            // between overlapping TSH styles and the full native ordering is preserved.
+            // Rank native captures without a boxed MutableList<Int> or comparator
+            // object. The ordering is byte-for-byte equivalent to the former
+            // compareByDescending/thenBy chain, with source index as final tie-break.
+            fun compareCaptureOrder(leftIndex: Int, rightIndex: Int): Int {
+                var order = captures.priority(rightIndex).compareTo(captures.priority(leftIndex))
+                if (order != 0) return order
+                order = captures.declarationOrder(leftIndex).compareTo(captures.declarationOrder(rightIndex))
+                if (order != 0) return order
+                order = java.lang.Long.compare(
+                    captures.startByteUnsigned(leftIndex), captures.startByteUnsigned(rightIndex))
+                if (order != 0) return order
+                order = java.lang.Long.compare(
+                    captures.endByteUnsigned(rightIndex), captures.endByteUnsigned(leftIndex))
+                if (order != 0) return order
+                order = captures.source(leftIndex).compareTo(captures.source(rightIndex))
+                if (order != 0) return order
+                order = captures.styleId(leftIndex).compareTo(captures.styleId(rightIndex))
+                if (order != 0) return order
+                order = captures.fontFlags(leftIndex).compareTo(captures.fontFlags(rightIndex))
+                if (order != 0) return order
+                return leftIndex.compareTo(rightIndex)
             }
 
-            // CaptureIntervalIndex and viewport queries may reorder captures by source
-            // offset. Derive Android priority from the native rule ordering metadata,
-            // never from the incidental order of this particular result list.
-            val ruleOrder = spans.asSequence()
-                .map { it.priority to it.declarationOrder }
-                .distinct()
-                .sortedWith(
-                    compareByDescending<Pair<Int, Int>> { it.first }.thenBy { it.second }
-                )
-                .mapIndexed { index, key -> key to (255 - index).coerceAtLeast(1) }
-                .toMap()
+            val rankedIndices = IntArray(captures.size) { it }
+            fun siftRankedDown(rootIndex: Int, limit: Int) {
+                var root = rootIndex
+                while (true) {
+                    val leftChild = root * 2 + 1
+                    if (leftChild >= limit) return
+                    val rightChild = leftChild + 1
+                    var largest = leftChild
+                    if (rightChild < limit &&
+                        compareCaptureOrder(rankedIndices[rightChild], rankedIndices[leftChild]) > 0) {
+                        largest = rightChild
+                    }
+                    if (compareCaptureOrder(rankedIndices[largest], rankedIndices[root]) <= 0) return
+                    val swap = rankedIndices[root]
+                    rankedIndices[root] = rankedIndices[largest]
+                    rankedIndices[largest] = swap
+                    root = largest
+                }
+            }
 
-            for (span in spans) {
-                val globalStart = span.startByteUnsigned ushr 1
-                val globalEnd = span.endByteUnsigned ushr 1
+            // In-place heapsort yields ascending native precedence order.
+            for (root in (rankedIndices.size ushr 1) - 1 downTo 0) {
+                siftRankedDown(root, rankedIndices.size)
+            }
+            for (limit in rankedIndices.size - 1 downTo 1) {
+                val swap = rankedIndices[0]
+                rankedIndices[0] = rankedIndices[limit]
+                rankedIndices[limit] = swap
+                siftRankedDown(0, limit)
+            }
+
+            val capturePriorityFlags = IntArray(captures.size)
+            var rank = -1
+            var previousPriority: Int? = null
+            var previousDeclaration: Int? = null
+            for (index in rankedIndices) {
+                val priority = captures.priority(index)
+                val declarationOrder = captures.declarationOrder(index)
+                if (previousPriority != priority || previousDeclaration != declarationOrder) {
+                    rank++
+                    previousPriority = priority
+                    previousDeclaration = declarationOrder
+                }
+                val androidPriority = (255 - rank).coerceAtLeast(1)
+                capturePriorityFlags[index] =
+                    androidPriority shl Spanned.SPAN_PRIORITY_SHIFT
+            }
+
+            // Keep clipped captures in primitive parallel arrays. The previous
+            // ClippedCapture wrapper allocated one object per overlapping span on
+            // every line draw, despite the source HighlightSpan being immutable.
+            val captureSourceIndices = IntArray(captures.size)
+            val captureStarts = IntArray(captures.size)
+            val captureEnds = IntArray(captures.size)
+            var captureCount = 0
+            for (sourceIndex in 0 until captures.size) {
+                val globalStart = captures.startByteUnsigned(sourceIndex) ushr 1
+                val globalEnd = captures.endByteUnsigned(sourceIndex) ushr 1
                 val localStart = globalStart - documentOffset.toLong()
                 val localEnd = globalEnd - documentOffset.toLong()
-                val charStart = maxOf(localStart, visibleStart.toLong())
-                val charEnd = minOf(localEnd, visibleEnd.toLong())
-                if (charStart >= charEnd) continue
-                val localCharStart = charStart.toInt()
-                val localCharEnd = charEnd.toInt()
+                val clippedStart = maxOf(localStart, visibleStart.toLong())
+                val clippedEnd = minOf(localEnd, visibleEnd.toLong())
+                if (clippedStart >= clippedEnd) continue
+                captureSourceIndices[captureCount] = sourceIndex
+                captureStarts[captureCount] = clippedStart.toInt()
+                captureEnds[captureCount] = clippedEnd.toInt()
+                captureCount++
+            }
+            if (captureCount == 0) return@synchronized
 
-                val colorDef = palette[span.styleId]
-                // One native rule precedence must govern every visual property,
-                // not only foreground color. Otherwise a lower-priority capture's
-                // bold/italic/underline/opacity can leak through a higher-priority
-                // nested capture even while its text color is correctly resolved.
-                val precedence = ruleOrder[span.priority to span.declarationOrder] ?: 1
-                val spanFlags = Spannable.SPAN_EXCLUSIVE_EXCLUSIVE or
-                    (precedence shl Spanned.SPAN_PRIORITY_SHIFT)
-
-                // Background and foreground are independent palette channels.
-                // A transparent background is still explicit when its presence bit is set.
-                val hasBackground = if (darkMode) {
-                    colorDef?.hasDarkBackground == true
+            fun compareCaptureIndices(left: Int, right: Int): Int =
+                compareCaptureOrder(captureSourceIndices[left], captureSourceIndices[right])
+            val hasForeground = BooleanArray(captureCount)
+            val hasBackground = BooleanArray(captureCount)
+            val captureFontFlags = IntArray(captureCount)
+            val captureFontDefinedMasks = IntArray(captureCount)
+            // Primitive packed sweep events avoid two heap objects per capture.
+            // Ordering is offset first, then end(0) before start(1), then capture index.
+            val events = LongArray(captureCount * 2)
+            val activeHeapCapacities = IntArray(7)
+            var eventWrite = 0
+            for (index in 0 until captureCount) {
+                val sourceIndex = captureSourceIndices[index]
+                val style = palette[captures.styleId(sourceIndex)]
+                // Resolve each appearance independently, but never let an
+                // omitted dark/light override fall through to the editor's base
+                // TextPaint color. That fallback is unrelated to the TSH style and
+                // can make a configured yellow annotation appear green in dark mode.
+                // An explicitly supplied color for the active appearance wins;
+                // otherwise inherit the other appearance's value.
+                hasForeground[index] = style != null &&
+                    (style.hasDarkColor || style.hasLightColor)
+                hasBackground[index] = style != null &&
+                    (style.hasDarkBackground || style.hasLightBackground)
+                val schemeFlags = if (darkMode) {
+                    style?.darkFontFlags ?: 0
                 } else {
-                    colorDef?.hasLightBackground == true
+                    style?.lightFontFlags ?: 0
                 }
-                val background = if (darkMode) {
-                    colorDef?.darkBackground ?: 0
+                val schemeDefinedMask = if (darkMode) {
+                    style?.darkFontDefinedMask ?: 0
                 } else {
-                    colorDef?.lightBackground ?: 0
+                    style?.lightFontDefinedMask ?: 0
                 }
-                if (hasBackground) {
-                    spannable.setSpan(BackgroundColorSpan(background), localCharStart, localCharEnd, spanFlags)
+                val rawCaptureFlags = captures.fontFlags(sourceIndex)
+                // Scheme declarations override raw capture flags only for attributes
+                // they explicitly define. Unspecified scheme attributes preserve the
+                // capture's own flags; explicit clears remain represented by the mask.
+                captureFontFlags[index] =
+                    (rawCaptureFlags and schemeDefinedMask.inv()) or schemeFlags
+                // A defined-but-disabled attribute is still an active winner:
+                // it must suppress a lower-priority enclosing capture's style.
+                captureFontDefinedMasks[index] = rawCaptureFlags or schemeDefinedMask
+                if (hasForeground[index]) activeHeapCapacities[0]++
+                if (hasBackground[index]) activeHeapCapacities[1]++
+                for (bitIndex in 0 until 5) {
+                    if ((captureFontDefinedMasks[index] and (1 shl bitIndex)) != 0) {
+                        activeHeapCapacities[bitIndex + 2]++
+                    }
                 }
+                events[eventWrite++] = packBoundaryEvent(captureStarts[index], index, starts = true)
+                events[eventWrite++] = packBoundaryEvent(captureEnds[index], index, starts = false)
+            }
+            events.sort()
 
-                // Missing colors leave the editor's base foreground untouched.
-                val hasColor = if (darkMode) colorDef?.hasDarkColor == true else colorDef?.hasLightColor == true
-                val color = if (darkMode) colorDef?.darkColor ?: 0 else colorDef?.lightColor ?: 0
-                if (hasColor) {
-                    spannable.setSpan(ForegroundColorSpan(color), localCharStart, localCharEnd, spanFlags)
-                }
+            // Allocate each heap to the exact number of captures that can enter it,
+            // rather than seven full captureCount-sized arrays. This keeps the
+            // primitive replacement memory-proportional to actual active attributes.
+            val activeCaptures = BooleanArray(captureCount)
+            val activeHeaps = Array(7) { IntArray(activeHeapCapacities[it]) }
+            val activeHeapSizes = IntArray(7)
 
-                val schemeFlags = if (darkMode) colorDef?.darkFontFlags ?: 0 else colorDef?.lightFontFlags ?: 0
-                val flags = span.fontFlags or schemeFlags
-                if ((flags and 0x01) != 0) {
-                    spannable.setSpan(StyleSpan(android.graphics.Typeface.BOLD), localCharStart, localCharEnd, spanFlags)
+            fun siftDown(heapIndex: Int, startIndex: Int) {
+                val heap = activeHeaps[heapIndex]
+                val size = activeHeapSizes[heapIndex]
+                var parent = startIndex
+                while (true) {
+                    val left = parent * 2 + 1
+                    if (left >= size) break
+                    val right = left + 1
+                    var best = left
+                    if (right < size &&
+                        compareCaptureIndices(heap[right], heap[left]) < 0) best = right
+                    if (compareCaptureIndices(heap[best], heap[parent]) >= 0) break
+                    val swap = heap[parent]
+                    heap[parent] = heap[best]
+                    heap[best] = swap
+                    parent = best
                 }
-                if ((flags and 0x02) != 0) {
-                    spannable.setSpan(StyleSpan(android.graphics.Typeface.ITALIC), localCharStart, localCharEnd, spanFlags)
+            }
+
+            fun addToHeap(heapIndex: Int, captureIndex: Int) {
+                val heap = activeHeaps[heapIndex]
+                var position = activeHeapSizes[heapIndex]
+                activeHeapSizes[heapIndex] = position + 1
+                heap[position] = captureIndex
+                while (position > 0) {
+                    val parent = (position - 1) ushr 1
+                    if (compareCaptureIndices(heap[position], heap[parent]) >= 0) break
+                    val swap = heap[parent]
+                    heap[parent] = heap[position]
+                    heap[position] = swap
+                    position = parent
                 }
-                if ((flags and 0x04) != 0) {
-                    spannable.setSpan(UnderlineSpan(), localCharStart, localCharEnd, spanFlags)
+            }
+
+            fun activeWinner(heapIndex: Int): Int? {
+                val heap = activeHeaps[heapIndex]
+                while (activeHeapSizes[heapIndex] > 0 && !activeCaptures[heap[0]]) {
+                    val nextSize = activeHeapSizes[heapIndex] - 1
+                    activeHeapSizes[heapIndex] = nextSize
+                    if (nextSize > 0) {
+                        heap[0] = heap[nextSize]
+                        siftDown(heapIndex, 0)
+                    }
                 }
-                if ((flags and 0x08) != 0) {
-                    spannable.setSpan(StrikethroughSpan(), localCharStart, localCharEnd, spanFlags)
+                return if (activeHeapSizes[heapIndex] > 0) heap[0] else null
+            }
+
+            fun hasActiveStyles(): Boolean {
+                if (activeWinner(0) != null || activeWinner(1) != null) return true
+                for (bitIndex in 0 until 5) {
+                    if (activeWinner(bitIndex + 2) != null) return true
                 }
-                if ((flags and 0x10) != 0) {
+                return false
+            }
+
+            fun paintRun(
+                runStart: Int,
+                runEnd: Int,
+                foregroundIndex: Int?,
+                backgroundIndex: Int?,
+                fontFlags: Int,
+                packedFontPriorities: Long
+            ) {
+                if (runStart >= runEnd) return
+                val flags = Spannable.SPAN_EXCLUSIVE_EXCLUSIVE
+                backgroundIndex?.let { index ->
+                    val sourceIndex = captureSourceIndices[index]
+                    val style = palette[captures.styleId(sourceIndex)] ?: return@let
+                    val background = when {
+                        darkMode && style.hasDarkBackground -> style.darkBackground
+                        style.hasLightBackground -> style.lightBackground
+                        style.hasDarkBackground -> style.darkBackground
+                        else -> return@let
+                    }
+                    spannable.setSpan(
+                        BackgroundColorSpan(background), runStart, runEnd,
+                        flags or capturePriorityFlags[sourceIndex]
+                    )
+                }
+                foregroundIndex?.let { index ->
+                    val sourceIndex = captureSourceIndices[index]
+                    val style = palette[captures.styleId(sourceIndex)] ?: return@let
+                    val color = when {
+                        darkMode && style.hasDarkColor -> style.darkColor
+                        style.hasLightColor -> style.lightColor
+                        style.hasDarkColor -> style.darkColor
+                        else -> return@let
+                    }
+                    spannable.setSpan(
+                        ForegroundColorSpan(color), runStart, runEnd,
+                        flags or capturePriorityFlags[sourceIndex]
+                    )
+                }
+                if ((fontFlags and 0x01) != 0) {
+                    spannable.setSpan(
+                        StyleSpan(android.graphics.Typeface.BOLD), runStart, runEnd,
+                        flags or (((packedFontPriorities ushr 0) and 0xFFL).toInt()
+                            shl Spanned.SPAN_PRIORITY_SHIFT)
+                    )
+                }
+                if ((fontFlags and 0x02) != 0) {
+                    spannable.setSpan(
+                        StyleSpan(android.graphics.Typeface.ITALIC), runStart, runEnd,
+                        flags or (((packedFontPriorities ushr 8) and 0xFFL).toInt()
+                            shl Spanned.SPAN_PRIORITY_SHIFT)
+                    )
+                }
+                if ((fontFlags and 0x04) != 0) {
+                    spannable.setSpan(
+                        UnderlineSpan(), runStart, runEnd,
+                        flags or (((packedFontPriorities ushr 16) and 0xFFL).toInt()
+                            shl Spanned.SPAN_PRIORITY_SHIFT)
+                    )
+                }
+                if ((fontFlags and 0x08) != 0) {
+                    spannable.setSpan(
+                        StrikethroughSpan(), runStart, runEnd,
+                        flags or (((packedFontPriorities ushr 24) and 0xFFL).toInt()
+                            shl Spanned.SPAN_PRIORITY_SHIFT)
+                    )
+                }
+                if ((fontFlags and 0x10) != 0) {
                     spannable.setSpan(object : CharacterStyle() {
                         override fun updateDrawState(textPaint: TextPaint) {
                             textPaint.alpha = minOf(textPaint.alpha, 160)
                         }
-                    }, localCharStart, localCharEnd, spanFlags)
+                    }, runStart, runEnd, flags)
                 }
             }
+
+            fun setCaptureActive(index: Int, active: Boolean) {
+                activeCaptures[index] = active
+                if (!active) return
+                if (hasForeground[index]) addToHeap(0, index)
+                if (hasBackground[index]) addToHeap(1, index)
+                val definedMask = captureFontDefinedMasks[index]
+                for (bitIndex in 0 until 5) {
+                    if ((definedMask and (1 shl bitIndex)) != 0) addToHeap(bitIndex + 2, index)
+                }
+            }
+
+            var pendingStart = -1
+            var pendingEnd = -1
+            var pendingForeground: Int? = null
+            var pendingBackground: Int? = null
+            var pendingFontFlags = 0
+            var pendingFontPriorityFlags = 0L
+            fun flushPendingRun() {
+                if (pendingStart >= 0) {
+                    paintRun(
+                        pendingStart, pendingEnd,
+                        pendingForeground, pendingBackground,
+                        pendingFontFlags, pendingFontPriorityFlags
+                    )
+                }
+                pendingStart = -1
+                pendingEnd = -1
+                pendingForeground = null
+                pendingBackground = null
+                pendingFontFlags = 0
+                pendingFontPriorityFlags = 0
+            }
+            fun appendResolvedRun(startOffset: Int, endOffset: Int) {
+                if (startOffset >= endOffset) return
+                val foreground = activeWinner(0)
+                val background = activeWinner(1)
+                var fontFlags = 0
+                var packedFontPriorities = 0L
+                for (bitIndex in 0 until 5) {
+                    val winner = activeWinner(bitIndex + 2) ?: continue
+                    // The winning capture defines this attribute even when its
+                    // value is off. This prevents nested @no-bold/@no-italic styles
+                    // from leaking the enclosing capture's enabled attribute.
+                    val winnerSourceIndex = captureSourceIndices[winner]
+                    if ((captureFontFlags[winner] and (1 shl bitIndex)) != 0) {
+                        fontFlags = fontFlags or (1 shl bitIndex)
+                    }
+                    if (bitIndex < 4) {
+                        val priority = (capturePriorityFlags[winnerSourceIndex] ushr
+                            Spanned.SPAN_PRIORITY_SHIFT) and 0xFF
+                        packedFontPriorities = packedFontPriorities or
+                            (priority.toLong() shl (bitIndex * 8))
+                    }
+                }
+                if (pendingStart >= 0 && pendingEnd == startOffset &&
+                    pendingForeground == foreground &&
+                    pendingBackground == background &&
+                    pendingFontFlags == fontFlags &&
+                    pendingFontPriorityFlags == packedFontPriorities) {
+                    pendingEnd = endOffset
+                } else {
+                    flushPendingRun()
+                    pendingStart = startOffset
+                    pendingEnd = endOffset
+                    pendingForeground = foreground
+                    pendingBackground = background
+                    pendingFontFlags = fontFlags
+                    pendingFontPriorityFlags = packedFontPriorities
+                }
+            }
+
+            var eventIndex = 0
+            var cursor = visibleStart
+            while (eventIndex < events.size) {
+                val boundary = boundaryEventOffset(events[eventIndex])
+                if (cursor < boundary &&
+                    hasActiveStyles()) {
+                    appendResolvedRun(cursor, boundary)
+                } else if (cursor < boundary) {
+                    flushPendingRun()
+                }
+                while (eventIndex < events.size &&
+                    boundaryEventOffset(events[eventIndex]) == boundary &&
+                    !boundaryEventStarts(events[eventIndex])) {
+                    val index = boundaryEventCaptureIndex(events[eventIndex])
+                    setCaptureActive(index, active = false)
+                    eventIndex++
+                }
+                while (eventIndex < events.size &&
+                    boundaryEventOffset(events[eventIndex]) == boundary &&
+                    boundaryEventStarts(events[eventIndex])) {
+                    val index = boundaryEventCaptureIndex(events[eventIndex])
+                    setCaptureActive(index, active = true)
+                    eventIndex++
+                }
+                cursor = boundary
+            }
+            if (cursor < visibleEnd &&
+                hasActiveStyles()) {
+                appendResolvedRun(cursor, visibleEnd)
+            }
+            flushPendingRun()
         }
     }
 
@@ -837,6 +1223,30 @@ class WindbellTshEngine private constructor() {
         documentHandle, diagnostics, startByte, endByte
     )
 
+    /**
+     * Exact viewport keys that the native dependency cache retained after edits.
+     * The editor uses this authoritative set to preserve only Kotlin capture
+     * entries whose native AST/query/Regex dependencies were proven reusable.
+     */
+    fun reusableNativeHighlightRanges(documentHandle: Long): List<NativeHighlightRange> {
+        require(documentHandle != 0L)
+        val encoded = nativeGetReusableHighlightRanges(documentHandle)
+            ?: error("Native reusable highlight range snapshot could not be allocated")
+        require(encoded.isNotEmpty()) { "Native reusable highlight snapshot is missing its range count" }
+        val count = encoded[0]
+        require(count >= 0L && count == (encoded.size - 1L) / 2L &&
+            (encoded.size - 1) % 2 == 0) {
+            "Native reusable highlight range count is malformed"
+        }
+        return ArrayList<NativeHighlightRange>(count.toInt()).also { ranges ->
+            var index = 1
+            repeat(count.toInt()) {
+                ranges += NativeHighlightRange(encoded[index], encoded[index + 1])
+                index += 2
+            }
+        }
+    }
+
     fun closeNativeDocument(documentHandle: Long) {
         if (documentHandle != 0L) nativeCloseDocument(documentHandle)
     }
@@ -865,9 +1275,12 @@ class WindbellTshEngine private constructor() {
         rangeEndByte: Long
     ): IntArray?
 
+    private external fun nativeGetReusableHighlightRanges(
+        documentHandle: Long
+    ): LongArray?
+
     private external fun nativeCloseDocument(documentHandle: Long)
 
-    @FastNative
     private external fun nativeLoadTshSource(extension: String, tshSourceContent: String, languagePtr: Long): Boolean
 
     @FastNative
@@ -900,7 +1313,6 @@ class WindbellTshEngine private constructor() {
     @FastNative
     private external fun nativeGetPalette(extension: String, schemeName: String): IntArray?
 
-    @FastNative
     private external fun nativeHighlight(
         treePtr: Long,
         text: String,

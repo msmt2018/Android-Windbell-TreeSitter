@@ -1,9 +1,9 @@
 ; Query for creating code block ranges in sora-editor
 
-(xml_decl) @scope.marked
+(XMLDecl) @scope.marked
 
-(end_tag_element) @scope.marked
+(ETag) @scope.marked
 
-(empty_element) @scope.marked
+(EmptyElemTag) @scope.marked
 
-(cdata_sect) @scope.marked
+(CDSect) @scope.marked

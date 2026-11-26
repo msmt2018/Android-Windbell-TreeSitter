@@ -16,8 +16,13 @@
 #include <new>
 #include <exception>
 #include <cstdlib>
+#include <chrono>
+
+// Tree-sitter allocations must be released through the active allocator.
+#include "alloc.h"
 
 #include "tsh/WindbellTshCore.h"
+#include "ts_language_lease.h"
 #include "tsh/WindbellTshCompiler.h"
 #include "tsh/TshRegexNative.h"
 #include "tsh/NativeHighlightCache.h"
@@ -103,6 +108,8 @@ struct NativeTshDocument {
     std::unique_ptr<windbell::largefile::MappedFileSource> regex_snapshot;
     uint64_t regex_snapshot_version = UINT64_MAX;
     std::string temporary_directory;
+    // Destructor deletes tree and parser before this loader lease is released.
+    std::shared_ptr<void> grammar_library_lease;
     TSParser *parser = nullptr;
     TSTree *tree = nullptr;
     std::string extension;
@@ -111,6 +118,8 @@ struct NativeTshDocument {
     NativeHighlightCache highlight_cache{4u * 1024u * 1024u, nativeHighlightBudget()};
     windbell::largefile::TextPartitionIndex partition_index{256};
     std::vector<RegexStateCheckpoint> regex_state_checkpoints;
+    // Bounded per-document delimiter-state checkpoints for top-level BLOCK rules.
+    std::vector<RegexBlockCheckpoint> regex_block_checkpoints;
     // Pending dirty byte intervals are always rebased into the current
     // document version. Keeping byte coordinates avoids losing earlier edits
     // when later edits insert/delete lines before an unconsumed dirty range.
@@ -174,16 +183,23 @@ static NativeDocumentRegistry &nativeDocumentRegistry() {
 
 struct NativeDocumentInput {
     const windbell::largefile::TextSource *source = nullptr;
-    // A surrogate pair may straddle PieceTree segment boundaries. The parser
-    // input callback must return complete UTF-16 scalar boundaries, so only
-    // that exceptional chunk is stitched into this reusable per-parse buffer.
-    std::array<char, windbell::largefile::kTreeSitterInputChunkBytes + 2u>
-        surrogate_boundary_buffer{};
-    // TSInput uses a null/zero-length result to signal EOF. Preserve the
-    // distinction between a real EOF and an I/O/source failure so a failed
-    // read can never be accepted as a successfully parsed truncated document.
+    // Keep read_failed second so {source, false} is explicit and does not
+    // accidentally initialize the first byte of the staging buffer.
     bool read_failed = false;
+    // Debug profiling separates source-window work from Tree-sitter CPU time.
+    uint64_t read_calls = 0;
+    uint64_t read_bytes = 0;
+    uint64_t read_nanoseconds = 0;
+    // Every callback result is copied into stable per-parse storage. TextSource
+    // views may be invalidated by boundary look-ahead across PieceTree pieces.
+    std::array<char, windbell::largefile::kTreeSitterInputChunkBytes + 2u>
+        input_buffer{};
 };
+
+// Snapshot transfer crosses JNI once per window. Keep this larger than the
+// parser's 64 KiB TextSource window so large PieceTree snapshots do not pay
+// thousands of Java callback transitions and tiny pwrite calls. Heap-backed.
+static constexpr uint32_t kNativeDocumentTransferChunkBytes = 1024u * 1024u;
 
 using DirtyLineInterval = std::pair<uint64_t, uint64_t>;
 
@@ -358,45 +374,53 @@ static const char *nativeDocumentRead(
         return nullptr;
     }
 
-    windbell::largefile::TextChunkView chunk{};
-    if (!input->source->read(
-            byte_index, windbell::largefile::kTreeSitterInputChunkBytes, &chunk) ||
-        !chunk.data || chunk.size == 0 ||
-        (chunk.size & 1u) != 0 ||
-        chunk.size > document_size - byte_index ||
-        chunk.size > windbell::largefile::kTreeSitterInputChunkBytes) {
-        input->read_failed = true;
-        return nullptr;
-    }
-
-    // PieceTree reads can end at an arbitrary piece boundary. UTF-16 code
-    // units are never split, but a high/low surrogate pair can still be split
-    // between two even-sized chunks. Extend only that boundary by one code
-    // unit; copyTextRange stitches the two pieces without materializing the
-    // document or changing the parser's absolute byte offsets.
-    bool splits_surrogate_pair = false;
-    const uint64_t chunk_end = static_cast<uint64_t>(byte_index) + chunk.size;
-    if (!windbell::largefile::checkUtf16SurrogateBoundary(
-            *input->source, chunk_end, &splits_surrogate_pair)) {
-        input->read_failed = true;
-        return nullptr;
-    }
-    if (splits_surrogate_pair) {
-        const uint64_t extended_size = static_cast<uint64_t>(chunk.size) + 2u;
-        if (extended_size > input->surrogate_boundary_buffer.size() ||
-            extended_size > document_size - byte_index ||
-            !windbell::largefile::copyTextRange(
-                *input->source, byte_index, extended_size,
-                input->surrogate_boundary_buffer.data())) {
+#ifndef NDEBUG
+    const auto read_started = std::chrono::steady_clock::now();
+    const auto record_read = [&](uint32_t count) noexcept {
+        ++input->read_calls;
+        input->read_bytes += count;
+        input->read_nanoseconds += static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::steady_clock::now() - read_started).count());
+    };
+#endif
+    // Untouched mmap/contiguous Piece Tree documents can be exposed directly.
+    // Tree-sitter consumes the stable backing view without per-callback memcpy,
+    // 128 KiB staging writes, or repeated source-window lookups. Edited piece
+    // trees transparently fall back to the reusable bounded input buffer.
+    const char *contiguous_data = nullptr;
+    uint64_t contiguous_size = 0;
+    if (input->source->contiguousData(&contiguous_data, &contiguous_size) &&
+        contiguous_data != nullptr && contiguous_size == document_size) {
+        const uint64_t remaining = document_size - byte_index;
+        if (remaining == 0) return nullptr;
+        if (remaining > std::numeric_limits<uint32_t>::max()) {
             input->read_failed = true;
             return nullptr;
         }
-        *bytes_read = static_cast<uint32_t>(extended_size);
-        return input->surrogate_boundary_buffer.data();
+        *bytes_read = static_cast<uint32_t>(remaining);
+#ifndef NDEBUG
+        record_read(*bytes_read);
+#endif
+        return contiguous_data + byte_index;
     }
 
-    *bytes_read = chunk.size;
-    return chunk.data;
+    uint32_t stable_bytes = 0;
+    if (!windbell::largefile::copyTreeSitterInputChunk(
+            *input->source, byte_index, input->input_buffer.data(),
+            static_cast<uint32_t>(input->input_buffer.size()), &stable_bytes)) {
+        input->read_failed = true;
+#ifndef NDEBUG
+        record_read(0);
+#endif
+        return nullptr;
+    }
+    if (stable_bytes == 0) return nullptr;
+    *bytes_read = stable_bytes;
+#ifndef NDEBUG
+    record_read(stable_bytes);
+#endif
+    return input->input_buffer.data();
 }
 
 static bool writeAllAt(int fd, const uint8_t *data, size_t length, uint64_t offset) {
@@ -545,25 +569,28 @@ static jintArray encodeNativeHighlightResult(
         env->SetIntArrayRegion(output, 0, 4, values);
         if (env->ExceptionCheck()) return nullptr;
     }
-    constexpr size_t kBatchSpans = 4096;
-    std::vector<jint> batch;
-    batch.reserve(kBatchSpans * kFields);
+    // Encode in a small fixed stack batch. The previous per-call vector
+    // reserved 96 KiB even for tiny viewport results and allocated on every JNI
+    // invocation. A 512-span batch uses 12 KiB of bounded stack storage and
+    // keeps the JNI transfer incremental without another heap allocation.
+    constexpr size_t kBatchSpans = 512;
+    std::array<jint, kBatchSpans * kFields> batch;
     for (size_t base = 0; base < spans.size();) {
         const size_t count = std::min(kBatchSpans, spans.size() - base);
-        batch.clear();
         for (size_t i = 0; i < count; ++i) {
             const auto &span = spans[base + i];
-            batch.push_back(static_cast<jint>(span.start_byte));
-            batch.push_back(static_cast<jint>(span.end_byte));
-            batch.push_back(static_cast<jint>(
-                span.style_id | (static_cast<uint32_t>(span.flags) << 16)));
-            batch.push_back(static_cast<jint>(span.priority));
-            batch.push_back(static_cast<jint>(span.declaration_order));
-            batch.push_back(static_cast<jint>(span.source));
+            const size_t offset = i * kFields;
+            batch[offset] = static_cast<jint>(span.start_byte);
+            batch[offset + 1] = static_cast<jint>(span.end_byte);
+            batch[offset + 2] = static_cast<jint>(
+                span.style_id | (static_cast<uint32_t>(span.flags) << 16));
+            batch[offset + 3] = static_cast<jint>(span.priority);
+            batch[offset + 4] = static_cast<jint>(span.declaration_order);
+            batch[offset + 5] = static_cast<jint>(span.source);
         }
         env->SetIntArrayRegion(
             output, header + static_cast<jsize>(base * kFields),
-            static_cast<jsize>(batch.size()), batch.data());
+            static_cast<jsize>(count * kFields), batch.data());
         if (env->ExceptionCheck()) return nullptr;
         base += count;
     }
@@ -672,6 +699,13 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeLoadTshSource(
             }
             LOGE("WindbellTSH", "Failed to compile TSH grammar rules for: %s", ext_str.c_str());
             return JNI_FALSE;
+        }
+        if (ts_lang != nullptr) {
+            compilation.grammar->language_library_lease = retainTreeSitterLanguageLibrary(ts_lang);
+            if (!compilation.grammar->language_library_lease) {
+                throw_illegal_state(env, "Unable to retain TSH language shared object");
+                return JNI_FALSE;
+            }
         }
         WindbellEngine::getInstance().registerGrammar(ext_str, compilation.grammar);
         return JNI_TRUE;
@@ -821,26 +855,62 @@ JNIEXPORT jobjectArray JNICALL
 Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeGetCompileDiagnostics(
     JNIEnv* env, jobject
 ) {
-    const auto& diagnostics = g_last_jni_compile_diagnostics;
-    jclass string_class = env->FindClass("java/lang/String");
-    if (!string_class) return nullptr;
-    jobjectArray result = env->NewObjectArray(
-        static_cast<jsize>(diagnostics.size() * 5), string_class, nullptr);
-    if (!result) { env->DeleteLocalRef(string_class); return nullptr; }
-    for (size_t i = 0; i < diagnostics.size(); ++i) {
-        const auto& d = diagnostics[i];
-        const std::array<std::string, 5> values = {
-            d.code, d.message, std::to_string(d.offset),
-            std::to_string(d.line), std::to_string(d.column)
-        };
-        for (size_t k = 0; k < values.size(); ++k) {
-            jstring value = env->NewStringUTF(values[k].c_str());
-            env->SetObjectArrayElement(result, static_cast<jsize>(i * 5 + k), value);
-            env->DeleteLocalRef(value);
+    try {
+        const auto& diagnostics = g_last_jni_compile_diagnostics;
+        constexpr size_t kFieldsPerDiagnostic = 5;
+        const size_t max_values =
+            static_cast<size_t>(std::numeric_limits<jsize>::max());
+        if (diagnostics.size() > max_values / kFieldsPerDiagnostic) {
+            throw_illegal_state(env, "Native compile diagnostics exceed JNI array capacity");
+            return nullptr;
         }
+
+        jclass string_class = env->FindClass("java/lang/String");
+        if (!string_class) return nullptr;
+        const jsize value_count = static_cast<jsize>(
+            diagnostics.size() * kFieldsPerDiagnostic);
+        jobjectArray result = env->NewObjectArray(value_count, string_class, nullptr);
+        if (!result) {
+            env->DeleteLocalRef(string_class);
+            return nullptr;
+        }
+
+        for (size_t i = 0; i < diagnostics.size(); ++i) {
+            const auto& diagnostic = diagnostics[i];
+            const std::array<std::string, kFieldsPerDiagnostic> values = {
+                diagnostic.code, diagnostic.message, std::to_string(diagnostic.offset),
+                std::to_string(diagnostic.line), std::to_string(diagnostic.column)
+            };
+            for (size_t field = 0; field < values.size(); ++field) {
+                jstring value = env->NewStringUTF(values[field].c_str());
+                if (!value) {
+                    env->DeleteLocalRef(result);
+                    env->DeleteLocalRef(string_class);
+                    return nullptr;
+                }
+                env->SetObjectArrayElement(
+                    result,
+                    static_cast<jsize>(i * kFieldsPerDiagnostic + field),
+                    value);
+                env->DeleteLocalRef(value);
+                if (env->ExceptionCheck()) {
+                    env->DeleteLocalRef(result);
+                    env->DeleteLocalRef(string_class);
+                    return nullptr;
+                }
+            }
+        }
+
+        env->DeleteLocalRef(string_class);
+        return result;
+    } catch (const std::bad_alloc&) {
+        throwNativeAllocationFailure(env, "Unable to encode native compile diagnostics");
+    } catch (const std::exception& error) {
+        throwNativeHighlightFailure(env, error.what());
+    } catch (...) {
+        throwNativeHighlightFailure(env, "Unknown native compile diagnostics failure");
     }
-    env->DeleteLocalRef(string_class);
-    return result;
+    return nullptr;
 }
 
 /**
@@ -1179,9 +1249,11 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeGetThemeTokens(
 
 /**
  * Export palette for the explicitly selected scheme.
- * Layout v2: [styleId, lightFg, darkFg, lightFlags, darkFlags, hasLightFg, hasDarkFg,
- *              lightBg, darkBg, hasLightBg, hasDarkBg] * N.
+ * Layout v3: [styleId, lightFg, darkFg, lightFlags, darkFlags, hasLightFg, hasDarkFg,
+ *              lightBg, darkBg, hasLightBg, hasDarkBg, lightFontDefinedMask,
+ *              darkFontDefinedMask] * N.
  * Presence flags distinguish an absent value from an explicit transparent color.
+ * Font masks preserve explicit clears (for example @no-bold) across JNI.
  */
 JNIEXPORT jintArray JNICALL
 Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeGetPalette(
@@ -1215,7 +1287,7 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeGetPalette(
         const auto scheme_it = grammar->schemes.find(selected_scheme);
         if (scheme_it == grammar->schemes.end()) return env->NewIntArray(0);
 
-        constexpr jsize kPaletteFields = 11;
+        constexpr jsize kPaletteFields = 13;
         const size_t style_count = grammar->styles.size();
         if (style_count > static_cast<size_t>(std::numeric_limits<jsize>::max() / kPaletteFields)) {
             throw_illegal_state(env, "Native TSH palette exceeds the JNI array length limit");
@@ -1247,6 +1319,8 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeGetPalette(
             values[base + 8] = static_cast<jint>(dark.background.argb);
             values[base + 9] = light.background.present ? 1 : 0;
             values[base + 10] = dark.background.present ? 1 : 0;
+            values[base + 11] = static_cast<jint>(light.font.defined_mask);
+            values[base + 12] = static_cast<jint>(dark.font.defined_mask);
         }
         if (value_count > 0) {
             env->SetIntArrayRegion(result, 0, value_count, values.data());
@@ -1356,9 +1430,18 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlight(
         }
     } source_guard{env, text_jstr, source_chars};
 
+    // Adapt the existing pinned Java UTF-16 buffer to the shared Native
+    // TextSource contract. This is zero-copy: the view is valid only for this
+    // synchronous call and allows finite-width Regex to use the same bounded
+    // window executor as mmap/PieceTree documents.
+    windbell::largefile::ContiguousTextSource contiguous_source(
+        source_chars, sourceByteLength);
     std::vector<HighlightSpan> raw_candidates;
     uint32_t pipeline_match_counts[4] = {};
     std::vector<HighlightSpan> spans;
+#ifndef NDEBUG
+    const auto highlight_core_started = std::chrono::steady_clock::now();
+#endif
     try {
         spans = WindbellEngine::getInstance().highlightHybrid(
             tree ? ts_tree_language(tree) : nullptr,
@@ -1369,7 +1452,8 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlight(
             diagnostics == JNI_TRUE ? &raw_candidates : nullptr,
             diagnostics == JNI_TRUE ? pipeline_match_counts : nullptr,
             static_cast<uint32_t>(range_start_byte),
-            static_cast<uint32_t>(range_end_byte)
+            static_cast<uint32_t>(range_end_byte),
+            &contiguous_source
         );
     } catch (const std::bad_alloc&) {
         throwNativeAllocationFailure(env, "Native TSH capture processing exhausted memory");
@@ -1448,11 +1532,31 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeCreateDocument(
         throw_illegal_args(env, "A writable application cache directory is required");
         return 0;
     }
+
+    // The .tsh compilation binds one exact TSLanguage object. Never accept a
+    // caller-supplied parser language merely because the extension matches:
+    // doing so can build an AST with a different symbol/field table than the
+    // one used to compile ATS selectors and native queries.
+    const auto bound_grammar =
+        WindbellEngine::getInstance().getGrammarByExtension(extension);
+    const auto *requested_language =
+        reinterpret_cast<const TSLanguage *>(language_pointer);
+    if (!bound_grammar || bound_grammar->ts_language == nullptr ||
+        bound_grammar->ts_language != requested_language) {
+        throw_illegal_state(env,
+            "TSH grammar language identity mismatch: compile the .tsh source with the exact TSLanguage instance used by the document parser");
+        return 0;
+    }
+
     jclass reader_class = env->GetObjectClass(reader);
     if (!reader_class) return 0;
     jmethodID read_method = env->GetMethodID(reader_class, "read", "(JILjava/nio/ByteBuffer;)I");
     env->DeleteLocalRef(reader_class);
     if (!read_method || env->ExceptionCheck()) return 0;
+
+#ifndef NDEBUG
+    const auto native_create_started = std::chrono::steady_clock::now();
+#endif
 
     try {
     std::string backing_path;
@@ -1480,7 +1584,7 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeCreateDocument(
     if (ok && byte_length > 0) {
         try {
             window.resize(static_cast<size_t>(std::min<uint64_t>(
-                windbell::largefile::kTreeSitterInputChunkBytes,
+                kNativeDocumentTransferChunkBytes,
                 static_cast<uint64_t>(byte_length))));
         } catch (...) {
             fd_guard.close();
@@ -1496,9 +1600,11 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeCreateDocument(
         if (!direct_window) ok = false;
     }
     uint64_t offset = 0;
+    uint64_t reader_calls = 0;
     while (ok && offset < static_cast<uint64_t>(byte_length)) {
+        ++reader_calls;
         const jint requested = static_cast<jint>(std::min<uint64_t>(
-            windbell::largefile::kTreeSitterInputChunkBytes,
+            kNativeDocumentTransferChunkBytes,
             static_cast<uint64_t>(byte_length) - offset));
         const jint count = env->CallIntMethod(
             reader, read_method, static_cast<jlong>(offset), requested, direct_window);
@@ -1526,6 +1632,7 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeCreateDocument(
         }
         return 0;
     }
+    const auto source_transfer_finished = std::chrono::steady_clock::now();
 
     auto document = std::make_shared<NativeTshDocument>();
     // mmap a memfd whenever the Android kernel supports it. This avoids
@@ -1611,15 +1718,23 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeCreateDocument(
     document->extension = extension;
     document->temporary_directory = directory;
     document->length_chars = static_cast<uint32_t>(static_cast<uint64_t>(byte_length) / 2u);
+    const auto *document_language = reinterpret_cast<const TSLanguage *>(language_pointer);
+    document->grammar_library_lease = retainTreeSitterLanguageLibrary(document_language);
+    if (!document->grammar_library_lease) {
+        throw_illegal_state(env, "Unable to retain document TSLanguage shared object");
+        return 0;
+    }
     document->parser = ts_parser_new();
     if (!document->parser || !ts_parser_set_language(
             document->parser, reinterpret_cast<const TSLanguage *>(language_pointer))) {
         throw_illegal_state(env, "Unable to initialize Tree-sitter for native document");
         return 0;
     }
+    const auto parser_started = std::chrono::steady_clock::now();
     NativeDocumentInput payload{document->source.get(), false};
     TSInput input{&payload, nativeDocumentRead, TSInputEncodingUTF16LE, nullptr};
     document->tree = ts_parser_parse(document->parser, nullptr, input);
+    const auto parse_finished = std::chrono::steady_clock::now();
     if (!document->tree || payload.read_failed ||
         !nativeTreeIsValidForDocument(document->tree, document->source->sizeBytes())) {
         if (document->tree) {
@@ -1630,6 +1745,30 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeCreateDocument(
             "Tree-sitter input failed or did not cover the complete native document");
         return 0;
     }
+#ifndef NDEBUG
+    const auto elapsed_ms = [](auto start, auto end) noexcept {
+        return std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+    };
+    const int64_t parse_ms = elapsed_ms(parser_started, parse_finished);
+    const int64_t source_read_ms = static_cast<int64_t>(payload.read_nanoseconds / 1000000u);
+    const int64_t parser_cpu_ms = std::max<int64_t>(0, parse_ms - source_read_ms);
+    LOGI("TSHPerf",
+         "nativeCreateDocument bytes=%lld anonymousBacking=%d transferReaderCalls=%llu "
+         "treeInputCalls=%llu treeInputBytes=%llu treeInputReadMs=%lld parserCpuMs=%lld "
+         "backingTransferMs=%lld backingMapPieceTreeMs=%lld parseTotalMs=%lld totalMs=%lld "
+         "transferChunkBytes=%u",
+         static_cast<long long>(byte_length), anonymous_backing ? 1 : 0,
+         static_cast<unsigned long long>(reader_calls),
+         static_cast<unsigned long long>(payload.read_calls),
+         static_cast<unsigned long long>(payload.read_bytes),
+         static_cast<long long>(source_read_ms),
+         static_cast<long long>(parser_cpu_ms),
+         static_cast<long long>(elapsed_ms(native_create_started, source_transfer_finished)),
+         static_cast<long long>(elapsed_ms(source_transfer_finished, parser_started)),
+         static_cast<long long>(parse_ms),
+         static_cast<long long>(elapsed_ms(native_create_started, parse_finished)),
+         kNativeDocumentTransferChunkBytes);
+#endif
     const jlong handle = nativeDocumentRegistry().insert(std::move(document));
     if (handle == 0) {
         throw_illegal_state(env, "Unable to register native document handle");
@@ -1745,6 +1884,10 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeApplyDocumentEdi
         throw_illegal_state(env, "Unable to clone native syntax tree for transactional edit");
         return JNI_FALSE;
     }
+    // A fallback parser is part of the candidate transaction. Do not replace
+    // the live parser until every later dirty-range/index allocation succeeds.
+    std::unique_ptr<TSParser, decltype(&ts_parser_delete)> replacement_parser(
+        nullptr, &ts_parser_delete);
     TSInputEdit edit{};
     edit.start_byte = static_cast<uint32_t>(start_byte);
     edit.old_end_byte = static_cast<uint32_t>(old_end_byte);
@@ -1757,10 +1900,20 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeApplyDocumentEdi
 
     NativeDocumentInput payload{next_source.get(), false};
     TSInput input{&payload, nativeDocumentRead, TSInputEncodingUTF16LE, nullptr};
+    const auto incremental_parse_started = std::chrono::steady_clock::now();
     TSTree *next_tree = ts_parser_parse(document->parser, edited_tree, input);
+    const auto incremental_parse_finished = std::chrono::steady_clock::now();
+    const auto elapsed_parse_ms = [](auto start, auto end) noexcept {
+        return std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+    };
+    const int64_t incremental_parse_ms =
+        elapsed_parse_ms(incremental_parse_started, incremental_parse_finished);
     const bool incremental_parse_complete = next_tree && !payload.read_failed &&
         nativeTreeIsValidForDocument(next_tree, next_source->sizeBytes());
+    bool used_full_parse_fallback = false;
+    int64_t full_parse_fallback_ms = 0;
     if (!incremental_parse_complete) {
+        used_full_parse_fallback = true;
         // Incremental reuse is an optimization, never a correctness boundary.
         // If a reused subtree or edit-coordinate interaction yields a partial
         // root, discard that candidate and retry against the complete candidate
@@ -1785,10 +1938,16 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeApplyDocumentEdi
                 "Unable to recreate Tree-sitter parser for full-document fallback; original document retained");
             return JNI_FALSE;
         }
+        replacement_parser.reset(fallback_parser);
         NativeDocumentInput fallback_payload{next_source.get(), false};
         TSInput fallback_input{
             &fallback_payload, nativeDocumentRead, TSInputEncodingUTF16LE, nullptr};
-        TSTree *fallback_tree = ts_parser_parse(fallback_parser, nullptr, fallback_input);
+        const auto fallback_parse_started = std::chrono::steady_clock::now();
+        TSTree *fallback_tree = ts_parser_parse(
+            replacement_parser.get(), nullptr, fallback_input);
+        const auto fallback_parse_finished = std::chrono::steady_clock::now();
+        full_parse_fallback_ms =
+            elapsed_parse_ms(fallback_parse_started, fallback_parse_finished);
         if (!fallback_tree || fallback_payload.read_failed ||
             !nativeTreeIsValidForDocument(fallback_tree, next_source->sizeBytes())) {
             uint32_t fallback_start = 0;
@@ -1799,7 +1958,7 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeApplyDocumentEdi
                 fallback_end = ts_node_end_byte(fallback_root);
                 ts_tree_delete(fallback_tree);
             }
-            ts_parser_delete(fallback_parser);
+            replacement_parser.reset();
             ts_tree_delete(edited_tree);
             ts_parser_reset(document->parser);
             const std::string reason =
@@ -1811,9 +1970,25 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeApplyDocumentEdi
             throw_illegal_state(env, reason.c_str());
             return JNI_FALSE;
         }
-        ts_parser_delete(document->parser);
-        document->parser = fallback_parser;
         next_tree = fallback_tree;
+    }
+    if (old_size >= 10u * 1024u * 1024u ||
+        used_full_parse_fallback || incremental_parse_ms >= 5) {
+        const int64_t input_read_ms =
+            static_cast<int64_t>(payload.read_nanoseconds / 1000000u);
+        LOGI("TSHPerf",
+             "nativeApplyDocumentEdit bytes=%llu incrementalParseMs=%lld "
+             "inputCalls=%llu inputBytes=%llu inputReadMs=%lld parserCpuMs=%lld "
+             "fullParseFallback=%d fallbackParseMs=%lld dirtyRangesPending=%zu",
+             static_cast<unsigned long long>(old_size),
+             static_cast<long long>(incremental_parse_ms),
+             static_cast<unsigned long long>(payload.read_calls),
+             static_cast<unsigned long long>(payload.read_bytes),
+             static_cast<long long>(input_read_ms),
+             static_cast<long long>(std::max<int64_t>(0, incremental_parse_ms - input_read_ms)),
+             used_full_parse_fallback ? 1 : 0,
+             static_cast<long long>(full_parse_fallback_ms),
+             document->dirty_byte_intervals.size());
     }
 
     // Prepare syntax invalidation before committing any candidate document state.
@@ -1830,6 +2005,10 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeApplyDocumentEdi
     } catch (...) {
         ts_tree_delete(next_tree);
         ts_tree_delete(edited_tree);
+        if (replacement_parser) {
+            replacement_parser.reset();
+            ts_parser_reset(document->parser);
+        }
         throw_illegal_state(env, "Unable to allocate native dirty-range transaction");
         return JNI_FALSE;
     }
@@ -1846,7 +2025,7 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeApplyDocumentEdi
             catch (...) { dirty_ranges_ok = false; }
         }
     }
-    std::free(changed_ranges); // Tree-sitter 0.28 documents malloc/free ownership.
+    if (changed_ranges) ts_free(changed_ranges); // Match ts_malloc/ts_current_free, including the bounded pool overlay.
     const uint64_t insertedEnd = static_cast<uint64_t>(start_byte) +
         static_cast<uint64_t>(inserted_size);
     if (dirty_ranges_ok) {
@@ -1899,11 +2078,23 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeApplyDocumentEdi
     ts_tree_delete(edited_tree);
     if (!dirty_ranges_ok) {
         ts_tree_delete(next_tree);
+        // The incremental parser may have been interrupted before the full
+        // fallback succeeded. If the candidate transaction is still uncommitted,
+        // discard its parser and reset the original parser for the next edit.
+        if (replacement_parser) {
+            replacement_parser.reset();
+            ts_parser_reset(document->parser);
+        }
         throw_illegal_state(env, "Unable to map Tree-sitter changed ranges into native line intervals");
         return JNI_FALSE;
     }
 
     const uint64_t old_source_version = document->source->version();
+    if (replacement_parser) {
+        TSParser *previous_parser = document->parser;
+        document->parser = replacement_parser.release();
+        ts_parser_delete(previous_parser);
+    }
     ts_tree_delete(document->tree);
     document->tree = next_tree;
     document->source = std::move(next_source);
@@ -1916,13 +2107,42 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeApplyDocumentEdi
     ++document->version;
     document->dirty_byte_intervals.swap(next_pending_dirty_bytes);
     document->dirty_line_intervals.swap(next_dirty_intervals);
-    // Until NativeHighlightCache supports interval-level eviction, clear its
-    // entries conservatively. Dirty intervals are retained for the next
-    // incremental ATS capture implementation instead of being discarded.
-    document->highlight_cache.rebaseAfterEdit(
+    // Rebase cached highlight snapshots against the committed edit and the
+    // post-edit Tree-sitter changed ranges. Unproven/document-context
+    // dependencies are evicted; unaffected rooted-query/finite-Regex ranges
+    // retain their shifted coordinates and the new document versions.
+    const auto cache_rebase = document->highlight_cache.rebaseAfterEdit(
         document->version, document->source->version(), document->partition_index.version(),
         static_cast<uint32_t>(start_byte), static_cast<uint32_t>(old_end_byte),
         static_cast<uint32_t>(inserted_size), next_dirty_byte_ranges);
+    if (cache_rebase.payload_before != cache_rebase.payload_after ||
+        cache_rebase.dependencies_before != cache_rebase.dependencies_after ||
+        cache_rebase.reset_for_invalid_edit || cache_rebase.reset_due_shared_budget ||
+        cache_rebase.reset_after_allocation_failure) {
+        LOGI("TSHCache",
+             "editRebase payload=%zu->%zu dependencies=%zu->%zu "
+             "missingProof=%zu viewportEdit=%zu documentWide=%zu checkpoint=%zu "
+             "boundary=%zu dirty=%zu inserted=%zu budgetRejected=%zu "
+             "payloadWithoutProof=%zu resetInvalid=%d resetSharedBudget=%d resetAllocation=%d "
+             "dirtyRanges=%zu editBytes=%lld..%lld insertedBytes=%d",
+             cache_rebase.payload_before, cache_rebase.payload_after,
+             cache_rebase.dependencies_before, cache_rebase.dependencies_after,
+             cache_rebase.missing_dependency_proof,
+             cache_rebase.viewport_intersects_edit,
+             cache_rebase.document_wide_dependency,
+             cache_rebase.checkpoint_invalidated,
+             cache_rebase.boundary_invalidated,
+             cache_rebase.dirty_range_invalidated,
+             cache_rebase.inserted_range_invalidated,
+             cache_rebase.dependency_budget_rejected,
+             cache_rebase.payload_without_proof,
+             cache_rebase.reset_for_invalid_edit ? 1 : 0,
+             cache_rebase.reset_due_shared_budget ? 1 : 0,
+             cache_rebase.reset_after_allocation_failure ? 1 : 0,
+             next_dirty_byte_ranges.size(),
+             static_cast<long long>(start_byte),
+             static_cast<long long>(old_end_byte), inserted_size);
+    }
 
     // Keep tokenizer checkpoints before the edit as immediately reusable. Keep
     // checkpoints after the replaced range as *candidates* at their shifted byte
@@ -1957,6 +2177,21 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeApplyDocumentEdi
     }
     if (checkpoints_copied) document->regex_state_checkpoints.swap(retained);
     else document->regex_state_checkpoints.clear();
+
+    // A block-state checkpoint before the edit remains valid in the unchanged
+    // prefix. Any checkpoint after the edit may summarize a delimiter state that
+    // changed, so discard only that suffix and let the next viewport rebuild it.
+    document->regex_block_checkpoints.erase(
+        std::remove_if(
+            document->regex_block_checkpoints.begin(),
+            document->regex_block_checkpoints.end(),
+            [&](RegexBlockCheckpoint& checkpoint) {
+                if (checkpoint.byte_offset > static_cast<uint32_t>(start_byte)) return true;
+                checkpoint.source_version = new_source_version;
+                checkpoint.partition_version = new_partition_version;
+                return false;
+            }),
+        document->regex_block_checkpoints.end());
     return JNI_TRUE;
 }
 
@@ -2025,6 +2260,12 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
         return nullptr;
     }
     std::lock_guard<std::mutex> lock(document->mutex);
+#ifndef NDEBUG
+    const auto native_highlight_started = std::chrono::steady_clock::now();
+    const auto elapsed_ms = [](auto start, auto end) noexcept {
+        return std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+    };
+#endif
     const uint64_t total_bytes = document->source->sizeBytes();
     // Tree-sitter's public TSNode/TSPoint byte coordinates are uint32_t in the
     // vendored ABI. The TextSource itself is 64-bit, but this JNI highlighter
@@ -2087,9 +2328,21 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
     };
     if (const auto *cached = document->highlight_cache.find(cache_key)) {
         try {
-            return encodeNativeHighlightResult(
+            jintArray encoded = encodeNativeHighlightResult(
                 env, cached->spans, cached->match_counts,
                 diagnostics == JNI_TRUE);
+#ifndef NDEBUG
+            const auto cache_hit_finished = std::chrono::steady_clock::now();
+            LOGV("TSHPerf",
+                 "nativeHighlightDocument cache=hit range=%u..%u documentBytes=%llu "
+                 "spans=%zu totalMs=%lld cacheEvictions=%zu cacheRejected=%zu",
+                 requested_start, requested_end,
+                 static_cast<unsigned long long>(total_bytes), cached->spans.size(),
+                 static_cast<long long>(elapsed_ms(native_highlight_started, cache_hit_finished)),
+                 document->highlight_cache.payloadEvictionCount(),
+                 document->highlight_cache.payloadRejectedCount());
+#endif
+            return encoded;
         } catch (const std::bad_alloc&) {
             throwNativeAllocationFailure(env, "Unable to allocate cached JNI highlight result");
             return nullptr;
@@ -2101,36 +2354,76 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
     // Only context-dependent Regex requires a whole-document mmap snapshot.
     // Finite-width Regex continues through its bounded TextSource window path.
     const auto has_context_rule = [](const auto &self, const CompiledRegexRule &rule) -> bool {
+        if (!rule.enabled) return false;
         if (rule.execution_capability == RegexExecutionCapability::DOCUMENT_CONTEXT_REQUIRED)
             return true;
         return std::any_of(rule.nested_rules.begin(), rule.nested_rules.end(),
             [&](const CompiledRegexRule &nested) { return self(self, nested); });
     };
-    const bool has_regex_state = !grammar->regex_states.empty();
-    const bool source_has_regex = grammar &&
-        (!grammar->regex_rules.empty() || has_regex_state ||
-         std::any_of(grammar->native_queries.begin(), grammar->native_queries.end(),
-            [](const NativeQueryProgram &query) { return !query.predicate_regexes.empty(); }) ||
-         std::any_of(grammar->ast_selector_rules.begin(), grammar->ast_selector_rules.end(),
-            [](const AstSelectorRule &rule) { return rule.has_text_regex; }));
-    const bool source_requires_contiguous_regex = grammar &&
+    const auto has_enabled_regex_rule =
+        [](const auto &self, const CompiledRegexRule &rule) -> bool {
+            if (!rule.enabled) return false;
+            if (rule.onig_start != nullptr) return true;
+            return std::any_of(rule.nested_rules.begin(), rule.nested_rules.end(),
+                [&](const CompiledRegexRule &nested) { return self(self, nested); });
+        };
+    const bool has_regex_state = std::any_of(
+        grammar->regex_states.begin(), grammar->regex_states.end(),
+        [](const auto &state_entry) {
+            return std::any_of(
+                state_entry.second.begin(), state_entry.second.end(),
+                [](const RegexStateRule &rule) { return rule.enabled; });
+        });
+    const auto has_active_native_query = [](const NativeQueryProgram &query) {
+        return query.enabled && query.query &&
+            std::any_of(query.pattern_metadata.begin(), query.pattern_metadata.end(),
+                [](const auto &item) { return item.second.enabled; });
+    };
+    const bool has_enabled_native_query = std::any_of(
+        grammar->native_queries.begin(), grammar->native_queries.end(),
+        [&](const NativeQueryProgram &query) {
+            return has_active_native_query(query);
+        });
+    const bool has_enabled_ast_selector = std::any_of(
+        grammar->ast_selector_rules.begin(), grammar->ast_selector_rules.end(),
+        [](const AstSelectorRule &rule) { return rule.enabled; });
+    const bool source_has_regex = has_regex_state ||
         std::any_of(grammar->regex_rules.begin(), grammar->regex_rules.end(),
-            [&](const CompiledRegexRule &rule) { return has_context_rule(has_context_rule, rule); }) ||
-        (grammar && has_regex_state && !grammar->regex_state_graph_bounded) ||
-        (grammar && std::any_of(grammar->native_queries.begin(), grammar->native_queries.end(),
-            [](const NativeQueryProgram &query) {
-                return std::any_of(query.predicate_regexes.begin(), query.predicate_regexes.end(),
-                    [](const NativeQueryProgram::PredicateRegex &predicate) {
-                        return predicate.execution_capability ==
-                            RegexExecutionCapability::DOCUMENT_CONTEXT_REQUIRED;
-                    });
-            })) ||
-        (grammar && std::any_of(grammar->ast_selector_rules.begin(), grammar->ast_selector_rules.end(),
+            [&](const CompiledRegexRule &rule) {
+                return has_enabled_regex_rule(has_enabled_regex_rule, rule);
+            }) ||
+        std::any_of(grammar->native_queries.begin(), grammar->native_queries.end(),
+            [&](const NativeQueryProgram &query) {
+                return has_active_native_query(query) && !query.predicate_regexes.empty();
+            }) ||
+        std::any_of(grammar->ast_selector_rules.begin(), grammar->ast_selector_rules.end(),
             [](const AstSelectorRule &rule) {
-                return rule.has_text_regex && !rule.text_regex_bounded;
-            }));
+                return rule.enabled && rule.has_text_regex;
+            });
+    const bool source_requires_contiguous_regex =
+        std::any_of(grammar->regex_rules.begin(), grammar->regex_rules.end(),
+            [&](const CompiledRegexRule &rule) {
+                return rule.enabled && has_context_rule(has_context_rule, rule);
+            }) ||
+        (has_regex_state && !grammar->regex_state_graph_bounded) ||
+        std::any_of(grammar->native_queries.begin(), grammar->native_queries.end(),
+            [&](const NativeQueryProgram &query) {
+                return has_active_native_query(query) &&
+                    std::any_of(query.predicate_regexes.begin(), query.predicate_regexes.end(),
+                        [](const NativeQueryProgram::PredicateRegex &predicate) {
+                            return predicate.execution_capability ==
+                                RegexExecutionCapability::DOCUMENT_CONTEXT_REQUIRED;
+                        });
+            }) ||
+        std::any_of(grammar->ast_selector_rules.begin(), grammar->ast_selector_rules.end(),
+            [](const AstSelectorRule &rule) {
+                return rule.enabled && rule.has_text_regex && !rule.text_regex_bounded;
+            });
     const bool source_native_ast_only = grammar && !source_has_regex;
     const windbell::largefile::TextSource *highlight_source = document->source.get();
+#ifndef NDEBUG
+    int64_t regex_snapshot_ms = 0;
+#endif
     if (source_requires_contiguous_regex) {
         const char *contiguous_data = nullptr;
         uint64_t contiguous_size = 0;
@@ -2141,8 +2434,15 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
         if (!already_contiguous) {
             if (!document->regex_snapshot ||
                 document->regex_snapshot_version != document->source->version()) {
+#ifndef NDEBUG
+                const auto snapshot_started = std::chrono::steady_clock::now();
+#endif
                 auto candidate = windbell::largefile::MappedFileSource::createSnapshot(
                     *document->source, document->temporary_directory);
+#ifndef NDEBUG
+                regex_snapshot_ms = elapsed_ms(
+                    snapshot_started, std::chrono::steady_clock::now());
+#endif
                 if (!candidate || candidate->sizeBytes() != total_bytes) {
                     throw_illegal_state(env,
                         "Unable to create a complete mmap snapshot for context-dependent TSH Regex");
@@ -2172,8 +2472,14 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
         // TextSource window executors; no legacy whole-document heap bridge.
     }
     std::vector<HighlightSpan> candidates;
+    std::vector<HighlightDependencyRange> highlight_dependencies;
     uint32_t counts[4] = {};
     std::vector<HighlightSpan> spans;
+#ifndef NDEBUG
+    // Measure this document-backed highlight invocation independently from the
+    // legacy contiguous JNI entry point; its timing scope must be local.
+    const auto highlight_core_started = std::chrono::steady_clock::now();
+#endif
     try {
         spans = WindbellEngine::getInstance().highlightHybrid(
             ts_tree_language(document->tree), document->tree, input,
@@ -2183,7 +2489,8 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
             evaluation_start,
             evaluation_end, highlight_source,
             &document->regex_state_checkpoints, document->source->version(),
-            document->partition_index.version());
+            document->partition_index.version(), &highlight_dependencies,
+            &document->regex_block_checkpoints);
         if (diagnostics == JNI_TRUE) spans = std::move(candidates);
         if (requested_start == requested_end) {
             spans.clear();
@@ -2205,8 +2512,15 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
         return nullptr;
     }
 
+#ifndef NDEBUG
+    const auto highlight_core_finished = std::chrono::steady_clock::now();
+    const size_t highlight_span_count = spans.size();
+#endif
     // Encode before cache admission. Cache pressure must never invalidate a
     // complete highlight result that has already been produced for the caller.
+#ifndef NDEBUG
+    const auto encode_started = std::chrono::steady_clock::now();
+#endif
     jintArray encoded = nullptr;
     try {
         encoded = encodeNativeHighlightResult(
@@ -2219,17 +2533,243 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
         return nullptr;
     }
     if (!encoded || env->ExceptionCheck()) return nullptr;
+#ifndef NDEBUG
+    const auto encode_finished = std::chrono::steady_clock::now();
+#endif
 
     NativeHighlightCache::Value cache_value;
     cache_value.spans = std::move(spans);
+    std::vector<HighlightDependencyRange> cache_dependencies =
+        std::move(highlight_dependencies);
+
+    // Query dependencies were collected from every possible rooted AST
+    // candidate intersecting the evaluated viewport, not merely emitted captures.
+    // If Query execution was unavailable or did not produce dependency
+    // metadata, never cache a partial result under an assumed local scope.
+    const bool has_native_query_dependency = std::any_of(
+        cache_dependencies.begin(), cache_dependencies.end(),
+        [](const HighlightDependencyRange& dependency) {
+            return dependency.source ==
+                static_cast<uint8_t>(HighlightSource::NATIVE_QUERY);
+        });
+    if (has_enabled_native_query && !has_native_query_dependency) {
+        cache_dependencies.push_back({
+            0u, static_cast<uint32_t>(total_bytes), UINT32_MAX,
+            static_cast<uint8_t>(HighlightSource::NATIVE_QUERY), 0xFFu,
+            HIGHLIGHT_DEPENDENCY_DOCUMENT_WIDE
+        });
+    }
+    // ATS now publishes the viewport plus the exact candidate-node,
+    // parent/child-list and inspected ancestor envelopes from the AST selector
+    // traversal. Keep a viewport-only safety dependency if a future producer
+    // path returns no ATS envelope; do not invalidate every document partition
+    // merely because this grammar contains ATS rules.
+    const bool has_ast_selector_dependency = std::any_of(
+        cache_dependencies.begin(), cache_dependencies.end(),
+        [](const HighlightDependencyRange& dependency) {
+            return dependency.source ==
+                static_cast<uint8_t>(HighlightSource::AST_SELECTOR);
+        });
+    if (has_enabled_ast_selector && !has_ast_selector_dependency) {
+        cache_dependencies.push_back({
+            requested_start, requested_end, UINT32_MAX,
+            static_cast<uint8_t>(HighlightSource::AST_SELECTOR), 0xFFu,
+            HIGHLIGHT_DEPENDENCY_BOUNDARY_SENSITIVE
+        });
+    }
+    // Uncheckpointed stateful/context-dependent Regex can propagate lexical
+    // state beyond a verified viewport envelope. Bounded BLOCK delimiters now
+    // publish checkpoint-based dependencies from the last known delimiter state,
+    // so they do not force every cached viewport to become document-wide.
+    const bool has_regex_state_dependency = std::any_of(
+        cache_dependencies.begin(), cache_dependencies.end(),
+        [](const HighlightDependencyRange& dependency) {
+            return dependency.source ==
+                static_cast<uint8_t>(HighlightSource::REGEX_STATE);
+        });
+    const bool has_document_wide_regex_dependency = std::any_of(
+        cache_dependencies.begin(), cache_dependencies.end(),
+        [](const HighlightDependencyRange& dependency) {
+            return dependency.source ==
+                    static_cast<uint8_t>(HighlightSource::REGEX_STATE) &&
+                (dependency.flags & HIGHLIGHT_DEPENDENCY_DOCUMENT_WIDE) != 0;
+        });
+    const auto has_uncheckpointed_context_rule =
+        [](const auto &self, const CompiledRegexRule &rule) -> bool {
+            if (!rule.enabled) return false;
+            if (rule.execution_capability ==
+                    RegexExecutionCapability::DOCUMENT_CONTEXT_REQUIRED &&
+                (rule.type != RegexRuleType::BLOCK ||
+                 !rule.block_delimiters_bounded)) {
+                return true;
+            }
+            return std::any_of(
+                rule.nested_rules.begin(), rule.nested_rules.end(),
+                [&](const CompiledRegexRule &nested) {
+                    return self(self, nested);
+                });
+        };
+    const bool has_uncheckpointed_context_regex =
+        std::any_of(grammar->regex_rules.begin(), grammar->regex_rules.end(),
+            [&](const CompiledRegexRule &rule) {
+                return has_uncheckpointed_context_rule(
+                    has_uncheckpointed_context_rule, rule);
+            }) ||
+        std::any_of(grammar->native_queries.begin(), grammar->native_queries.end(),
+            [&](const NativeQueryProgram &query) {
+                return has_active_native_query(query) &&
+                    std::any_of(query.predicate_regexes.begin(),
+                    query.predicate_regexes.end(),
+                    [](const NativeQueryProgram::PredicateRegex &predicate) {
+                        return predicate.execution_capability ==
+                            RegexExecutionCapability::DOCUMENT_CONTEXT_REQUIRED;
+                    });
+            }) ||
+        std::any_of(grammar->ast_selector_rules.begin(), grammar->ast_selector_rules.end(),
+            [](const AstSelectorRule &rule) {
+                return rule.enabled && rule.has_text_regex && !rule.text_regex_bounded;
+            });
+    const bool added_global_regex_dependency =
+        has_uncheckpointed_context_regex &&
+        !has_document_wide_regex_dependency;
+    if (added_global_regex_dependency) {
+        cache_dependencies.push_back({
+            0u, static_cast<uint32_t>(total_bytes), UINT32_MAX,
+            static_cast<uint8_t>(HighlightSource::REGEX_STATE), 0xFFu,
+            HIGHLIGHT_DEPENDENCY_DOCUMENT_WIDE
+        });
+    }
+    if (has_regex_state &&
+        !has_regex_state_dependency && !added_global_regex_dependency) {
+        // If the stateful pipeline did not publish a verified checkpoint
+        // envelope, never admit its result under a guessed local dependency.
+        cache_dependencies.push_back({
+            0u, static_cast<uint32_t>(total_bytes), UINT32_MAX,
+            static_cast<uint8_t>(HighlightSource::REGEX_STATE), 0xFFu,
+            HIGHLIGHT_DEPENDENCY_DOCUMENT_WIDE
+        });
+    }
+    // Finite-width MATCH Regex rules are independent dependencies even when
+    // the same grammar also contains Query/AST/state pipelines.
+    uint64_t regex_overlap = 0;
+    bool has_bounded_regex = false;
+    const auto include_width = [&](const auto &self, const CompiledRegexRule &rule) -> void {
+        if (rule.enabled && rule.type == RegexRuleType::MATCH && rule.onig_start &&
+            rule.execution_capability == RegexExecutionCapability::BOUNDED_WINDOW &&
+            rule.maximum_match_bytes != 0) {
+            has_bounded_regex = true;
+            regex_overlap = std::max(regex_overlap,
+                rule.maximum_match_bytes >= 2u ? rule.maximum_match_bytes - 2u : 0u);
+        }
+        if (!rule.enabled) return;
+        for (const auto &nested : rule.nested_rules) self(self, nested);
+    };
+    for (const auto &rule : grammar->regex_rules) include_width(include_width, rule);
+    if (has_bounded_regex) {
+        const uint32_t dependency_start = static_cast<uint32_t>(
+            evaluation_start > regex_overlap ? evaluation_start - regex_overlap : 0u);
+        const uint32_t dependency_end = static_cast<uint32_t>(
+            std::min<uint64_t>(total_bytes,
+                static_cast<uint64_t>(evaluation_end) + regex_overlap));
+        cache_dependencies.push_back({
+            dependency_start, dependency_end, UINT32_MAX,
+            static_cast<uint8_t>(HighlightSource::ONIG_REGEX), 0xFFu,
+            HIGHLIGHT_DEPENDENCY_BOUNDARY_SENSITIVE
+        });
+    }
     std::copy(std::begin(counts), std::end(counts), std::begin(cache_value.match_counts));
     try {
-        document->highlight_cache.put(cache_key, std::move(cache_value));
+        document->highlight_cache.put(
+            cache_key, std::move(cache_value), std::move(cache_dependencies));
     } catch (...) {
         // Cache admission is optional. Preserve the complete result even when
         // cache bookkeeping cannot allocate under memory pressure.
     }
+#ifndef NDEBUG
+    const auto native_highlight_finished = std::chrono::steady_clock::now();
+    if (total_bytes >= 10u * 1024u * 1024u ||
+        elapsed_ms(native_highlight_started, native_highlight_finished) >= 5) {
+        LOGV("TSHPerf",
+             "nativeHighlightDocument cache=miss range=%u..%u documentBytes=%llu "
+             "spans=%zu regexSnapshotMs=%lld coreMs=%lld encodeMs=%lld totalMs=%lld "
+             "cacheEntries=%zu cacheBytes=%llu dependencyLedgerBytes=%llu "
+             "cacheEvictions=%zu cacheRejected=%zu "
+             "blockCheckpoints=%zu requiresSnapshot=%d sourceHasRegex=%d "
+             "activeNativeQuery=%d activeAstSelector=%d regexState=%d",
+             requested_start, requested_end,
+             static_cast<unsigned long long>(total_bytes), highlight_span_count,
+             static_cast<long long>(regex_snapshot_ms),
+             static_cast<long long>(elapsed_ms(highlight_core_started, highlight_core_finished)),
+             static_cast<long long>(elapsed_ms(encode_started, encode_finished)),
+             static_cast<long long>(elapsed_ms(native_highlight_started, native_highlight_finished)),
+             document->highlight_cache.size(),
+             static_cast<unsigned long long>(document->highlight_cache.usedBytes()),
+             static_cast<unsigned long long>(document->highlight_cache.dependencyBytesUsed()),
+             document->highlight_cache.payloadEvictionCount(),
+             document->highlight_cache.payloadRejectedCount(),
+             document->regex_block_checkpoints.size(),
+             source_requires_contiguous_regex ? 1 : 0,
+             source_has_regex ? 1 : 0,
+             has_enabled_native_query ? 1 : 0,
+             has_enabled_ast_selector ? 1 : 0,
+             has_regex_state ? 1 : 0);
+    }
+#endif
     return encoded;
+}
+
+JNIEXPORT jlongArray JNICALL
+Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeGetReusableHighlightRanges(
+    JNIEnv *env, jobject, jlong document_pointer
+) {
+    auto document = nativeDocumentRegistry().acquire(document_pointer);
+    if (!document) {
+        throw_npe(env, "Native document handle cannot be null");
+        return nullptr;
+    }
+    std::lock_guard<std::mutex> lock(document->mutex);
+    try {
+        const auto grammar =
+            WindbellEngine::getInstance().getGrammarByExtension(document->extension);
+        if (!grammar) return env->NewLongArray(1);
+        const auto ranges = document->highlight_cache.snapshotRanges(
+            false, grammar->revision, document->version,
+            document->source->version(), document->partition_index.version());
+        if (ranges.size() >
+            (static_cast<size_t>(std::numeric_limits<jsize>::max()) - 1u) / 2u) {
+            throwNativeAllocationFailure(
+                env, "Reusable native highlight range snapshot exceeds JNI array limits");
+            return nullptr;
+        }
+        const jsize length = static_cast<jsize>(1u + ranges.size() * 2u);
+        jlongArray result = env->NewLongArray(length);
+        if (!result) return nullptr;
+        std::vector<jlong> encoded_ranges;
+        encoded_ranges.reserve(static_cast<size_t>(length));
+        encoded_ranges.push_back(static_cast<jlong>(ranges.size()));
+        for (const auto& range : ranges) {
+            encoded_ranges.push_back(static_cast<jlong>(range.first));
+            encoded_ranges.push_back(static_cast<jlong>(range.second));
+        }
+        if (!encoded_ranges.empty()) {
+            env->SetLongArrayRegion(
+                result, 0, length, encoded_ranges.data());
+        }
+        if (env->ExceptionCheck()) {
+            env->DeleteLocalRef(result);
+            return nullptr;
+        }
+        return result;
+    } catch (const std::bad_alloc&) {
+        throwNativeAllocationFailure(
+            env, "Unable to allocate reusable native highlight range snapshot");
+    } catch (const std::exception& error) {
+        throwNativeHighlightFailure(env, error.what());
+    } catch (...) {
+        throwNativeHighlightFailure(
+            env, "Unknown reusable native highlight range snapshot failure");
+    }
+    return nullptr;
 }
 
 JNIEXPORT void JNICALL
@@ -2306,7 +2846,7 @@ Java_com_zerostudio_idea_treesitter_tsh_api_TshOnigurumaNative_nativeFindAll(
         return nullptr;
     }
     if (max_matches <= 0) {
-        throw_illegal_args(env, "Regex result budget must be positive");
+        throw_illegal_args(env, "Regex result batch size must be positive");
         return nullptr;
     }
 
@@ -2335,42 +2875,64 @@ Java_com_zerostudio_idea_treesitter_tsh_api_TshOnigurumaNative_nativeFindAll(
             return nullptr;
         }
 
-        // Compute the exact wire size before allocating. Capture-heavy Regex
-        // results can contain far more than the historical eight values per
-        // match; repeated vector growth needlessly duplicated memory while
-        // encoding a bounded Native batch for JNI.
+        // Compute the exact JNI array length before allocating. The former flat
+        // vector duplicated every match/capture pair while the Native batch was
+        // still alive, nearly doubling peak result memory for dense Regex windows.
+        // Stream records into a small fixed buffer after allocating the final array.
+        const size_t jni_max = static_cast<size_t>(std::numeric_limits<jsize>::max());
         size_t value_count = 2u;
         for (const auto& match : batch.matches) {
-            const size_t capture_count = match.capture_ranges_utf16.size();
-            if (capture_count > (std::numeric_limits<size_t>::max() - value_count - 3u) / 2u) {
-                throw_illegal_args(env, "Regex result size overflow");
+            if (value_count > jni_max - 3u) {
+                throw_illegal_args(env, "Regex result exceeds Java array capacity");
                 return nullptr;
             }
-            value_count += 3u + capture_count * 2u;
+            value_count += 3u;
+            const size_t capture_count = match.capture_ranges_utf16.size();
+            if (capture_count > (jni_max - value_count) / 2u) {
+                throw_illegal_args(env, "Regex capture result exceeds Java array capacity");
+                return nullptr;
+            }
+            value_count += capture_count * 2u;
         }
-        if (value_count > static_cast<size_t>(std::numeric_limits<jsize>::max())) {
-            throw_illegal_args(env, "Regex result exceeds Java array capacity");
-            return nullptr;
-        }
-        std::vector<jlong> flat;
-        flat.reserve(value_count);
-        flat.push_back(batch.truncated ? 1 : 0);
-        flat.push_back(static_cast<jlong>(batch.matches.size()));
+
+        jlongArray result = env->NewLongArray(static_cast<jsize>(value_count));
+        if (!result) return nullptr;
+
+        constexpr size_t kTransferValues = 4096u;
+        std::array<jlong, kTransferValues> transfer{};
+        size_t buffered = 0;
+        jsize output_offset = 0;
+        auto append_value = [&](jlong value) -> bool {
+            transfer[buffered++] = value;
+            if (buffered != transfer.size()) return true;
+            env->SetLongArrayRegion(
+                result, output_offset, static_cast<jsize>(buffered), transfer.data());
+            if (env->ExceptionCheck()) return false;
+            output_offset += static_cast<jsize>(buffered);
+            buffered = 0;
+            return true;
+        };
+
+        bool encoded = append_value(batch.truncated ? 1 : 0) &&
+            append_value(static_cast<jlong>(batch.matches.size()));
         for (const auto& match : batch.matches) {
-            flat.push_back(match.start_utf16);
-            flat.push_back(match.end_utf16);
-            flat.push_back(static_cast<jlong>(match.capture_ranges_utf16.size()));
+            if (!encoded) break;
+            encoded = append_value(match.start_utf16) &&
+                append_value(match.end_utf16) &&
+                append_value(static_cast<jlong>(match.capture_ranges_utf16.size()));
             for (const auto& capture : match.capture_ranges_utf16) {
-                flat.push_back(capture.first);
-                flat.push_back(capture.second);
+                if (!encoded) break;
+                encoded = append_value(capture.first) && append_value(capture.second);
             }
         }
-        // The exact size was validated before allocation above.
-        jlongArray result = env->NewLongArray(static_cast<jsize>(flat.size()));
-        if (!result) return nullptr;
-        if (!flat.empty()) {
-            env->SetLongArrayRegion(result, 0, static_cast<jsize>(flat.size()), flat.data());
-            if (env->ExceptionCheck()) return nullptr;
+        if (encoded && buffered != 0) {
+            env->SetLongArrayRegion(
+                result, output_offset, static_cast<jsize>(buffered), transfer.data());
+            encoded = !env->ExceptionCheck();
+        }
+        if (!encoded) {
+            env->DeleteLocalRef(result);
+            return nullptr;
         }
         return result;
     } catch (const std::bad_alloc&) {

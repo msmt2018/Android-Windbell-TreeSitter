@@ -44,6 +44,29 @@ class JavaTshFullTest {
     }
 
     @Test
+    fun testLegacyJavaAssetMatchesCanonicalSyntaxAwareAsset() {
+        val canonicalCandidates = listOf(
+            File("../app/src/main/assets/tsh/java.tsh"),
+            File("app/src/main/assets/tsh/java.tsh")
+        )
+        val legacyCandidates = listOf(
+            File("../app/src/main/assets/java.tsh"),
+            File("app/src/main/assets/java.tsh")
+        )
+        val canonical = requireNotNull(canonicalCandidates.firstOrNull { it.isFile }) {
+            "Canonical app/src/main/assets/tsh/java.tsh must be present"
+        }
+        val legacy = requireNotNull(legacyCandidates.firstOrNull { it.isFile }) {
+            "Legacy app/src/main/assets/java.tsh must be present"
+        }
+        assertEquals(
+            canonical.readText(Charsets.UTF_8),
+            legacy.readText(Charsets.UTF_8),
+            "Legacy Java asset must not retain stale global @ Regex annotation rules"
+        )
+    }
+
+    @Test
     fun testBlockScopeAndSurrogatePairStability() {
         // 覆盖：现代 Text Block、Javadoc 嵌套块、Emoji 👨‍👩‍👧‍👦 (4 个 Code Units) 与罕见汉字 𠮷
         val textBlockDelimiter = "\"\"\""
@@ -172,6 +195,147 @@ class JavaTshFullTest {
         WindbellTshEngine.instance.setAppearance("java", true)
         WindbellTshEngine.instance.clearAppearanceOverride("java")
         parser.close()
+    }
+
+    @Test
+    fun testJavaAnnotationCapturesAreStableForQualifiedAndParameterizedNames() {
+        val source = """
+            // 😀 UTF-16 prefix
+            package com.zerostudio.annotationprobe;
+
+            import android.view.ViewDebug;
+            import androidx.annotation.ColorInt;
+
+            @Deprecated
+            @ColorInt
+            @ViewDebug.ExportedProperty(category = "drawing", resolveId = true)
+            class AnnotationProbe {
+                @SuppressWarnings({"unchecked", "deprecation"})
+                void run() {}
+
+                String email = "dev@example.com";
+                String literal = "@StringLiteral";
+                // @CommentText is ordinary comment content.
+                /** @param value is a documentation tag, not an annotation marker. */
+                void markerFalsePositives(String value) {}
+            }
+        """.trimIndent()
+        val parser = TSParser.create().apply { language = TSLanguageJava.getInstance() }
+        val tree = parser.parseString(source)
+        assertNotNull(tree)
+        try {
+            val engine = WindbellTshEngine.instance
+            val allFull = engine.computeHighlights(tree, source, "java")
+            val astCaptures = allFull.filter { it.source == 2 }
+            val annotationNames = listOf(
+                "Deprecated", "ColorInt", "ViewDebug.ExportedProperty", "SuppressWarnings"
+            )
+            val annotationSpans = annotationNames.map { name ->
+                val annotationStart = source.indexOf("@$name")
+                assertTrue(annotationStart >= 0, "Fixture annotation @$name must exist")
+                val start = annotationStart + 1
+                val matches = astCaptures.filter { span ->
+                    span.startByte == start * 2 && span.endByte == (start + name.length) * 2
+                }
+                assertEquals(1, matches.size,
+                    "Native ATS must capture the complete annotation name $name exactly once")
+                assertEquals(120, matches.single().priority,
+                    "Annotation style must win over generic identifier/type styling for $name")
+
+                val markerStart = start - 1
+                assertTrue(markerStart >= 0 && source[markerStart] == '@',
+                    "Annotation $name must have a leading @ marker")
+                val marker = requireNotNull(allFull.singleOrNull { span ->
+                    span.source == 3 && span.startByte == markerStart * 2 &&
+                        span.endByte == (markerStart + 1) * 2
+                }) { "Native Tree-sitter Query must emit a dedicated @ marker capture for $name" }
+                assertEquals(matches.single().styleId, marker.styleId,
+                    "The @ marker and annotation name must use the same semantic color for $name")
+                assertEquals(120, marker.priority,
+                    "The @ marker must retain annotation precedence for $name")
+                matches.single()
+            }
+            assertEquals(1, annotationSpans.map { it.styleId }.distinct().size,
+                "Simple, qualified and parameterized annotation names must share one semantic style")
+
+            // Only syntactic annotation nodes may emit the marker capture.
+            val nonAnnotationMarkers = listOf(
+                source.indexOf("@example.com"),
+                source.indexOf("@StringLiteral"),
+                source.indexOf("@CommentText"),
+                source.indexOf("@param")
+            )
+            for (markerOffset in nonAnnotationMarkers) {
+                assertTrue(markerOffset >= 0)
+                assertTrue(allFull.none { span ->
+                    span.source == 3 && span.startByte == markerOffset * 2 &&
+                        span.endByte == (markerOffset + 1) * 2
+                }, "Non-annotation @ at UTF-16 offset $markerOffset must not be captured")
+            }
+
+            for (name in annotationNames) {
+                // Anchor the viewport to the annotation occurrence, not an earlier import
+                // that happens to contain the same identifier (e.g. ColorInt/ViewDebug).
+                val tokenStart = source.indexOf("@$name") + 1
+                val start = (tokenStart - 2).coerceAtLeast(0)
+                val end = (tokenStart + name.length + 2).coerceAtMost(source.length)
+                val startByte = start.toLong() * 2L
+                val endByte = end.toLong() * 2L
+                val viewport = engine.computeHighlights(tree, source, "java", startByte, endByte)
+                val expected = allFull.mapNotNull { span ->
+                    val clippedStart = maxOf(span.startByte.toLong(), startByte)
+                    val clippedEnd = minOf(span.endByte.toLong(), endByte)
+                    if (clippedStart < clippedEnd) {
+                        listOf(clippedStart, clippedEnd, span.styleId.toLong(),
+                            span.priority.toLong(), span.declarationOrder.toLong(), span.source.toLong())
+                    } else null
+                }.sortedWith(compareBy<List<Long>> { it[0] }.thenBy { it[1] }.thenBy { it[2] })
+                val actual = viewport.map { span ->
+                    listOf(span.startByte.toLong(), span.endByte.toLong(), span.styleId.toLong(),
+                        span.priority.toLong(), span.declarationOrder.toLong(), span.source.toLong())
+                }.sortedWith(compareBy<List<Long>> { it[0] }.thenBy { it[1] }.thenBy { it[2] })
+                assertEquals(expected, actual,
+                    "Annotation capture for $name must be identical in full-document and viewport execution")
+
+                // Exercise the exact JNI/Query boundaries independently: a viewport
+                // containing only '@', one beginning inside the annotation name, and
+                // one ending at the marker/name boundary must remain deterministic.
+                val boundaryRanges = listOf(
+                    tokenStart to (tokenStart + 1),
+                    (tokenStart + 1) to (tokenStart + 2),
+                    (tokenStart + 2) to (tokenStart + name.length),
+                    tokenStart to (tokenStart + name.length + 1)
+                )
+                for ((boundaryStart, boundaryEnd) in boundaryRanges) {
+                    val boundaryStartByte = boundaryStart.toLong() * 2L
+                    val boundaryEndByte = boundaryEnd.toLong() * 2L
+                    val boundaryActual = engine.computeHighlights(
+                        tree, source, "java", boundaryStartByte, boundaryEndByte
+                    ).map { span ->
+                        listOf(span.startByte.toLong(), span.endByte.toLong(),
+                            span.styleId.toLong(), span.priority.toLong(),
+                            span.declarationOrder.toLong(), span.source.toLong())
+                    }.sortedWith(compareBy<List<Long>> { it[0] }
+                        .thenBy { it[1] }.thenBy { it[2] })
+                    val boundaryExpected = allFull.mapNotNull { span ->
+                        val clippedStart = maxOf(span.startByte.toLong(), boundaryStartByte)
+                        val clippedEnd = minOf(span.endByte.toLong(), boundaryEndByte)
+                        if (clippedStart < clippedEnd) {
+                            listOf(clippedStart, clippedEnd, span.styleId.toLong(),
+                                span.priority.toLong(), span.declarationOrder.toLong(),
+                                span.source.toLong())
+                        } else null
+                    }.sortedWith(compareBy<List<Long>> { it[0] }
+                        .thenBy { it[1] }.thenBy { it[2] })
+                    assertEquals(boundaryExpected, boundaryActual,
+                        "Annotation $name must remain stable at UTF-16 viewport boundary " +
+                            "[$boundaryStart, $boundaryEnd)")
+                }
+            }
+        } finally {
+            tree?.close()
+            parser.close()
+        }
     }
 
     @Test

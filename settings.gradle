@@ -17,8 +17,35 @@
 
 
 pluginManagement {
+    // Keep every Kotlin Gradle plugin on the same version as the stdlib and
+    // compiler dependencies declared by the root version catalog. Without an
+    // explicit resolution rule, the included build's Kotlin DSL plugin can
+    // leave an older compiler on the application plugin classpath.
+    resolutionStrategy {
+        eachPlugin {
+            if (requested.id.id.startsWith("org.jetbrains.kotlin")) {
+                useVersion("2.4.21")
+            }
+        }
+    }
+
+    // AGP 8.13.2 bundles an R8 release that predates Kotlin 2.4 metadata.
+    // Use Google's compatible R8 release without forcing an AGP 9 / Gradle 9
+    // migration into this integration branch.
+    buildscript {
+        repositories {
+            maven { url = uri("https://storage.googleapis.com/r8-releases/raw") }
+            google()
+            mavenCentral()
+        }
+        dependencies {
+            classpath("com.android.tools:r8:9.1.29")
+        }
+    }
     includeBuild("build-logic")
     repositories {
+        // Google-hosted Maven Central mirror avoids transient Central HTTP 429s.
+        maven { url = uri("https://maven-central.storage-download.googleapis.com/maven2/") }
         gradlePluginPortal()
         google()
         mavenCentral()
@@ -36,6 +63,8 @@ dependencyResolutionManagement {
     repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
     repositories {
         google()
+        // Keep Maven Central as fallback; prefer Google's official GCS mirror.
+        maven { url = uri("https://maven-central.storage-download.googleapis.com/maven2/") }
         mavenCentral()
     }
 }

@@ -14,11 +14,13 @@
 #include <functional>
 #include <vector>
 #include <memory>
+#include <map>
 #include <unordered_map>
 #include <mutex>
 #include <utility>
 
 #include "tree_sitter/api.h"
+#include "../ts_language_lease.h"
 #include "oniguruma.h"
 #include "../largefile/TextSource.h"
 
@@ -49,6 +51,21 @@ struct HighlightSpan {
 
 static_assert(sizeof(HighlightSpan) == 24, "HighlightSpan ABI must remain 24 bytes.");
 
+enum HighlightDependencyFlags : uint8_t {
+    HIGHLIGHT_DEPENDENCY_DOCUMENT_WIDE = 1u << 0,
+    HIGHLIGHT_DEPENDENCY_BOUNDARY_SENSITIVE = 1u << 1,
+    HIGHLIGHT_DEPENDENCY_CHECKPOINT_BASED = 1u << 2
+};
+
+struct HighlightDependencyRange {
+    uint32_t start_byte = 0;
+    uint32_t end_byte = 0;
+    uint32_t pattern_index = UINT32_MAX;
+    uint8_t source = static_cast<uint8_t>(HighlightSource::UNKNOWN);
+    uint8_t query_dependency_scope = 0xFFu;
+    uint8_t flags = 0;
+};
+
 enum class RegexRuleType : uint8_t {
     MATCH,
     BLOCK
@@ -74,6 +91,11 @@ struct CompiledRegexRule {
     RegexExecutionCapability execution_capability =
         RegexExecutionCapability::DOCUMENT_CONTEXT_REQUIRED;
     uint64_t maximum_match_bytes = 0;
+    // BLOCK delimiters can still require the full source string for Oniguruma
+    // context, while their state dependency is checkpointable when both
+    // delimiter patterns have compiler-proven finite widths.
+    uint64_t maximum_block_delimiter_bytes = 0;
+    bool block_delimiters_bounded = false;
     RegexRuleType type = RegexRuleType::MATCH;
     uint16_t style_id = 0;
     bool has_style = false;
@@ -133,12 +155,27 @@ struct RegexStateRule {
 // One independently compiled native Tree-sitter query block. The source text is
 // consumed directly by ts_query_new; no generated SCM artifact exists.
 struct NativeQueryProgram {
+    // This is a compile-time proof classification, not a guessed byte range.
+    // ROOTED_LOCAL may use AST candidate-root envelopes only when the compiler
+    // also resolves one fixed root symbol. Unknown/non-local roots stay global.
+    enum class QueryDependencyScope : uint8_t {
+        ROOTED_LOCAL = 0,
+        NON_LOCAL = 1,
+        UNROOTED = 2,
+        UNKNOWN = 3
+    };
+
     struct PatternMetadata {
         uint32_t pattern_index = 0;
         int32_t priority = 0;
         uint32_t declaration_order = 0;
         bool has_priority = false;
         bool enabled = true;
+        bool allow_overlap = false;
+        bool is_rooted = false;
+        bool is_non_local = false;
+        TSSymbol root_node_symbol = 0;
+        QueryDependencyScope dependency_scope = QueryDependencyScope::UNKNOWN;
     };
 
     std::string id;
@@ -150,30 +187,33 @@ struct NativeQueryProgram {
     // Capture names are query-local identifiers; bindings resolve them to
     // independent style IDs during compilation.
     std::unordered_map<std::string, std::string> capture_bindings;
-    std::unordered_map<uint32_t, uint16_t> capture_style_ids;
+    // Capture IDs are dense query-local indices. A direct table avoids a
+    // hash lookup for every emitted capture in large/high-density query results.
+    // -1 denotes a predicate-only capture that must not produce a paint span.
+    std::vector<int32_t> capture_style_ids_by_index;
     struct PredicateRegex { uint32_t pattern_index = 0; uint32_t predicate_index = 0; uint32_t capture_id = 0; regex_t* regex = nullptr; bool negate = false; RegexExecutionCapability execution_capability = RegexExecutionCapability::DOCUMENT_CONTEXT_REQUIRED; uint64_t maximum_match_bytes = 0; };
     std::vector<PredicateRegex> predicate_regexes;
     // Parsed once at grammar compilation; the hot match loop must not rebuild
     // predicate-step vectors for every match in large documents.
     std::vector<std::vector<std::vector<TSQueryPredicateStep>>> predicates_by_pattern;
+    // Immutable predicate operands are decoded once with the query. The match
+    // hot path must not allocate vectors or transcode the same UTF-8 literals
+    // for every AST match in a large document.
+    struct CompiledPredicateOperands {
+        std::string operation;
+        std::vector<std::vector<UChar>> expected_utf16;
+        std::vector<std::string> expected_types;
+    };
+    std::vector<std::vector<CompiledPredicateOperands>> compiled_predicates_by_pattern;
 };
 
-struct AstTypeIndexHash {
-    using is_transparent = void;
-    std::size_t operator()(std::string_view value) const noexcept {
-        return std::hash<std::string_view>{}(value);
-    }
-};
-
-struct AstTypeIndexEqual {
-    using is_transparent = void;
-    bool operator()(std::string_view left, std::string_view right) const noexcept {
-        return left == right;
-    }
-};
-
-using AstTypeRuleIndex = std::unordered_map<
-    std::string, std::vector<uint32_t>, AstTypeIndexHash, AstTypeIndexEqual>;
+// std::map's transparent comparator provides heterogeneous string_view lookup
+// on the Android NDK libc++ versions used by supported Android builds. The
+// selector type catalog is small and immutable after compilation, so O(log N)
+// lookup avoids per-node string allocations without relying on the newer
+// unordered_map heterogeneous-find implementation.
+using AstTypeRuleIndex = std::map<
+    std::string, std::vector<uint32_t>, std::less<>>;
 
 struct AstSelectorRule {
     TSSymbol target_symbol = 0;
@@ -379,6 +419,8 @@ public:
     std::string first_line_pattern;
     regex_t* first_line_regex = nullptr;
     const TSLanguage* ts_language = nullptr;
+    // Retains the shared object containing generated language tables.
+    std::shared_ptr<void> language_library_lease;
     
     std::unordered_map<std::string, uint16_t> style_name_to_id;
     std::unordered_map<std::string, TshStyle> style_definitions;
@@ -410,8 +452,17 @@ public:
     // are indexed by their owner symbol; ordinary selectors by target symbol.
     std::unordered_map<TSSymbol, std::vector<uint32_t>> ast_rules_by_node_symbol;
     AstTypeRuleIndex ast_rules_by_node_type;
+    // Type-name aliases for supertype descendants are compiled once with the
+    // grammar. Runtime viewport traversal must not rebuild these maps.
+    AstTypeRuleIndex ast_supertype_rules_by_node_type;
+    // Reverse subtype lookup for relational ATS selectors (parent/ancestor/child/
+    // sibling). Built once with the grammar; runtime matching is hash lookup,
+    // not a recursive ts_language_subtypes walk for every candidate node.
+    std::unordered_map<TSSymbol, std::vector<TSSymbol>>
+        ast_supertype_selectors_by_node_symbol;
     std::unordered_map<TSSymbol, std::vector<uint32_t>> ast_field_rules_by_parent_symbol;
     AstTypeRuleIndex ast_field_rules_by_parent_type;
+    AstTypeRuleIndex ast_supertype_field_rules_by_parent_type;
     std::vector<uint32_t> ast_wildcard_rules;
     std::vector<NativeQueryProgram> native_queries;
 
@@ -423,6 +474,20 @@ struct RegexStateCheckpoint {
     uint64_t source_version = 0;
     uint64_t partition_version = 0;
     std::vector<std::string> state_stack;
+};
+
+/**
+ * Last-known block delimiter state at a source offset. These checkpoints let
+ * successive viewport requests advance lexical block state from the nearest
+ * earlier viewport instead of reverse-scanning the document prefix each time.
+ */
+struct RegexBlockCheckpoint {
+    uint32_t declaration_order = 0;
+    uint32_t byte_offset = 0;
+    uint32_t active_start_byte = UINT32_MAX;
+    uint64_t grammar_revision = 0;
+    uint64_t source_version = 0;
+    uint64_t partition_version = 0;
 };
 
 class WindbellEngine {
@@ -449,7 +514,9 @@ public:
         const windbell::largefile::TextSource* text_source = nullptr,
         std::vector<RegexStateCheckpoint>* regex_state_checkpoints = nullptr,
         uint64_t source_version = 0,
-        uint64_t partition_version = 0
+        uint64_t partition_version = 0,
+        std::vector<HighlightDependencyRange>* dependency_ranges = nullptr,
+        std::vector<RegexBlockCheckpoint>* block_checkpoints = nullptr
     );
 
 private:
@@ -466,7 +533,12 @@ private:
         uint32_t output_start_byte,
         uint32_t output_end_byte,
         std::vector<HighlightSpan>& out_spans,
-        uint32_t* regex_match_count = nullptr
+        uint32_t* regex_match_count = nullptr,
+        std::vector<RegexBlockCheckpoint>* block_checkpoints = nullptr,
+        uint64_t grammar_revision = 0,
+        uint64_t source_version = 0,
+        uint64_t partition_version = 0,
+        std::vector<HighlightDependencyRange>* dependency_ranges = nullptr
     );
 
     std::mutex registry_lock_;

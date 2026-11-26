@@ -87,21 +87,32 @@ data class TshSyntaxTreeSnapshot(
     val grammar: TshGrammarDescriptor,
     val rootByteRange: TshByteRange,
     val nativeObjectId: TshObjectId,
-    val inputEncoding: TshTreeSitterInputEncoding = TshTreeSitterInputEncoding.UTF8
-) {
+    val inputEncoding: TshTreeSitterInputEncoding = TshTreeSitterInputEncoding.UTF8,
+    /** Retained Engine-ledger lease for this result; close the result when its captures are no longer needed. */
+    internal val memoryReservation: TshMemoryReservation? = null
+) : AutoCloseable {
     init {
         require(documentId.isNotBlank())
         require(documentVersion >= 0)
         require(treeRevision >= 0)
     }
+
+    /** Releases the retained Engine-ledger reservation; the provider owns the Native tree. */
+    override fun close() {
+        memoryReservation?.close()
+    }
 }
 
 data class TshQueryExecutionBudget @JvmOverloads constructor(
+    /** Exact Native Query VM work-unit limit; one unit is one traversal base cost plus active states. */
     val maxSteps: Long? = null,
-    val maxMatches: Int = 100_000,
-    val maxCaptures: Int = 1_000_000,
-    /** Estimated retained result bytes; this is not a measurement of Native cursor/tree memory. */
-    val maxResultBytes: Long = 32L * 1024L * 1024L
+    val maxMatches: Int = Int.MAX_VALUE,
+    val maxCaptures: Int = Int.MAX_VALUE,
+    /**
+     * Optional caller policy for retained query results. The default is not a semantic result
+     * ceiling; Engine-created executors enforce adaptive admission through TshMemoryBudget.
+     */
+    val maxResultBytes: Long = Long.MAX_VALUE
 ) {
     init {
         require(maxSteps == null || maxSteps > 0)
@@ -111,12 +122,22 @@ data class TshQueryExecutionBudget @JvmOverloads constructor(
     }
 }
 
-/** Cooperative cancellation only; native calls must provide their own interruption boundary. */
+/** Cooperative cancellation polled at Kotlin execution boundaries. */
 fun interface TshQueryCancellation {
     fun isCancelled(): Boolean
     companion object {
         val NEVER = TshQueryCancellation { false }
     }
+}
+
+/**
+ * Optional extension for callers that need to observe Tree-sitter 0.28 native progress.
+ * [onProgress] runs synchronously inside Native query traversal and must be fast, non-blocking,
+ * and must not re-enter the active cursor. Returning true halts in-flight traversal.
+ */
+interface TshQueryProgressCancellation : TshQueryCancellation {
+    /** Approximate absolute Tree-sitter byte offset at a native progress checkpoint. */
+    fun onProgress(currentByteOffset: Long): Boolean
 }
 
 data class TshCapture(
@@ -142,11 +163,14 @@ data class TshQueryResult(
     val treeRevision: Long,
     val grammarFingerprint: String,
     val captures: List<TshCapture>,
+    /** Completed Native Query VM work units, or null when the bundled core cannot expose them. */
     val stepsUsed: Long?,
     val isComplete: Boolean = true,
     /** Byte ranges in captures use this tree source encoding. */
-    val inputEncoding: TshTreeSitterInputEncoding = TshTreeSitterInputEncoding.UTF8
-) {
+    val inputEncoding: TshTreeSitterInputEncoding = TshTreeSitterInputEncoding.UTF8,
+    /** Retained Engine-ledger lease for this result; close the result when its captures are released. */
+    internal val memoryReservation: TshMemoryReservation? = null
+) : AutoCloseable {
     init {
         require(queryId.isNotBlank())
         require(queryRevision.isNotBlank())
@@ -154,6 +178,10 @@ data class TshQueryResult(
         require(documentVersion >= 0)
         require(treeRevision >= 0)
         require(stepsUsed == null || stepsUsed >= 0L)
+    }
+
+    override fun close() {
+        memoryReservation?.close()
     }
 
     fun isCurrentFor(tree: TshSyntaxTreeSnapshot): Boolean =

@@ -17,7 +17,6 @@
 
 package com.zerostudio.idea.treesitter;
 
-import android.text.TextUtils;
 import com.zerostudio.idea.treesitter.annotations.GenerateNativeHeaders;
 import com.zerostudio.idea.treesitter.util.TSObjectFactoryProvider;
 import dalvik.annotation.optimization.FastNative;
@@ -180,7 +179,7 @@ public class TSQuery extends TSNativeObject {
       throw new IllegalArgumentException("Language cannot be null");
     }
 
-    if (querySource == null || TextUtils.getTrimmedLength(querySource) == 0) {
+    if (querySource == null || isBlankQuery(querySource)) {
       throw new IllegalArgumentException("Query cannot be null or blank");
     }
 
@@ -249,6 +248,19 @@ public class TSQuery extends TSNativeObject {
     @Override
     public void close() {
     }
+  }
+
+  /**
+   * Checks query whitespace without depending on android.text.TextUtils. Query compilation is
+   * also exercised by host-side JVM tests, where Android framework methods are not mocked.
+   */
+  private static boolean isBlankQuery(String value) {
+    for (int i = 0; i < value.length(); i++) {
+      if (!Character.isWhitespace(value.charAt(i))) {
+        return false;
+      }
+    }
+    return true;
   }
 
   @GenerateNativeHeaders(fileName = "query")

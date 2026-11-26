@@ -265,12 +265,37 @@ class TshRenderPlanSyntaxHighlighter(
     }
 
     private fun currentSnapshot(): RenderSnapshot? {
-        // RenderPlan publication is atomic. During edits and while the next plan is
-        // being produced, keep drawing with the last committed snapshot instead of
-        // toggling all syntax spans off/on on every document-version change.
-        // Line caches are keyed by generation + version, so stale line spans are
-        // never reused across edits. The next valid plan replaces this snapshot.
-        return synchronized(stateLock) { snapshot }
+        // Read the host version before taking stateLock. EditorDocument invokes
+        // highlighter callbacks while holding its mutation lock; taking that lock
+        // from inside stateLock would invert the callback lock order.
+        val version = try {
+            currentDocumentVersion()
+        } catch (_: Exception) {
+            return null
+        } catch (_: LinkageError) {
+            return null
+        }
+
+        var staleSnapshotDropped = false
+        val current = synchronized(stateLock) {
+            val active = snapshot ?: return@synchronized null
+
+            // Never draw a plan across an active edit transaction or against a
+            // newer document version. Old ranges painted over new text are stale
+            // syntax, not a useful temporary fallback.
+            if (editInProgress || version < 0L ||
+                active.plan.revisions.documentVersion != version
+            ) {
+                snapshot = null
+                diagnostics = emptyList()
+                staleSnapshotDropped = true
+                null
+            } else {
+                active
+            }
+        }
+        if (staleSnapshotDropped) clearLineStyleCache()
+        return current
     }
  
     private fun lineStyleCache(

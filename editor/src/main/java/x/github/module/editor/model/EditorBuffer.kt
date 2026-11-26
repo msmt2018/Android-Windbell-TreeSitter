@@ -187,6 +187,32 @@ interface EditorTextSnapshot : CharSequence {
 
     /** Copies only the requested range. */
     fun substring(startIndex: Int, endIndex: Int = length): String
+
+    /**
+     * Copies up to [maxLength] UTF-16 code units into [destination], crossing snapshot chunks
+     * when necessary. Implementations backed by PieceTree override this to copy directly from
+     * immutable backing pieces without materializing intermediate Strings.
+     */
+    fun copyTo(
+        destination: CharArray,
+        destinationOffset: Int,
+        startIndex: Int,
+        maxLength: Int
+    ): Int {
+        require(destinationOffset >= 0 && destinationOffset <= destination.size)
+        require(startIndex >= 0 && startIndex <= length)
+        require(maxLength >= 0)
+        var copied = 0
+        val limit = minOf(maxLength, destination.size - destinationOffset, length - startIndex)
+        while (copied < limit) {
+            val chunk = getNearestChunk(startIndex + copied, limit - copied)
+            if (chunk.isEmpty()) break
+            val count = minOf(chunk.length, limit - copied)
+            chunk.toCharArray(destination, destinationOffset + copied, 0, count)
+            copied += count
+        }
+        return copied
+    }
 }
 
 private val nextStringSnapshotVersion = AtomicLong()
@@ -197,6 +223,19 @@ private class StringEditorTextSnapshot(private val text: String) : EditorTextSna
     override fun get(index: Int): Char = text[index]
     override fun subSequence(startIndex: Int, endIndex: Int): CharSequence = text.subSequence(startIndex, endIndex)
     override fun substring(startIndex: Int, endIndex: Int): String = text.substring(startIndex, endIndex)
+    override fun copyTo(
+        destination: CharArray,
+        destinationOffset: Int,
+        startIndex: Int,
+        maxLength: Int
+    ): Int {
+        require(destinationOffset >= 0 && destinationOffset <= destination.size)
+        require(startIndex >= 0 && startIndex <= length)
+        require(maxLength >= 0)
+        val count = minOf(maxLength, destination.size - destinationOffset, length - startIndex)
+        if (count > 0) text.toCharArray(destination, destinationOffset, startIndex, startIndex + count)
+        return count
+    }
     override fun toString(): String = text
     override fun getNearestChunk(offset: Int, maxLength: Int): String {
         require(offset >= 0) { "offset must be non-negative" }

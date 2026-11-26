@@ -38,12 +38,14 @@ class PartitionManagerTest {
 
     @Test fun weightedLruEvictsOldestAndRejectsOversizedEntry() {
         val cache = BoundedLruCache<String, ByteArray>(10) { it.size.toLong() }
-        cache.put("a", ByteArray(6))
-        cache.put("b", ByteArray(4))
+        cache.put("a", ByteArray(4))
+        cache.put("b", ByteArray(6))
+        // Promote "a" to MRU so "b" is the first eviction.
         assertThat(cache.get("a")).isNotNull()
         cache.put("c", ByteArray(5))
-        assertThat(cache.get("a")).isNull()
-        assertThat(cache.get("b")).isNotNull()
+        assertThat(cache.get("a")).isNotNull()
+        assertThat(cache.get("b")).isNull()
+        assertThat(cache.get("c")).isNotNull()
         assertThat(cache.weight()).isAtMost(10L)
         cache.put("huge", ByteArray(11))
         assertThat(cache.get("huge")).isNull()

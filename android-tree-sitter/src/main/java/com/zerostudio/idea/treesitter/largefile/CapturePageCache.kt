@@ -30,9 +30,8 @@ class CapturePageCache<T : Any>(
     fun get(identity: CaptureCacheKey, pageIndex: Int): CapturePage<T>? =
         cache.get(CapturePageKey(identity, pageIndex))
 
-    fun put(page: CapturePage<T>) {
+    fun put(page: CapturePage<T>): Boolean =
         cache.put(CapturePageKey(page.key, page.pageIndex), page)
-    }
 
     fun invalidateDocumentVersion(version: Long) {
         cache.invalidate { key, _ -> key.identity.documentVersion != version }

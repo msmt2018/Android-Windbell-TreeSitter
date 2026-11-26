@@ -50,9 +50,18 @@ public:
 private:
     struct Entry {
         explicit Entry(regex_t* value) : regex(value) {}
-        ~Entry() { if (regex) onig_free(regex); }
+        ~Entry() {
+            if (reusable_region) onig_region_free(reusable_region, 1);
+            if (regex) onig_free(regex);
+        }
         regex_t* regex = nullptr;
         std::mutex execution_mutex;
+        // Reuse the Oniguruma match region under execution_mutex. Its lifetime
+        // follows the compiled regex entry, not an individual viewport request.
+        OnigRegion* reusable_region = nullptr;
+        // Reuse the small, frequent viewport sentinel copy while holding execution_mutex.
+        // Large windows use a transient buffer so one unusually large request is not retained.
+        std::vector<UChar> reusable_sentinel_buffer;
     };
 
     std::mutex mutex_;

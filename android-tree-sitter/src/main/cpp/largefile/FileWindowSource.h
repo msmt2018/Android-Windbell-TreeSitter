@@ -30,6 +30,7 @@ public:
     bool open(const std::string &path) noexcept;
     void close() noexcept;
     bool isOpen() const noexcept;
+    bool isValid() const noexcept override;
 
     uint64_t sizeBytes() const noexcept override;
     bool read(uint64_t offset, uint32_t maxBytes, TextChunkView *out) const noexcept override;

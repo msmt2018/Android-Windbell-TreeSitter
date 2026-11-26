@@ -30,6 +30,13 @@ data class TshRegexWindowExecution(
 )
 
 /**
+ * Whether reaching the accepted-match limit at the end of this core requires a probe
+ * of later cores before completeness can be decided.
+ */
+internal fun shouldProbeAfterWindow(matchesAtLimit: Boolean, isLastCore: Boolean): Boolean =
+    matchesAtLimit && !isLastCore
+
+/**
  * Independent Oniguruma Regex compiler/executor backed by an opaque Native handle.
  *
  * Window constraints are an explicit caller declaration, not a proof-producing Regex analyzer.
@@ -206,13 +213,30 @@ class TshOnigurumaRegex private constructor(
             val isLastCore = acquired.coreEndUtf16 == sequence.documentLengthUtf16
             val remaining = maxMatches - records.size
             if (remaining <= 0) {
-                acquired.close()
-                truncated = !isLastCore
-                if (truncated) break
-                // No matches can be accepted from a zero-capacity execution; conservatively report
-                // truncation because this final core has not been inspected.
-                truncated = true
-                break
+                // The accepted result budget is full, but this core still has to be
+                // inspected. Otherwise an exactly-full result set is incorrectly marked
+                // truncated even when the remaining document contains no further matches.
+                // Probe one match without admitting it: a hit proves truncation; exhaustion
+                // proves that the result set is complete.
+                val probe = try {
+                    executeWindow(acquired, 1)
+                } finally {
+                    acquired.close()
+                }
+                when (probe) {
+                    is TshResult.Failure -> {
+                        executionDiagnostics.addAll(probe.diagnostics)
+                        partial = true
+                        break
+                    }
+                    is TshResult.Success -> {
+                        if (probe.value.matches.isNotEmpty() || probe.value.truncated) {
+                            truncated = true
+                            break
+                        }
+                        continue
+                    }
+                }
             }
 
             val execution = try {
@@ -241,9 +265,10 @@ class TshOnigurumaRegex private constructor(
                 truncated = true
                 break
             }
-            if (records.size >= maxMatches && !isLastCore) {
-                truncated = true
-                break
+            if (shouldProbeAfterWindow(records.size >= maxMatches, isLastCore)) {
+                // Do not call this truncated yet. The next window is probed with a one-match
+                // non-admitting scan; only an actual additional match proves truncation.
+                continue
             }
             if (records.size >= maxMatches && isLastCore) {
                 // The last core was fully searched and the Native result was not truncated.

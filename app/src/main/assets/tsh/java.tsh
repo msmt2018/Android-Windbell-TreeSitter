@@ -89,7 +89,7 @@
                 string: #A31515,
                 stringBlock: #800000,
                 comment: #008000,
-                docComment: #3F5FBF,
+                docComment: #3F5FBF @no-bold,
                 docTag: #7F0055 @bold,
                 number: #098658,
                 annotation: #2B91AF,
@@ -106,8 +106,8 @@
                 string: #6A8759,
                 stringBlock: #497B51,
                 comment: #808080,
-                docComment: #629755,
-                docTag: #526F5C @bold,
+                docComment: #629755 @no-bold,
+                docTag: #C69D48 @bold,
                 number: #6897BB,
                 annotation: #BBB529,
                 constant: #9876AA @bold,
@@ -164,7 +164,7 @@
                 string: #0A3069,
                 stringBlock: #0A3069,
                 comment: #6E7781,
-                docComment: #6E7781,
+                docComment: #6E7781 @no-bold,
                 docTag: #8250DF,
                 number: #0550AE,
                 annotation: #8250DF,
@@ -181,7 +181,7 @@
                 string: #A5D6FF,
                 stringBlock: #A5D6FF,
                 comment: #8B949E,
-                docComment: #8B949E,
+                docComment: #8B949E @no-bold,
                 docTag: #D2A8FF,
                 number: #79C0FF,
                 annotation: #D2A8FF,
@@ -265,6 +265,8 @@
         // --- 4.5 类型标识符宏观着色 ---
         { node: "type_identifier", style: "type", priority: 95 },
         { node: "scoped_type_identifier", style: "type", priority: 95 },
+        { node: "@", named: false, parent: "annotation", style: "annotation", priority: 120 },
+        { node: "@", named: false, parent: "marker_annotation", style: "annotation", priority: 120 },
         { node: "annotation", field: "name", style: "annotation", priority: 120 },
         { node: "marker_annotation", field: "name", style: "annotation", priority: 120 },
 
@@ -293,6 +295,18 @@
                 priority: 120
                 source: `(variable_declarator name: (identifier) @localName (#match? @localName "^(?:multiline|MAX_CACHE_CAPACITY)$"))`
                 captures: { localName: variable }
+            },
+            {
+                id: "java-annotation-marker"
+                priority: 120
+                source: `(annotation "@" @annotationMarker)`
+                captures: { annotationMarker: annotation }
+            },
+            {
+                id: "java-marker-annotation-marker"
+                priority: 120
+                source: `(marker_annotation "@" @annotationMarker)`
+                captures: { annotationMarker: annotation }
             }
         ]
     },
@@ -347,6 +361,9 @@
         },
 
         // ---------- 5.5 元数据注解 (Annotations) ----------
+        // The leading @ token is captured by Tree-sitter queries above. Do not
+        // use a global Regex marker: it also matches email addresses, strings,
+        // comments and malformed/non-annotation source text.
 
         // ---------- 5.6 静态常量规范 (SCREAMING_SNAKE_CASE) ----------
 

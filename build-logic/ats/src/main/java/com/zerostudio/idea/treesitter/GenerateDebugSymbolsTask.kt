@@ -74,7 +74,7 @@ abstract class GenerateDebugSymbolsTask : DefaultTask() {
       }
     }
 
-    val objcopyExe = ndkInfo.get().getObjcopyExecutable(abi)
+    val objcopyExe = ndkInfo.get().getObjcopyExecutable(abi.tag)
     val cmdLine = arrayOf(
       objcopyExe.absolutePath,
       "--only-keep-debug",

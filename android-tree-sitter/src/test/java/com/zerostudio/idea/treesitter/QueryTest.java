@@ -187,9 +187,14 @@ public class QueryTest extends TreeSitterTest {
   }
 
   @Test
+  public void testXmlDtdLanguageBinding() {
+    assertThat(TSLanguageXml.getDtdInstance()).isNotNull();
+  }
+
+  @Test
   public void testXmlBlocksQuery() throws Exception {
     try (final var parser = TSParser.create()) {
-      parser.setLanguage(TSLanguageXml.getInstance());
+      parser.setLanguage(TSLanguageXml.getXmlInstance());
       final var source = UTF16StringFactory.newString(
         readString(Paths.get("./src/test/resources/test.xml")));
       try (final var tree = parser.parseString(source)) {
@@ -199,6 +204,11 @@ public class QueryTest extends TreeSitterTest {
 
         final var query = TSQuery.create(parser.getLanguage(),
           readString(Paths.get("./src/test/resources/blocks-xml.scm")));
+        if (!query.canAccess()) {
+          throw new AssertionError(String.format(
+            "XML blocks query compilation failed: error=%s offset=%s",
+            query.getErrorType(), query.getErrorOffset()));
+        }
         final var cursor = TSQueryCursor.create();
         cursor.exec(query, root);
 

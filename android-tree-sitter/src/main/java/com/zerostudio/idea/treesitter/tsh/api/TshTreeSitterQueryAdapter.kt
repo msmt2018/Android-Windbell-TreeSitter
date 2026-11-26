@@ -8,6 +8,7 @@ import com.zerostudio.idea.treesitter.TSTree
 import com.zerostudio.idea.treesitter.predicate.TSPredicateHandler
 import com.zerostudio.idea.treesitter.predicate.SetDirectiveHandler
 import java.security.MessageDigest
+import java.util.Collections
 
 /** Resolves a registered, lease-managed language handle for a grammar descriptor. */
 fun interface TshGrammarLanguageResolver {
@@ -192,13 +193,17 @@ class TshTreeSitterQueryCompiler(
  * Executes compiled queries through TSQueryCursor. Query and tree remain caller/registry-owned;
  * only the per-execution cursor is created and closed by this adapter.
  */
+private const val QUERY_CURSOR_BASE_ESTIMATED_BYTES_PER_PENDING_MATCH = 256L
+private const val QUERY_CURSOR_ESTIMATED_BYTES_PER_CAPTURE = 64L
+
 class TshTreeSitterQueryExecutor(
     private val objects: TshObjectRegistry,
     private val queries: TshCompiledQueryRegistry,
     private val leases: TshNativeQueryLeaseStore,
     private val treeLeases: TshNativeResourceLeaseStore = TshNativeResourceLeaseStore(),
     private val predicateHandlers: List<TSPredicateHandler> = emptyList(),
-    private val resourceRegistry: TshNativeResourceRegistry? = null
+    private val resourceRegistry: TshNativeResourceRegistry? = null,
+    private val memoryBudget: TshMemoryBudget = TshMemoryBudget()
 ) : TshQueryExecutor {
 
     override fun execute(
@@ -208,12 +213,6 @@ class TshTreeSitterQueryExecutor(
         budget: TshQueryExecutionBudget,
         cancellation: TshQueryCancellation
     ): TshResult<TshQueryResult> {
-        if (budget.maxSteps != null) {
-            return failure(
-                "TSH-QUERY-EXEC-021",
-                "maxSteps cannot be enforced by the current TSQueryCursor API; omit maxSteps or use a future step-budget capable adapter"
-            )
-        }
         if (!query.isCompatibleWith(tree.grammar)) {
             return failure("TSH-QUERY-EXEC-001", "Compiled query grammar does not match syntax tree grammar")
         }
@@ -339,39 +338,89 @@ class TshTreeSitterQueryExecutor(
             return failure("TSH-QUERY-EXEC-010", "Requested query range is outside the syntax tree root range")
         }
 
-        if (effectiveRange.startByte > Int.MAX_VALUE.toLong() ||
-            effectiveRange.endByte > Int.MAX_VALUE.toLong()) {
+        if (effectiveRange.startByte < 0L ||
+            effectiveRange.endByte < effectiveRange.startByte ||
+            effectiveRange.endByte > 0xFFFF_FFFFL) {
             return failure(
                 "TSH-QUERY-EXEC-020",
-                "Native TSQueryCursor byte-range ABI is Int-limited; requested range exceeds Int.MAX_VALUE"
+                "Query byte range must fit Tree-sitter's unsigned 32-bit byte-offset domain"
             )
         }
 
+        // Tree-sitter's match limit bounds pending in-progress matches, not total results.
+        // Derive it from the live Engine budget instead of treating it as a semantic match cap.
+        // The estimate is intentionally conservative and is accounting guidance, not an RSS claim.
+        val beforeCursor = memoryBudget.snapshot()
+        val availableBytes = (beforeCursor.limitBytes - beforeCursor.reservedBytes).coerceAtLeast(0L)
+        val pendingBytes = availableBytes / 4L
+        // A pending query match retains more than a fixed cursor-state header: captures are
+        // accumulated while the pattern is in progress. Scale the estimate with the compiled
+        // query's capture vocabulary so dense/high-capture queries receive a smaller pending
+        // match window under the same shared memory budget.
+        val captureSlots = nativeQuery.captureCount.toLong().coerceAtLeast(1L)
+        val captureEstimate = captureSlots * QUERY_CURSOR_ESTIMATED_BYTES_PER_CAPTURE
+        val estimatedBytesPerPendingMatch =
+            if (captureEstimate > Long.MAX_VALUE - QUERY_CURSOR_BASE_ESTIMATED_BYTES_PER_PENDING_MATCH) {
+                Long.MAX_VALUE
+            } else {
+                QUERY_CURSOR_BASE_ESTIMATED_BYTES_PER_PENDING_MATCH + captureEstimate
+            }
+        if (pendingBytes < estimatedBytesPerPendingMatch) {
+            return failure(
+                "TSH-QUERY-EXEC-035",
+                "Insufficient shared memory budget for the query's pending-match and capture working set",
+                stage = TshDiagnosticStage.MEMORY
+            )
+        }
+        val pendingMatchLimit = minOf(
+            Int.MAX_VALUE.toLong(),
+            pendingBytes / estimatedBytesPerPendingMatch
+        ).toInt().coerceAtLeast(1)
+        val cursorReservation = when (val reserved = memoryBudget.reserve(
+            TshMemoryCategory.QUERY_CURSOR,
+            pendingBytes,
+            "query-cursor:${query.queryId}:${tree.documentId}:${tree.documentVersion}"
+        )) {
+            is TshResult.Success -> reserved.value
+            is TshResult.Failure -> return TshResult.Failure(reserved.diagnostics)
+        }
         val cursor = try {
             TSQueryCursor.create()
         } catch (error: Throwable) {
+            cursorReservation.close()
             return failure("TSH-QUERY-EXEC-011", "Cannot create Tree-sitter query cursor: ${error.message}", cause = error)
         }
 
+        var resultReservation: TshMemoryReservation? = null
+        var reservationTransferred = false
         try {
-            // Tree-sitter's match limit bounds pending in-progress matches, not total results.
-            // Enforce maxMatches while draining the cursor instead.
-            cursor.setByteRange(effectiveRange.startByte.toInt(), effectiveRange.endByte.toInt())
-            cursor.setMatchLimit(budget.maxMatches)
+            cursor.setByteRange(effectiveRange.startByte, effectiveRange.endByte)
+            cursor.setMatchLimit(pendingMatchLimit)
             cursor.setPredicateEvaluationEnabled(query.options.enablePredicates)
             if (query.options.enablePredicates) {
                 effectivePredicateHandlers.forEach(cursor::addPredicateHandler)
             }
+            if (cancellation.isCancelled()) {
+                return failure("TSH-QUERY-EXEC-012", "Query cancelled before native Tree-sitter execution")
+            }
+            var progressCallbackAvailable = true
+            var progressCallbackCancelled = false
             try {
-                cursor.exec(nativeQuery, root, TSQueryCursor.ProgressCallback { _ ->
-                    cancellation.isCancelled()
+                cursor.exec(nativeQuery, root, TSQueryCursor.ProgressCallback { currentByteOffset ->
+                    val cancel = if (cancellation is TshQueryProgressCancellation) {
+                        cancellation.onProgress(currentByteOffset)
+                    } else {
+                        cancellation.isCancelled()
+                    }
+                    if (cancel) progressCallbackCancelled = true
+                    cancel
                 })
             } catch (error: UnsupportedOperationException) {
-                return failure(
-                    "TSH-QUERY-EXEC-033",
-                    "Native Tree-sitter build does not expose the 0.28 query progress callback; cooperative in-query cancellation is unavailable",
-                    cause = error
-                )
+                // The Java binding can be newer than the bundled Tree-sitter C library.
+                // Do not disable ordinary queries on builds older than 0.28: fall back to
+                // the stable cursor API and keep checking cancellation between returned matches.
+                progressCallbackAvailable = false
+                cursor.exec(nativeQuery, root)
             } catch (error: Throwable) {
                 return failure(
                     "TSH-QUERY-EXEC-034",
@@ -379,8 +428,23 @@ class TshTreeSitterQueryExecutor(
                     cause = error
                 )
             }
+            // The exact VM budget is installed after exec() resets the native cursor and
+            // before nextMatch() performs any query traversal.
+            if (budget.maxSteps != null) {
+                try {
+                    cursor.setStepLimit(budget.maxSteps)
+                } catch (error: UnsupportedOperationException) {
+                    return failure(
+                        "TSH-QUERY-EXEC-021",
+                        "Exact maxSteps requires a Tree-sitter build with the patched Query VM",
+                        cause = error
+                    )
+                }
+            }
 
-            val captures = ArrayList<TshCapture>(minOf(budget.maxCaptures, 16_384))
+            // Avoid allocating a 16K-reference backing array for small or empty query results.
+            // Grow with actual matches while keeping the initial transient allocation bounded.
+            val captures = ArrayList<TshCapture>(minOf(budget.maxCaptures, budget.maxMatches, 256))
             var matchesSeen = 0
             var estimatedResultBytes = 0L
             var truncated = false
@@ -419,7 +483,27 @@ class TshTreeSitterQueryExecutor(
                     // The estimate is deliberately explicit and does not include Native objects.
                     val estimatedCaptureBytes = 96L +
                         2L * (captureName.length.toLong() + nodeType.length.toLong())
-                    if (estimatedCaptureBytes > budget.maxResultBytes - estimatedResultBytes) {
+                    if (estimatedCaptureBytes > Long.MAX_VALUE - estimatedResultBytes) {
+                        truncated = true
+                        break
+                    }
+                    val nextEstimatedBytes = estimatedResultBytes + estimatedCaptureBytes
+                    if (nextEstimatedBytes > budget.maxResultBytes) {
+                        truncated = true
+                        break
+                    }
+                    val admission = if (resultReservation == null) {
+                        memoryBudget.reserve(
+                            TshMemoryCategory.QUERY_RESULT,
+                            nextEstimatedBytes.coerceAtLeast(1L),
+                            "query-result:${query.queryId}:${tree.documentId}:${tree.documentVersion}"
+                        ).also { reserved ->
+                            if (reserved is TshResult.Success) resultReservation = reserved.value
+                        }
+                    } else {
+                        resultReservation!!.resize(nextEstimatedBytes)
+                    }
+                    if (admission is TshResult.Failure) {
                         truncated = true
                         break
                     }
@@ -430,20 +514,26 @@ class TshTreeSitterQueryExecutor(
                         nodeId = node.nodeId,
                         patternIndex = match.patternIndex
                     )
-                    estimatedResultBytes += estimatedCaptureBytes
+                    estimatedResultBytes = nextEstimatedBytes
                 }
                 if (truncated) break
             }
 
-            if (cancellation.isCancelled()) {
+            if (progressCallbackCancelled || cancellation.isCancelled()) {
                 return failure(
                     "TSH-QUERY-EXEC-012",
-                    "Query cancelled during native Tree-sitter execution"
+                    if (progressCallbackCancelled) {
+                        "Query cancelled by Tree-sitter's in-flight native progress callback"
+                    } else {
+                        "Query cancelled during native Tree-sitter execution"
+                    }
                 )
             }
 
             val exceeded = cursor.didExceedMatchLimit()
-            val complete = !exceeded && !truncated
+            val exceededStepLimit = cursor.didExceedStepLimit()
+            val stepsUsed = cursor.stepsUsed.takeIf { it >= 0L }
+            val complete = !exceeded && !truncated && !exceededStepLimit
             TshResult.Success(
                 TshQueryResult(
                     queryId = query.queryId,
@@ -452,25 +542,41 @@ class TshTreeSitterQueryExecutor(
                     documentVersion = tree.documentVersion,
                     treeRevision = tree.treeRevision,
                     grammarFingerprint = tree.grammar.fingerprint,
-                    captures = captures.toList(),
-                    // Null means the native cursor does not expose VM step counts.
-                    stepsUsed = null,
+                    // The capture buffer is locally owned and never mutated after publication. Wrap it
+                    // without copying: toList() duplicated every capture reference at peak result size.
+                    captures = Collections.unmodifiableList(captures),
+                    stepsUsed = stepsUsed,
                     isComplete = complete,
-                    inputEncoding = tree.inputEncoding
-                ),
+                    inputEncoding = tree.inputEncoding,
+                    memoryReservation = resultReservation
+                ).also { reservationTransferred = resultReservation != null },
                 diagnostics = buildList {
-                    if (!complete) add(diagnostic(
-                        "TSH-QUERY-EXEC-015",
-                        "Query result is partial because a match, capture-count, or estimated result-memory budget was reached, or Tree-sitter dropped pending matches.",
+                    if (!progressCallbackAvailable) add(diagnostic(
+                        "TSH-QUERY-EXEC-033",
+                        "This Tree-sitter build does not expose the 0.28 progress callback. Query execution continued through the stable cursor API; cancellation is checked before execution and between returned matches, but cannot interrupt an in-progress native query.",
                         TshDiagnosticSeverity.WARNING
                     ))
-                    // Step budgets are rejected before entering Native execution; no false stepsUsed value is reported.
+                    if (!complete) add(diagnostic(
+                        "TSH-QUERY-EXEC-015",
+                        "Query result is partial because a match, capture-count, estimated result-memory budget, native VM step budget, or Tree-sitter pending-match limit was reached.",
+                        TshDiagnosticSeverity.WARNING
+                    ))
+                    if (exceededStepLimit) add(diagnostic(
+                        "TSH-QUERY-EXEC-036",
+                        "Native Tree-sitter query VM stopped after exhausting the configured work-unit budget.",
+                        TshDiagnosticSeverity.WARNING
+                    ))
                 }
             )
         } catch (error: Throwable) {
             failure("TSH-QUERY-EXEC-016", "Tree-sitter query execution failed: ${error.message}", cause = error)
         } finally {
-            cursor.close()
+            if (!reservationTransferred) resultReservation?.close()
+            try {
+                cursor.close()
+            } finally {
+                cursorReservation.close()
+            }
         }
         } finally {
             treeLease.close()

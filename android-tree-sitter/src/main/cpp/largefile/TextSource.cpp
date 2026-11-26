@@ -9,7 +9,7 @@ namespace windbell::largefile {
 
 bool copyTextRange(const TextSource &source, uint64_t offset,
                    uint64_t length, void *destination) noexcept {
-    if ((offset & 1u) || (length & 1u) ||
+    if (!source.isValid() || (source.sizeBytes() & 1u) || (offset & 1u) || (length & 1u) ||
         offset > source.sizeBytes() || length > source.sizeBytes() - offset ||
         (length != 0 && !destination) ||
         length > static_cast<uint64_t>(std::numeric_limits<size_t>::max())) return false;
@@ -31,8 +31,8 @@ bool copyTextRange(const TextSource &source, uint64_t offset,
 bool checkUtf16SurrogateBoundary(const TextSource &source,
                                  uint64_t byteOffset,
                                  bool *splitsPair) noexcept {
-    if (!splitsPair || (byteOffset & 1u) != 0 ||
-        byteOffset > source.sizeBytes()) return false;
+    if (!splitsPair || !source.isValid() || (source.sizeBytes() & 1u) != 0 ||
+        (byteOffset & 1u) != 0 || byteOffset > source.sizeBytes()) return false;
     *splitsPair = false;
     if (byteOffset == 0 || byteOffset >= source.sizeBytes()) return true;
 
@@ -44,6 +44,47 @@ bool checkUtf16SurrogateBoundary(const TextSource &source,
         (static_cast<uint16_t>(adjacent[3]) << 8u);
     *splitsPair = before >= 0xD800u && before <= 0xDBFFu &&
         after >= 0xDC00u && after <= 0xDFFFu;
+    return true;
+}
+
+
+bool copyTreeSitterInputChunk(
+    const TextSource &source,
+    uint64_t offset,
+    void *destination,
+    uint32_t destinationCapacity,
+    uint32_t *bytesRead
+) noexcept {
+    if (!bytesRead || !source.isValid()) return false;
+    *bytesRead = 0;
+    const uint64_t documentSize = source.sizeBytes();
+    if ((documentSize & 1u) != 0 || (offset & 1u) != 0 || offset > documentSize) return false;
+    if (offset == documentSize) return true;
+    if (!destination || destinationCapacity < 2u) return false;
+
+    // A source view is only valid until its next read(). Boundary inspection
+    // below may cross a PieceTree boundary and switch a FileWindowSource's
+    // backing window, so never return the borrowed view directly to Tree-sitter.
+    TextChunkView chunk{};
+    if (!source.read(offset, kTreeSitterInputChunkBytes, &chunk) ||
+        !chunk.data || chunk.size == 0 || (chunk.size & 1u) != 0 ||
+        chunk.size > kTreeSitterInputChunkBytes ||
+        chunk.size > documentSize - offset) return false;
+
+    bool splitsSurrogatePair = false;
+    const uint64_t chunkEnd = offset + chunk.size;
+    if (!checkUtf16SurrogateBoundary(source, chunkEnd, &splitsSurrogatePair)) return false;
+
+    const uint64_t stableSize = static_cast<uint64_t>(chunk.size) +
+        (splitsSurrogatePair ? 2u : 0u);
+    if (stableSize > destinationCapacity || stableSize > documentSize - offset ||
+        stableSize > std::numeric_limits<uint32_t>::max()) return false;
+
+    // Re-read after all look-ahead operations. copyTextRange copies each
+    // borrowed segment before requesting the next one, preserving correctness
+    // even when adjacent pieces map to unrelated FileWindowSource offsets.
+    if (!copyTextRange(source, offset, stableSize, destination)) return false;
+    *bytesRead = static_cast<uint32_t>(stableSize);
     return true;
 }
 
@@ -86,9 +127,11 @@ bool SegmentedTextSource::read(
     if (out == nullptr) return false;
     out->data = nullptr;
     out->size = 0;
-    if (!valid_ || (offset & 1u) != 0 || maxBytes < 2u) return false;
+    if (!valid_ || (offset & 1u) != 0 || offset > total_bytes_) return false;
+    // EOF is a successful empty read regardless of the requested chunk size,
+    // matching ContiguousTextSource and the TextSource callback contract.
     if (offset == total_bytes_) return true;
-    if (offset > total_bytes_) return false;
+    if (maxBytes < 2u) return false;
 
     const auto it = std::upper_bound(segment_starts_.begin(), segment_starts_.end(), offset);
     if (it == segment_starts_.begin()) return false;
@@ -108,7 +151,12 @@ bool SegmentedTextSource::read(
 }
 
 ContiguousTextSource::ContiguousTextSource(const void *data, uint64_t sizeBytes) noexcept
-    : data_(static_cast<const char *>(data)), size_bytes_(sizeBytes) {}
+    : data_(static_cast<const char *>(data)), size_bytes_(sizeBytes),
+      valid_((sizeBytes & 1u) == 0 && (sizeBytes == 0 || data != nullptr)) {}
+
+bool ContiguousTextSource::isValid() const noexcept {
+    return valid_;
+}
 
 uint64_t ContiguousTextSource::sizeBytes() const noexcept {
     return size_bytes_;
@@ -117,7 +165,7 @@ uint64_t ContiguousTextSource::sizeBytes() const noexcept {
 bool ContiguousTextSource::contiguousData(
     const char **data, uint64_t *sizeBytes
 ) const noexcept {
-    if (!data || !sizeBytes || (size_bytes_ != 0 && !data_)) return false;
+    if (!data || !sizeBytes || !valid_) return false;
     *data = data_;
     *sizeBytes = size_bytes_;
     return true;
@@ -132,9 +180,9 @@ bool ContiguousTextSource::read(
     out->data = nullptr;
     out->size = 0;
 
-    if (data_ == nullptr || maxBytes == 0 || offset >= size_bytes_) {
-        return offset == size_bytes_;
-    }
+    if (!valid_ || (offset & 1u) != 0 || offset > size_bytes_) return false;
+    if (offset == size_bytes_) return true;
+    if (maxBytes < 2u || data_ == nullptr) return false;
 
     const uint64_t remaining = size_bytes_ - offset;
     uint64_t count = std::min<uint64_t>(remaining, maxBytes);

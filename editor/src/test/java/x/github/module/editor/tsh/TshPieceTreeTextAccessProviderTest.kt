@@ -240,10 +240,30 @@ class TshPieceTreeTextAccessProviderTest {
             snapshotThread = Thread.currentThread()
         )
         val provider = TshPieceTreeTextAccessProvider()
+        assertFalse(
+            provider.supports(document),
+            "An editor-thread-bound factory is incompatible with the ANY_THREAD provider contract."
+        )
         var result: TshResult<com.zerostudio.idea.treesitter.tsh.api.TshTextSnapshot>? = null
         val worker = Thread { result = provider.snapshot(document) }
         worker.start()
         worker.join()
+
+        assertTrue(result is TshResult.Failure)
+        assertEquals(
+            "TSH-PIECETREE-011",
+            (result as TshResult.Failure).diagnostics.single().code
+        )
+    }
+
+    @Test
+    fun snapshotFactoryFailuresMapToBindingFailure() {
+        val document = TshPieceTreeDocument(
+            "snapshot-failure-doc",
+            "text",
+            snapshotFactory = { throw IllegalStateException("snapshot factory failed") }
+        )
+        val result = TshPieceTreeTextAccessProvider().snapshot(document)
 
         assertTrue(result is TshResult.Failure)
         assertEquals(

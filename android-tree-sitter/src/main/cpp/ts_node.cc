@@ -19,6 +19,9 @@
 #include "utils/ts_preconditions.h"
 #include "ts__log.h"
 
+// Release Tree-sitter-owned memory through its configured allocator.
+#include "alloc.h"
+
 #include "subtree.h"
 
 #include "ts_node.h"
@@ -201,7 +204,7 @@ TSNode_isEqualTo(JNIEnv *env, jclass clazz, jobject self, jobject other) {
 static jstring TSNode_getNodeString(JNIEnv *env, jclass clazz, jobject self) {
   char *nodeString = ts_node_string(_unmarshalNode(env, self));
   jstring result = env->NewStringUTF(nodeString);
-  free(nodeString);
+  ts_free(nodeString);
   return result;
 }
 

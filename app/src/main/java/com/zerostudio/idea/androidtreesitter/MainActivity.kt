@@ -9,8 +9,11 @@
 package com.zerostudio.idea.androidtreesitter
 
 import android.app.ProgressDialog
-import android.os.Bundle
+import android.content.Intent
+import android.content.res.Configuration
 import android.net.Uri
+import android.provider.OpenableColumns
+import android.os.Bundle
 import android.text.Editable
 import android.text.TextWatcher
 import android.util.Log
@@ -19,7 +22,6 @@ import android.view.Menu
 import android.view.MenuItem
 import android.view.View
 import android.widget.ArrayAdapter
-import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatDelegate
@@ -40,6 +42,7 @@ import com.zerostudio.idea.treesitter.python.TSLanguagePython
 import com.zerostudio.idea.treesitter.tsh.WindbellTshEngine
 import com.zerostudio.idea.treesitter.xml.TSLanguageXml
 import kotlinx.coroutines.*
+import java.io.InputStreamReader
 import x.github.module.editor.model.PieceTreeBuffer
 import x.github.module.editor.view.EditorView
 import x.github.module.editor.input.AutoPair
@@ -50,6 +53,40 @@ import java.util.concurrent.CancellationException
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 
+
+private enum class JavaTshPipelineProfile(
+    val id: String,
+    val assetName: String,
+    val displayName: String,
+    val description: String
+) {
+    BASELINE(
+        "baseline", "java.tsh", "Java Default",
+        "项目默认 Java TSH 配置；用于验证基础配置与运行时文件切换"
+    ),
+    REGEX_ONLY(
+        "regex-only", "java-regex-only.tsh", "Regex Only",
+        "仅 Oniguruma Regex；不启用 AST Selector / Tree-sitter Query"
+    ),
+    ATS_ONLY(
+        "ats-only", "java-ats-only.tsh", "Tree-sitter ATS Only",
+        "仅 AST Selector + 原生 SCM Query / 谓词；不启用 Regex"
+    ),
+    HYBRID(
+        "hybrid", "java-hybrid.tsh", "Hybrid",
+        "同时启用 ATS / SCM Query 与 Oniguruma Regex"
+    ),
+    CUSTOM(
+        "custom", "", "External TSH File",
+        "从 Android 文件选择器载入的外部 .tsh 配置"
+    );
+
+    companion object {
+        fun fromId(value: String?): JavaTshPipelineProfile =
+            values().firstOrNull { it.id == value } ?: BASELINE
+    }
+}
+
 class MainActivity : AppCompatActivity() {
 
     private var _binding: ActivityMainBinding? = null
@@ -57,6 +94,18 @@ class MainActivity : AppCompatActivity() {
 
     private val activityScope =
         CoroutineScope(Dispatchers.Default + CoroutineName("MainActivity-Kernel"))
+
+    private val openDocumentLauncher =
+        registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+            uri?.let(::loadExternalDocument)
+        }
+
+    private val openTshConfigurationLauncher =
+        registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+            uri?.let(::loadExternalTshConfiguration)
+        }
+
+    private var externalDocumentLoadJob: Job? = null
 
     // 解析与高亮作业句柄
     private var parser: TSParser? = null
@@ -72,12 +121,12 @@ class MainActivity : AppCompatActivity() {
 
     // 核心编辑器控件与文本缓存
     private var editorView: EditorView? = null
-    private var openedFileName: String? = null
-    private val openLocalFileLauncher = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri != null) openLocalFile(uri)
-    }
     private var editorTree: TSTree? = null
     @Volatile private var javaTshReady: Boolean = false
+    @Volatile private var activeJavaTshProfile: JavaTshPipelineProfile = JavaTshPipelineProfile.BASELINE
+    @Volatile private var activeJavaTshConfigUri: Uri? = null
+    @Volatile private var activeJavaTshConfigName: String? = null
+    private var javaTshProfileLoadJob: Job? = null
     private var activeTshHighlighter: TshSyntaxHighlighter? = null
     private val tshConfigurationStates = java.util.concurrent.ConcurrentHashMap<String, String>()
     private var restoredTshScheme: String? = null
@@ -85,29 +134,97 @@ class MainActivity : AppCompatActivity() {
 
     companion object {
         private const val TAG = "Windbell_MainActivity"
+        @Volatile private var processJavaTshProfileId: String? = null
         // Keep Java first and make the console language spinner deterministic.
         private val languageMap = java.util.Collections.synchronizedMap(linkedMapOf<String, TSLanguage>())
+        private val nativeLibraryStates = java.util.Collections.synchronizedMap(linkedMapOf<String, String>())
+        private val languageRegistrationStates = java.util.Collections.synchronizedMap(linkedMapOf<String, String>())
+
+        private fun loadNativeLibrary(name: String): Boolean {
+            return try {
+                System.loadLibrary(name)
+                nativeLibraryStates[name] = "READY"
+                Log.i(TAG, "Native library loaded: lib$name.so")
+                true
+            } catch (error: Throwable) {
+                val state = "FAILED: ${error.javaClass.simpleName}: ${error.message ?: "no diagnostic"}"
+                nativeLibraryStates[name] = state
+                Log.e(TAG, "Unable to load native library lib$name.so", error)
+                false
+            }
+        }
+
+        private fun registerLanguage(
+            displayName: String,
+            libraryName: String,
+            factory: () -> TSLanguage
+        ) {
+            if (nativeLibraryStates["android-tree-sitter"] != "READY") {
+                languageRegistrationStates[displayName] = "BLOCKED: libandroid-tree-sitter.so unavailable"
+                return
+            }
+            if (nativeLibraryStates[libraryName] != "READY") {
+                languageRegistrationStates[displayName] = "BLOCKED: ${nativeLibraryStates[libraryName] ?: "library not loaded"}"
+                return
+            }
+            try {
+                languageMap[displayName] = factory()
+                languageRegistrationStates[displayName] = "READY"
+                Log.i(TAG, "Tree-sitter language registered: $displayName")
+            } catch (error: Throwable) {
+                languageRegistrationStates[displayName] =
+                    "FAILED: ${error.javaClass.simpleName}: ${error.message ?: "no diagnostic"}"
+                Log.e(TAG, "Tree-sitter language registration failed: $displayName", error)
+            }
+        }
 
         init {
-            TreeSitter.loadLibrary()
-            try { System.loadLibrary("tree-sitter-java") } catch (_: Throwable) {}
-            try { System.loadLibrary("tree-sitter-json") } catch (_: Throwable) {}
-            try { System.loadLibrary("tree-sitter-kotlin") } catch (_: Throwable) {}
-            try { System.loadLibrary("tree-sitter-logcat") } catch (_: Throwable) {}
-            try { System.loadLibrary("tree-sitter-python") } catch (_: Throwable) {}
-            try { System.loadLibrary("tree-sitter-xml") } catch (_: Throwable) {}
+            // The core JNI bridge must be loaded before grammar libraries and language bindings.
+            loadNativeLibrary("android-tree-sitter")
 
-            runCatching { languageMap["Java"] = TSLanguageJava.getInstance() }
-            runCatching { languageMap["JSON"] = TSLanguageJson.getInstance() }
-            runCatching { languageMap["Kotlin"] = TSLanguageKotlin.getInstance() }
-            runCatching { languageMap["Logcat"] = TSLanguageLogcat.getInstance() }
-            runCatching { languageMap["Python"] = TSLanguagePython.getInstance() }
-            runCatching { languageMap["XML"] = TSLanguageXml.getInstance() }
+            val grammarLibraries = listOf(
+                "tree-sitter-java",
+                "tree-sitter-json",
+                "tree-sitter-kotlin",
+                "tree-sitter-logcat",
+                "tree-sitter-python",
+                "tree-sitter-xml"
+            )
+            grammarLibraries.forEach(::loadNativeLibrary)
+
+            registerLanguage("Java", "tree-sitter-java") { TSLanguageJava.getInstance() }
+            registerLanguage("JSON", "tree-sitter-json") { TSLanguageJson.getInstance() }
+            registerLanguage("Kotlin", "tree-sitter-kotlin") { TSLanguageKotlin.getInstance() }
+            registerLanguage("Logcat", "tree-sitter-logcat") { TSLanguageLogcat.getInstance() }
+            registerLanguage("Python", "tree-sitter-python") { TSLanguagePython.getInstance() }
+            registerLanguage("XML", "tree-sitter-xml") { TSLanguageXml.getXmlInstance() }
+        }
+
+        internal fun nativeBootstrapReport(): String = buildString {
+            appendLine("Native library status:")
+            nativeLibraryStates.forEach { (name, state) ->
+                appendLine("  lib$name.so: $state")
+            }
+            appendLine("Language registration:")
+            languageRegistrationStates.forEach { (name, state) ->
+                appendLine("  $name: $state")
+            }
         }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        val profilePreferences = getSharedPreferences("tsh_pipeline_profiles", MODE_PRIVATE)
+        activeJavaTshProfile = JavaTshPipelineProfile.fromId(
+            savedInstanceState?.getString("tsh.pipelineProfile")
+                ?: profilePreferences.getString("java.profile", JavaTshPipelineProfile.BASELINE.id)
+        )
+        activeJavaTshConfigUri = (
+            savedInstanceState?.getString("tsh.externalConfigUri")
+                ?: profilePreferences.getString("java.externalConfigUri", null)
+            )?.let(Uri::parse)
+        activeJavaTshConfigName = savedInstanceState?.getString("tsh.externalConfigName")
+            ?: profilePreferences.getString("java.externalConfigName", null)
         restoredTshScheme = savedInstanceState?.getString("tsh.selectedScheme")
         if (savedInstanceState?.containsKey("tsh.isDark") == true) {
             restoredTshDark = savedInstanceState.getBoolean("tsh.isDark")
@@ -117,16 +234,46 @@ class MainActivity : AppCompatActivity() {
         setSupportActionBar(binding.toolbar)
 
         currentLanguage = languageMap[currentLanguageKey]
-        parser = TSParser.create()
-        currentLanguage?.let { parser?.setLanguage(it) }
+        if (nativeLibraryStates["android-tree-sitter"] == "READY") {
+            parser = runCatching { TSParser.create() }
+                .onFailure { Log.e(TAG, "Unable to create the console Tree-sitter parser", it) }
+                .getOrNull()
+            currentLanguage?.let { language ->
+                runCatching { parser?.setLanguage(language) }
+                    .onFailure { Log.e(TAG, "Unable to bind the console parser to $currentLanguageKey", it) }
+            }
+        } else {
+            parser = null
+            Log.e(TAG, "Console parser initialization skipped: libandroid-tree-sitter.so is not loaded")
+        }
 
-        // 初始化加载原生 .tsh 语法配置（完全放弃 SCM 方案）
+        Log.i(
+            TAG,
+            "Native bootstrap summary; nativeLibraryDir=${applicationInfo.nativeLibraryDir}\n" +
+                nativeBootstrapReport()
+        )
+
+        // 初始化原生 .tsh 配置；ATS Selector 与 SCM Query 保持独立管道。
         initTshEngineConfigurations()
 
         setupTabs()
         setupConsoleTab(binding.contentConsole)
         setupEditorTab(binding.contentEditor)
         loadExternalLanguages()
+    }
+
+    /**
+     * AppCompat night-mode changes are handled in-place (see MainActivity's
+     * uiMode configChanges declaration). Re-resolve only the TSH palette and
+     * redraw cached captures; do not detach the editor or rebuild its native
+     * Tree-sitter document just to change foreground colors.
+     */
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        if (_binding != null) {
+            activeTshHighlighter?.refreshTheme()
+            applyTshThemeTokens()
+        }
     }
 
     /**
@@ -147,8 +294,15 @@ class MainActivity : AppCompatActivity() {
             if (language != null) {
                 languages[extension] = language
             } else {
-                tshConfigurationStates[extension] = "PARSER_MISSING"
-                Log.e(TAG, "Tree-sitter parser unavailable: .$extension ($displayName); native .so or language binding did not register")
+                val libraryName = "tree-sitter-$extension"
+                val libraryState = nativeLibraryStates[libraryName] ?: "NOT_LOADED"
+                val bindingState = languageRegistrationStates[displayName] ?: "NOT_REGISTERED"
+                tshConfigurationStates[extension] = "PARSER_MISSING: $libraryState; $bindingState"
+                Log.e(
+                    TAG,
+                    "Tree-sitter parser unavailable: .$extension ($displayName); " +
+                        "lib$libraryName.so=$libraryState; binding=$bindingState"
+                )
             }
         }
         loadAvailableTshConfigurations(languages)
@@ -162,20 +316,40 @@ class MainActivity : AppCompatActivity() {
                     emptySet()
                 }
             languages.forEach { (extension, language) ->
-                val assetName = "$extension.tsh"
-                if (assetName !in availableAssets) {
+                val isExternalJavaProfile =
+                    extension == "java" && activeJavaTshProfile == JavaTshPipelineProfile.CUSTOM
+                val assetName = if (extension == "java") activeJavaTshProfile.assetName else "$extension.tsh"
+                if (!isExternalJavaProfile && assetName !in availableAssets) {
                     tshConfigurationStates[extension] = "MISSING"
                     Log.i(TAG, "TSH config unavailable: assets/tsh/$assetName (Parser is registered; highlighting config is not)")
                     return@forEach
                 }
                 val engine = WindbellTshEngine.instance
-                if (engine.isGrammarLoaded(extension)) {
+                val activeJavaProfileKey = if (isExternalJavaProfile) {
+                    "custom:" + (activeJavaTshConfigUri?.toString() ?: "missing-uri")
+                } else {
+                    activeJavaTshProfile.id
+                }
+                val javaProfileAlreadyLoaded =
+                    extension != "java" || processJavaTshProfileId == activeJavaProfileKey
+                if (engine.isGrammarLoaded(extension) && javaProfileAlreadyLoaded) {
                     tshConfigurationStates[extension] = "READY"
                     Log.i(TAG, "Reusing compiled native TSH grammar .$extension; skip recompilation on Activity recreation")
                     return@forEach
                 }
+                if (extension == "java" && engine.isGrammarLoaded(extension)) {
+                    Log.i(TAG, "Reloading Java TSH profile ${activeJavaTshProfile.id}; process profile marker differs")
+                }
                 val result = runCatching {
-                    val source = assets.open("tsh/$assetName").bufferedReader().use { it.readText() }
+                    val source = if (isExternalJavaProfile) {
+                        val uri = checkNotNull(activeJavaTshConfigUri) {
+                            "External Java TSH profile has no persisted document URI."
+                        }
+                        contentResolver.openInputStream(uri)?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }
+                            ?: error("Unable to reopen the selected TSH document: " + uri)
+                    } else {
+                        assets.open("tsh/$assetName").bufferedReader(Charsets.UTF_8).use { it.readText() }
+                    }
                     val compiled = synchronized(engine) {
                         engine.loadTshSource(extension, source, language)
                     }
@@ -187,6 +361,7 @@ class MainActivity : AppCompatActivity() {
                 }
                 result.onSuccess {
                     tshConfigurationStates[extension] = "READY"
+                    if (extension == "java") processJavaTshProfileId = activeJavaProfileKey
                     Log.i(TAG, "TSH config ready: .$extension")
                 }.onFailure { error ->
                     tshConfigurationStates[extension] = "FAILED: ${error.message}"
@@ -259,8 +434,19 @@ class MainActivity : AppCompatActivity() {
         content.code.isSaveEnabled = false
         content.ast.isSaveEnabled = false
 
-        content.tsMeta.text = "Tree Sitter Language ABI: " + TreeSitter.getLanguageVersion()
-        content.tsVersion.text = "Tree Sitter Core Engine: " + TreeSitter.getEngineVersion()
+        val coreLoaded = nativeLibraryStates["android-tree-sitter"] == "READY"
+        content.tsMeta.text = if (coreLoaded) {
+            runCatching { "Tree Sitter Language ABI: " + TreeSitter.getLanguageVersion() }
+                .getOrElse { "Tree Sitter Language ABI: UNAVAILABLE (${it.message})" }
+        } else {
+            "Tree Sitter Language ABI: UNAVAILABLE (libandroid-tree-sitter.so not loaded)"
+        }
+        content.tsVersion.text = if (coreLoaded) {
+            runCatching { "Tree Sitter Core Engine: " + TreeSitter.getEngineVersion() }
+                .getOrElse { "Tree Sitter Core Engine: UNAVAILABLE (${it.message})" }
+        } else {
+            "Tree Sitter Core Engine: UNAVAILABLE (libandroid-tree-sitter.so not loaded)"
+        }
 
         content.code.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
@@ -282,8 +468,15 @@ class MainActivity : AppCompatActivity() {
                 installTshHighlighterIfReady()
                 currentLanguage?.let { lang ->
                     parser?.close()
-                    parser = TSParser.create()
-                    parser?.setLanguage(lang)
+                    parser = if (nativeLibraryStates["android-tree-sitter"] == "READY") {
+                        runCatching {
+                            TSParser.create().also { it.setLanguage(lang) }
+                        }.onFailure { error ->
+                            Log.e(TAG, "Unable to switch console parser to $currentLanguageKey", error)
+                        }.getOrNull()
+                    } else {
+                        null
+                    }
                 }
                 val text = content.code.text?.toString() ?: ""
                 if (text.isNotEmpty()) {
@@ -418,6 +611,7 @@ class MainActivity : AppCompatActivity() {
 
     /** Applies only UI colors explicitly declared by the active .tsh scheme. */
     private fun applyTshThemeTokens() {
+        if (!javaTshReady) return
         val engine = WindbellTshEngine.instance
         val tokens = engine.getThemeTokens("java")
         editorView?.let { view ->
@@ -512,9 +706,19 @@ class MainActivity : AppCompatActivity() {
         this.parseJob = activityScope.launch {
             currentJob?.cancel(CancellationException("New parse requested"))
 
-            val activeParser = parser ?: TSParser.create().also {
-                parser = it
-                it.setLanguage(lang)
+            val activeParser = parser ?: try {
+                TSParser.create().also {
+                    parser = it
+                    it.setLanguage(lang)
+                }
+            } catch (error: Throwable) {
+                Log.e(TAG, "Unable to initialize console parser for $currentLanguageKey", error)
+                withContext(Dispatchers.Main) {
+                    binding.contentConsole.ast.text =
+                        "Tree-sitter parser unavailable: ${error.javaClass.simpleName}: ${error.message}\n\n" +
+                            nativeBootstrapReport()
+                }
+                return@launch
             }
             activeParser.reset()
 
@@ -534,14 +738,18 @@ class MainActivity : AppCompatActivity() {
                 sb.append("Setup: ${setupDur}ms | Parse: ${parseDur}ms | Avg: ${avgParse / parseCount}ms\n\n")
 
                 if (tree != null) {
-                    val ext = if (currentLanguageKey.equals("Kotlin", ignoreCase = true)) "kt" else "java"
-                    val spans = WindbellTshEngine.instance.computeHighlights(tree, codeText, ext)
-                    sb.append("--- ⚡ TSH 原生 AST+正则双通道高亮 Span (总数: ${spans.size}) ---\n")
-                    for (i in 0 until minOf(spans.size, 15)) {
-                        val sp = spans[i]
-                        sb.append("  🏷️ Span [${sp.startByte}..${sp.endByte}] StyleID: ${sp.styleId} Flags: ${sp.fontFlags}\n")
+                    val ext = if (currentLanguageKey.equals("Kotlin", ignoreCase = true)) "kotlin" else "java"
+                    if (tshConfigurationStates[ext] == "READY") {
+                        val spans = WindbellTshEngine.instance.computeHighlights(tree, codeText, ext)
+                        sb.append("--- ⚡ TSH 原生 AST+正则双通道高亮 Span (总数: ${spans.size}) ---\n")
+                        for (i in 0 until minOf(spans.size, 15)) {
+                            val sp = spans[i]
+                            sb.append("  🏷️ Span [${sp.startByte}..${sp.endByte}] StyleID: ${sp.styleId} Flags: ${sp.fontFlags}\n")
+                        }
+                        if (spans.size > 15) sb.append("  ... 以及额外 ${spans.size - 15} 个高亮 Span\n\n")
+                    } else {
+                        sb.append("--- TSH unavailable for .$ext: ${tshConfigurationStates[ext] ?: "NOT_INITIALIZED"} ---\n")
                     }
-                    if (spans.size > 15) sb.append("  ... 以及额外 ${spans.size - 15} 个高亮 Span\n\n")
 
                     sb.append("--- 🌳 全局 AST 完整节点树 ---\n")
                     tree.rootNode.walk().use { cursor ->
@@ -585,52 +793,101 @@ class MainActivity : AppCompatActivity() {
             // Do not reopen the same C grammar library on every Light/Dark switch.
             if (languageMap.containsKey("C")) return@launch
             runCatching {
-                val cLang = TSLanguage.loadLanguage(this@MainActivity, "c")
-                if (cLang != null) {
-                    withContext(Dispatchers.Main) {
-                        languageMap["C"] = cLang
-                        (binding.contentConsole.languageChooser.adapter as? ArrayAdapter<*>)?.notifyDataSetChanged()
-                        loadExternalTshConfiguration("c", cLang)
-                    }
+                check(nativeLibraryStates["android-tree-sitter"] == "READY") {
+                    "libandroid-tree-sitter.so is unavailable; external language registration cannot run.\n" +
+                        nativeBootstrapReport()
                 }
+                val cLang = TSLanguage.loadLanguage(this@MainActivity, "c")
+                checkNotNull(cLang) { "External C Tree-sitter grammar did not register a language binding." }
+                withContext(Dispatchers.Main) {
+                    languageMap["C"] = cLang
+                    languageRegistrationStates["C"] = "READY"
+                    (binding.contentConsole.languageChooser.adapter as? ArrayAdapter<*>)?.notifyDataSetChanged()
+                    loadExternalTshConfiguration("c", cLang)
+                }
+            }.onFailure { error ->
+                languageRegistrationStates["C"] = "FAILED: ${error.message ?: error.javaClass.simpleName}"
+                Log.e(TAG, "Unable to load/register the external C Tree-sitter grammar", error)
             }
         }
     }
 
-    /** Opens a user-selected local document without flattening it into a whole-file String. */
-    private fun openLocalFile(uri: Uri) {
-        activityScope.launch(Dispatchers.IO) {
-            val loaded = runCatching {
-                contentResolver.openInputStream(uri)?.use { input ->
-                    input.bufferedReader(Charsets.UTF_8).use { reader ->
-                        val builder = PieceTreeTextBufferBuilder()
+
+    /**
+     * Opens a document selected through Android's Storage Access Framework.
+     *
+     * The provider stream is decoded incrementally into PieceTree chunks. This avoids
+     * creating a second full-file String in Activity memory, which matters for large
+     * source files. The editor buffer is replaced only after the complete read succeeds.
+     */
+    private fun loadExternalDocument(uri: Uri) {
+        runCatching {
+            contentResolver.takePersistableUriPermission(
+                uri,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION
+            )
+        }
+
+        externalDocumentLoadJob?.cancel()
+        externalDocumentLoadJob = activityScope.launch(Dispatchers.IO) {
+            try {
+                val displayName = runCatching {
+                    contentResolver.query(
+                        uri,
+                        arrayOf(OpenableColumns.DISPLAY_NAME),
+                        null,
+                        null,
+                        null
+                    )?.use { cursor ->
+                        if (cursor.moveToFirst()) cursor.getString(0) else null
+                    }
+                }.getOrNull()?.takeIf { it.isNotBlank() }
+                    ?: uri.lastPathSegment?.takeIf { it.isNotBlank() }
+                    ?: "Untitled"
+
+                val builder = PieceTreeTextBufferBuilder()
+                val input = contentResolver.openInputStream(uri)
+                    ?: error("The selected document provider returned no readable stream.")
+
+                input.use { stream ->
+                    InputStreamReader(stream, Charsets.UTF_8).buffered().use { reader ->
                         val chunk = CharArray(64 * 1024)
                         while (true) {
+                            currentCoroutineContext().ensureActive()
                             val count = reader.read(chunk)
                             if (count < 0) break
-                            if (count > 0) builder.acceptChunk(String(chunk, 0, count))
+                            if (count == 0) continue
+
+                            // PieceTreeTextBufferBuilder owns BOM detection and metadata.
+                            // Pass the decoded stream unchanged so it can also preserve a
+                            // BOM-only file and normalize split CRLF/surrogate boundaries.
+                            builder.acceptChunk(String(chunk, 0, count))
                         }
-                        PieceTreeBuffer(builder.build())
                     }
-                } ?: error("无法读取所选文件")
-            }
-            val name = runCatching {
-                contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)
-                    ?.use { cursor -> if (cursor.moveToFirst()) cursor.getString(0) else null }
-            }.getOrNull() ?: uri.lastPathSegment ?: "本地文件"
-            withContext(Dispatchers.Main) {
-                loaded.onSuccess { buffer ->
-                    editorView?.setBuffer(buffer)
-                    openedFileName = name
+                }
+
+                val buffer = PieceTreeBuffer(builder.build())
+                withContext(Dispatchers.Main) {
+                    val activeEditor = checkNotNull(editorView) {
+                        "The editor view is not available to receive the selected document."
+                    }
+                    check(activeEditor.setBuffer(buffer)) {
+                        "The editor is rebuilding its layout (zoom in progress); the selected file was not opened. Retry after the editor settles."
+                    }
                     ensureEditorHighlighterInstalled()
-                    Toast.makeText(this@MainActivity, "已打开：$name（${buffer.length} 字符）", Toast.LENGTH_LONG).show()
-                }.onFailure { error ->
-                    showResultDialog("打开本地文件失败", error.stackTraceToString())
+                    binding.toolbar.subtitle = displayName
+                    binding.tabLayout.getTabAt(1)?.select()
+                    Log.i(TAG, "Opened external document: $displayName (${buffer.length} UTF-16 units)")
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Throwable) {
+                withContext(Dispatchers.Main) {
+                    showResultDialog("打开外部文件失败", error.stackTraceToString())
                 }
             }
         }
     }
-
 
     override fun onCreateOptionsMenu(menu: Menu): Boolean {
         menuInflater.inflate(R.menu.main, menu)
@@ -639,17 +896,27 @@ class MainActivity : AppCompatActivity() {
 
     override fun onOptionsItemSelected(item: MenuItem): Boolean {
         when (item.itemId) {
-            R.id.action_open_file -> {
-                openLocalFileLauncher.launch(arrayOf("text/*", "application/json", "application/xml", "application/octet-stream"))
-                return true
-            }
             R.id.reload_external -> {
                 destroyParserResources()
                 loadExternalLanguages()
                 return true
             }
+            R.id.action_open_file -> {
+                openDocumentLauncher.launch(arrayOf("*/*"))
+                return true
+            }
             R.id.test_tsh_suite -> {
                 showTshCoreTestSuiteDialog()
+                return true
+            }
+            R.id.test_tsh_java_pipeline -> {
+                // Keep profile recovery available after a bad/missing TSH config.
+                // The switch action validates the Java parser and reports native-load failures.
+                showJavaTshPipelineProfileDialog()
+                return true
+            }
+            R.id.action_open_tsh_file -> {
+                openTshConfigurationLauncher.launch(arrayOf("*/*"))
                 return true
             }
             R.id.test_tsh_cursor_capture -> {
@@ -668,6 +935,351 @@ class MainActivity : AppCompatActivity() {
         return super.onOptionsItemSelected(item)
     }
 
+
+
+    /**
+     * Selects one isolated Java TSH profile. The existing document and PieceTree buffer
+     * are retained; only the compiled grammar snapshot and its SyntaxHighlighter binding
+     * are replaced. Detaching first prevents an old highlighter from querying the newly
+     * compiled profile through a stale grammar binding.
+     */
+    private fun showJavaTshPipelineProfileDialog() {
+        val profiles = JavaTshPipelineProfile.values().filter { it != JavaTshPipelineProfile.CUSTOM }
+        val labels = profiles.map { profile ->
+            val marker = if (profile == activeJavaTshProfile) " ✓" else ""
+            "${profile.displayName}$marker\n${profile.description}"
+        }.toTypedArray()
+        MaterialAlertDialogBuilder(this)
+            .setTitle("Java TSH 配置 / 管道切换（当前：" +
+                (activeJavaTshConfigName ?: activeJavaTshProfile.displayName) + "）")
+            .setItems(labels) { _, index ->
+                switchJavaTshPipelineProfile(profiles[index])
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    /**
+     * Compile a user-selected .tsh file and bind it to the real EditorView highlighter.
+     * The persisted SAF read grant keeps the selection valid after Activity recreation.
+     */
+    private fun loadExternalTshConfiguration(uri: Uri) {
+        runCatching {
+            contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        val language = languageMap["Java"]
+        if (language == null) {
+            showResultDialog("TSH 配置加载失败", "Java Tree-sitter Parser 尚未注册。\n\n" + nativeBootstrapReport())
+            return
+        }
+        val displayName = runCatching {
+            contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+                if (cursor.moveToFirst()) cursor.getString(0) else null
+            }
+        }.getOrNull()?.takeIf { it.isNotBlank() }
+            ?: uri.lastPathSegment?.substringAfterLast('/')?.takeIf { it.isNotBlank() }
+            ?: "selected.tsh"
+        if (!displayName.endsWith(".tsh", ignoreCase = true)) {
+            showResultDialog("文件类型不受支持", "请选择扩展名为 .tsh 的配置文件。\n当前文件：" + displayName)
+            return
+        }
+
+        javaTshProfileLoadJob?.cancel()
+        val engine = WindbellTshEngine.instance
+        val previousScheme = engine.getSelectedScheme("java")
+        val previousDarkAppearance = engine.isDark("java")
+        editorView?.setSyntaxHighlighter(null)
+        activeTshHighlighter = null
+        javaTshReady = false
+
+        javaTshProfileLoadJob = activityScope.launch(Dispatchers.IO) {
+            val compilation = runCatching {
+                val source = contentResolver.openInputStream(uri)?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }
+                    ?: error("The selected document provider returned no readable stream.")
+                val compiled = synchronized(engine) { engine.loadTshSource("java", source, language) }
+                if (!compiled) {
+                    val diagnostics = engine.lastCompileDiagnostics.joinToString("\n") { diagnostic ->
+                        diagnostic.code + "@" + diagnostic.line + ":" + diagnostic.column + ": " + diagnostic.message
+                    }
+                    error(diagnostics.ifBlank { "Native TSH compiler returned false without diagnostics." })
+                }
+                previousScheme?.let { engine.selectScheme("java", it) }
+                engine.setAppearance("java", previousDarkAppearance)
+            }
+            val probe = if (compilation.isSuccess) {
+                runCatching { runJavaTshPipelineProfileProbe(JavaTshPipelineProfile.CUSTOM, language) }
+            } else null
+            withContext(Dispatchers.Main) {
+                if (compilation.isSuccess) {
+                    activeJavaTshProfile = JavaTshPipelineProfile.CUSTOM
+                    activeJavaTshConfigUri = uri
+                    activeJavaTshConfigName = displayName
+                    processJavaTshProfileId = "custom:" + uri.toString()
+                    getSharedPreferences("tsh_pipeline_profiles", MODE_PRIVATE).edit()
+                        .putString("java.profile", JavaTshPipelineProfile.CUSTOM.id)
+                        .putString("java.externalConfigUri", uri.toString())
+                        .putString("java.externalConfigName", displayName)
+                        .apply()
+                    tshConfigurationStates["java"] = "READY"
+                    javaTshReady = true
+                    installTshHighlighterIfReady()
+                    editorView?.invalidate()
+                    applyTshThemeTokens()
+                    val report = probe?.getOrElse { diagnosticError ->
+                        "PIPELINE DIAGNOSTICS ERROR\n" + diagnosticError.stackTraceToString()
+                    } ?: "Pipeline probe did not run."
+                    showResultDialog("已加载外部 TSH：" + displayName, report +
+                        "\n\n当前编辑器文档未更换；新配置已编译并绑定到实际 EditorView 高亮器。")
+                } else {
+                    javaTshReady = engine.isGrammarLoaded("java")
+                    if (javaTshReady) installTshHighlighterIfReady()
+                    val error = compilation.exceptionOrNull()
+                    showResultDialog("外部 TSH 配置加载失败",
+                        "目标文件：" + displayName + "\nURI：" + uri + "\n\n" +
+                            (error?.stackTraceToString() ?: "Unknown compiler failure"))
+                }
+            }
+        }
+    }
+    private fun switchJavaTshPipelineProfile(profile: JavaTshPipelineProfile) {
+        val language = languageMap["Java"]
+        if (language == null) {
+            showResultDialog(
+                "Java TSH 配置切换失败",
+                "Java Tree-sitter Parser 尚未注册，无法编译目标 TSH 文件。\n\n" +
+                    nativeBootstrapReport()
+            )
+            return
+        }
+        javaTshProfileLoadJob?.cancel()
+        val previousScheme = WindbellTshEngine.instance.getSelectedScheme("java")
+        val previousDarkAppearance = WindbellTshEngine.instance.isDark("java")
+        // Detach the previous document runtime before replacing the engine's grammar.
+        editorView?.setSyntaxHighlighter(null)
+        activeTshHighlighter = null
+        javaTshReady = false
+
+        javaTshProfileLoadJob = activityScope.launch(Dispatchers.IO) {
+            val engine = WindbellTshEngine.instance
+            val compilation = runCatching {
+                val source = assets.open("tsh/${profile.assetName}")
+                    .bufferedReader(Charsets.UTF_8).use { it.readText() }
+                val compiled = synchronized(engine) {
+                    engine.loadTshSource("java", source, language)
+                }
+                if (!compiled) {
+                    val diagnostics = engine.lastCompileDiagnostics.joinToString("\n") {
+                        "${it.code}@${it.line}:${it.column}: ${it.message}"
+                    }
+                    error(diagnostics.ifBlank { "Native TSH compiler returned false without diagnostics." })
+                }
+                previousScheme?.let { engine.selectScheme("java", it) }
+                engine.setAppearance("java", previousDarkAppearance)
+            }
+            // Compilation and runtime probing are separate outcomes: a diagnostic
+            // failure must never leave the newly compiled profile mislabeled as the old one.
+            val probe = if (compilation.isSuccess) {
+                runCatching { runJavaTshPipelineProfileProbe(profile, language) }
+            } else null
+
+            withContext(Dispatchers.Main) {
+                if (compilation.isSuccess) {
+                    activeJavaTshProfile = profile
+                    activeJavaTshConfigUri = null
+                    activeJavaTshConfigName = null
+                    processJavaTshProfileId = profile.id
+                    getSharedPreferences("tsh_pipeline_profiles", MODE_PRIVATE)
+                        .edit()
+                        .putString("java.profile", profile.id)
+                        .remove("java.externalConfigUri")
+                        .remove("java.externalConfigName")
+                        .apply()
+                    tshConfigurationStates["java"] = "READY"
+                    javaTshReady = true
+                    installTshHighlighterIfReady()
+                    editorView?.invalidate()
+                    applyTshThemeTokens()
+                    val report = probe?.getOrElse { diagnosticError ->
+                        "PIPELINE DIAGNOSTICS ERROR\n${diagnosticError.stackTraceToString()}"
+                    } ?: "Pipeline probe did not run."
+                    showResultDialog(
+                        "Java TSH 已切换：${profile.displayName}",
+                        report + "\n\n编辑器原文档已保留；新高亮器已重新绑定，后续绘制使用当前配置。"
+                    )
+                } else {
+                    // A failed compile leaves the engine's previous grammar snapshot intact.
+                    javaTshReady = engine.isGrammarLoaded("java")
+                    if (javaTshReady) installTshHighlighterIfReady()
+                    val error = compilation.exceptionOrNull()
+                    showResultDialog(
+                        "Java TSH 配置加载失败",
+                        "目标文件：assets/tsh/${profile.assetName}\n\n${error?.stackTraceToString() ?: "Unknown compiler failure"}"
+                    )
+                }
+            }
+        }
+    }
+
+    /**
+     * Exercises the real Java parser and each independent producer. Source ordinals:
+     * 0=Oniguruma Regex, 1=Regex State / Contains, 2=ATS selector, 3=Native Tree-sitter Query.
+     */
+    private fun runJavaTshPipelineProfileProbe(
+        profile: JavaTshPipelineProfile,
+        language: TSLanguage
+    ): String {
+        val sample = """
+            package com.example.pipeline;
+            import java.util.*;
+            import java.util.concurrent.CompletableFuture;
+
+            /** Full Java probe.
+             * @author Windbell
+             * @param input source text
+             * @return parsed result
+             * @throws IllegalArgumentException invalid input
+             * {@code @Deprecated}
+             */
+            @Deprecated
+            public sealed class PipelineProbe<T extends Number> permits RecordProbe {
+                private static final int MAX_BUFFER_SIZE = 0x7FFF;
+                private static final int MAX_CACHE_CAPACITY = 1024;
+                private static final long BINARY_MASK = 0b1010_0101L;
+                private final String message = "Hello \"Tree-sitter\"";
+                private final char marker = '\n';
+
+                public PipelineProbe(T input) {
+                    this.value = input;
+                }
+
+                private T value;
+
+                public T getValue(final int index, String fallback) {
+                    // TODO: cover comments and identifiers
+                    /* FIXME: nested lexical content */
+                    return value;
+                }
+
+                public void same(int same) { value = null; }
+
+                public void run() {
+                    List<String> names = new ArrayList<>();
+                    names.add("alpha");
+                    names.forEach(name -> System.out.println(name));
+                    Runnable task = this::execute;
+                    task.run();
+                    double ratio = 1.25e-3;
+                    double hexRatio = 0x1.8p1;
+                    long mask = 0xFF_FF_FF_FFL;
+                    boolean enabled = true && (ratio > 0);
+                    if (enabled) { execute(); } else { value = null; }
+                }
+
+                private void execute() {
+                    String text = ${"\"\"\""}
+                        Java text block
+                        Unicode: 中文 👨‍👩‍👧‍👦 𠮷
+                        ${"\"\"\""};
+                    throw new IllegalStateException(text);
+                }
+            }
+
+            record RecordProbe(int id, String label) {}
+            enum ProbeState { READY, RUNNING, FAILED }
+            interface ProbeContract { void execute(); }
+            """.trimIndent()
+
+        // Regex-only deliberately runs without constructing or passing a Tree-sitter tree.
+        val parser = if (profile == JavaTshPipelineProfile.REGEX_ONLY) {
+            null
+        } else {
+            TSParser.create().apply { setLanguage(language) }
+        }
+        var tree: TSTree? = null
+        try {
+            tree = parser?.parseString(sample)
+            if (profile != JavaTshPipelineProfile.REGEX_ONLY && tree == null) {
+                error("Tree-sitter Java parser returned a null tree.")
+            }
+            val diagnostics = WindbellTshEngine.instance
+                .computePipelineDiagnostics(tree, sample, "java")
+            val finalSpans = WindbellTshEngine.instance
+                .computeHighlights(tree, sample, "java")
+                val preview = android.text.SpannableStringBuilder(sample)
+                WindbellTshEngine.instance.applyHighlightSpansToSpannable(
+                    finalSpans, 0, sample, "java", preview
+                )
+                val foregroundSpans = preview.getSpans(
+                    0, preview.length, android.text.style.ForegroundColorSpan::class.java
+                )
+                val sourceCounts = (0..3).associateWith { source ->
+                    diagnostics.captures.count { it.source == source }
+                }
+                val regex = sourceCounts[0] ?: 0
+                val regexState = sourceCounts[1] ?: 0
+                val regexTotal = regex + regexState
+                val ats = sourceCounts[2] ?: 0
+                val query = sourceCounts[3] ?: 0
+                val parserDescription = tree?.rootNode?.type ?: "not invoked (Regex-only profile)"
+                val producerIsolationPassed = when (profile) {
+                    JavaTshPipelineProfile.REGEX_ONLY ->
+                        regexTotal > 0 && ats == 0 && query == 0
+                    JavaTshPipelineProfile.ATS_ONLY ->
+                        regexTotal == 0 && ats > 0 && query > 0
+                    JavaTshPipelineProfile.HYBRID,
+                    JavaTshPipelineProfile.BASELINE ->
+                        regexTotal > 0 && ats > 0 && query > 0
+                    JavaTshPipelineProfile.CUSTOM ->
+                        regexTotal + ats + query > 0
+                }
+                val passed = producerIsolationPassed &&
+                    finalSpans.isNotEmpty() && foregroundSpans.isNotEmpty()
+                val renderStatus = if (foregroundSpans.isNotEmpty()) "RENDER PASS" else "RENDER FAIL"
+                val report = StringBuilder()
+                report.appendLine("配置：" + profile.assetName.ifBlank { activeJavaTshConfigName ?: "External .tsh" })
+                report.appendLine("Java parser：$parserDescription")
+                report.appendLine("源代码：${sample.length} UTF-16 units / ${sample.length * 2} UTF-16LE bytes")
+                report.appendLine("原始 captures：${diagnostics.captures.size}")
+                report.appendLine("最终合成 spans：${finalSpans.size}")
+                report.appendLine("Android ForegroundColorSpan：${foregroundSpans.size} ($renderStatus)")
+                report.appendLine("Oniguruma Regex：${diagnostics.matchCounts[0] ?: 0} matches / $regex captures")
+                report.appendLine("Regex State / Contains：${diagnostics.matchCounts[1] ?: 0} matches / $regexState captures")
+                report.appendLine("Regex total captures：$regexTotal")
+                report.appendLine("ATS Selector：${diagnostics.matchCounts[2] ?: 0} matches / $ats captures")
+                report.appendLine("Native SCM Query：${diagnostics.matchCounts[3] ?: 0} matches / $query captures")
+                report.appendLine()
+                report.appendLine("Capture preview (first 24):")
+                val sourceLabels = mapOf(
+                    0 to "Oniguruma Regex",
+                    1 to "Regex State / Contains",
+                    2 to "ATS Selector",
+                    3 to "Native SCM Query"
+                )
+                val styleNames = WindbellTshEngine.instance
+                    .getStyleCatalog("java").associateBy { it.styleId }
+                diagnostics.captures.take(24).forEach { capture ->
+                    val start = (capture.startByte shr 1).coerceIn(0, sample.length)
+                    val end = (capture.endByte shr 1).coerceIn(start, sample.length)
+                    val snippet = sample.substring(start, end)
+                        .replace("\n", "\n")
+                        .replace("\r", "\\r")
+                    val style = styleNames[capture.styleId]?.name ?: "style#${capture.styleId}"
+                    val sourceName = sourceLabels[capture.source] ?: "source#${capture.source}"
+                    report.appendLine(
+                        "  [$sourceName p=${capture.priority} style=$style] \"$snippet\""
+                    )
+                }
+                report.appendLine()
+                report.appendLine(if (passed) "PIPELINE ISOLATION: PASS" else "PIPELINE ISOLATION: FAIL")
+                if (!passed) {
+                    report.appendLine("Expected producer counts do not match the selected profile. Inspect the compiler diagnostics and captures before treating this profile as valid.")
+                }
+            return report.toString()
+        } finally {
+            tree?.close()
+            parser?.close()
+        }
+    }
 
     /** Find the deepest named Java Tree-sitter node containing a UTF-16LE byte range. */
     private fun findSmallestNamedNode(root: TSNode, startByte: Int, endByte: Int): TSNode {
@@ -690,10 +1302,11 @@ class MainActivity : AppCompatActivity() {
     /** Reparse the editor's current source and report parser, captures and Android spans. */
     private fun runCursorCaptureDiagnostic() {
         val view = editorView
-        if (view == null || !javaTshReady) {
-            showResultDialog("TSH 捕获诊断", "编辑器或 Java TSH 尚未就绪。")
+        if (view == null) {
+            showResultDialog("TSH 捕获诊断", "编辑器尚未初始化。")
             return
         }
+        if (!requireJavaTshReady("TSH 捕获诊断")) return
         val source = view.getText()
         val lineNumber = view.getCursorLine().coerceIn(1, view.getLineCount())
         val lineStart = view.getLineStartOffset(lineNumber)
@@ -793,7 +1406,7 @@ class MainActivity : AppCompatActivity() {
                     report.appendLine("2) TSH native pipeline: " + captures.size + " raw captures · " +
                         String.format(Locale.US, "%.3f", queryNanos / 1_000_000.0) + " ms")
                     val sourceNames = mapOf(
-                        0 to "Oniguruma Regex", 1 to "Monarch",
+                        0 to "Oniguruma Regex", 1 to "Regex State / Contains",
                         2 to "ATS Selector", 3 to "Tree-sitter Query"
                     )
                     for (sourceId in 0..3) {
@@ -842,7 +1455,7 @@ class MainActivity : AppCompatActivity() {
                             "   " + sourceNames[span.source] +
                                 " [" + from + "," + to + ") " +
                                 (styles[span.styleId]?.name ?: "style#" + span.styleId) +
-                                " = " + symbolText.substring(from, to).replace("\n", "\\n")
+                                " = " + symbolText.substring(from, to).replace("\n", "\n")
                         )
                     }
                     if (symbolCaptures.isEmpty()) report.appendLine("NO SYMBOL CAPTURES: inspect TSH rule match, ATS selector, query predicate and parser grammar.")
@@ -872,8 +1485,22 @@ class MainActivity : AppCompatActivity() {
         applyTshThemeTokens()
     }
 
+    private fun requireJavaTshReady(feature: String): Boolean {
+        if (javaTshReady && WindbellTshEngine.instance.isGrammarLoaded("java")) return true
+        val parserState = languageRegistrationStates["Java"] ?: "NOT_REGISTERED"
+        val configState = tshConfigurationStates["java"] ?: "NOT_INITIALIZED"
+        showResultDialog(
+            "$feature：TSH 未就绪",
+            "Java Parser=$parserState\nJava TSH=$configState\n\n" +
+                nativeBootstrapReport() +
+                "\n请先修复原生库加载 / Parser 注册，或通过“Java TSH 配置 / 管道切换”重新加载有效配置。"
+        )
+        return false
+    }
+
     /** Browse all compiled schemes and their light/dark semantic colors. */
     private fun showTshSchemesDialog() {
+        if (!requireJavaTshReady("TSH Scheme 浏览器")) return
         val engine = WindbellTshEngine.instance
         val schemes = engine.listSchemes("java")
         if (schemes.isEmpty()) {
@@ -929,6 +1556,7 @@ class MainActivity : AppCompatActivity() {
      * 切换 TSH 白天/黑夜多态调色板
      */
     private fun toggleTshTheme() {
+        if (!requireJavaTshReady("TSH 主题切换")) return
         val engine = WindbellTshEngine.instance
         val nextDark = !engine.isDark("java")
         engine.setAppearance("java", nextDark)
@@ -951,7 +1579,7 @@ class MainActivity : AppCompatActivity() {
     private fun showTshCoreTestSuiteDialog() {
         val testOptions = arrayOf(
             "1. 🎨 Scheme / Style ID / UI Token 颜色映射",
-            "2. ⚡ Regex / Monarch / ATS / Native Query 四管线覆盖",
+            "2. ⚡ Regex / Regex State / ATS / Native Query 四管线覆盖",
             "3. 🧩 Tree-sitter Parser 与 TSH 配置注册审计",
             "4. 🧵 32 线程并发重入与资源释放压测"
         )
@@ -959,10 +1587,10 @@ class MainActivity : AppCompatActivity() {
             .setTitle("⚙️ Windbell-TSH 核心测试与诊断")
             .setItems(testOptions) { _, which ->
                 when (which) {
-                    0 -> runTshPaletteTest()
-                    1 -> runTshHybridCoverageTest()
+                    0 -> if (requireJavaTshReady("TSH Scheme / Style 测试")) runTshPaletteTest()
+                    1 -> if (requireJavaTshReady("TSH 四管线覆盖测试")) runTshHybridCoverageTest()
                     2 -> runTshParserRegistryTest()
-                    3 -> runTshConcurrencyTest()
+                    3 -> if (requireJavaTshReady("TSH 并发重入测试")) runTshConcurrencyTest()
                 }
             }
             .setNegativeButton("关闭", null)
@@ -978,16 +1606,23 @@ class MainActivity : AppCompatActivity() {
             val schemes = if (configState == "READY") WindbellTshEngine.instance.listSchemes(extension) else emptyList()
             val styles = if (configState == "READY") WindbellTshEngine.instance.getStyleCatalog(extension).size else 0
             val bindingClass = if (name == "C") "TSLanguage.loadLanguage" else "TSLanguage$name"
-            val nativeLibrary = "libtree-sitter-$extension.so"
-            report.appendLine("$name (.$extension): parser=$parserState · binding=$bindingClass · native=$nativeLibrary · tsh=$configState · schemes=${schemes.size} · styles=$styles")
+            val libraryName = "tree-sitter-$extension"
+            val nativeState = nativeLibraryStates[libraryName] ?: "NOT_LOADED"
+            val bindingState = languageRegistrationStates[name] ?: "NOT_REGISTERED"
+            report.appendLine(
+                "$name (.$extension): parser=$parserState · binding=$bindingClass ($bindingState) · " +
+                    "native=lib$libraryName.so ($nativeState) · tsh=$configState · schemes=${schemes.size} · styles=$styles"
+            )
             if (schemes.isNotEmpty()) report.appendLine("   " + schemes.joinToString())
         }
         report.appendLine()
-        report.appendLine("Editor language=$editorLanguageKey · attached=${activeTshHighlighter != null && editorView?.getSyntaxHighlighter() === activeTshHighlighter}")
+        report.appendLine(nativeBootstrapReport())
+        report.appendLine("Editor language=$editorLanguageKey · TSH ready=$javaTshReady · attached=${activeTshHighlighter != null && editorView?.getSyntaxHighlighter() === activeTshHighlighter}")
         showResultDialog("Parser / TSH 注册审计", report.toString())
     }
 
     private fun runTshPaletteTest() {
+        if (!requireJavaTshReady("TSH Scheme / Style 测试")) return
         val report = StringBuilder()
         report.append("=== 🎨 TSH 调色板映射测试 ===\n\n")
 
@@ -1032,6 +1667,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun runTshHybridCoverageTest() {
+        if (!requireJavaTshReady("TSH 四管线覆盖测试")) return
         val pd = ProgressDialog(this).apply {
             setMessage("正在测试双通道扫描线合并仲裁...")
             show()
@@ -1078,7 +1714,7 @@ class MainActivity : AppCompatActivity() {
             report.append("=== ⚡ 四管线混合扫描线合成报告 ===\n\n")
             report.append("源码字符总数: ${text.length} (UTF-16LE bytes: ${text.length * 2})\n")
             report.append("原始候选捕获: ${diagnostics.captures.size} · 最终渲染 Span: ${spans.size}\n")
-            val pipelineNames = mapOf(0 to "Oniguruma", 1 to "Monarch", 2 to "ATS", 3 to "Native Query")
+            val pipelineNames = mapOf(0 to "Oniguruma", 1 to "Regex State / Contains", 2 to "ATS", 3 to "Native Query")
             for (id in 0..3) {
                 report.appendLine("${pipelineNames.getValue(id)} matches=${diagnostics.matchCounts[id] ?: 0} captures=${diagnostics.captures.count { it.source == id }}")
             }
@@ -1087,7 +1723,7 @@ class MainActivity : AppCompatActivity() {
             for (span in spans.take(12)) {
                 val startChar = span.startByte shr 1
                 val endChar = span.endByte shr 1
-                val snippet = text.substring(startChar, minOf(endChar, text.length)).replace("\n", "\\n")
+                val snippet = text.substring(startChar, minOf(endChar, text.length)).replace("\n", "\n")
                 report.append("  [${span.startByte}..${span.endByte}] Id:${span.styleId} -> \"$snippet\"\n")
             }
 
@@ -1099,6 +1735,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun runTshConcurrencyTest() {
+        if (!requireJavaTshReady("TSH 并发重入测试")) return
         val pd = ProgressDialog(this).apply {
             setTitle("TSH Native 并发重入压测")
             setMessage("32 个线程执行 Tree-sitter parse + 四管线高亮 + 释放…")
@@ -1172,8 +1809,13 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
-        outState.putString("tsh.selectedScheme", WindbellTshEngine.instance.getSelectedScheme("java"))
-        outState.putBoolean("tsh.isDark", WindbellTshEngine.instance.isDark("java"))
+        outState.putString("tsh.pipelineProfile", activeJavaTshProfile.id)
+        activeJavaTshConfigUri?.let { outState.putString("tsh.externalConfigUri", it.toString()) }
+        activeJavaTshConfigName?.let { outState.putString("tsh.externalConfigName", it) }
+        if (javaTshReady && WindbellTshEngine.instance.isGrammarLoaded("java")) {
+            outState.putString("tsh.selectedScheme", WindbellTshEngine.instance.getSelectedScheme("java"))
+            outState.putBoolean("tsh.isDark", WindbellTshEngine.instance.isDark("java"))
+        }
         super.onSaveInstanceState(outState)
     }
 

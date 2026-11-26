@@ -18,6 +18,9 @@
 
 #include "ts_tree.h"
 
+// Release Tree-sitter-owned memory through its configured allocator.
+#include "alloc.h"
+
 #include "utils/ts_misc.h"
 #include "utils/ts_obj_utils.h"
 #include "utils/ts_preconditions.h"
@@ -65,7 +68,7 @@ static jobjectArray TSTree_changedRanges(JNIEnv *env,
       ts_tree_get_changed_ranges((TSTree *)oldTree, (TSTree *)tree, &count);
   if (count == 0) {
     if (ranges != nullptr) {
-      free(ranges);
+      ts_free(ranges);
     }
     return nullptr;
   }
@@ -78,7 +81,7 @@ static jobjectArray TSTree_changedRanges(JNIEnv *env,
     env->SetObjectArrayElement(arr, (jint)i, _marshalRange(env, *r));
   }
 
-  free(ranges);
+  ts_free(ranges);
 
   return arr;
 }
@@ -92,7 +95,7 @@ static jobjectArray TSTree_includedRanges(JNIEnv *env,
   TSRange *ranges = ts_tree_included_ranges((TSTree *)tree, &count);
   if (count == 0) {
     if (ranges != nullptr) {
-      free(ranges);
+      ts_free(ranges);
     }
 
     return nullptr;
@@ -106,7 +109,7 @@ static jobjectArray TSTree_includedRanges(JNIEnv *env,
     env->SetObjectArrayElement(arr, (jint)i, _marshalRange(env, *r));
   }
 
-  free(ranges);
+  ts_free(ranges);
 
   return arr;
 }
