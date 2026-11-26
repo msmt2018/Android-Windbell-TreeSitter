@@ -436,8 +436,15 @@ class MainActivity : AppCompatActivity() {
                 installTshHighlighterIfReady()
                 currentLanguage?.let { lang ->
                     parser?.close()
-                    parser = TSParser.create()
-                    parser?.setLanguage(lang)
+                    parser = if (nativeLibraryStates["android-tree-sitter"] == "READY") {
+                        runCatching {
+                            TSParser.create().also { it.setLanguage(lang) }
+                        }.onFailure { error ->
+                            Log.e(TAG, "Unable to switch console parser to $currentLanguageKey", error)
+                        }.getOrNull()
+                    } else {
+                        null
+                    }
                 }
                 val text = content.code.text?.toString() ?: ""
                 if (text.isNotEmpty()) {
