@@ -689,14 +689,18 @@ class MainActivity : AppCompatActivity() {
                 sb.append("Setup: ${setupDur}ms | Parse: ${parseDur}ms | Avg: ${avgParse / parseCount}ms\n\n")
 
                 if (tree != null) {
-                    val ext = if (currentLanguageKey.equals("Kotlin", ignoreCase = true)) "kt" else "java"
-                    val spans = WindbellTshEngine.instance.computeHighlights(tree, codeText, ext)
-                    sb.append("--- ⚡ TSH 原生 AST+正则双通道高亮 Span (总数: ${spans.size}) ---\n")
-                    for (i in 0 until minOf(spans.size, 15)) {
-                        val sp = spans[i]
-                        sb.append("  🏷️ Span [${sp.startByte}..${sp.endByte}] StyleID: ${sp.styleId} Flags: ${sp.fontFlags}\n")
+                    val ext = if (currentLanguageKey.equals("Kotlin", ignoreCase = true)) "kotlin" else "java"
+                    if (tshConfigurationStates[ext] == "READY") {
+                        val spans = WindbellTshEngine.instance.computeHighlights(tree, codeText, ext)
+                        sb.append("--- ⚡ TSH 原生 AST+正则双通道高亮 Span (总数: ${spans.size}) ---\n")
+                        for (i in 0 until minOf(spans.size, 15)) {
+                            val sp = spans[i]
+                            sb.append("  🏷️ Span [${sp.startByte}..${sp.endByte}] StyleID: ${sp.styleId} Flags: ${sp.fontFlags}\n")
+                        }
+                        if (spans.size > 15) sb.append("  ... 以及额外 ${spans.size - 15} 个高亮 Span\n\n")
+                    } else {
+                        sb.append("--- TSH unavailable for .$ext: ${tshConfigurationStates[ext] ?: "NOT_INITIALIZED"} ---\n")
                     }
-                    if (spans.size > 15) sb.append("  ... 以及额外 ${spans.size - 15} 个高亮 Span\n\n")
 
                     sb.append("--- 🌳 全局 AST 完整节点树 ---\n")
                     tree.rootNode.walk().use { cursor ->
@@ -1662,8 +1666,10 @@ class MainActivity : AppCompatActivity() {
 
     override fun onSaveInstanceState(outState: Bundle) {
         outState.putString("tsh.pipelineProfile", activeJavaTshProfile.id)
-        outState.putString("tsh.selectedScheme", WindbellTshEngine.instance.getSelectedScheme("java"))
-        outState.putBoolean("tsh.isDark", WindbellTshEngine.instance.isDark("java"))
+        if (javaTshReady && WindbellTshEngine.instance.isGrammarLoaded("java")) {
+            outState.putString("tsh.selectedScheme", WindbellTshEngine.instance.getSelectedScheme("java"))
+            outState.putBoolean("tsh.isDark", WindbellTshEngine.instance.isDark("java"))
+        }
         super.onSaveInstanceState(outState)
     }
 
