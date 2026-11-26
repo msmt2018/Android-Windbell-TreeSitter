@@ -92,7 +92,7 @@ class JavaTshPipelineProfilesTest {
                     if (profile != 0) {
                         val expectedQueryPriorities = listOf(
                             136, 135, 132, 128, 127, 125, 123, 122, 121, 120,
-                            119, 118, 117, 116, 115, 112, 98, 96, 92, 66, 56
+                            119, 118, 117, 116, 115, 112, 98, 96, 92, 66, 60, 56
                         )
                         expectedQueryPriorities.forEach { priority ->
                             assertTrue(
