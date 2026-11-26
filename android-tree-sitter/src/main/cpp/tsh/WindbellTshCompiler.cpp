@@ -2745,7 +2745,7 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                                 // All production query examples use backtick raw strings.
                                 query_source_content_offset =
                                     g_tsh_last_source_offset +
-                                    (g_tsh_last_source_offset < UINT32_MAX ? 1U : 0U);
+                                    (1U);
                             } else if (field.text == "enabled") {
                                 if (value.text == "true") program.enabled = true;
                                 else if (value.text == "false") program.enabled = false;
