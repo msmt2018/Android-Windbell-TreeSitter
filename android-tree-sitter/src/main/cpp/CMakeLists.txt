@@ -649,6 +649,57 @@ if(TSH_PARSER_REDUCE_PATCH_POSITION LESS 0)
     message(FATAL_ERROR "Pinned Tree-sitter parser reduce patch did not apply")
 endif()
 
+# GLR reductions compare several popped slices that collapse into the same
+# stack version. Build each candidate parent in its owned slice once, compare
+# it with the current parent, then keep or release that same node. This avoids
+# copying child pointers into scratch_trees and rebuilding a winning parent.
+set(TSH_PARSER_REDUCE_CANDIDATE_OLD [=[      if (ts_parser__select_children(
+        self,
+        ts_subtree_from_mut(parent),
+        &next_slice_children
+      )) {
+        ts_subtree_array_clear(&self->tree_pool, &self->trailing_extras);
+        ts_subtree_release(&self->tree_pool, ts_subtree_from_mut(parent));
+        array_swap(&self->trailing_extras, &self->trailing_extras2);
+        parent = ts_subtree_new_node(
+          symbol, &next_slice_children, production_id, self->language
+        );
+      } else {
+        array_clear(&self->trailing_extras2);
+        ts_subtree_array_delete(&self->tree_pool, &next_slice.subtrees);
+      }]=])
+set(TSH_PARSER_REDUCE_CANDIDATE_NEW [=[      // Build the candidate parent from its owned slice exactly once. The old
+      // path summarized a scratch copy for comparison, then summarized and
+      // rebuilt the same parent again when the candidate won. Reuse this node
+      // as the final parent, or release it when the existing parent wins.
+      MutableSubtree next_parent = ts_subtree_new_node(
+        symbol, &next_slice_children, production_id, self->language
+      );
+      if (ts_parser__select_tree(
+        self,
+        ts_subtree_from_mut(parent),
+        ts_subtree_from_mut(next_parent)
+      )) {
+        ts_subtree_array_clear(&self->tree_pool, &self->trailing_extras);
+        ts_subtree_release(&self->tree_pool, ts_subtree_from_mut(parent));
+        array_swap(&self->trailing_extras, &self->trailing_extras2);
+        parent = next_parent;
+      } else {
+        array_clear(&self->trailing_extras2);
+        ts_subtree_release(&self->tree_pool, ts_subtree_from_mut(next_parent));
+      }]=])
+string(REPLACE "${TSH_PARSER_REDUCE_CANDIDATE_OLD}"
+    "${TSH_PARSER_REDUCE_CANDIDATE_NEW}"
+    TSH_PARSER_SOURCE "${TSH_PARSER_SOURCE}")
+string(FIND "${TSH_PARSER_SOURCE}" "MutableSubtree next_parent = ts_subtree_new_node("
+    TSH_PARSER_REDUCE_CANDIDATE_POSITION)
+string(FIND "${TSH_PARSER_SOURCE}" "ts_parser__select_children("
+    TSH_PARSER_SELECT_CHILDREN_REMAINS)
+if(TSH_PARSER_REDUCE_CANDIDATE_POSITION LESS 0 OR
+   NOT TSH_PARSER_SELECT_CHILDREN_REMAINS LESS 0)
+    message(FATAL_ERROR "Pinned Tree-sitter GLR reduce candidate reuse patch did not apply")
+endif()
+
 
 # Parser phase telemetry: measure lexer callback execution separately from
 # reduction work and parent-node construction. clock() reports process CPU
@@ -659,7 +710,7 @@ string(REPLACE
     TSH_PARSER_SOURCE "${TSH_PARSER_SOURCE}")
 string(REPLACE
     "  unsigned operation_count;\n"
-    "  unsigned operation_count;\n  uint64_t lex_calls;\n  uint64_t lex_ticks;\n  uint64_t reduce_calls;\n  uint64_t reduce_ticks;\n  uint64_t ast_parent_nodes;\n  uint64_t ast_parent_ticks;\n  uint64_t reduce_child_visits;\n"
+    "  unsigned operation_count;\n  uint64_t lex_calls;\n  uint64_t lex_ticks;\n  uint64_t reduce_calls;\n  uint64_t reduce_ticks;\n  uint64_t ast_parent_nodes;\n  uint64_t ast_parent_ticks;\n  uint64_t reduce_child_visits;\n  uint64_t reduce_candidate_parent_nodes;\n  uint64_t reduce_candidate_parent_ticks;\n  uint64_t reduce_candidate_child_visits;\n"
     TSH_PARSER_SOURCE "${TSH_PARSER_SOURCE}")
 string(REPLACE
     "static StackVersion ts_parser__reduce(\n  TSParser *self,\n  StackVersion version,\n  TSSymbol symbol,\n  uint32_t count,\n  int dynamic_precedence,\n  uint16_t production_id,\n  bool is_fragile,\n  bool end_of_non_terminal_extra\n) {\n  uint32_t initial_version_count = ts_stack_version_count(self->stack);"
@@ -670,8 +721,8 @@ string(REPLACE
     "#ifndef NDEBUG\n    const uint32_t ast_child_count = children.size;\n    const clock_t ast_started = clock();\n#endif\n    MutableSubtree parent = ts_subtree_new_node(\n      symbol, &children, production_id, self->language\n    );\n#ifndef NDEBUG\n    self->ast_parent_nodes++;\n    self->ast_parent_ticks += (uint64_t)(clock() - ast_started);\n    self->reduce_child_visits += ast_child_count;\n#endif"
     TSH_PARSER_SOURCE "${TSH_PARSER_SOURCE}")
 string(REPLACE
-    "        parent = ts_subtree_new_node(\n          symbol, &next_slice_children, production_id, self->language\n        );"
-    "#ifndef NDEBUG\n        const uint32_t ast_child_count = next_slice_children.size;\n        const clock_t ast_started = clock();\n#endif\n        parent = ts_subtree_new_node(\n          symbol, &next_slice_children, production_id, self->language\n        );\n#ifndef NDEBUG\n        self->ast_parent_nodes++;\n        self->ast_parent_ticks += (uint64_t)(clock() - ast_started);\n        self->reduce_child_visits += ast_child_count;\n#endif"
+    "      MutableSubtree next_parent = ts_subtree_new_node(\n        symbol, &next_slice_children, production_id, self->language\n      );"
+    "#ifndef NDEBUG\n      const uint32_t candidate_child_count = next_slice_children.size;\n      const clock_t candidate_parent_started = clock();\n#endif\n      MutableSubtree next_parent = ts_subtree_new_node(\n        symbol, &next_slice_children, production_id, self->language\n      );\n#ifndef NDEBUG\n      self->reduce_candidate_parent_nodes++;\n      self->reduce_candidate_parent_ticks += (uint64_t)(clock() - candidate_parent_started);\n      self->reduce_candidate_child_visits += candidate_child_count;\n#endif"
     TSH_PARSER_SOURCE "${TSH_PARSER_SOURCE}")
 string(REPLACE
     "  return ts_stack_version_count(self->stack) > initial_version_count\n    ? initial_version_count\n    : STACK_VERSION_NONE;\n}"
@@ -683,11 +734,11 @@ string(REPLACE
     TSH_PARSER_SOURCE "${TSH_PARSER_SOURCE}")
 string(REPLACE
     "  self->operation_count = 0;\n\n  if (ts_parser_has_outstanding_parse(self)) {"
-    "  self->operation_count = 0;\n  if (!ts_parser_has_outstanding_parse(self)) {\n    self->lex_calls = self->lex_ticks = 0;\n    self->reduce_calls = self->reduce_ticks = 0;\n    self->ast_parent_nodes = self->ast_parent_ticks = 0;\n    self->reduce_child_visits = 0;\n  }\n\n  if (ts_parser_has_outstanding_parse(self)) {"
+    "  self->operation_count = 0;\n  if (!ts_parser_has_outstanding_parse(self)) {\n    self->lex_calls = self->lex_ticks = 0;\n    self->reduce_calls = self->reduce_ticks = 0;\n    self->ast_parent_nodes = self->ast_parent_ticks = 0;\n    self->reduce_child_visits = 0;\n    self->reduce_candidate_parent_nodes = self->reduce_candidate_parent_ticks = 0;\n    self->reduce_candidate_child_visits = 0;\n  }\n\n  if (ts_parser_has_outstanding_parse(self)) {"
     TSH_PARSER_SOURCE "${TSH_PARSER_SOURCE}")
 string(REPLACE
     "balance:\n  ts_assert(self->finished_tree.ptr);"
-    "balance:\n#ifndef NDEBUG\n  LOG(\"parser_work lexer_calls:%\" PRIu64 \" lexer_cpu_ms:%.3f reduce_calls:%\" PRIu64 \" reduce_cpu_ms:%.3f ast_parent_nodes:%\" PRIu64 \" ast_parent_cpu_ms:%.3f reduce_child_visits:%\" PRIu64,\n    self->lex_calls, (double)self->lex_ticks * 1000.0 / CLOCKS_PER_SEC,\n    self->reduce_calls, (double)self->reduce_ticks * 1000.0 / CLOCKS_PER_SEC,\n    self->ast_parent_nodes, (double)self->ast_parent_ticks * 1000.0 / CLOCKS_PER_SEC,\n    self->reduce_child_visits);\n#endif\n  ts_assert(self->finished_tree.ptr);"
+    "balance:\n#ifndef NDEBUG\n  LOG(\"parser_work lexer_calls:%\" PRIu64 \" lexer_cpu_ms:%.3f reduce_calls:%\" PRIu64 \" reduce_cpu_ms:%.3f ast_parent_nodes:%\" PRIu64 \" ast_parent_cpu_ms:%.3f reduce_child_visits:%\" PRIu64 \" reduce_candidate_parents:%\" PRIu64 \" reduce_candidate_cpu_ms:%.3f reduce_candidate_child_visits:%\" PRIu64,\n    self->lex_calls, (double)self->lex_ticks * 1000.0 / CLOCKS_PER_SEC,\n    self->reduce_calls, (double)self->reduce_ticks * 1000.0 / CLOCKS_PER_SEC,\n    self->ast_parent_nodes, (double)self->ast_parent_ticks * 1000.0 / CLOCKS_PER_SEC,\n    self->reduce_child_visits,\n    self->reduce_candidate_parent_nodes,\n    (double)self->reduce_candidate_parent_ticks * 1000.0 / CLOCKS_PER_SEC,\n    self->reduce_candidate_child_visits);\n#endif\n  ts_assert(self->finished_tree.ptr);"
     TSH_PARSER_SOURCE "${TSH_PARSER_SOURCE}")
 
 foreach(TSH_METRIC_ANCHOR
@@ -699,7 +750,10 @@ foreach(TSH_METRIC_ANCHOR
     "#include <time.h>"
     "self->reduce_ticks += (uint64_t)(clock() - reduce_started);"
     "self->ast_parent_ticks += (uint64_t)(clock() - ast_started);"
-    "self->reduce_child_visits += ast_child_count;")
+    "self->reduce_child_visits += ast_child_count;"
+    "self->reduce_candidate_parent_nodes++;"
+    "self->reduce_candidate_parent_ticks += (uint64_t)(clock() - candidate_parent_started);"
+    "self->reduce_candidate_child_visits += candidate_child_count;")
   string(FIND "${TSH_PARSER_SOURCE}" "${TSH_METRIC_ANCHOR}" TSH_METRIC_POSITION)
   if(TSH_METRIC_POSITION LESS 0)
     message(FATAL_ERROR "Tree-sitter parser phase telemetry patch did not apply: ${TSH_METRIC_ANCHOR}")
