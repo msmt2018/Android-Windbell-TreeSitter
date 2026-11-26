@@ -311,7 +311,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun requireJavaTshReady(feature: String): Boolean {
-        val parserReady = languageMap["Java"]?.self?.let { it != 0L } == true
+        val parserReady = languageMap["Java"]?.getNativeObject()?.let { it != 0L } == true
         val configState = tshConfigurationStates["java"] ?: "INITIALIZING"
         if (parserReady && javaTshReady && WindbellTshEngine.instance.isGrammarLoaded("java")) {
             return true
