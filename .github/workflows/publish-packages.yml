@@ -1,26 +1,20 @@
-name: Publish GitHub Packages
+name: Publish to JitPack
 
 on:
   workflow_dispatch:
     inputs:
       version:
-        description: Maven package version
+        description: Release tag (use auto for yyyyMMdd-<7-character commit hash>)
         required: true
-        default: 0.1.0
+        default: auto
         type: string
 
 permissions:
-  contents: read
-  packages: write
-
-env:
-  ANDROID_NDK_REVISION: '29.0.14206865'
-  ANDROID_CMAKE_VERSION: '3.31.6'
-  ANDROID_BUILD_TOOLS_VERSION: '35.0.0'
+  contents: write
 
 jobs:
-  publish:
-    name: Publish Maven packages
+  release:
+    name: Create JitPack release tag
     runs-on: ubuntu-latest
 
     steps:
@@ -28,136 +22,54 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          submodules: recursive
 
-      - name: Set up JDK 17
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: "17"
-          cache: gradle
-
-      - name: Install pinned Android NDK, CMake and Build Tools
-        timeout-minutes: 90
+      - name: Create release tag
+        id: release
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
         shell: bash
         run: |
           set -Eeuo pipefail
-          sdk_root="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
-          if [[ -z "$sdk_root" ]]; then
-            echo "::error::ANDROID_SDK_ROOT/ANDROID_HOME is not configured"
+
+          if [[ "$INPUT_VERSION" == "auto" ]]; then
+            version="$(date -u +%Y%m%d)-$(git rev-parse --short=7 HEAD)"
+          else
+            version="$INPUT_VERSION"
+          fi
+
+          if [[ ! "$version" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
+            echo "::error::Invalid release tag: $version"
             exit 1
           fi
-          sdkmanager="$sdk_root/cmdline-tools/latest/bin/sdkmanager"
-          if [[ ! -x "$sdkmanager" ]]; then
-            sdkmanager="$(command -v sdkmanager || true)"
-          fi
-          if [[ -z "$sdkmanager" || ! -x "$sdkmanager" ]]; then
-            echo "::error::Android sdkmanager was not found"
+
+          if git rev-parse --verify --quiet "refs/tags/$version" >/dev/null; then
+            echo "::error::Tag $version already exists. Use a new version."
             exit 1
           fi
 
-          yes | "$sdkmanager" --licenses >/dev/null || true
-          "$sdkmanager" --install \
-            "ndk;$ANDROID_NDK_REVISION" \
-            "cmake;$ANDROID_CMAKE_VERSION" \
-            "build-tools;$ANDROID_BUILD_TOOLS_VERSION"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$version" -m "Release $version"
+          git push origin "refs/tags/$version"
 
-          ndk_path="$sdk_root/ndk/$ANDROID_NDK_REVISION"
-          ndk_revision="$(sed -n 's/^Pkg.Revision = //p' "$ndk_path/source.properties" | head -n 1)"
-          if [[ "$ndk_revision" != "$ANDROID_NDK_REVISION" ]]; then
-            echo "::error::Expected NDK $ANDROID_NDK_REVISION, received $ndk_revision"
-            exit 1
-          fi
-          echo "ANDROID_NDK_HOME=$ndk_path" >> "$GITHUB_ENV"
-          echo "ANDROID_NDK_ROOT=$ndk_path" >> "$GITHUB_ENV"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
 
-          export PATH="$sdk_root/cmake/$ANDROID_CMAKE_VERSION/bin:$PATH"
-          echo "$sdk_root/cmake/$ANDROID_CMAKE_VERSION/bin" >> "$GITHUB_PATH"
-          cmake --version
-          "$sdk_root/build-tools/$ANDROID_BUILD_TOOLS_VERSION/aapt" version
-
-      - name: Install native build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential cargo nodejs npm ninja-build
-
-      - name: Install C++ grammar dependencies
-        timeout-minutes: 30
-        working-directory: grammars/cpp
-        run: npm install
-
-      - name: Enable Gradle wrapper
-        run: chmod +x gradlew
-
-      - name: Publish selected packages
+      - name: Create GitHub release
         env:
-          GITHUB_ACTOR: ${{ github.actor }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITHUB_REPOSITORY_OWNER: ${{ github.repository_owner }}
-          GITHUB_REPOSITORY: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.release.outputs.version }}
+        run: gh release create "$VERSION" --generate-notes
+
+      - name: Publish instructions
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
         run: |
-          ./gradlew \
-            :annotations:publishReleasePublicationToGitHubPackagesRepository \
-            :android-tree-sitter:publishReleasePublicationToGitHubPackagesRepository \
-            :tree-sitter-aidl:publishReleasePublicationToGitHubPackagesRepository \
-            :tree-sitter-arm64:publishReleasePublicationToGitHubPackagesRepository \
-            :tree-sitter-asciidoc:publishReleasePublicationToGitHubPackagesRepository \
-            :tree-sitter-asm:publishReleasePublicationToGitHubPackagesRepository \
-            :tree-sitter-bash:publishReleasePublicationToGitHubPackagesRepository \
-            :tree-sitter-c:publishReleasePublicationToGitHubPackagesRepository \
-            :tree-sitter-cmake:publishReleasePublicationToGitHubPackagesRepository \
-            :tree-sitter-containerfile:publishReleasePublicationToGitHubPackagesRepository \
-            :tree-sitter-cpp:publishReleasePublicationToGitHubPackagesRepository \
-            :tree-sitter-csharp:publishReleasePublicationToGitHubPackagesRepository \
-            :tree-sitter-csv:publishReleasePublicationToGitHubPackagesRepository \
-            :tree-sitter-dart:publishReleasePublicationToGitHubPackagesRepository \
-            :tree-sitter-diff:publishReleasePublicationToGitHubPackagesRepository \
-            :tree-sitter-disassembly:publishReleasePublicationToGitHubPackagesRepository \
-            :tree-sitter-dockerfile:publishReleasePublicationToGitHubPackagesRepository \
-            :tree-sitter-gdb:publishReleasePublicationToGitHubPackagesRepository \
-            :tree-sitter-git_rebase:publishReleasePublicationToGitHubPackagesRepository \
-            :tree-sitter-gitattributes:publishReleasePublicationToGitHubPackagesRepository \
-            :tree-sitter-gitcommit:publishReleasePublicationToGitHubPackagesRepository \
-            :tree-sitter-gitignore:publishReleasePublicationToGitHubPackagesRepository \
-            :tree-sitter-go:publishReleasePublicationToGitHubPackagesRepository \
-            :tree-sitter-gomod:publishReleasePublicationToGitHubPackagesRepository \
-            :tree-sitter-graphql:publishReleasePublicationToGitHubPackagesRepository \
-            :tree-sitter-groovy:publishReleasePublicationToGitHubPackagesRepository \
-            :tree-sitter-ini:publishReleasePublicationToGitHubPackagesRepository \
-            :tree-sitter-java:publishReleasePublicationToGitHubPackagesRepository \
-            :tree-sitter-javascript:publishReleasePublicationToGitHubPackagesRepository \
-            :tree-sitter-jsdoc:publishReleasePublicationToGitHubPackagesRepository \
-            :tree-sitter-json:publishReleasePublicationToGitHubPackagesRepository \
-            :tree-sitter-kotlin:publishReleasePublicationToGitHubPackagesRepository \
-            :tree-sitter-llvm:publishReleasePublicationToGitHubPackagesRepository \
-            :tree-sitter-llvm_mir:publishReleasePublicationToGitHubPackagesRepository \
-            :tree-sitter-logcat:publishReleasePublicationToGitHubPackagesRepository \
-            :tree-sitter-lua:publishReleasePublicationToGitHubPackagesRepository \
-            :tree-sitter-make:publishReleasePublicationToGitHubPackagesRepository \
-            :tree-sitter-markdwon:publishReleasePublicationToGitHubPackagesRepository \
-            :tree-sitter-php:publishReleasePublicationToGitHubPackagesRepository \
-            :tree-sitter-properties:publishReleasePublicationToGitHubPackagesRepository \
-            :tree-sitter-proto:publishReleasePublicationToGitHubPackagesRepository \
-            :tree-sitter-python:publishReleasePublicationToGitHubPackagesRepository \
-            :tree-sitter-regex:publishReleasePublicationToGitHubPackagesRepository \
-            :tree-sitter-requirements:publishReleasePublicationToGitHubPackagesRepository \
-            :tree-sitter-rst:publishReleasePublicationToGitHubPackagesRepository \
-            :tree-sitter-ruby:publishReleasePublicationToGitHubPackagesRepository \
-            :tree-sitter-rust:publishReleasePublicationToGitHubPackagesRepository \
-            :tree-sitter-scss:publishReleasePublicationToGitHubPackagesRepository \
-            :tree-sitter-smali:publishReleasePublicationToGitHubPackagesRepository \
-            :tree-sitter-sql:publishReleasePublicationToGitHubPackagesRepository \
-            :tree-sitter-ssh:publishReleasePublicationToGitHubPackagesRepository \
-            :tree-sitter-starlark:publishReleasePublicationToGitHubPackagesRepository \
-            :tree-sitter-svelte:publishReleasePublicationToGitHubPackagesRepository \
-            :tree-sitter-swift:publishReleasePublicationToGitHubPackagesRepository \
-            :tree-sitter-toml:publishReleasePublicationToGitHubPackagesRepository \
-            :tree-sitter-typescript:publishReleasePublicationToGitHubPackagesRepository \
-            :tree-sitter-vue:publishReleasePublicationToGitHubPackagesRepository \
-            :tree-sitter-xml:publishReleasePublicationToGitHubPackagesRepository \
-            :tree-sitter-yaml:publishReleasePublicationToGitHubPackagesRepository \
-            :tree-sitter-zsh:publishReleasePublicationToGitHubPackagesRepository \
-            -PreleaseVersion=${{ inputs.version }} \
-            --no-daemon \
-            --parallel \
-            --stacktrace
+          {
+            echo "## JitPack release created"
+            echo
+            echo "- Version: `$VERSION`"
+            echo "- JitPack build: https://jitpack.io/#msmt2018/Android-Windbell-TreeSitter/$VERSION"
+            echo "- Multi-module coordinates: `com.github.msmt2018.Android-Windbell-TreeSitter:<module>:$VERSION`"
+            echo
+            echo "JitPack builds and caches artifacts from this Git tag on demand; this workflow does not upload Maven packages."
+          } >> "$GITHUB_STEP_SUMMARY"
