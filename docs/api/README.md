@@ -4,6 +4,10 @@
 
 This directory is a source-oriented API reference. Its organization follows JavaDoc/KDoc conventions: type purpose, ownership, parameter and return semantics, failure behavior, and lifecycle notes. Public signatures remain defined by the source files; when a detail is not stated or enforced there, this reference marks it as unspecified rather than inventing a contract.
 
+## Source coverage
+
+- [Complete Java/Kotlin source inventory](source-inventory.md) — every source file in the requested package tree.
+
 ## Packages
 
 | Reference | Package | Responsibility |
