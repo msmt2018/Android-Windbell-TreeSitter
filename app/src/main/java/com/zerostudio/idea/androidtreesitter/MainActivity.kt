@@ -123,7 +123,7 @@ class MainActivity : AppCompatActivity() {
                 check(language.getNativeObject() != 0L) { "$libraryName returned a null TSLanguage pointer" }
                 languageMap[displayName] = language
                 nativeLibraryStates[libraryName] = "READY"
-                Log.i(TAG, "Loaded lib$libraryName.so; ABI=${language.abiVersion}")
+                Log.i(TAG, "Loaded lib$libraryName.so; ABI=${language.getLanguageVersion()}")
             } catch (error: Throwable) {
                 nativeLibraryStates[libraryName] = "FAILED: ${error.javaClass.simpleName}: ${error.message}"
                 Log.e(TAG, "Unable to load/register lib$libraryName.so", error)
