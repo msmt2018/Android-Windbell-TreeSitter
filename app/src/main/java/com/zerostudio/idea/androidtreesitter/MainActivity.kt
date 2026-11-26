@@ -402,8 +402,19 @@ class MainActivity : AppCompatActivity() {
         content.code.isSaveEnabled = false
         content.ast.isSaveEnabled = false
 
-        content.tsMeta.text = "Tree Sitter Language ABI: " + TreeSitter.getLanguageVersion()
-        content.tsVersion.text = "Tree Sitter Core Engine: " + TreeSitter.getEngineVersion()
+        val coreLoaded = nativeLibraryStates["android-tree-sitter"] == "READY"
+        content.tsMeta.text = if (coreLoaded) {
+            runCatching { "Tree Sitter Language ABI: " + TreeSitter.getLanguageVersion() }
+                .getOrElse { "Tree Sitter Language ABI: UNAVAILABLE (${it.message})" }
+        } else {
+            "Tree Sitter Language ABI: UNAVAILABLE (libandroid-tree-sitter.so not loaded)"
+        }
+        content.tsVersion.text = if (coreLoaded) {
+            runCatching { "Tree Sitter Core Engine: " + TreeSitter.getEngineVersion() }
+                .getOrElse { "Tree Sitter Core Engine: UNAVAILABLE (${it.message})" }
+        } else {
+            "Tree Sitter Core Engine: UNAVAILABLE (libandroid-tree-sitter.so not loaded)"
+        }
 
         content.code.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
@@ -561,6 +572,7 @@ class MainActivity : AppCompatActivity() {
 
     /** Applies only UI colors explicitly declared by the active .tsh scheme. */
     private fun applyTshThemeTokens() {
+        if (!javaTshReady) return
         val engine = WindbellTshEngine.instance
         val tokens = engine.getThemeTokens("java")
         editorView?.let { view ->
