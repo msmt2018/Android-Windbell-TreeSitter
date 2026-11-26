@@ -183,6 +183,9 @@ class WindbellTshEngine private constructor() {
         val darkColor: Int,
         val lightFontFlags: Int,
         val darkFontFlags: Int,
+        /** Per-appearance attributes explicitly set or cleared by this style. */
+        val lightFontDefinedMask: Int = lightFontFlags,
+        val darkFontDefinedMask: Int = darkFontFlags,
         val hasLightColor: Boolean,
         val hasDarkColor: Boolean,
         val lightBackground: Int = 0,
@@ -266,7 +269,8 @@ class WindbellTshEngine private constructor() {
     }
 
     private fun decodePalette(flatPalette: IntArray): Map<Int, StylePalette> {
-        val fields = 11
+        val fields = 13
+        require(flatPalette.size % fields == 0) { "Native palette has an invalid field count" }
         val map = LinkedHashMap<Int, StylePalette>(flatPalette.size / fields)
         val count = flatPalette.size / fields
         for (i in 0 until count) {
@@ -283,7 +287,9 @@ class WindbellTshEngine private constructor() {
                 lightBackground = flatPalette[base + 7],
                 darkBackground = flatPalette[base + 8],
                 hasLightBackground = flatPalette[base + 9] != 0,
-                hasDarkBackground = flatPalette[base + 10] != 0
+                hasDarkBackground = flatPalette[base + 10] != 0,
+                lightFontDefinedMask = flatPalette[base + 11],
+                darkFontDefinedMask = flatPalette[base + 12]
             )
         }
         return map.toMap()
@@ -305,7 +311,8 @@ class WindbellTshEngine private constructor() {
 
     private fun readSchemePalette(extension: String, schemeName: String): Map<Int, StylePalette> {
         val flatPalette = nativeGetPalette(extension, schemeName) ?: return emptyMap()
-        val fields = 11
+        val fields = 13
+        require(flatPalette.size % fields == 0) { "Native palette has an invalid field count" }
         val map = HashMap<Int, StylePalette>(flatPalette.size / fields)
         val count = flatPalette.size / fields
         for (i in 0 until count) {
@@ -322,7 +329,9 @@ class WindbellTshEngine private constructor() {
                 lightBackground = flatPalette[base + 7],
                 darkBackground = flatPalette[base + 8],
                 hasLightBackground = flatPalette[base + 9] != 0,
-                hasDarkBackground = flatPalette[base + 10] != 0
+                hasDarkBackground = flatPalette[base + 10] != 0,
+                lightFontDefinedMask = flatPalette[base + 11],
+                darkFontDefinedMask = flatPalette[base + 12]
             )
         }
         return map
@@ -758,6 +767,7 @@ class WindbellTshEngine private constructor() {
             val hasForeground = BooleanArray(captureCount)
             val hasBackground = BooleanArray(captureCount)
             val captureFontFlags = IntArray(captureCount)
+            val captureFontDefinedMasks = IntArray(captureCount)
             // Primitive packed sweep events avoid two heap objects per capture.
             // Ordering is offset first, then end(0) before start(1), then capture index.
             val events = LongArray(captureCount * 2)
@@ -781,11 +791,20 @@ class WindbellTshEngine private constructor() {
                 } else {
                     style?.lightFontFlags ?: 0
                 }
+                val schemeDefinedMask = if (darkMode) {
+                    style?.darkFontDefinedMask ?: 0
+                } else {
+                    style?.lightFontDefinedMask ?: 0
+                }
                 captureFontFlags[index] = captures.fontFlags(sourceIndex) or schemeFlags
+                // A defined-but-disabled attribute is still an active winner:
+                // it must suppress a lower-priority enclosing capture's style.
+                captureFontDefinedMasks[index] =
+                    captures.fontFlags(sourceIndex) or schemeDefinedMask
                 if (hasForeground[index]) activeHeapCapacities[0]++
                 if (hasBackground[index]) activeHeapCapacities[1]++
                 for (bitIndex in 0 until 5) {
-                    if ((captureFontFlags[index] and (1 shl bitIndex)) != 0) {
+                    if ((captureFontDefinedMasks[index] and (1 shl bitIndex)) != 0) {
                         activeHeapCapacities[bitIndex + 2]++
                     }
                 }
@@ -936,9 +955,9 @@ class WindbellTshEngine private constructor() {
                 if (!active) return
                 if (hasForeground[index]) addToHeap(0, index)
                 if (hasBackground[index]) addToHeap(1, index)
-                val flags = captureFontFlags[index]
+                val definedMask = captureFontDefinedMasks[index]
                 for (bitIndex in 0 until 5) {
-                    if ((flags and (1 shl bitIndex)) != 0) addToHeap(bitIndex + 2, index)
+                    if ((definedMask and (1 shl bitIndex)) != 0) addToHeap(bitIndex + 2, index)
                 }
             }
 
@@ -971,14 +990,15 @@ class WindbellTshEngine private constructor() {
                 var packedFontPriorities = 0L
                 for (bitIndex in 0 until 5) {
                     val winner = activeWinner(bitIndex + 2) ?: continue
-                    // Font attributes are independent paint channels. Resolve each
-                    // channel by its own precedence heap; a winning foreground
-                    // capture must not erase bold/italic inherited from an enclosing
-                    // TSH scope (and a child can explicitly clear inherited flags
-                    // during palette resolution before captures reach this stage).
-                    fontFlags = fontFlags or (1 shl bitIndex)
+                    // The winning capture defines this attribute even when its
+                    // value is off. This prevents nested @no-bold/@no-italic styles
+                    // from leaking the enclosing capture's enabled attribute.
+                    val winnerSourceIndex = captureSourceIndices[winner]
+                    if ((captureFontFlags[winner] and (1 shl bitIndex)) != 0) {
+                        fontFlags = fontFlags or (1 shl bitIndex)
+                    }
                     if (bitIndex < 4) {
-                        val priority = (capturePriorityFlags[captureSourceIndices[winner]] ushr
+                        val priority = (capturePriorityFlags[winnerSourceIndex] ushr
                             Spanned.SPAN_PRIORITY_SHIFT) and 0xFF
                         packedFontPriorities = packedFontPriorities or
                             (priority.toLong() shl (bitIndex * 8))
