@@ -2786,8 +2786,8 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                                     64, query_source.size() - context_start);
                                 std::string context =
                                     query_source.substr(context_start, context_length);
-                                std::replace(context.begin(), context.end(), '\\n', ' ');
-                                std::replace(context.begin(), context.end(), '\\r', ' ');
+                                std::replace(context.begin(), context.end(), '\n', ' ');
+                                std::replace(context.begin(), context.end(), '\r', ' ');
                                 g_tsh_last_source_offset =
                                     query_source_content_offset + error_offset;
                                 g_tsh_last_error_detail =
