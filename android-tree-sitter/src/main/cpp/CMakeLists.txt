@@ -715,8 +715,8 @@ set(TSH_PARSER_REDUCE_CANDIDATE_NEW [=[      // Build the candidate parent from 
       } else {
         // The candidate parent owns the non-extra children. The extras were
         // detached into trailing_extras2 before parent construction, so release
-        // that array separately instead of deleting the now-overwritten slice.
-        ts_subtree_array_delete(&self->tree_pool, &self->trailing_extras2);
+        // them separately while retaining the reusable array capacity.
+        ts_subtree_array_clear(&self->tree_pool, &self->trailing_extras2);
         ts_subtree_release(&self->tree_pool, ts_subtree_from_mut(next_parent));
       }]=])
 string(REPLACE "${TSH_PARSER_REDUCE_CANDIDATE_OLD}"
