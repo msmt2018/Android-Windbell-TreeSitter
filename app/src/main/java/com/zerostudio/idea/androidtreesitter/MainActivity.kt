@@ -939,16 +939,17 @@ class MainActivity : AppCompatActivity() {
                     diagnostics.captures.count { it.source == source }
                 }
                 val regex = sourceCounts[0] ?: 0
-                val monarch = sourceCounts[1] ?: 0
+                val regexState = sourceCounts[1] ?: 0
+                val regexTotal = regex + regexState
                 val ats = sourceCounts[2] ?: 0
                 val query = sourceCounts[3] ?: 0
                 val passed = when (profile) {
                     JavaTshPipelineProfile.REGEX_ONLY ->
-                        regex > 0 && ats == 0 && query == 0 && monarch == 0
+                        regexTotal > 0 && ats == 0 && query == 0
                     JavaTshPipelineProfile.ATS_ONLY ->
-                        regex == 0 && ats > 0 && query > 0 && monarch == 0
+                        regexTotal == 0 && ats > 0 && query > 0
                     JavaTshPipelineProfile.HYBRID ->
-                        regex > 0 && ats > 0 && query > 0 && monarch == 0
+                        regexTotal > 0 && ats > 0 && query > 0
                 }
                 val report = StringBuilder()
                 report.appendLine("配置：${profile.assetName}")
@@ -957,8 +958,9 @@ class MainActivity : AppCompatActivity() {
                 report.appendLine("原始 captures：${diagnostics.captures.size}")
                 report.appendLine("最终合成 spans：${finalSpans.size}")
                 report.appendLine("Android ForegroundColorSpan：${foregroundSpans.size}")
-                report.appendLine("Regex：${diagnostics.matchCounts[0] ?: 0} matches / $regex captures")
-                report.appendLine("Monarch：${diagnostics.matchCounts[1] ?: 0} matches / $monarch captures (must remain 0)")
+                report.appendLine("Oniguruma Regex：${diagnostics.matchCounts[0] ?: 0} matches / $regex captures")
+                report.appendLine("Regex State / Contains：${diagnostics.matchCounts[1] ?: 0} matches / $regexState captures")
+                report.appendLine("Regex total captures：$regexTotal")
                 report.appendLine("ATS Selector：${diagnostics.matchCounts[2] ?: 0} matches / $ats captures")
                 report.appendLine("Native SCM Query：${diagnostics.matchCounts[3] ?: 0} matches / $query captures")
                 report.appendLine()
