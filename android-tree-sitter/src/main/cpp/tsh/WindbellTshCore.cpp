@@ -1561,15 +1561,42 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
 
         OnigRegion* region = onig_region_new();
         if (!region) continue;
-        const UChar* current = text_start;
 
-        while (current < text_end) {
+        // Context-dependent MATCH rules used to restart at byte zero and walk
+        // every match in the entire document for every viewport request. This
+        // made ordinary editor painting O(document_size * visible_rows).
+        // Recover only the immediately preceding non-overlapping match (it is
+        // the sole candidate that can cross the viewport's left edge), then
+        // scan forward only until the viewport's right edge. The regex still
+        // receives the complete immutable document as its input, preserving
+        // anchors, look-behind and unbounded match semantics.
+        const UChar* viewport_start = text_start + range_start_byte;
+        const UChar* viewport_end = text_start + range_end_byte;
+        const UChar* current = viewport_start;
+        if (viewport_start > text_start) {
+            const int previous_hit = onig_search(
+                rule.onig_start,
+                text_start,
+                text_end,
+                viewport_start,
+                text_start,
+                region,
+                ONIG_OPTION_NONE
+            );
+            if (previous_hit >= 0 && region->beg[0] >= 0 &&
+                region->end[0] > static_cast<int>(range_start_byte) &&
+                region->beg[0] < static_cast<int>(range_start_byte)) {
+                current = text_start + region->beg[0];
+            }
+        }
+
+        while (current < viewport_end) {
             int hit_pos = onig_search(
                 rule.onig_start,
                 text_start,
                 text_end,
                 current,
-                text_end,
+                viewport_end,
                 region,
                 ONIG_OPTION_NONE
             );
