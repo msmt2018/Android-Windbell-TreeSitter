@@ -80,6 +80,21 @@ internal class TshRenderedLineDiskStore(
         }
     }
 
+    fun contains(
+        documentRevision: Long,
+        lineStartOffset: Int,
+        visibleStart: Int,
+        visibleEnd: Int,
+        scheme: String,
+        dark: Boolean
+    ): Boolean = synchronized(lock) {
+        if (closed) return@synchronized false
+        val key = fileKey(
+            documentRevision, lineStartOffset, visibleStart, visibleEnd, scheme, dark
+        )
+        entries.containsKey(key)
+    }
+
     fun put(
         documentRevision: Long,
         lineStartOffset: Int,
