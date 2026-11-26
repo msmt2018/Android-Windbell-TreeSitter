@@ -1461,18 +1461,16 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                 rule.execution_capability != RegexExecutionCapability::BOUNDED_WINDOW ||
                 rule.maximum_match_bytes == 0) continue;
 
-            // Resolve named capture numbers once per rule, not once per match.
-            // The old inner match loop allocated and converted every group name
-            // for every occurrence, creating allocator pressure on dense files.
-            std::vector<std::pair<int, uint16_t>> named_group_indices;
-            named_group_indices.reserve(rule.named_group_style_map.size());
+            // Convert named capture identifiers once per rule, not once per
+            // match. Keep the region-dependent lookup in the match loop because
+            // Oniguruma uses the current region to disambiguate duplicate names.
+            std::vector<std::pair<std::vector<UChar>, uint16_t>> named_group_names;
+            named_group_names.reserve(rule.named_group_style_map.size());
             for (const auto& named : rule.named_group_style_map) {
                 std::vector<UChar> name;
                 name.reserve(named.first.size());
                 for (unsigned char ch : named.first) name.push_back(static_cast<UChar>(ch));
-                const int group = onig_name_to_backref_number(
-                    rule.onig_start, name.data(), name.data() + name.size(), nullptr);
-                if (group >= 0) named_group_indices.emplace_back(group, named.second);
+                named_group_names.emplace_back(std::move(name), named.second);
             }
 
             const uint64_t overlap = rule.maximum_match_bytes >= 2u
@@ -1553,8 +1551,11 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                                 if (style != rule.group_style_map.end())
                                     append_window_capture(group, style->second);
                             }
-                            for (const auto& named : named_group_indices) {
-                                append_window_capture(named.first, named.second);
+                            for (const auto& named : named_group_names) {
+                                const int group = onig_name_to_backref_number(
+                                    rule.onig_start, named.first.data(),
+                                    named.first.data() + named.first.size(), region);
+                                append_window_capture(group, named.second);
                             }
                         }
                     }
