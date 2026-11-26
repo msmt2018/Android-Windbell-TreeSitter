@@ -2,6 +2,7 @@ package com.zerostudio.idea.androidtreesitter
 
 import android.os.Looper
 import android.text.SpannableStringBuilder
+import android.text.SpannedString
 import android.text.Spanned
 import android.text.style.CharacterStyle
 import android.util.Log
@@ -50,6 +51,9 @@ class TshSyntaxHighlighter(
         private const val TAG = "WindbellTSH"
         // Capture storage is byte-budgeted; execution ranges come from the live renderer.
         private const val CAPTURE_CACHE_BYTES = 32L * 1024L * 1024L
+        // Retain immutable rendered lines so revisiting a viewport avoids both
+        // native capture lookup and Android span reconstruction.
+        private const val RENDERED_LINE_CACHE_BYTES = 16L * 1024L * 1024L
         // Failed viewport attempts are retained only for retry backoff. Keep their
         // bookkeeping bounded when a broken grammar/native call is hit while scrolling
         // through many distinct regions of a very large document.
@@ -62,7 +66,23 @@ class TshSyntaxHighlighter(
             onEntryAdded = { key, _ -> captureRangeIndex.add(key) },
             onEntryRemoved = { key, _ -> captureRangeIndex.remove(key) }
         )
+        private val renderedLineCache = ByteBudgetLruCache<RenderedLineKey, SpannedString>(
+            RENDERED_LINE_CACHE_BYTES,
+            { value -> 128L + value.length.toLong() * 2L +
+                value.getSpans(0, value.length, CharacterStyle::class.java).size.toLong() * 96L }
+        )
     }
+
+    private data class RenderedLineKey(
+        val sessionId: Long,
+        val documentRevision: Long,
+        val lineStartOffset: Int,
+        val visibleStart: Int,
+        val visibleEnd: Int,
+        val text: String,
+        val scheme: String,
+        val dark: Boolean
+    )
 
     private data class LargeSession(
         /** Native-owned PieceTreeSource + incremental Tree-sitter tree. */
@@ -262,6 +282,18 @@ class TshSyntaxHighlighter(
         val active = largeSession ?: return null
         if (active.pendingEditEpoch.get() != active.appliedEditEpoch.get()) return null
 
+        val renderKey = RenderedLineKey(
+            sessionId = active.cacheSessionId,
+            documentRevision = active.documentRevision.get(),
+            lineStartOffset = lineStartOffset,
+            visibleStart = visibleStart,
+            visibleEnd = visibleEnd,
+            text = text,
+            scheme = engine.getSelectedScheme(extension) ?: engine.getDefaultScheme(extension).orEmpty(),
+            dark = engine.isDark(extension)
+        )
+        renderedLineCache.get(renderKey)?.let { return it }
+
         val boundedStart = queryStart.coerceAtMost(active.lengthChars.get())
         val boundedEnd = queryEnd.coerceAtMost(active.lengthChars.get())
         val spans = if (boundedStart >= boundedEnd) emptyList()
@@ -289,7 +321,8 @@ class TshSyntaxHighlighter(
             Log.w(TAG, "No Android CharacterStyle applied: extension=.$extension line=$bufferLine captures=${spans.size}")
             return null
         }
-        return styled
+        // Immutable spans can be safely reused after scrolling away and back.
+        return SpannedString(styled).also { renderedLineCache.put(renderKey, it) }
     }
 
     override fun isStyleReady(
@@ -811,6 +844,9 @@ class TshSyntaxHighlighter(
                     captureCache.invalidate { key, _ ->
                         key.sessionId == active.cacheSessionId
                     }
+                    renderedLineCache.invalidate { key, _ ->
+                        key.sessionId == active.cacheSessionId
+                    }
                     active.rangeWork.clear()
                     Log.v(
                         TAG,
@@ -907,6 +943,7 @@ class TshSyntaxHighlighter(
                 }
             }.onFailure { Log.w(TAG, "Failed to close native TSH document", it) }
             captureCache.invalidate { key, _ -> key.sessionId == active.cacheSessionId }
+            renderedLineCache.invalidate { key, _ -> key.sessionId == active.cacheSessionId }
         }
     }
 }
