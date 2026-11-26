@@ -610,6 +610,18 @@ class TshSyntaxHighlighter(
     }
 
     private fun findCaptureCoverage(key: CaptureRangeKey): List<CaptureIntervalIndex>? {
+        // Keep the overwhelmingly common one-range hit logarithmic and allocation
+        // free. Only shifted viewports that cross cached range boundaries need
+        // the multi-range interval-union path.
+        val containing = captureRangeIndex.findContaining(
+            key.sessionId, key.startUtf16, key.endUtf16
+        )
+        if (containing != null) {
+            val index = captureCache.get(containing)
+            if (index != null) return listOf(index)
+            captureRangeIndex.remove(containing)
+        }
+
         val cachedKeys = captureRangeIndex.findCovering(
             key.sessionId, key.startUtf16, key.endUtf16
         ) ?: return null
