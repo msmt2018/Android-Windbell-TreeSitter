@@ -307,7 +307,7 @@ dependencies {
 
 Replace <code>VERSION</code> with a Git tag or commit version that JitPack has successfully built. Add one <code>tree-sitter-&lt;language&gt;</code> module for each language your application needs; do not add every grammar by default.
 
-**Publication status:** Maven artifacts are now configured for JitPack. The <code>release-jitpack.yml</code> workflow creates a version tag; JitPack builds that tag on demand and publishes the resulting Maven artifacts. A created tag is not proof of a successful JitPack build: check the [JitPack project page](https://jitpack.io/#msmt2018/Android-Windbell-TreeSitter) and build log before consuming it.
+**Publication status:** The release workflow first builds the complete Gradle project, then verifies that all 60 configured Maven publications can be generated in Maven Local. Only after both steps succeed does it create and push the release tag. JitPack then builds/caches the tagged modules on demand and serves their Maven artifacts. A successful pre-release GitHub Actions build does not replace checking the JitPack build result and requested artifact on the [JitPack project page](https://jitpack.io/#msmt2018/Android-Windbell-TreeSitter).
 
 ### 3. Parse source code
 
