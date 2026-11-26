@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2026 Windbell contributors.
- * SPDX-License-Identifier: LGPL-2.1-or-later
+ * SPDX-License-Identifier: AGPL-3.0-only
  */
 package com.zerostudio.idea.treesitter.largefile
 
