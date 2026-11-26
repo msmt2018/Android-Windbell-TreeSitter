@@ -143,10 +143,10 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        private fun <T : TSLanguage> registerLanguage(
+        private fun registerLanguage(
             displayName: String,
             libraryName: String,
-            factory: () -> T
+            factory: () -> TSLanguage
         ) {
             if (nativeLibraryStates["android-tree-sitter"] != "READY") {
                 languageRegistrationStates[displayName] = "BLOCKED: libandroid-tree-sitter.so unavailable"
@@ -217,8 +217,24 @@ class MainActivity : AppCompatActivity() {
         setSupportActionBar(binding.toolbar)
 
         currentLanguage = languageMap[currentLanguageKey]
-        parser = TSParser.create()
-        currentLanguage?.let { parser?.setLanguage(it) }
+        if (nativeLibraryStates["android-tree-sitter"] == "READY") {
+            parser = runCatching { TSParser.create() }
+                .onFailure { Log.e(TAG, "Unable to create the console Tree-sitter parser", it) }
+                .getOrNull()
+            currentLanguage?.let { language ->
+                runCatching { parser?.setLanguage(language) }
+                    .onFailure { Log.e(TAG, "Unable to bind the console parser to $currentLanguageKey", it) }
+            }
+        } else {
+            parser = null
+            Log.e(TAG, "Console parser initialization skipped: libandroid-tree-sitter.so is not loaded")
+        }
+
+        Log.i(
+            TAG,
+            "Native bootstrap summary; nativeLibraryDir=${applicationInfo.nativeLibraryDir}\n" +
+                nativeBootstrapReport()
+        )
 
         // 初始化原生 .tsh 配置；ATS Selector 与 SCM Query 保持独立管道。
         initTshEngineConfigurations()
@@ -321,8 +337,8 @@ class MainActivity : AppCompatActivity() {
                 }
             }
             withContext(Dispatchers.Main) {
-                javaTshReady = "java" in languages && tshConfigurationStates["java"] == "READY"
                 if ("java" in languages) {
+                    javaTshReady = tshConfigurationStates["java"] == "READY"
                     restoredTshScheme?.let { scheme ->
                         val restored = WindbellTshEngine.instance.selectScheme("java", scheme)
                         if (!restored) Log.w(TAG, "Saved TSH scheme no longer exists: $scheme")
@@ -712,14 +728,21 @@ class MainActivity : AppCompatActivity() {
             // Do not reopen the same C grammar library on every Light/Dark switch.
             if (languageMap.containsKey("C")) return@launch
             runCatching {
-                val cLang = TSLanguage.loadLanguage(this@MainActivity, "c")
-                if (cLang != null) {
-                    withContext(Dispatchers.Main) {
-                        languageMap["C"] = cLang
-                        (binding.contentConsole.languageChooser.adapter as? ArrayAdapter<*>)?.notifyDataSetChanged()
-                        loadExternalTshConfiguration("c", cLang)
-                    }
+                check(nativeLibraryStates["android-tree-sitter"] == "READY") {
+                    "libandroid-tree-sitter.so is unavailable; external language registration cannot run.\n" +
+                        nativeBootstrapReport()
                 }
+                val cLang = TSLanguage.loadLanguage(this@MainActivity, "c")
+                checkNotNull(cLang) { "External C Tree-sitter grammar did not register a language binding." }
+                withContext(Dispatchers.Main) {
+                    languageMap["C"] = cLang
+                    languageRegistrationStates["C"] = "READY"
+                    (binding.contentConsole.languageChooser.adapter as? ArrayAdapter<*>)?.notifyDataSetChanged()
+                    loadExternalTshConfiguration("c", cLang)
+                }
+            }.onFailure { error ->
+                languageRegistrationStates["C"] = "FAILED: ${error.message ?: error.javaClass.simpleName}"
+                Log.e(TAG, "Unable to load/register the external C Tree-sitter grammar", error)
             }
         }
     }
@@ -858,7 +881,7 @@ class MainActivity : AppCompatActivity() {
             "${profile.displayName}$marker\n${profile.description}"
         }.toTypedArray()
         MaterialAlertDialogBuilder(this)
-            .setTitle("Java TSH 管道隔离测试")
+            .setTitle("Java TSH 配置 / 管道切换")
             .setItems(labels) { _, index ->
                 switchJavaTshPipelineProfile(profiles[index])
             }
@@ -1119,10 +1142,11 @@ class MainActivity : AppCompatActivity() {
     /** Reparse the editor's current source and report parser, captures and Android spans. */
     private fun runCursorCaptureDiagnostic() {
         val view = editorView
-        if (view == null || !javaTshReady) {
-            showResultDialog("TSH 捕获诊断", "编辑器或 Java TSH 尚未就绪。")
+        if (view == null) {
+            showResultDialog("TSH 捕获诊断", "编辑器尚未初始化。")
             return
         }
+        if (!requireJavaTshReady("TSH 捕获诊断")) return
         val source = view.getText()
         val lineNumber = view.getCursorLine().coerceIn(1, view.getLineCount())
         val lineStart = view.getLineStartOffset(lineNumber)
@@ -1301,8 +1325,22 @@ class MainActivity : AppCompatActivity() {
         applyTshThemeTokens()
     }
 
+    private fun requireJavaTshReady(feature: String): Boolean {
+        if (javaTshReady && WindbellTshEngine.instance.isGrammarLoaded("java")) return true
+        val parserState = languageRegistrationStates["Java"] ?: "NOT_REGISTERED"
+        val configState = tshConfigurationStates["java"] ?: "NOT_INITIALIZED"
+        showResultDialog(
+            "$feature：TSH 未就绪",
+            "Java Parser=$parserState\nJava TSH=$configState\n\n" +
+                nativeBootstrapReport() +
+                "\n请先修复原生库加载 / Parser 注册，或通过“Java TSH 配置 / 管道切换”重新加载有效配置。"
+        )
+        return false
+    }
+
     /** Browse all compiled schemes and their light/dark semantic colors. */
     private fun showTshSchemesDialog() {
+        if (!requireJavaTshReady("TSH Scheme 浏览器")) return
         val engine = WindbellTshEngine.instance
         val schemes = engine.listSchemes("java")
         if (schemes.isEmpty()) {
@@ -1358,6 +1396,7 @@ class MainActivity : AppCompatActivity() {
      * 切换 TSH 白天/黑夜多态调色板
      */
     private fun toggleTshTheme() {
+        if (!requireJavaTshReady("TSH 主题切换")) return
         val engine = WindbellTshEngine.instance
         val nextDark = !engine.isDark("java")
         engine.setAppearance("java", nextDark)
@@ -1388,10 +1427,10 @@ class MainActivity : AppCompatActivity() {
             .setTitle("⚙️ Windbell-TSH 核心测试与诊断")
             .setItems(testOptions) { _, which ->
                 when (which) {
-                    0 -> runTshPaletteTest()
-                    1 -> runTshHybridCoverageTest()
+                    0 -> if (requireJavaTshReady("TSH Scheme / Style 测试")) runTshPaletteTest()
+                    1 -> if (requireJavaTshReady("TSH 四管线覆盖测试")) runTshHybridCoverageTest()
                     2 -> runTshParserRegistryTest()
-                    3 -> runTshConcurrencyTest()
+                    3 -> if (requireJavaTshReady("TSH 并发重入测试")) runTshConcurrencyTest()
                 }
             }
             .setNegativeButton("关闭", null)
@@ -1423,6 +1462,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun runTshPaletteTest() {
+        if (!requireJavaTshReady("TSH Scheme / Style 测试")) return
         val report = StringBuilder()
         report.append("=== 🎨 TSH 调色板映射测试 ===\n\n")
 
@@ -1467,6 +1507,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun runTshHybridCoverageTest() {
+        if (!requireJavaTshReady("TSH 四管线覆盖测试")) return
         val pd = ProgressDialog(this).apply {
             setMessage("正在测试双通道扫描线合并仲裁...")
             show()
@@ -1534,6 +1575,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun runTshConcurrencyTest() {
+        if (!requireJavaTshReady("TSH 并发重入测试")) return
         val pd = ProgressDialog(this).apply {
             setTitle("TSH Native 并发重入压测")
             setMessage("32 个线程执行 Tree-sitter parse + 四管线高亮 + 释放…")
