@@ -99,16 +99,21 @@ class MainActivity : AppCompatActivity() {
                 Log.i(TAG, "Loaded libandroid-tree-sitter.so")
             } catch (error: Throwable) {
                 nativeLibraryStates["android-tree-sitter"] = "FAILED: ${error.message}"
-                Log.e(TAG, "FATAL: unable to load libandroid-tree-sitter.so", error)
-                throw ExceptionInInitializerError(error)
+                Log.e(TAG, "FATAL: unable to load libandroid-tree-sitter.so; app will remain in diagnostic-only mode", error)
             }
 
-            registerGrammarLibrary("Java", "java") { TSLanguageJava.getInstance() }
-            registerGrammarLibrary("JSON", "json") { TSLanguageJson.getInstance() }
-            registerGrammarLibrary("Kotlin", "kotlin") { TSLanguageKotlin.getInstance() }
-            registerGrammarLibrary("Logcat", "logcat") { TSLanguageLogcat.getInstance() }
-            registerGrammarLibrary("Python", "python") { TSLanguagePython.getInstance() }
-            registerGrammarLibrary("XML", "xml") { TSLanguageXml.getInstance() }
+            if (nativeLibraryStates["android-tree-sitter"] == "READY") {
+                registerGrammarLibrary("Java", "java") { TSLanguageJava.getInstance() }
+                registerGrammarLibrary("JSON", "json") { TSLanguageJson.getInstance() }
+                registerGrammarLibrary("Kotlin", "kotlin") { TSLanguageKotlin.getInstance() }
+                registerGrammarLibrary("Logcat", "logcat") { TSLanguageLogcat.getInstance() }
+                registerGrammarLibrary("Python", "python") { TSLanguagePython.getInstance() }
+                registerGrammarLibrary("XML", "xml") { TSLanguageXml.getInstance() }
+            } else {
+                listOf("java", "json", "kotlin", "logcat", "python", "xml").forEach {
+                    nativeLibraryStates["tree-sitter-$it"] = "SKIPPED: core library unavailable"
+                }
+            }
         }
 
         private inline fun registerGrammarLibrary(
@@ -142,8 +147,15 @@ class MainActivity : AppCompatActivity() {
         setSupportActionBar(binding.toolbar)
 
         currentLanguage = languageMap[currentLanguageKey]
-        parser = TSParser.create()
-        currentLanguage?.let { parser?.setLanguage(it) }
+        parser = if (nativeLibraryStates["android-tree-sitter"] == "READY") {
+            runCatching { TSParser.create() }.onFailure {
+                Log.e(TAG, "Unable to create console Tree-sitter parser", it)
+            }.getOrNull()
+        } else null
+        currentLanguage?.let { language ->
+            runCatching { parser?.setLanguage(language) }
+                .onFailure { Log.e(TAG, "Unable to assign initial console grammar", it) }
+        }
 
         // 初始化加载原生 .tsh 语法配置（完全放弃 SCM 方案）
         initTshEngineConfigurations()
@@ -359,8 +371,15 @@ class MainActivity : AppCompatActivity() {
         content.code.isSaveEnabled = false
         content.ast.isSaveEnabled = false
 
-        content.tsMeta.text = "Tree Sitter Language ABI: " + TreeSitter.getLanguageVersion()
-        content.tsVersion.text = "Tree Sitter Core Engine: " + TreeSitter.getEngineVersion()
+        val nativeCoreReady = nativeLibraryStates["android-tree-sitter"] == "READY"
+        content.tsMeta.text = if (nativeCoreReady) {
+            runCatching { "Tree Sitter Language ABI: " + TreeSitter.getLanguageVersion() }
+                .getOrElse { "Tree-sitter Native ABI unavailable: ${it.message}" }
+        } else "Tree-sitter Native ABI unavailable: libandroid-tree-sitter.so failed to load"
+        content.tsVersion.text = if (nativeCoreReady) {
+            runCatching { "Tree Sitter Core Engine: " + TreeSitter.getEngineVersion() }
+                .getOrElse { "Tree-sitter Core unavailable: ${it.message}" }
+        } else "Tree-sitter Core unavailable: libandroid-tree-sitter.so failed to load"
 
         content.code.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
@@ -680,6 +699,10 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun loadExternalLanguages() {
+        if (nativeLibraryStates["android-tree-sitter"] != "READY") {
+            Log.w(TAG, "Skipping external C grammar load because libandroid-tree-sitter.so is unavailable")
+            return
+        }
         activityScope.launch(Dispatchers.IO) {
             // The language registry and native TSH engine outlive Activity recreation.
             // Do not reopen the same C grammar library on every Light/Dark switch.
