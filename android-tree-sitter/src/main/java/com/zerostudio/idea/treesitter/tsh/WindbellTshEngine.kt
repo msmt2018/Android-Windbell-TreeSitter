@@ -18,6 +18,17 @@ import java.io.File
 import java.nio.ByteBuffer
 import com.zerostudio.idea.treesitter.TreeSitter
 
+/** Stable, serializable alpha style emitted by the TSH Android span renderer. */
+class TshAlphaCharacterStyle(val alpha: Int = 160) : CharacterStyle() {
+    init {
+        require(alpha in 0..255)
+    }
+
+    override fun updateDrawState(textPaint: TextPaint) {
+        textPaint.alpha = minOf(textPaint.alpha, alpha)
+    }
+}
+
 data class NativeDirtyByteRange(val startByte: Long, val endByte: Long) {
     init {
         // Deletions have an empty post-edit byte interval but still invalidate
@@ -663,11 +674,12 @@ class WindbellTshEngine private constructor() {
                     spannable.setSpan(StrikethroughSpan(), localCharStart, localCharEnd, spanFlags)
                 }
                 if ((flags and 0x10) != 0) {
-                    spannable.setSpan(object : CharacterStyle() {
-                        override fun updateDrawState(textPaint: TextPaint) {
-                            textPaint.alpha = minOf(textPaint.alpha, 160)
-                        }
-                    }, localCharStart, localCharEnd, spanFlags)
+                    spannable.setSpan(
+                        TshAlphaCharacterStyle(),
+                        localCharStart,
+                        localCharEnd,
+                        spanFlags
+                    )
                 }
             }
         }
