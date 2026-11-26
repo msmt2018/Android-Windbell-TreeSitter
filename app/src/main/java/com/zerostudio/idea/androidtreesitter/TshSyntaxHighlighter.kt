@@ -403,7 +403,7 @@ class TshSyntaxHighlighter(
                 renderedKey.visibleEnd,
                 renderedKey.scheme,
                 renderedKey.dark
-            )) return true
+            ) == true) return true
 
         val key = CaptureRangeKey(active.cacheSessionId, boundedStart.toInt(), boundedEnd.toInt())
         if (hasCachedCaptureCoverage(key)) return true
