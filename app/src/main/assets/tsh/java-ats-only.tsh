@@ -249,7 +249,7 @@
             {
                 id: "java-not-any-of-excluded-methods"
                 priority: 118
-                source: `(method_declaration name: (identifier) @function (#not-any-of? @function "test" "skip"))`
+                source: `(method_declaration name: (identifier) @function (#not-any-of? @function "skip"))`
             },
             {
                 id: "java-any-contains-getter"
