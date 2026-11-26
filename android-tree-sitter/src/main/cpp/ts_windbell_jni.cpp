@@ -2117,6 +2117,70 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
             return nullptr;
         }
     }
+    // A shifted viewport may overlap several retained captures without being
+    // wholly contained by any one of them. Reuse their continuous union rather
+    // than rerunning Regex for bytes that have already been captured.
+    std::vector<const NativeHighlightCache::Value*> cached_segments;
+    try {
+        if (document->highlight_cache.findCovering(cache_key, cached_segments)) {
+            std::vector<HighlightSpan> combined;
+            size_t total_spans = 0;
+            for (const auto *segment : cached_segments) {
+                if (segment) total_spans += segment->spans.size();
+            }
+            combined.reserve(total_spans);
+            for (const auto *segment : cached_segments) {
+                if (!segment) continue;
+                for (const HighlightSpan &span : segment->spans) {
+                    if (span.end_byte <= requested_start || span.start_byte >= requested_end)
+                        continue;
+                    HighlightSpan visible = span;
+                    visible.start_byte = std::max(visible.start_byte, requested_start);
+                    visible.end_byte = std::min(visible.end_byte, requested_end);
+                    if (visible.start_byte < visible.end_byte) combined.push_back(visible);
+                }
+            }
+            std::stable_sort(combined.begin(), combined.end(),
+                [](const HighlightSpan &left, const HighlightSpan &right) {
+                    if (left.start_byte != right.start_byte)
+                        return left.start_byte < right.start_byte;
+                    if (left.end_byte != right.end_byte)
+                        return left.end_byte < right.end_byte;
+                    if (left.priority != right.priority)
+                        return left.priority < right.priority;
+                    return left.declaration_order < right.declaration_order;
+                });
+            std::vector<HighlightSpan> normalized;
+            normalized.reserve(combined.size());
+            for (const HighlightSpan &span : combined) {
+                if (!normalized.empty()) {
+                    HighlightSpan &previous = normalized.back();
+                    const bool sameStyleRun =
+                        previous.style_id == span.style_id &&
+                        previous.flags == span.flags &&
+                        previous.priority == span.priority &&
+                        previous.declaration_order == span.declaration_order &&
+                        previous.allow_overlap == span.allow_overlap &&
+                        previous.source == span.source;
+                    if (sameStyleRun && span.start_byte <= previous.end_byte) {
+                        previous.end_byte = std::max(previous.end_byte, span.end_byte);
+                        continue;
+                    }
+                }
+                normalized.push_back(span);
+            }
+            const uint32_t empty_counts[4] = {};
+            return encodeNativeHighlightResult(
+                env, normalized, empty_counts, JNI_FALSE);
+        }
+    } catch (const std::bad_alloc&) {
+        throwNativeAllocationFailure(env, "Unable to compose cached JNI highlight ranges");
+        return nullptr;
+    } catch (const std::exception& error) {
+        throwNativeHighlightFailure(env, error.what());
+        return nullptr;
+    }
+
     // Only context-dependent Regex requires a whole-document mmap snapshot.
     // Finite-width Regex continues through its bounded TextSource window path.
     const auto has_context_rule = [](const auto &self, const CompiledRegexRule &rule) -> bool {
