@@ -53,6 +53,32 @@ import java.util.concurrent.CancellationException
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 
+
+private enum class JavaTshPipelineProfile(
+    val id: String,
+    val assetName: String,
+    val displayName: String,
+    val description: String
+) {
+    REGEX_ONLY(
+        "regex-only", "java-regex-only.tsh", "Regex Only",
+        "仅 Oniguruma Regex；不启用 AST Selector / Tree-sitter Query"
+    ),
+    ATS_ONLY(
+        "ats-only", "java-ats-only.tsh", "Tree-sitter ATS Only",
+        "仅 AST Selector + 原生 SCM Query / 谓词；不启用 Regex"
+    ),
+    HYBRID(
+        "hybrid", "java-hybrid.tsh", "Hybrid",
+        "同时启用 ATS / SCM Query 与 Oniguruma Regex"
+    );
+
+    companion object {
+        fun fromId(value: String?): JavaTshPipelineProfile =
+            values().firstOrNull { it.id == value } ?: HYBRID
+    }
+}
+
 class MainActivity : AppCompatActivity() {
 
     private var _binding: ActivityMainBinding? = null
@@ -84,6 +110,8 @@ class MainActivity : AppCompatActivity() {
     private var editorView: EditorView? = null
     private var editorTree: TSTree? = null
     @Volatile private var javaTshReady: Boolean = false
+    private var activeJavaTshProfile: JavaTshPipelineProfile = JavaTshPipelineProfile.HYBRID
+    private var javaTshProfileLoadJob: Job? = null
     private var activeTshHighlighter: TshSyntaxHighlighter? = null
     private val tshConfigurationStates = java.util.concurrent.ConcurrentHashMap<String, String>()
     private var restoredTshScheme: String? = null
@@ -114,6 +142,11 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        activeJavaTshProfile = JavaTshPipelineProfile.fromId(
+            savedInstanceState?.getString("tsh.pipelineProfile")
+                ?: getSharedPreferences("tsh_pipeline_profiles", MODE_PRIVATE)
+                    .getString("java.profile", JavaTshPipelineProfile.HYBRID.id)
+        )
         restoredTshScheme = savedInstanceState?.getString("tsh.selectedScheme")
         if (savedInstanceState?.containsKey("tsh.isDark") == true) {
             restoredTshDark = savedInstanceState.getBoolean("tsh.isDark")
@@ -182,7 +215,7 @@ class MainActivity : AppCompatActivity() {
                     emptySet()
                 }
             languages.forEach { (extension, language) ->
-                val assetName = "$extension.tsh"
+                val assetName = if (extension == "java") activeJavaTshProfile.assetName else "$extension.tsh"
                 if (assetName !in availableAssets) {
                     tshConfigurationStates[extension] = "MISSING"
                     Log.i(TAG, "TSH config unavailable: assets/tsh/$assetName (Parser is registered; highlighting config is not)")
@@ -714,6 +747,10 @@ class MainActivity : AppCompatActivity() {
                 showTshCoreTestSuiteDialog()
                 return true
             }
+            R.id.test_tsh_java_pipeline -> {
+                showJavaTshPipelineProfileDialog()
+                return true
+            }
             R.id.test_tsh_cursor_capture -> {
                 runCursorCaptureDiagnostic()
                 return true
@@ -730,6 +767,202 @@ class MainActivity : AppCompatActivity() {
         return super.onOptionsItemSelected(item)
     }
 
+
+
+    /**
+     * Selects one isolated Java TSH profile. The existing document and PieceTree buffer
+     * are retained; only the compiled grammar snapshot and its SyntaxHighlighter binding
+     * are replaced. Detaching first prevents an old highlighter from querying the newly
+     * compiled profile through a stale grammar binding.
+     */
+    private fun showJavaTshPipelineProfileDialog() {
+        val profiles = JavaTshPipelineProfile.values()
+        val labels = profiles.map { profile ->
+            val marker = if (profile == activeJavaTshProfile) " ✓" else ""
+            "${profile.displayName}$marker\n${profile.description}"
+        }.toTypedArray()
+        MaterialAlertDialogBuilder(this)
+            .setTitle("Java TSH 管道隔离测试")
+            .setItems(labels) { _, index ->
+                switchJavaTshPipelineProfile(profiles[index])
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    private fun switchJavaTshPipelineProfile(profile: JavaTshPipelineProfile) {
+        val language = languageMap["Java"]
+        if (language == null) {
+            showResultDialog("Java TSH 管道切换失败", "Java Tree-sitter Parser 尚未注册。")
+            return
+        }
+        javaTshProfileLoadJob?.cancel()
+        // Detach the previous document runtime before replacing the engine's grammar.
+        editorView?.setSyntaxHighlighter(null)
+        activeTshHighlighter = null
+        javaTshReady = false
+
+        javaTshProfileLoadJob = activityScope.launch(Dispatchers.IO) {
+            val engine = WindbellTshEngine.instance
+            val result = runCatching {
+                val source = assets.open("tsh/${profile.assetName}")
+                    .bufferedReader(Charsets.UTF_8).use { it.readText() }
+                val compiled = synchronized(engine) {
+                    engine.loadTshSource("java", source, language)
+                }
+                if (!compiled) {
+                    val diagnostics = engine.lastCompileDiagnostics.joinToString("\n") {
+                        "${it.code}@${it.line}:${it.column}: ${it.message}"
+                    }
+                    error(diagnostics.ifBlank { "Native TSH compiler returned false without diagnostics." })
+                }
+                runJavaTshPipelineProfileProbe(profile, language)
+            }
+            withContext(Dispatchers.Main) {
+                result.onSuccess { report ->
+                    activeJavaTshProfile = profile
+                    getSharedPreferences("tsh_pipeline_profiles", MODE_PRIVATE)
+                        .edit().putString("java.profile", profile.id).apply()
+                    tshConfigurationStates["java"] = "READY"
+                    javaTshReady = true
+                    installTshHighlighterIfReady()
+                    editorView?.invalidate()
+                    applyTshThemeTokens()
+                    showResultDialog(
+                        "Java TSH 已切换：${profile.displayName}",
+                        report + "\n\n编辑器原文档已保留；新高亮器已重新绑定，后续绘制使用当前配置。"
+                    )
+                }.onFailure { error ->
+                    // A failed compile leaves the engine's previous grammar snapshot intact.
+                    javaTshReady = engine.isGrammarLoaded("java")
+                    if (javaTshReady) installTshHighlighterIfReady()
+                    showResultDialog(
+                        "Java TSH 配置加载失败",
+                        "目标文件：assets/tsh/${profile.assetName}\n\n${error.stackTraceToString()}"
+                    )
+                }
+            }
+        }
+    }
+
+    /**
+     * Exercises the real Java parser and each independent producer. Source ordinals:
+     * 0=Oniguruma Regex, 1=Monarch, 2=ATS selector, 3=Native Tree-sitter Query.
+     */
+    private fun runJavaTshPipelineProfileProbe(
+        profile: JavaTshPipelineProfile,
+        language: TSLanguage
+    ): String {
+        val sample = """
+            package com.example.pipeline;
+            import java.util.*;
+            import java.util.concurrent.CompletableFuture;
+
+            /** Full Java probe.
+             * @author Windbell
+             * @param input source text
+             * @return parsed result
+             * @throws IllegalArgumentException invalid input
+             * {@code @Deprecated}
+             */
+            @Deprecated
+            public sealed class PipelineProbe<T extends Number> permits RecordProbe {
+                private static final int MAX_BUFFER_SIZE = 0x7FFF;
+                private static final long BINARY_MASK = 0b1010_0101L;
+                private final String message = "Hello \\"Tree-sitter\\"";
+                private final char marker = '\\n';
+
+                public PipelineProbe(T input) {
+                    this.value = input;
+                }
+
+                private T value;
+
+                public T getValue(final int index, String fallback) {
+                    // TODO: cover comments and identifiers
+                    /* FIXME: nested lexical content */
+                    return value;
+                }
+
+                public void run() {
+                    List<String> names = new ArrayList<>();
+                    names.add("alpha");
+                    names.forEach(name -> System.out.println(name));
+                    Runnable task = this::execute;
+                    task.run();
+                    double ratio = 1.25e-3;
+                    long mask = 0xFF_FF_FF_FFL;
+                    boolean enabled = true && (ratio > 0);
+                    if (enabled) { execute(); } else { value = null; }
+                }
+
+                private void execute() {
+                    String text = """
+                        Java text block
+                        Unicode: 中文 👨‍👩‍👧‍👦 𠮷
+                        """;
+                    throw new IllegalStateException(text);
+                }
+            }
+
+            record RecordProbe(int id, String label) {}
+            enum ProbeState { READY, RUNNING, FAILED }
+            interface ProbeContract { void execute(); }
+            """.trimIndent()
+
+        val parser = TSParser.create().apply { setLanguage(language) }
+        try {
+            val tree = parser.parseString(sample)
+                ?: error("Tree-sitter Java parser returned a null tree.")
+            tree.use { parsedTree ->
+                val diagnostics = WindbellTshEngine.instance
+                    .computePipelineDiagnostics(parsedTree, sample, "java")
+                val finalSpans = WindbellTshEngine.instance
+                    .computeHighlights(parsedTree, sample, "java")
+                val preview = android.text.SpannableStringBuilder(sample)
+                WindbellTshEngine.instance.applyHighlightSpansToSpannable(
+                    finalSpans, 0, sample, "java", preview
+                )
+                val foregroundSpans = preview.getSpans(
+                    0, preview.length, android.text.style.ForegroundColorSpan::class.java
+                )
+                val sourceCounts = (0..3).associateWith { source ->
+                    diagnostics.captures.count { it.source == source }
+                }
+                val regex = sourceCounts[0] ?: 0
+                val monarch = sourceCounts[1] ?: 0
+                val ats = sourceCounts[2] ?: 0
+                val query = sourceCounts[3] ?: 0
+                val passed = when (profile) {
+                    JavaTshPipelineProfile.REGEX_ONLY ->
+                        regex > 0 && ats == 0 && query == 0 && monarch == 0
+                    JavaTshPipelineProfile.ATS_ONLY ->
+                        regex == 0 && ats > 0 && query > 0 && monarch == 0
+                    JavaTshPipelineProfile.HYBRID ->
+                        regex > 0 && ats > 0 && query > 0 && monarch == 0
+                }
+                val report = StringBuilder()
+                report.appendLine("配置：${profile.assetName}")
+                report.appendLine("Java parser：${parsedTree.rootNode.type}")
+                report.appendLine("源代码：${sample.length} UTF-16 units / ${sample.length * 2} UTF-16LE bytes")
+                report.appendLine("原始 captures：${diagnostics.captures.size}")
+                report.appendLine("最终合成 spans：${finalSpans.size}")
+                report.appendLine("Android ForegroundColorSpan：${foregroundSpans.size}")
+                report.appendLine("Regex：${diagnostics.matchCounts[0] ?: 0} matches / $regex captures")
+                report.appendLine("Monarch：${diagnostics.matchCounts[1] ?: 0} matches / $monarch captures (must remain 0)")
+                report.appendLine("ATS Selector：${diagnostics.matchCounts[2] ?: 0} matches / $ats captures")
+                report.appendLine("Native SCM Query：${diagnostics.matchCounts[3] ?: 0} matches / $query captures")
+                report.appendLine()
+                report.appendLine(if (passed) "PIPELINE ISOLATION: PASS" else "PIPELINE ISOLATION: FAIL")
+                if (!passed) {
+                    report.appendLine("Expected producer counts do not match the selected profile. Inspect the compiler diagnostics and captures before treating this profile as valid.")
+                }
+                return report.toString()
+            }
+        } finally {
+            parser.close()
+        }
+    }
 
     /** Find the deepest named Java Tree-sitter node containing a UTF-16LE byte range. */
     private fun findSmallestNamedNode(root: TSNode, startByte: Int, endByte: Int): TSNode {
@@ -1234,6 +1467,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
+        outState.putString("tsh.pipelineProfile", activeJavaTshProfile.id)
         outState.putString("tsh.selectedScheme", WindbellTshEngine.instance.getSelectedScheme("java"))
         outState.putBoolean("tsh.isDark", WindbellTshEngine.instance.isDark("java"))
         super.onSaveInstanceState(outState)
