@@ -372,12 +372,14 @@
             {
                 id: "java-keyword-tokens"
                 priority: 96
-                source: `["public" "protected" "private" "abstract" "static" "final" "native" "synchronized" "volatile" "transient" "strictfp" "class" "interface" "enum" "record" "extends" "implements" "permits" "return" "throw" "throws" "new" "this" "super" "if" "else" "switch" "case" "default" "for" "while" "do" "break" "continue" "try" "catch" "finally" "yield" "assert" "package" "import"] @keyword`
+                source: `["public" "protected" "private" "abstract" "static" "final" "native" "synchronized" "volatile" "transient" "strictfp" "class" "interface" "enum" "record" "extends" "implements" "return" "throw" "new" "if" "else" "switch" "case" "default" "for" "while" "do" "break" "continue" "try" "catch" "finally" "yield" "assert" "package" "import"] @keyword
+(this) @keyword
+(super) @keyword`
             },
             {
                 id: "java-literal-constants"
                 priority: 96
-                source: `["true" "false" "null"] @constant`
+                source: `[(true) (false) (null_literal)] @constant`
             },
             {
                 id: "java-annotation-names"
@@ -418,7 +420,7 @@
             {
                 id: "java-primitive-types"
                 priority: 98
-                source: `["boolean" "byte" "char" "short" "int" "long" "float" "double" "void"] @typeBuiltin`
+                source: `[(boolean_type) (integral_type) (floating_point_type) (void_type)] @typeBuiltin`
             },
             {
                 id: "java-operator-tokens"
