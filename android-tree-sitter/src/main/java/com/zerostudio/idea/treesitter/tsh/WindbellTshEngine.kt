@@ -183,15 +183,15 @@ class WindbellTshEngine private constructor() {
         val darkColor: Int,
         val lightFontFlags: Int,
         val darkFontFlags: Int,
-        /** Per-appearance attributes explicitly set or cleared by this style. */
-        val lightFontDefinedMask: Int = lightFontFlags,
-        val darkFontDefinedMask: Int = darkFontFlags,
         val hasLightColor: Boolean,
         val hasDarkColor: Boolean,
         val lightBackground: Int = 0,
         val darkBackground: Int = 0,
         val hasLightBackground: Boolean = false,
-        val hasDarkBackground: Boolean = false
+        val hasDarkBackground: Boolean = false,
+        /** Per-appearance attributes explicitly set or cleared by this style. */
+        val lightFontDefinedMask: Int = lightFontFlags,
+        val darkFontDefinedMask: Int = darkFontFlags
     )
 
     private val paletteCache = ConcurrentHashMap<String, Map<Int, StylePalette>>()
