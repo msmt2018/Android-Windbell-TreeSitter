@@ -159,7 +159,7 @@ class MainActivity : AppCompatActivity() {
         parser = TSParser.create()
         currentLanguage?.let { parser?.setLanguage(it) }
 
-        // 初始化加载原生 .tsh 语法配置（完全放弃 SCM 方案）
+        // 初始化原生 .tsh 配置；ATS Selector 与 SCM Query 保持独立管道。
         initTshEngineConfigurations()
 
         setupTabs()
