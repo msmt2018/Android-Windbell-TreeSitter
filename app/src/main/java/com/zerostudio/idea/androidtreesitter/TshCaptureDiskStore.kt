@@ -50,6 +50,10 @@ internal class TshCaptureDiskStore(
         if (key.startUtf16 >= key.endUtf16) return
         synchronized(lock) {
             if (closed) return
+            // Remove the previous index/file before publishing the replacement.
+            // Doing this after rename would delete the newly-written file because
+            // both generations intentionally use the same deterministic filename.
+            removeEntry(key)
             val destination = fileFor(key)
             val temporary = File(directory, destination.name + ".tmp")
             try {
@@ -76,7 +80,6 @@ internal class TshCaptureDiskStore(
                 if (!temporary.renameTo(destination)) {
                     throw IllegalStateException("Unable to publish cached TSH capture page")
                 }
-                removeEntry(key)
                 val entryBytes = destination.length()
                 entries[key] = Entry(destination, entryBytes)
                 rangeIndex.add(key)
