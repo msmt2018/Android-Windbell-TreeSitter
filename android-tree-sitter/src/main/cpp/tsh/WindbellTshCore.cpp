@@ -1172,19 +1172,25 @@ void WindbellEngine::matchBlockRecursive(
         // boundary instead; for blocks that begin inside this viewport retain
         // the original content_start so no delimiter can be skipped.
         const UChar* end_search_start = std::max(content_start, range_start);
+        // Only a closing delimiter whose start is inside this viewport can
+        // affect the spans emitted for this request. Keep text_end as the full
+        // Oniguruma input (look-around still sees the complete document), but
+        // bound candidate start positions to range_end. If no close is found,
+        // treat the block as continuing through this viewport; the next viewport
+        // independently resumes from its own boundary.
         int hit_end = onig_search(
             rule.onig_end,
             text_start,
             text_end,
             end_search_start,
-            text_end,
+            range_end,
             end_region,
             ONIG_OPTION_NONE
         );
 
         uint32_t block_end_byte = (hit_end >= 0) ?
             static_cast<uint32_t>(end_region->end[0]) :
-            static_cast<uint32_t>(text_end - text_start);
+            output_end_byte;
 
         if ((block_start_byte & 1u) == 0 && (block_end_byte & 1u) == 0) {
             if (rule.has_style && block_start_byte < block_end_byte) {
@@ -1205,7 +1211,7 @@ void WindbellEngine::matchBlockRecursive(
                 const uint32_t content_start = static_cast<uint32_t>(start_region->end[0]);
                 const uint32_t content_end = hit_end >= 0 ?
                     static_cast<uint32_t>(end_region->beg[0]) :
-                    static_cast<uint32_t>(text_end - text_start);
+                    output_end_byte;
                 if (content_start < content_end &&
                     (content_start & 1u) == 0 && (content_end & 1u) == 0 &&
                     content_end > output_start_byte && content_start < output_end_byte) {
@@ -1234,7 +1240,9 @@ void WindbellEngine::matchBlockRecursive(
 
             if (!rule.nested_rules.empty()) {
                 const UChar* inner_start = content_start;
-                const UChar* inner_end = hit_end >= 0 ? text_start + end_region->beg[0] : text_end;
+                const UChar* inner_end = hit_end >= 0
+                    ? text_start + end_region->beg[0]
+                    : text_start + output_end_byte;
 
                 for (const auto& nested : rule.nested_rules) {
                     if (!nested.enabled) continue;
