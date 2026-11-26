@@ -244,9 +244,8 @@ if(NOT TSH_STACK_BRANCH_CAP_POSITION LESS 0)
     message(FATAL_ERROR "Tree-sitter stack iterator branch cap was not removed")
 endif()
 
-# Keep upstream StackIterator ownership semantics: each iterator retains its
-# Subtrees and releases them through ts_subtree_array_delete. The borrowed-path
-# experiment corrupted allocator metadata during incremental parsing on Android.
+# Iterators share immutable retained subtree paths in Stack::iterator_paths.
+# StackSlices materialize their own references before the arena is released.
 
 string(REPLACE
     "array_reserve(&self->heads, 4);\n  array_reserve(&self->slices, 4);\n  array_reserve(&self->iterators, 4);"
@@ -274,7 +273,7 @@ set(TSH_STACK_ITERATOR_NEW [=[typedef struct {
   StackNode *node;
   uint32_t path_index;
   uint32_t path_length;
-  Subtree latest_subtree;
+  Subtree first_subtree;
   uint32_t subtree_count;
   bool is_pending;
 } StackIterator;
@@ -346,7 +345,9 @@ static SubtreeArray stack__materialize_iterator_path(
     ts_subtree_retain(path->subtree);
     path_index = path->previous;
   }
-  ts_subtree_array_reverse(&subtrees);
+  // The linked path is already in the reverse order expected by
+  // ts_stack__add_slice. Upstream reverses its forward-built iterator array
+  // immediately before emitting the slice; do not reverse it a second time.
   return subtrees;
 }]=])
 string(REPLACE
@@ -467,7 +468,7 @@ set(TSH_STACK_ITER_NEW [=[static StackSliceArray stack__iter(
     .node = head->node,
     .path_index = STACK_PATH_NONE,
     .path_length = 0,
-    .latest_subtree = NULL_SUBTREE,
+    .first_subtree = NULL_SUBTREE,
     .subtree_count = 0,
     .is_pending = true,
   };
@@ -515,8 +516,10 @@ set(TSH_STACK_ITER_NEW [=[static StackSliceArray stack__iter(
           if (include_subtrees) {
             next_iterator->path_index = stack__append_iterator_path(
               self, next_iterator->path_index, link.subtree);
+            if (next_iterator->path_length == 0) {
+              next_iterator->first_subtree = link.subtree;
+            }
             next_iterator->path_length++;
-            next_iterator->latest_subtree = link.subtree;
           }
           if (!ts_subtree_extra(link.subtree)) {
             next_iterator->subtree_count++;
@@ -557,9 +560,9 @@ set(TSH_STACK_ERROR_CALLBACK_OLD [=[forceinline StackAction pop_error_callback(v
 }
 ]=])
 set(TSH_STACK_ERROR_CALLBACK_NEW [=[forceinline StackAction pop_error_callback(void *payload, const StackIterator *iterator) {
-  if (iterator->path_length > 0 && iterator->latest_subtree.ptr) {
+  if (iterator->path_length > 0 && iterator->first_subtree.ptr) {
     bool *found_error = payload;
-    if (!*found_error && ts_subtree_is_error(iterator->latest_subtree)) {
+    if (!*found_error && ts_subtree_is_error(iterator->first_subtree)) {
       *found_error = true;
       return StackActionPop | StackActionStop;
     }
