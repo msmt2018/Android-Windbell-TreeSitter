@@ -405,7 +405,7 @@ python generate_grammars.py
 
 仓库根目录 `LICENSE` 使用 GNU Affero General Public License Version 3（AGPL-3.0-only）。AGPL 要求分发受覆盖作品时保留许可与版权声明，并履行对应源码提供义务；第 13 条还规定了修改版本通过网络向用户提供服务时的源码获取要求。
 
-各 Grammar 目录来自不同上游作者维护的独立项目。Git submodule 不会自动改变上游项目的许可证。重新分发前应分别检查每个 Grammar 的许可证与版权声明；Tree-sitter、Oniguruma 等嵌套第三方组件也应遵守其各自许可要求。
+各 Grammar 目录来自不同上游作者维护的独立项目。Git submodule 不会自动改变上游项目的许可证。重新分发前应分别检查每个 Grammar 的许可证与版权声明；Tree-sitter、Oniguruma 等嵌套第三方组件也应遵守其各自许可要求。 另外，仅替换根目录 LICENSE 并不会自动改写已有源码文件头中的许可证声明或上游派生源码的许可信息；当前仓库仍有带旧 GPL/LGPL 声明的源码文件，Gradle 发布 POM 中的许可证元数据也需要进一步统一核对。因此，在完成源码文件与发布元数据的许可审计前，不能把仓库内所有代码和产物笼统声明为统一 AGPL-3.0-only。
 
 - [仓库完整许可证](LICENSE)
 - [GNU AGPL v3 官方文本](https://www.gnu.org/licenses/agpl-3.0.html)
