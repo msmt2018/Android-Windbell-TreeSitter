@@ -906,7 +906,7 @@ class MainActivity : AppCompatActivity() {
                 }
 
                 private void execute() {
-                    String text = ${"\\"\\"\\""}
+                    String text = ${"\"\"\""}
                         Java text block
                         Unicode: 中文 👨‍👩‍👧‍👦 𠮷
                         ${"\\"\\"\\""};
