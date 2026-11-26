@@ -1472,7 +1472,7 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
             }
             bounded_rules.push_back(std::move(entry));
         }
-        std::sort(bounded_rules.begin(), bounded_rules.end(),
+        std::stable_sort(bounded_rules.begin(), bounded_rules.end(),
             [](const BoundedRule& left, const BoundedRule& right) {
                 return left.rule->maximum_match_bytes < right.rule->maximum_match_bytes;
             });
