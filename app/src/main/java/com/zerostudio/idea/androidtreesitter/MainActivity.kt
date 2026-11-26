@@ -1007,12 +1007,12 @@ class MainActivity : AppCompatActivity() {
                     val start = (capture.startByte shr 1).coerceIn(0, sample.length)
                     val end = (capture.endByte shr 1).coerceIn(start, sample.length)
                     val snippet = sample.substring(start, end)
-                        .replace("\\n", "\\\\n")
-                        .replace("\\r", "\\\\r")
+                        .replace("\n", "\\n")
+                        .replace("\r", "\\r")
                     val style = styleNames[capture.styleId]?.name ?: "style#${capture.styleId}"
+                    val sourceName = sourceLabels[capture.source] ?: "source#${capture.source}"
                     report.appendLine(
-                        "  [${sourceLabels[capture.source] ?: "source#${capture.source}"} " +
-                            "p=${capture.priority} style=$style] \"$snippet\""
+                        "  [$sourceName p=${capture.priority} style=$style] \"$snippet\""
                     )
                 }
                 report.appendLine()
