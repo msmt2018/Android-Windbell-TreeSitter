@@ -1603,8 +1603,8 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                 ONIG_OPTION_NONE
             );
             if (previous_hit < 0 || region->beg[0] < 0 ||
-                region->end[0] <= static_cast<int>(range_start_byte) ||
-                region->beg[0] >= static_cast<int>(range_start_byte)) {
+                static_cast<int64_t>(region->end[0]) <= static_cast<int64_t>(range_start_byte) ||
+                static_cast<int64_t>(region->beg[0]) >= static_cast<int64_t>(range_start_byte)) {
                 break;
             }
             current = text_start + region->beg[0];
