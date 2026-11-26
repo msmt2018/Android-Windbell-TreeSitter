@@ -1,2 +1,16 @@
 jdk:
   - openjdk17
+
+before_install:
+  - git submodule update --init --recursive
+  - sudo apt-get update
+  - sudo apt-get install -y build-essential cargo cmake ninja-build curl
+  - curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
+  - sudo apt-get install -y nodejs
+  - node --version
+  - npm --version
+  - chmod +x ./gradlew scripts/install-grammar-node-dependencies.sh
+  - bash scripts/install-grammar-node-dependencies.sh
+
+install:
+  - ./gradlew publishToMavenLocal -PjitpackVersion="$JITPACK_TAG" -x test -x lint --no-daemon --stacktrace
