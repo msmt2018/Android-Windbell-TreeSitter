@@ -398,12 +398,14 @@ class TshSyntaxHighlighter(
                 return false
             }
             val key = CaptureRangeKey(active.cacheSessionId, offset, offset + 1)
-            val cached = findContainingCaptureRange(key)
+            val cached = findCaptureCoverage(key)
             if (cached == null) {
                 enqueueViewportRange(key)
                 return true
             }
-            cached.query(offset, offset + 1)
+            val unique = LinkedHashSet<WindbellTshEngine.HighlightSpan>()
+            cached.forEach { it.appendQuery(offset, offset + 1, unique) }
+            unique.toList()
         } else {
             // There is no Kotlin-side full-document capture index anymore.
             // Until the native document is published, treat lexical scope as
@@ -633,7 +635,7 @@ class TshSyntaxHighlighter(
         if (key.startUtf16 >= key.endUtf16) return
         val active = largeSession ?: return
         if (generation.get() != active.ticket || active.cacheSessionId != key.sessionId) return
-        if (findContainingCaptureRange(key) != null) return
+        if (hasCachedCaptureCoverage(key)) return
         val flushNow = synchronized(viewportRequestLock) {
             if (pendingViewportRanges.none {
                 it.sessionId == key.sessionId && it.startUtf16 <= key.startUtf16 && it.endUtf16 >= key.endUtf16
@@ -752,7 +754,7 @@ class TshSyntaxHighlighter(
     private suspend fun executeNativeRangeNow(key: CaptureRangeKey): Boolean {
         val active = largeSession ?: return false
         if (generation.get() != active.ticket || active.cacheSessionId != key.sessionId ||
-            findContainingCaptureRange(key) != null) return false
+            hasCachedCaptureCoverage(key)) return false
         val existing = active.rangeWork[key]
         val work = if (existing == null) {
             val initial = RangeWork()
