@@ -1579,41 +1579,28 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
             rule.raw_match_pattern.find("\\G") != std::string::npos ||
             rule.raw_match_pattern.find("\\K") != std::string::npos;
         const UChar* current = position_sensitive ? text_start : viewport_start;
-        auto previousCodePoint = [text_start](const UChar* position) noexcept {
-            const auto* units = reinterpret_cast<const uint16_t*>(text_start);
-            const size_t unit_index = static_cast<size_t>(position - text_start) / 2u;
-            if (unit_index == 0) return text_start;
-            size_t step_units = 1;
-            const uint16_t previous_unit = units[unit_index - 1u];
-            if (previous_unit >= 0xDC00u && previous_unit <= 0xDFFFu &&
-                unit_index >= 2u) {
-                step_units = 2;
-            }
-            return position - step_units * 2u;
-        };
-        // A greedy/unbounded expression can match from many earlier positions
-        // and still overlap the viewport (for example [a-z]+ inside a long
-        // identifier). Walk backward through only those overlapping candidates
-        // until the earliest one is found, preserving the original forward,
-        // non-overlapping scan result without visiting unrelated prior matches.
-        const UChar* previous_search = viewport_start;
-        while (!position_sensitive && previous_search > text_start) {
-            previous_search = previousCodePoint(previous_search);
+        // A reverse Oniguruma search locates the nearest candidate start before
+        // the viewport in one engine invocation. The previous implementation
+        // moved one UTF-16 code point backward and re-ran onig_search each time;
+        // on a document with a large prefix this could issue hundreds of
+        // thousands of regex searches for a single visible line (quadratic
+        // prefix work). Probe once, then accept the candidate only when its
+        // complete match actually crosses the viewport boundary.
+        if (!position_sensitive && viewport_start > text_start) {
             const int previous_hit = onig_search(
                 rule.onig_start,
                 text_start,
                 text_end,
-                previous_search,
+                viewport_start,
                 text_start,
                 region,
                 ONIG_OPTION_NONE
             );
-            if (previous_hit < 0 || region->beg[0] < 0 ||
-                static_cast<int64_t>(region->end[0]) <= static_cast<int64_t>(range_start_byte) ||
-                static_cast<int64_t>(region->beg[0]) >= static_cast<int64_t>(range_start_byte)) {
-                break;
+            if (previous_hit >= 0 && region->beg[0] >= 0 &&
+                region->end[0] > static_cast<int64_t>(range_start_byte) &&
+                region->beg[0] < static_cast<int64_t>(range_start_byte)) {
+                current = text_start + region->beg[0];
             }
-            current = text_start + region->beg[0];
         }
 
         const UChar* scan_end = position_sensitive ? text_end : viewport_end;
