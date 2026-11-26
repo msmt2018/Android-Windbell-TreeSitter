@@ -2798,7 +2798,9 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                             if (!program.query) {
                                 g_tsh_last_source_offset = error_offset;
                                 g_tsh_last_error_detail =
-                                    "native Tree-sitter query compilation failed (error " +
+                                    "native Tree-sitter query compilation failed for '" +
+                                    (program.id.empty() ? std::string("<unnamed>") : program.id) +
+                                    "' (error " +
                                     std::to_string(static_cast<int>(error_type)) + ")";
                                 return nullptr;
                             }
