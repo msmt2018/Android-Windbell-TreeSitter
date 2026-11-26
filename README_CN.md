@@ -609,7 +609,7 @@ cmake --build build/host --target android-tree-sitter --parallel 2
 
 需要区分两种不同的分发方式：
 
-- **JitPack：** 当前唯一的项目 Maven 发布渠道。发布工作流创建 Git Tag，JitPack 根据 Tag 构建并提供各模块依赖。
+- **JitPack：** 当前唯一的项目 Maven 分发渠道。发布工作流先完整构建项目并验证全部 60 个 Maven Publication 可写入 Maven Local，成功后才创建 Git Tag；JitPack 随后按需构建/缓存各模块并提供依赖。
 - **GitHub Packages：** 不再用于本项目的 Maven Release 发布。
 
 使用 JitPack 时，先在仓库查询页面确认目标 Tag / Commit 构建成功，并且目标模块已列出。对于本多模块仓库，单独模块的依赖坐标形式为：
