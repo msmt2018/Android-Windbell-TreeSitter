@@ -1449,12 +1449,32 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
         // The previous inner-loop allocation created one vector and one region
         // per rule/window pair, even though neither needs to outlive this call.
         std::vector<UChar> regex_window;
-        OnigRegion* regex_window_region = onig_region_new();
-        if (regex_window_region) for (const auto& rule : grammar->regex_rules) {
+        const auto region_deleter = [](OnigRegion* value) {
+            if (value) onig_region_free(value, 1);
+        };
+        std::unique_ptr<OnigRegion, decltype(region_deleter)> regex_window_region(
+            onig_region_new(), region_deleter);
+        if (!regex_window_region) throw std::bad_alloc();
+        for (const auto& rule : grammar->regex_rules) {
             if (!rule.enabled || rule.type != RegexRuleType::MATCH ||
                 !rule.onig_start ||
                 rule.execution_capability != RegexExecutionCapability::BOUNDED_WINDOW ||
                 rule.maximum_match_bytes == 0) continue;
+
+            // Resolve named capture numbers once per rule, not once per match.
+            // The old inner match loop allocated and converted every group name
+            // for every occurrence, creating allocator pressure on dense files.
+            std::vector<std::pair<int, uint16_t>> named_group_indices;
+            named_group_indices.reserve(rule.named_group_style_map.size());
+            for (const auto& named : rule.named_group_style_map) {
+                std::vector<UChar> name;
+                name.reserve(named.first.size());
+                for (unsigned char ch : named.first) name.push_back(static_cast<UChar>(ch));
+                const int group = onig_name_to_backref_number(
+                    rule.onig_start, name.data(), name.data() + name.size(), nullptr);
+                if (group >= 0) named_group_indices.emplace_back(group, named.second);
+            }
+
             const uint64_t overlap = rule.maximum_match_bytes >= 2u
                 ? rule.maximum_match_bytes - 2u : 0u;
             uint64_t core_start = range_start_byte > overlap
@@ -1470,15 +1490,16 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                 if (window_bytes == 0 || (window_bytes & 1u) != 0 ||
                     window_bytes > static_cast<uint64_t>(std::numeric_limits<size_t>::max()) /
                         sizeof(UChar)) break;
-                try { regex_window.resize(static_cast<size_t>(window_bytes / sizeof(UChar))); }
-                catch (...) { break; }
+                regex_window.resize(static_cast<size_t>(window_bytes / sizeof(UChar)));
                 if (!windbell::largefile::copyTextRange(
-                        *text_source, core_start, window_bytes, regex_window.data())) break;
+                        *text_source, core_start, window_bytes, regex_window.data())) {
+                    throw std::runtime_error("Unable to copy bounded TSH Regex window");
+                }
                 const UChar* window_start = regex_window.data();
                 const UChar* window_end_ptr = window_start + regex_window.size();
                 const UChar* current = window_start;
-                onig_region_clear(regex_window_region);
-                OnigRegion* region = regex_window_region;
+                onig_region_clear(regex_window_region.get());
+                OnigRegion* region = regex_window_region.get();
                 while (current < window_end_ptr) {
                     const int hit = onig_search(
                         rule.onig_start, window_start, window_end_ptr,
@@ -1532,15 +1553,8 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                                 if (style != rule.group_style_map.end())
                                     append_window_capture(group, style->second);
                             }
-                            for (const auto& named : rule.named_group_style_map) {
-                                std::vector<UChar> name;
-                                try {
-                                    name.assign(named.first.begin(), named.first.end());
-                                } catch (...) { continue; }
-                                const int group = onig_name_to_backref_number(
-                                    rule.onig_start, name.data(),
-                                    name.data() + name.size(), region);
-                                append_window_capture(group, named.second);
+                            for (const auto& named : named_group_indices) {
+                                append_window_capture(named.first, named.second);
                             }
                         }
                     }
@@ -1556,7 +1570,6 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                 core_start = core_end;
             }
         }
-        onig_region_free(regex_window_region, 1);
     }
 
     if (has_contiguous_text) for (const auto& rule : grammar->regex_rules) {
