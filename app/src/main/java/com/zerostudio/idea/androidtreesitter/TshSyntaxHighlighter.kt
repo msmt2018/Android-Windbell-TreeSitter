@@ -89,8 +89,8 @@ class TshSyntaxHighlighter(
         val lengthChars: AtomicLong,
         val cacheSessionId: Long,
         val ticket: Long,
-        val diskCaptureStore: TshCaptureDiskStore,
-        val diskRenderedLineStore: TshRenderedLineDiskStore,
+        val diskCaptureStore: TshCaptureDiskStore?,
+        val diskRenderedLineStore: TshRenderedLineDiskStore?,
         val documentRevision: AtomicLong = AtomicLong(),
         // Mirrors the native document's committed edit version. Dirty ranges are
         // consumed only after the matching edit transaction has fully committed.
@@ -293,7 +293,7 @@ class TshSyntaxHighlighter(
             dark = engine.isDark(extension)
         )
         renderedLineCache.get(renderKey)?.let { return it }
-        active.diskRenderedLineStore.get(
+        active.diskRenderedLineStore?.get(
             renderKey.documentRevision,
             renderKey.lineStartOffset,
             renderKey.visibleStart,
@@ -341,7 +341,7 @@ class TshSyntaxHighlighter(
         scope.launch(Dispatchers.IO) {
             if (generation.get() == active.ticket && largeSession === active) {
                 runCatching {
-                    active.diskRenderedLineStore.put(
+                    active.diskRenderedLineStore?.put(
                         renderKey.documentRevision,
                         renderKey.lineStartOffset,
                         renderKey.visibleStart,
@@ -396,7 +396,7 @@ class TshSyntaxHighlighter(
             dark = engine.isDark(extension)
         )
         if (renderedLineCache.get(renderedKey) != null) return true
-        if (active.diskRenderedLineStore.contains(
+        if (active.diskRenderedLineStore?.contains(
                 renderedKey.documentRevision,
                 renderedKey.lineStartOffset,
                 renderedKey.visibleStart,
@@ -557,14 +557,22 @@ class TshSyntaxHighlighter(
             if (generation.get() != ticket) throw CancellationException("Stale native document")
 
             cacheSessionId = nextSessionId.getAndIncrement()
-            val sessionDiskCaptureStore = TshCaptureDiskStore(
-                File(temporaryDirectory, "tsh-captures-$cacheSessionId"),
-                cacheSessionId
-            )
+            val sessionDiskCaptureStore = runCatching {
+                TshCaptureDiskStore(
+                    File(temporaryDirectory, "tsh-captures-$cacheSessionId"),
+                    cacheSessionId
+                )
+            }.onFailure {
+                Log.w(TAG, "TSH capture cold cache unavailable; using the in-memory cache", it)
+            }.getOrNull()
             diskCaptureStore = sessionDiskCaptureStore
-            val sessionRenderedLineStore = TshRenderedLineDiskStore(
-                File(temporaryDirectory, "tsh-rendered-$cacheSessionId")
-            )
+            val sessionRenderedLineStore = runCatching {
+                TshRenderedLineDiskStore(
+                    File(temporaryDirectory, "tsh-rendered-$cacheSessionId")
+                )
+            }.onFailure {
+                Log.w(TAG, "TSH rendered-line cold cache unavailable; using the in-memory cache", it)
+            }.getOrNull()
             diskRenderedLineStore = sessionRenderedLineStore
             val active = LargeSession(
                 nativeHandle, AtomicLong(snapshot.length.toLong()),
@@ -831,7 +839,7 @@ class TshSyntaxHighlighter(
         // Restore a previously captured viewport from the bounded disk tier
         // before scheduling any native work. This path is used after the hot LRU
         // has evicted a range during long-distance scrolling.
-        val restored = active.diskCaptureStore.restoreCovering(key)
+        val restored = active.diskCaptureStore?.restoreCovering(key)
         if (restored != null) {
             val unique = LinkedHashSet<WindbellTshEngine.HighlightSpan>()
             restored.forEach { range ->
@@ -846,7 +854,7 @@ class TshSyntaxHighlighter(
             captureCache.put(key, CaptureIntervalIndex(restoredSpans))
             // Refresh the disk LRU with a compact combined page for the next
             // viewport request; failure here must not force Regex execution.
-            runCatching { active.diskCaptureStore.put(key, restoredSpans) }
+            runCatching { active.diskCaptureStore?.put(key, restoredSpans) }
             return true
         }
 
@@ -887,7 +895,7 @@ class TshSyntaxHighlighter(
                 captureCache.put(key, CaptureIntervalIndex(spans))
                 // Disk persistence is a cold tier only. A write failure never
                 // invalidates the successful native result or its hot-cache entry.
-                runCatching { active.diskCaptureStore.put(key, spans) }
+                runCatching { active.diskCaptureStore?.put(key, spans) }
                     .onFailure { Log.w(TAG, "Unable to persist TSH capture range $key", it) }
                 work.state = RangeWorkState.SUCCEEDED
             } else work.state = RangeWorkState.CANCELLED
@@ -982,8 +990,8 @@ class TshSyntaxHighlighter(
                     // Query and lexical state can depend on distant source text.
                     // Until dependency envelopes are recorded, invalidate the cold
                     // capture tier at the same committed-edit boundary as the hot tier.
-                    active.diskCaptureStore.clear()
-                    active.diskRenderedLineStore.clear()
+                    active.diskCaptureStore?.clear()
+                    active.diskRenderedLineStore?.clear()
                     renderedLineCache.invalidate { key, _ ->
                         key.sessionId == active.cacheSessionId
                     }
@@ -1083,8 +1091,8 @@ class TshSyntaxHighlighter(
                 }
             }.onFailure { Log.w(TAG, "Failed to close native TSH document", it) }
             captureCache.invalidate { key, _ -> key.sessionId == active.cacheSessionId }
-            active.diskCaptureStore.close()
-            active.diskRenderedLineStore.close()
+            active.diskCaptureStore?.close()
+            active.diskRenderedLineStore?.close()
             renderedLineCache.invalidate { key, _ -> key.sessionId == active.cacheSessionId }
         }
     }
