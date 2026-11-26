@@ -45,6 +45,65 @@ class WindbellTshLinkageTest {
     }
 
     @Test
+    fun nativeBlockViewportRetainsClosingDelimiterWhenViewportStartsInsideIt() {
+        val engine = WindbellTshEngine.instance
+        val extension = "block-close-boundary"
+        val dsl = """
+            name: ["Java", ".java"]
+            styles: [
+                "block", #007F00, #6A8759,
+            ]
+            contains: [
+                { start: { match: /\/\*/ }, end: { match: /\*\// }, style: "block" }
+            ]
+        """.trimIndent()
+        assertTrue(engine.loadTshSource(extension, dsl, TSLanguageJava.getInstance()))
+
+        val source = "class BoundaryProbe { /* " + "x".repeat(4096) + " */ int value; }"
+        val sourceBytes = source.toByteArray(Charsets.UTF_16LE)
+        val reader = NativeTextWindowReader { offset, requested, destination ->
+            val start = offset.toInt()
+            val count = minOf(requested, sourceBytes.size - start)
+            destination.clear()
+            if (count > 0) destination.put(sourceBytes, start, count)
+            destination.position()
+        }
+        val handle = engine.createNativeDocument(
+            TSLanguageJava.getInstance(), extension, sourceBytes.size.toLong(),
+            File(System.getProperty("java.io.tmpdir")), reader
+        )
+        try {
+            val blockStyle = engine.getStyleCatalog(extension)
+                .first { it.name == "block" }.styleId
+            val closingStart = source.indexOf("*/")
+            assertTrue(closingStart >= 0)
+
+            // Test both the first and second UTF-16 code unit of the closing
+            // delimiter. Neither viewport has a preceding block checkpoint,
+            // so both exercise authoritative reverse state recovery.
+            for (viewportStart in closingStart..closingStart + 1) {
+                val viewportEnd = viewportStart + 1
+                val encoded = engine.highlightNativeDocument(
+                    handle, viewportStart.toLong() * 2L, viewportEnd.toLong() * 2L, false
+                ) ?: error("BLOCK delimiter boundary viewport returned null")
+                val found = (0 until encoded.size / 6).any { index ->
+                    val base = index * 6
+                    Integer.toUnsignedLong(encoded[base]) == viewportStart.toLong() * 2L &&
+                        Integer.toUnsignedLong(encoded[base + 1]) == viewportEnd.toLong() * 2L &&
+                        (encoded[base + 2] and 0xFFFF) == blockStyle
+                }
+                assertTrue(
+                    found,
+                    "BLOCK style must include closing-delimiter code unit at UTF-16 offset $viewportStart; " +
+                        "spans=\${encoded.contentToString()}"
+                )
+            }
+        } finally {
+            engine.closeNativeDocument(handle)
+        }
+    }
+
+    @Test
     fun testLargeNativeDocumentExecutesBoundedRegexWithoutWholeFileBuffer() {
         val engine = WindbellTshEngine.instance
         val extension = "large-regex-window"
