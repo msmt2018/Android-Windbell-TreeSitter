@@ -208,7 +208,7 @@ interface EditorTextSnapshot : CharSequence {
             val chunk = getNearestChunk(startIndex + copied, limit - copied)
             if (chunk.isEmpty()) break
             val count = minOf(chunk.length, limit - copied)
-            chunk.getChars(0, count, destination, destinationOffset + copied)
+            chunk.toCharArray(destination, destinationOffset + copied, 0, count)
             copied += count
         }
         return copied
@@ -233,7 +233,7 @@ private class StringEditorTextSnapshot(private val text: String) : EditorTextSna
         require(startIndex >= 0 && startIndex <= length)
         require(maxLength >= 0)
         val count = minOf(maxLength, destination.size - destinationOffset, length - startIndex)
-        if (count > 0) text.getChars(startIndex, startIndex + count, destination, destinationOffset)
+        if (count > 0) text.toCharArray(destination, destinationOffset, startIndex, startIndex + count)
         return count
     }
     override fun toString(): String = text
