@@ -307,7 +307,7 @@ dependencies {
 
 将 <code>VERSION</code> 替换为已经由 JitPack 成功构建的 Git Tag 或 Commit 版本。每种语言按需添加一个 <code>tree-sitter-&lt;language&gt;</code> 模块，不需要默认引入全部 Grammar。
 
-**当前发布状态说明：** 仓库现有 <code>publish-packages.yml</code> 工作流的发布目标是 **GitHub Packages**，不是 JitPack。仓库根目录目前没有 <code>jitpack.yml</code>，因此这里不宣称某个 Release Tag 已经通过 JitPack 构建。正式依赖前，请先在 [JitPack 项目页面](https://jitpack.io/#msmt2018/Android-Windbell-TreeSitter)确认构建成功，并确认所需模块已列出。多模块坐标格式及 Android 构建要求请参考 [JitPack Android 指南](https://docs.jitpack.io/android/) 和 [多模块构建说明](https://docs.jitpack.io/building/)。
+**当前发布状态说明：** Maven 发布渠道已切换为 JitPack。<code>release-jitpack.yml</code> 工作流负责创建版本 Tag；JitPack 根据 Tag 按需构建并提供 Maven 模块。Tag 创建成功不代表 JitPack 构建成功，正式依赖前仍需在 [JitPack 项目页面](https://jitpack.io/#msmt2018/Android-Windbell-TreeSitter)检查构建日志和模块列表。
 
 ### 3. 解析源码
 
@@ -609,8 +609,8 @@ cmake --build build/host --target android-tree-sitter --parallel 2
 
 需要区分两种不同的分发方式：
 
-- **GitHub Packages：** 仓库当前的 <code>publish-packages.yml</code> 工作流将选定模块发布到 GitHub Packages。
-- **JitPack：** 根据 Git Tag 或 Commit 构建源码，并从 <code>https://jitpack.io</code> 提供 Maven 依赖。
+- **JitPack：** 当前唯一的项目 Maven 发布渠道。发布工作流创建 Git Tag，JitPack 根据 Tag 构建并提供各模块依赖。
+- **GitHub Packages：** 不再用于本项目的 Maven Release 发布。
 
 使用 JitPack 时，先在仓库查询页面确认目标 Tag / Commit 构建成功，并且目标模块已列出。对于本多模块仓库，单独模块的依赖坐标形式为：
 
@@ -636,7 +636,8 @@ dependencies {
 - [TSH 引擎完成度与性能路线图](android-tree-sitter/TSH_ENGINE_COMPLETION_AND_PERFORMANCE_ROADMAP.md)
 - [Java ATS-only 示例配置](app/src/main/assets/tsh/java-ats-only.tsh)
 - [构建与测试工作流](.github/workflows/build.yml)
-- [GitHub Packages 发布工作流](.github/workflows/publish-packages.yml)
+- [JitPack 发布工作流](.github/workflows/release-jitpack.yml)
+- [JitPack 构建配置](jitpack.yml)
 
 ## 许可证
 
