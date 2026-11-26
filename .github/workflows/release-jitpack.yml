@@ -1,0 +1,67 @@
+name: Release to JitPack
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Optional release tag (defaults to UTC date plus current commit hash)
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  tag_release:
+    name: Create JitPack release tag
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Create and push release tag
+        id: release
+        shell: bash
+        env:
+          REQUESTED_VERSION: ${{ inputs.version }}
+        run: |
+          set -Eeuo pipefail
+
+          short_sha="$(git rev-parse --short=7 HEAD)"
+          release_version="${REQUESTED_VERSION:-$(date -u +%Y%m%d)-$short_sha}"
+
+          if [[ ! "$release_version" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
+            echo "::error::Invalid release version: $release_version"
+            exit 1
+          fi
+
+          if git ls-remote --exit-code --tags origin "refs/tags/$release_version" >/dev/null 2>&1; then
+            echo "::error::Tag $release_version already exists. Choose a new version."
+            exit 1
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$release_version" -m "Release $release_version"
+          git push origin "refs/tags/$release_version"
+
+          echo "version=$release_version" >> "$GITHUB_OUTPUT"
+          echo "JitPack release tag created: $release_version"
+
+      - name: Publish instructions
+        env:
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          {
+            echo "## JitPack release"
+            echo
+            echo "Tag: `$RELEASE_VERSION`"
+            echo
+            echo "JitPack builds this tag on demand. No GitHub Packages upload is performed."
+            echo
+            echo "Repository: https://jitpack.io/#msmt2018/Android-Windbell-TreeSitter"
+            echo
+            echo "Core library: `com.github.msmt2018.Android-Windbell-TreeSitter:android-tree-sitter:$RELEASE_VERSION`"
+          } >> "$GITHUB_STEP_SUMMARY"
