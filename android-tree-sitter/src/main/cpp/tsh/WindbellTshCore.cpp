@@ -1572,7 +1572,13 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
         // anchors, look-behind and unbounded match semantics.
         const UChar* viewport_start = text_start + range_start_byte;
         const UChar* viewport_end = text_start + range_end_byte;
-        const UChar* current = viewport_start;
+        // \G is relative to the caller's current search position and \K can
+        // reset the reported match start. Keep their historical document-start
+        // scan until a dedicated position-aware executor is available.
+        const bool position_sensitive =
+            rule.raw_match_pattern.find("\\G") != std::string::npos ||
+            rule.raw_match_pattern.find("\\K") != std::string::npos;
+        const UChar* current = position_sensitive ? text_start : viewport_start;
         auto previousCodePoint = [text_start](const UChar* position) noexcept {
             const auto* units = reinterpret_cast<const uint16_t*>(text_start);
             const size_t unit_index = static_cast<size_t>(position - text_start) / 2u;
@@ -1591,7 +1597,7 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
         // until the earliest one is found, preserving the original forward,
         // non-overlapping scan result without visiting unrelated prior matches.
         const UChar* previous_search = viewport_start;
-        while (previous_search > text_start) {
+        while (!position_sensitive && previous_search > text_start) {
             previous_search = previousCodePoint(previous_search);
             const int previous_hit = onig_search(
                 rule.onig_start,
@@ -1610,13 +1616,14 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
             current = text_start + region->beg[0];
         }
 
-        while (current < viewport_end) {
+        const UChar* scan_end = position_sensitive ? text_end : viewport_end;
+        while (current < scan_end) {
             int hit_pos = onig_search(
                 rule.onig_start,
                 text_start,
                 text_end,
                 current,
-                viewport_end,
+                scan_end,
                 region,
                 ONIG_OPTION_NONE
             );
