@@ -60,6 +60,10 @@ private enum class JavaTshPipelineProfile(
     val displayName: String,
     val description: String
 ) {
+    BASELINE(
+        "baseline", "java.tsh", "Java Default",
+        "项目默认 Java TSH 配置；用于验证基础配置与运行时文件切换"
+    ),
     REGEX_ONLY(
         "regex-only", "java-regex-only.tsh", "Regex Only",
         "仅 Oniguruma Regex；不启用 AST Selector / Tree-sitter Query"
@@ -75,7 +79,7 @@ private enum class JavaTshPipelineProfile(
 
     companion object {
         fun fromId(value: String?): JavaTshPipelineProfile =
-            values().firstOrNull { it.id == value } ?: HYBRID
+            values().firstOrNull { it.id == value } ?: BASELINE
     }
 }
 
@@ -110,7 +114,7 @@ class MainActivity : AppCompatActivity() {
     private var editorView: EditorView? = null
     private var editorTree: TSTree? = null
     @Volatile private var javaTshReady: Boolean = false
-    @Volatile private var activeJavaTshProfile: JavaTshPipelineProfile = JavaTshPipelineProfile.HYBRID
+    @Volatile private var activeJavaTshProfile: JavaTshPipelineProfile = JavaTshPipelineProfile.BASELINE
     private var javaTshProfileLoadJob: Job? = null
     private var activeTshHighlighter: TshSyntaxHighlighter? = null
     private val tshConfigurationStates = java.util.concurrent.ConcurrentHashMap<String, String>()
@@ -122,22 +126,78 @@ class MainActivity : AppCompatActivity() {
         @Volatile private var processJavaTshProfileId: String? = null
         // Keep Java first and make the console language spinner deterministic.
         private val languageMap = java.util.Collections.synchronizedMap(linkedMapOf<String, TSLanguage>())
+        private val nativeLibraryStates = java.util.Collections.synchronizedMap(linkedMapOf<String, String>())
+        private val languageRegistrationStates = java.util.Collections.synchronizedMap(linkedMapOf<String, String>())
+
+        private fun loadNativeLibrary(name: String): Boolean {
+            return try {
+                System.loadLibrary(name)
+                nativeLibraryStates[name] = "READY"
+                Log.i(TAG, "Native library loaded: lib$name.so")
+                true
+            } catch (error: Throwable) {
+                val state = "FAILED: ${error.javaClass.simpleName}: ${error.message ?: "no diagnostic"}"
+                nativeLibraryStates[name] = state
+                Log.e(TAG, "Unable to load native library lib$name.so", error)
+                false
+            }
+        }
+
+        private fun <T : TSLanguage> registerLanguage(
+            displayName: String,
+            libraryName: String,
+            factory: () -> T
+        ) {
+            if (nativeLibraryStates["android-tree-sitter"] != "READY") {
+                languageRegistrationStates[displayName] = "BLOCKED: libandroid-tree-sitter.so unavailable"
+                return
+            }
+            if (nativeLibraryStates[libraryName] != "READY") {
+                languageRegistrationStates[displayName] = "BLOCKED: ${nativeLibraryStates[libraryName] ?: "library not loaded"}"
+                return
+            }
+            try {
+                languageMap[displayName] = factory()
+                languageRegistrationStates[displayName] = "READY"
+                Log.i(TAG, "Tree-sitter language registered: $displayName")
+            } catch (error: Throwable) {
+                languageRegistrationStates[displayName] =
+                    "FAILED: ${error.javaClass.simpleName}: ${error.message ?: "no diagnostic"}"
+                Log.e(TAG, "Tree-sitter language registration failed: $displayName", error)
+            }
+        }
 
         init {
-            TreeSitter.loadLibrary()
-            try { System.loadLibrary("tree-sitter-java") } catch (_: Throwable) {}
-            try { System.loadLibrary("tree-sitter-json") } catch (_: Throwable) {}
-            try { System.loadLibrary("tree-sitter-kotlin") } catch (_: Throwable) {}
-            try { System.loadLibrary("tree-sitter-logcat") } catch (_: Throwable) {}
-            try { System.loadLibrary("tree-sitter-python") } catch (_: Throwable) {}
-            try { System.loadLibrary("tree-sitter-xml") } catch (_: Throwable) {}
+            // The core JNI bridge must be loaded before grammar libraries and language bindings.
+            loadNativeLibrary("android-tree-sitter")
 
-            runCatching { languageMap["Java"] = TSLanguageJava.getInstance() }
-            runCatching { languageMap["JSON"] = TSLanguageJson.getInstance() }
-            runCatching { languageMap["Kotlin"] = TSLanguageKotlin.getInstance() }
-            runCatching { languageMap["Logcat"] = TSLanguageLogcat.getInstance() }
-            runCatching { languageMap["Python"] = TSLanguagePython.getInstance() }
-            runCatching { languageMap["XML"] = TSLanguageXml.getXmlInstance() }
+            val grammarLibraries = listOf(
+                "tree-sitter-java",
+                "tree-sitter-json",
+                "tree-sitter-kotlin",
+                "tree-sitter-logcat",
+                "tree-sitter-python",
+                "tree-sitter-xml"
+            )
+            grammarLibraries.forEach(::loadNativeLibrary)
+
+            registerLanguage("Java", "tree-sitter-java") { TSLanguageJava.getInstance() }
+            registerLanguage("JSON", "tree-sitter-json") { TSLanguageJson.getInstance() }
+            registerLanguage("Kotlin", "tree-sitter-kotlin") { TSLanguageKotlin.getInstance() }
+            registerLanguage("Logcat", "tree-sitter-logcat") { TSLanguageLogcat.getInstance() }
+            registerLanguage("Python", "tree-sitter-python") { TSLanguagePython.getInstance() }
+            registerLanguage("XML", "tree-sitter-xml") { TSLanguageXml.getXmlInstance() }
+        }
+
+        internal fun nativeBootstrapReport(): String = buildString {
+            appendLine("Native library status:")
+            nativeLibraryStates.forEach { (name, state) ->
+                appendLine("  lib$name.so: $state")
+            }
+            appendLine("Language registration:")
+            languageRegistrationStates.forEach { (name, state) ->
+                appendLine("  $name: $state")
+            }
         }
     }
 
@@ -146,7 +206,7 @@ class MainActivity : AppCompatActivity() {
         activeJavaTshProfile = JavaTshPipelineProfile.fromId(
             savedInstanceState?.getString("tsh.pipelineProfile")
                 ?: getSharedPreferences("tsh_pipeline_profiles", MODE_PRIVATE)
-                    .getString("java.profile", JavaTshPipelineProfile.HYBRID.id)
+                    .getString("java.profile", JavaTshPipelineProfile.BASELINE.id)
         )
         restoredTshScheme = savedInstanceState?.getString("tsh.selectedScheme")
         if (savedInstanceState?.containsKey("tsh.isDark") == true) {
@@ -201,8 +261,15 @@ class MainActivity : AppCompatActivity() {
             if (language != null) {
                 languages[extension] = language
             } else {
-                tshConfigurationStates[extension] = "PARSER_MISSING"
-                Log.e(TAG, "Tree-sitter parser unavailable: .$extension ($displayName); native .so or language binding did not register")
+                val libraryName = "tree-sitter-$extension"
+                val libraryState = nativeLibraryStates[libraryName] ?: "NOT_LOADED"
+                val bindingState = languageRegistrationStates[displayName] ?: "NOT_REGISTERED"
+                tshConfigurationStates[extension] = "PARSER_MISSING: $libraryState; $bindingState"
+                Log.e(
+                    TAG,
+                    "Tree-sitter parser unavailable: .$extension ($displayName); " +
+                        "lib$libraryName.so=$libraryState; binding=$bindingState"
+                )
             }
         }
         loadAvailableTshConfigurations(languages)
@@ -254,8 +321,8 @@ class MainActivity : AppCompatActivity() {
                 }
             }
             withContext(Dispatchers.Main) {
+                javaTshReady = "java" in languages && tshConfigurationStates["java"] == "READY"
                 if ("java" in languages) {
-                    javaTshReady = tshConfigurationStates["java"] == "READY"
                     restoredTshScheme?.let { scheme ->
                         val restored = WindbellTshEngine.instance.selectScheme("java", scheme)
                         if (!restored) Log.w(TAG, "Saved TSH scheme no longer exists: $scheme")
@@ -755,14 +822,9 @@ class MainActivity : AppCompatActivity() {
                 return true
             }
             R.id.test_tsh_java_pipeline -> {
-                if (javaTshReady) {
-                    showJavaTshPipelineProfileDialog()
-                } else {
-                    showResultDialog(
-                        "Java TSH 尚未就绪",
-                        "请等待 Java Parser 与当前 .tsh 配置完成初始化后再切换管道。"
-                    )
-                }
+                // Keep profile recovery available after a bad/missing TSH config.
+                // The switch action validates the Java parser and reports native-load failures.
+                showJavaTshPipelineProfileDialog()
                 return true
             }
             R.id.test_tsh_cursor_capture -> {
@@ -807,7 +869,11 @@ class MainActivity : AppCompatActivity() {
     private fun switchJavaTshPipelineProfile(profile: JavaTshPipelineProfile) {
         val language = languageMap["Java"]
         if (language == null) {
-            showResultDialog("Java TSH 管道切换失败", "Java Tree-sitter Parser 尚未注册。")
+            showResultDialog(
+                "Java TSH 配置切换失败",
+                "Java Tree-sitter Parser 尚未注册，无法编译目标 TSH 文件。\n\n" +
+                    nativeBootstrapReport()
+            )
             return
         }
         javaTshProfileLoadJob?.cancel()
@@ -979,7 +1045,8 @@ class MainActivity : AppCompatActivity() {
                         regexTotal > 0 && ats == 0 && query == 0
                     JavaTshPipelineProfile.ATS_ONLY ->
                         regexTotal == 0 && ats > 0 && query > 0
-                    JavaTshPipelineProfile.HYBRID ->
+                    JavaTshPipelineProfile.HYBRID,
+                    JavaTshPipelineProfile.BASELINE ->
                         regexTotal > 0 && ats > 0 && query > 0
                 }
                 val passed = producerIsolationPassed &&
@@ -1340,12 +1407,18 @@ class MainActivity : AppCompatActivity() {
             val schemes = if (configState == "READY") WindbellTshEngine.instance.listSchemes(extension) else emptyList()
             val styles = if (configState == "READY") WindbellTshEngine.instance.getStyleCatalog(extension).size else 0
             val bindingClass = if (name == "C") "TSLanguage.loadLanguage" else "TSLanguage$name"
-            val nativeLibrary = "libtree-sitter-$extension.so"
-            report.appendLine("$name (.$extension): parser=$parserState · binding=$bindingClass · native=$nativeLibrary · tsh=$configState · schemes=${schemes.size} · styles=$styles")
+            val libraryName = "tree-sitter-$extension"
+            val nativeState = nativeLibraryStates[libraryName] ?: "NOT_LOADED"
+            val bindingState = languageRegistrationStates[name] ?: "NOT_REGISTERED"
+            report.appendLine(
+                "$name (.$extension): parser=$parserState · binding=$bindingClass ($bindingState) · " +
+                    "native=lib$extension.so ($nativeState) · tsh=$configState · schemes=${schemes.size} · styles=$styles"
+            )
             if (schemes.isNotEmpty()) report.appendLine("   " + schemes.joinToString())
         }
         report.appendLine()
-        report.appendLine("Editor language=$editorLanguageKey · attached=${activeTshHighlighter != null && editorView?.getSyntaxHighlighter() === activeTshHighlighter}")
+        report.appendLine(nativeBootstrapReport())
+        report.appendLine("Editor language=$editorLanguageKey · TSH ready=$javaTshReady · attached=${activeTshHighlighter != null && editorView?.getSyntaxHighlighter() === activeTshHighlighter}")
         showResultDialog("Parser / TSH 注册审计", report.toString())
     }
 
