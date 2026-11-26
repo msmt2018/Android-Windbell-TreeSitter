@@ -1440,14 +1440,55 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
     // Anchors, block rules, and stateful tokenizers remain on their dedicated
     // context-aware paths; they are never silently reinterpreted as window-local.
     if (text_source) {
-        // Finite-width regexes run only over the requested viewport plus their
-        // proven maximum-match overlap. mmap contiguity must not trigger a full
-        // document scan for every editor draw.
+        // Finite-width Regex rules are grouped by their proven maximum width.
+        // Every rule in one group shares the same copied TextSource window, so
+        // N rules no longer cause N identical window reads/copies per viewport.
         constexpr uint64_t kRegexCoreWindowBytes = 256u * 1024u;
-        // Reuse the UTF-16LE window allocation and Oniguruma capture region
-        // across every bounded MATCH rule and every core window in this request.
-        // The previous inner-loop allocation created one vector and one region
-        // per rule/window pair, even though neither needs to outlive this call.
+        struct BoundedRule {
+            const CompiledRegexRule* rule = nullptr;
+            std::vector<std::pair<std::vector<UChar>, uint16_t>> named_group_names;
+        };
+        struct BoundedRuleGroup {
+            uint64_t maximum_match_bytes = 0;
+            std::vector<BoundedRule> rules;
+        };
+
+        std::vector<BoundedRule> bounded_rules;
+        bounded_rules.reserve(grammar->regex_rules.size());
+        for (const auto& rule : grammar->regex_rules) {
+            if (!rule.enabled || rule.type != RegexRuleType::MATCH ||
+                !rule.onig_start ||
+                rule.execution_capability != RegexExecutionCapability::BOUNDED_WINDOW ||
+                rule.maximum_match_bytes == 0) continue;
+
+            BoundedRule entry;
+            entry.rule = &rule;
+            entry.named_group_names.reserve(rule.named_group_style_map.size());
+            for (const auto& named : rule.named_group_style_map) {
+                std::vector<UChar> name;
+                name.reserve(named.first.size());
+                for (unsigned char ch : named.first) name.push_back(static_cast<UChar>(ch));
+                entry.named_group_names.emplace_back(std::move(name), named.second);
+            }
+            bounded_rules.push_back(std::move(entry));
+        }
+        std::sort(bounded_rules.begin(), bounded_rules.end(),
+            [](const BoundedRule& left, const BoundedRule& right) {
+                return left.rule->maximum_match_bytes < right.rule->maximum_match_bytes;
+            });
+
+        std::vector<BoundedRuleGroup> groups;
+        groups.reserve(bounded_rules.size());
+        for (auto& entry : bounded_rules) {
+            const uint64_t width = entry.rule->maximum_match_bytes;
+            if (groups.empty() || groups.back().maximum_match_bytes != width) {
+                groups.push_back(BoundedRuleGroup{width, {}});
+            }
+            groups.back().rules.push_back(std::move(entry));
+        }
+
+        // One reusable UTF-16LE window and one reusable Oniguruma region serve
+        // all rules/windows in this request. Capacity is retained between groups.
         std::vector<UChar> regex_window;
         const auto region_deleter = [](OnigRegion* value) {
             if (value) onig_region_free(value, 1);
@@ -1455,26 +1496,10 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
         std::unique_ptr<OnigRegion, decltype(region_deleter)> regex_window_region(
             onig_region_new(), region_deleter);
         if (!regex_window_region) throw std::bad_alloc();
-        for (const auto& rule : grammar->regex_rules) {
-            if (!rule.enabled || rule.type != RegexRuleType::MATCH ||
-                !rule.onig_start ||
-                rule.execution_capability != RegexExecutionCapability::BOUNDED_WINDOW ||
-                rule.maximum_match_bytes == 0) continue;
 
-            // Convert named capture identifiers once per rule, not once per
-            // match. Keep the region-dependent lookup in the match loop because
-            // Oniguruma uses the current region to disambiguate duplicate names.
-            std::vector<std::pair<std::vector<UChar>, uint16_t>> named_group_names;
-            named_group_names.reserve(rule.named_group_style_map.size());
-            for (const auto& named : rule.named_group_style_map) {
-                std::vector<UChar> name;
-                name.reserve(named.first.size());
-                for (unsigned char ch : named.first) name.push_back(static_cast<UChar>(ch));
-                named_group_names.emplace_back(std::move(name), named.second);
-            }
-
-            const uint64_t overlap = rule.maximum_match_bytes >= 2u
-                ? rule.maximum_match_bytes - 2u : 0u;
+        for (const auto& group : groups) {
+            const uint64_t overlap = group.maximum_match_bytes >= 2u
+                ? group.maximum_match_bytes - 2u : 0u;
             uint64_t core_start = range_start_byte > overlap
                 ? range_start_byte - overlap : 0u;
             core_start &= ~uint64_t{1};
@@ -1497,81 +1522,88 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                 }
                 const UChar* window_start = regex_window.data();
                 const UChar* window_end_ptr = window_start + regex_window.size();
-                const UChar* current = window_start;
-                onig_region_clear(regex_window_region.get());
-                OnigRegion* region = regex_window_region.get();
-                while (current < window_end_ptr) {
-                    const int hit = onig_search(
-                        rule.onig_start, window_start, window_end_ptr,
-                        current, window_end_ptr, region, ONIG_OPTION_NONE);
-                    if (hit == ONIG_MISMATCH) break;
-                    if (hit < 0) {
-                        throw std::runtime_error("Oniguruma failed during bounded TSH Regex execution");
-                    }
-                    const int64_t local_start = region->beg[0];
-                    const int64_t local_end = region->end[0];
-                    if (local_start < 0 || local_end < local_start) break;
-                    const uint64_t absolute_start = core_start +
-                        static_cast<uint64_t>(local_start);
-                    const uint64_t absolute_end = core_start +
-                        static_cast<uint64_t>(local_end);
-                    if (absolute_start >= core_start && absolute_start < core_end &&
-                        absolute_end <= window_end && (absolute_start & 1u) == 0 &&
-                        (absolute_end & 1u) == 0) {
-                        if (diagnostic_match_counts) tshIncrementDiagnostic(&diagnostic_match_counts[0]);
-                        auto append_window_capture = [&](int group, uint16_t style_id) {
-                            if (group < 0 || group >= region->num_regs ||
-                                region->beg[group] < 0 || region->end[group] < 0) return;
-                            const uint64_t capture_start = core_start +
-                                static_cast<uint64_t>(region->beg[group]);
-                            const uint64_t capture_end = core_start +
-                                static_cast<uint64_t>(region->end[group]);
-                            if (capture_start >= capture_end ||
-                                capture_end <= range_start_byte ||
-                                capture_start >= range_end_byte ||
-                                capture_end > total_bytes ||
-                                (capture_start & 1u) || (capture_end & 1u)) return;
-                            HighlightSpan span;
-                            span.start_byte = static_cast<uint32_t>(
-                                std::max<uint64_t>(capture_start, range_start_byte));
-                            span.end_byte = static_cast<uint32_t>(
-                                std::min<uint64_t>(capture_end, range_end_byte));
-                            span.style_id = style_id;
-                            span.flags = 0;
-                            span.priority = rule.priority;
-                            span.declaration_order = rule.declaration_order;
-                            span.allow_overlap = rule.allow_overlap ? 1 : 0;
-                            span.source = static_cast<uint8_t>(HighlightSource::ONIG_REGEX);
-                            micro_spans.push_back(span);
-                        };
-                        if (rule.group_style_map.empty() &&
-                            rule.named_group_style_map.empty()) {
-                            if (rule.has_style) append_window_capture(0, rule.style_id);
-                        } else {
-                            auto whole = rule.group_style_map.find(0);
-                            if (whole != rule.group_style_map.end())
-                                append_window_capture(0, whole->second);
-                            for (int group = 1; group < region->num_regs; ++group) {
-                                auto style = rule.group_style_map.find(group);
-                                if (style != rule.group_style_map.end())
-                                    append_window_capture(group, style->second);
-                            }
-                            for (const auto& named : named_group_names) {
-                                const int group = onig_name_to_backref_number(
-                                    rule.onig_start, named.first.data(),
-                                    named.first.data() + named.first.size(), region);
-                                append_window_capture(group, named.second);
+
+                for (const auto& entry : group.rules) {
+                    const CompiledRegexRule& rule = *entry.rule;
+                    OnigRegion* region = regex_window_region.get();
+                    onig_region_clear(region);
+                    const UChar* current = window_start;
+                    while (current < window_end_ptr) {
+                        const int hit = onig_search(
+                            rule.onig_start, window_start, window_end_ptr,
+                            current, window_end_ptr, region, ONIG_OPTION_NONE);
+                        if (hit == ONIG_MISMATCH) break;
+                        if (hit < 0) {
+                            throw std::runtime_error(
+                                "Oniguruma failed during bounded TSH Regex execution");
+                        }
+                        const int64_t local_start = region->beg[0];
+                        const int64_t local_end = region->end[0];
+                        if (local_start < 0 || local_end < local_start) break;
+                        const uint64_t absolute_start = core_start +
+                            static_cast<uint64_t>(local_start);
+                        const uint64_t absolute_end = core_start +
+                            static_cast<uint64_t>(local_end);
+                        if (absolute_start >= core_start && absolute_start < core_end &&
+                            absolute_end <= window_end && (absolute_start & 1u) == 0 &&
+                            (absolute_end & 1u) == 0) {
+                            if (diagnostic_match_counts)
+                                tshIncrementDiagnostic(&diagnostic_match_counts[0]);
+                            auto append_window_capture = [&](int capture_group, uint16_t style_id) {
+                                if (capture_group < 0 || capture_group >= region->num_regs ||
+                                    region->beg[capture_group] < 0 ||
+                                    region->end[capture_group] < 0) return;
+                                const uint64_t capture_start = core_start +
+                                    static_cast<uint64_t>(region->beg[capture_group]);
+                                const uint64_t capture_end = core_start +
+                                    static_cast<uint64_t>(region->end[capture_group]);
+                                if (capture_start >= capture_end ||
+                                    capture_end <= range_start_byte ||
+                                    capture_start >= range_end_byte ||
+                                    capture_end > total_bytes ||
+                                    (capture_start & 1u) || (capture_end & 1u)) return;
+                                HighlightSpan span;
+                                span.start_byte = static_cast<uint32_t>(
+                                    std::max<uint64_t>(capture_start, range_start_byte));
+                                span.end_byte = static_cast<uint32_t>(
+                                    std::min<uint64_t>(capture_end, range_end_byte));
+                                span.style_id = style_id;
+                                span.flags = 0;
+                                span.priority = rule.priority;
+                                span.declaration_order = rule.declaration_order;
+                                span.allow_overlap = rule.allow_overlap ? 1 : 0;
+                                span.source = static_cast<uint8_t>(HighlightSource::ONIG_REGEX);
+                                micro_spans.push_back(span);
+                            };
+                            if (rule.group_style_map.empty() &&
+                                rule.named_group_style_map.empty()) {
+                                if (rule.has_style) append_window_capture(0, rule.style_id);
+                            } else {
+                                const auto whole = rule.group_style_map.find(0);
+                                if (whole != rule.group_style_map.end())
+                                    append_window_capture(0, whole->second);
+                                for (int capture_group = 1;
+                                     capture_group < region->num_regs; ++capture_group) {
+                                    const auto style = rule.group_style_map.find(capture_group);
+                                    if (style != rule.group_style_map.end())
+                                        append_window_capture(capture_group, style->second);
+                                }
+                                for (const auto& named : entry.named_group_names) {
+                                    const int capture_group = onig_name_to_backref_number(
+                                        rule.onig_start, named.first.data(),
+                                        named.first.data() + named.first.size(), region);
+                                    append_window_capture(capture_group, named.second);
+                                }
                             }
                         }
+                        // Oniguruma offsets are UTF-16LE byte offsets. A zero-width
+                        // match advances one complete code unit, never one byte.
+                        const int64_t next = local_end > local_start
+                            ? local_end : local_start + 2;
+                        if (next <= 0 || (next & 1LL) != 0 ||
+                            static_cast<uint64_t>(next) >= regex_window.size()) break;
+                        current = window_start + next;
                     }
-                    // Oniguruma offsets are UTF-16LE byte offsets here.
-                    // A zero-width match must advance by one complete code unit;
-                    // advancing one byte would restart inside a UTF-16 code unit.
-                    const int64_t next = local_end > local_start
-                        ? local_end : local_start + 2;
-                    if (next <= 0 || (next & 1LL) != 0 ||
-                        static_cast<uint64_t>(next) >= regex_window.size()) break;
-                    current = window_start + next;
                 }
                 core_start = core_end;
             }
