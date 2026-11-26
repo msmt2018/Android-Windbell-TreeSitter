@@ -79,7 +79,6 @@ class TshSyntaxHighlighter(
         val lineStartOffset: Int,
         val visibleStart: Int,
         val visibleEnd: Int,
-        val text: String,
         val scheme: String,
         val dark: Boolean
     )
@@ -288,7 +287,6 @@ class TshSyntaxHighlighter(
             lineStartOffset = lineStartOffset,
             visibleStart = visibleStart,
             visibleEnd = visibleEnd,
-            text = text,
             scheme = engine.getSelectedScheme(extension) ?: engine.getDefaultScheme(extension).orEmpty(),
             dark = engine.isDark(extension)
         )
@@ -347,6 +345,22 @@ class TshSyntaxHighlighter(
         val boundedStart = queryStart.coerceAtLeast(0L)
         val boundedEnd = queryEnd.coerceAtMost(length)
         if (boundedStart >= boundedEnd) return true
+
+        // A rendered immutable line is stronger than a raw capture-cache hit:
+        // it already contains the exact final Android spans. Report it ready so
+        // scrolling back to a previously painted line does not enqueue Native
+        // Regex work merely because its lower-level capture page was evicted.
+        val renderedKey = RenderedLineKey(
+            sessionId = active.cacheSessionId,
+            documentRevision = active.documentRevision.get(),
+            lineStartOffset = lineStartOffset,
+            visibleStart = start,
+            visibleEnd = end,
+            scheme = engine.getSelectedScheme(extension) ?: engine.getDefaultScheme(extension).orEmpty(),
+            dark = engine.isDark(extension)
+        )
+        if (renderedLineCache.get(renderedKey) != null) return true
+
         val key = CaptureRangeKey(active.cacheSessionId, boundedStart.toInt(), boundedEnd.toInt())
         if (findContainingCaptureRange(key) != null) return true
         enqueueViewportRange(key)
