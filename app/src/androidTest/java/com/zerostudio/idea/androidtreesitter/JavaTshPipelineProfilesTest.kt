@@ -113,7 +113,7 @@ class JavaTshPipelineProfilesTest {
                     val spans = engine.computeHighlights(parsedTree, sample, extension)
                     assertTrue("$label must produce final render spans", spans.isNotEmpty())
                     val styled = android.text.SpannableStringBuilder(sample)
-                    engine.applyHighlightSpansToSpannable(spans, 0, sample, "java", styled)
+                    engine.applyHighlightSpansToSpannable(spans, 0, sample, extension, styled)
                     assertTrue(
                         "$label must resolve captures into Android foreground spans",
                         styled.getSpans(
