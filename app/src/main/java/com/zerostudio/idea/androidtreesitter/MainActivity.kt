@@ -674,19 +674,20 @@ class MainActivity : AppCompatActivity() {
         this.parseJob = activityScope.launch {
             currentJob?.cancel(CancellationException("New parse requested"))
 
-            val activeParser = parser ?: runCatching {
+            val activeParser = parser ?: try {
                 TSParser.create().also {
                     parser = it
                     it.setLanguage(lang)
                 }
-            }.onFailure { error ->
+            } catch (error: Throwable) {
                 Log.e(TAG, "Unable to initialize console parser for $currentLanguageKey", error)
                 withContext(Dispatchers.Main) {
                     binding.contentConsole.ast.text =
                         "Tree-sitter parser unavailable: ${error.javaClass.simpleName}: ${error.message}\n\n" +
                             nativeBootstrapReport()
                 }
-            }.getOrNull() ?: return@launch
+                return@launch
+            }
             activeParser.reset()
 
             val start = System.currentTimeMillis()
