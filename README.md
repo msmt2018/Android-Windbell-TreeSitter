@@ -2,7 +2,7 @@
   <img src="logo.png" alt="Android Windbell Tree-sitter logo" width="180" />
   <h1>Android Windbell Tree-sitter</h1>
   <p><strong>Android Tree-sitter bindings, modular language grammars, and the Windbell TSH highlighting engine.</strong></p>
-  <p><a href="README_CN.md">简体中文</a> · <a href="https://github.com/msmt2018/Android-Windbell-TreeSitter">GitHub</a> · <a href="https://tree-sitter.github.io/tree-sitter/">Tree-sitter</a> · <a href="https://jitpack.io/#msmt2018/Android-Windbell-TreeSitter">JitPack</a></p>
+  <p><a href="README_CN.md">简体中文</a> · <a href="docs/README.md">Documentation</a> · <a href="https://github.com/msmt2018/Android-Windbell-TreeSitter">GitHub</a> · <a href="https://tree-sitter.github.io/tree-sitter/">Tree-sitter</a> · <a href="https://jitpack.io/#msmt2018/Android-Windbell-TreeSitter">JitPack</a></p>
 </div>
 
 ---
@@ -622,6 +622,7 @@ For branch snapshots or commit builds, use the version form shown by JitPack for
 
 ## Further documentation
 
+- [Documentation index](docs/README.md) — architecture, Java/Kotlin API reference, TSH DSL v2 specification and syntax, SCM migration, engine guides, diagnostics, and roadmap.
 - [Grammar module metadata and generation](README_grammars.md)
 - [TSH DSL v2 specification](docs/TSH_DSL_V2_SPEC.md)
 - [TSH large-text native token architecture](docs/TSH_LARGE_TEXT_NATIVE_TOKEN_ARCHITECTURE.md)
@@ -634,4 +635,4 @@ For branch snapshots or commit builds, use the version form shown by JitPack for
 
 ## License
 
-See [LICENSE](LICENSE) for the license text and the repository's applicable licensing terms.
+The project-owned code in this repository is licensed under the **GNU Affero General Public License v3.0 only (AGPL-3.0-only)**. See [LICENSE](LICENSE) for the complete license text. Third-party components, including Git submodules and grammar sources, remain subject to their own upstream license terms; see their respective license files and notices.
