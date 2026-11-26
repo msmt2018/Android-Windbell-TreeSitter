@@ -307,7 +307,7 @@ dependencies {
 
 Replace <code>VERSION</code> with a Git tag or commit version that JitPack has successfully built. Add one <code>tree-sitter-&lt;language&gt;</code> module for each language your application needs; do not add every grammar by default.
 
-**Publication status:** the repository's current <code>publish-packages.yml</code> workflow targets **GitHub Packages**, not JitPack. The repository currently has no root <code>jitpack.yml</code>, and a successful JitPack build for a release tag is not asserted here. Check the [JitPack project page](https://jitpack.io/#msmt2018/Android-Windbell-TreeSitter) and its build log before relying on a version. JitPack's multi-module coordinate format and Android requirements are documented in the [JitPack Android guide](https://docs.jitpack.io/android/) and [multi-module build guide](https://docs.jitpack.io/building/).
+**Publication status:** Maven artifacts are now configured for JitPack. The <code>release-jitpack.yml</code> workflow creates a version tag; JitPack builds that tag on demand and publishes the resulting Maven artifacts. A created tag is not proof of a successful JitPack build: check the [JitPack project page](https://jitpack.io/#msmt2018/Android-Windbell-TreeSitter) and build log before consuming it.
 
 ### 3. Parse source code
 
@@ -604,8 +604,8 @@ For the complete device test matrix, refer to <code>.github/workflows/build.yml<
 
 There are two different distribution concepts:
 
-- **GitHub Packages:** the repository's current <code>publish-packages.yml</code> workflow publishes a selected set of artifacts to GitHub Packages.
-- **JitPack:** builds artifacts from Git tags or commits and serves them from <code>https://jitpack.io</code>.
+- **JitPack:** the supported Maven distribution channel. The release workflow creates a Git tag, and JitPack builds and serves module artifacts from <code>https://jitpack.io</code>.
+- **GitHub Packages:** no longer used for project Maven releases.
 
 For JitPack, use the repository lookup page to confirm that the tag/commit has a successful build and that the required module is listed. For this multi-module repository, the expected individual-module coordinate shape is:
 
@@ -631,7 +631,8 @@ For branch snapshots or commit builds, use the version form shown by JitPack for
 - [TSH engine completion and performance roadmap](android-tree-sitter/TSH_ENGINE_COMPLETION_AND_PERFORMANCE_ROADMAP.md)
 - [Sample Java ATS-only profile](app/src/main/assets/tsh/java-ats-only.tsh)
 - [Build and test workflow](.github/workflows/build.yml)
-- [GitHub Packages workflow](.github/workflows/publish-packages.yml)
+- [JitPack release workflow](.github/workflows/release-jitpack.yml)
+- [JitPack build configuration](jitpack.yml)
 
 ## License
 
