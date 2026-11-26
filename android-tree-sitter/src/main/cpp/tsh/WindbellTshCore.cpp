@@ -1164,11 +1164,19 @@ void WindbellEngine::matchBlockRecursive(
         uint32_t block_start_byte = static_cast<uint32_t>(start_region->beg[0]);
         const UChar* content_start = text_start + start_region->end[0];
 
+        // If this is the block already active at the viewport's left edge,
+        // its opening delimiter was recovered by the reverse probe above.
+        // Searching for the closing delimiter from content_start would rescan
+        // the entire prefix of a very large comment/text block on every
+        // subsequent viewport request. Resume that search at the viewport
+        // boundary instead; for blocks that begin inside this viewport retain
+        // the original content_start so no delimiter can be skipped.
+        const UChar* end_search_start = std::max(content_start, range_start);
         int hit_end = onig_search(
             rule.onig_end,
             text_start,
             text_end,
-            content_start,
+            end_search_start,
             text_end,
             end_region,
             ONIG_OPTION_NONE
