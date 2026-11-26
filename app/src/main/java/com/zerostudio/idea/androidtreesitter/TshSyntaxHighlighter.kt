@@ -90,6 +90,7 @@ class TshSyntaxHighlighter(
         val cacheSessionId: Long,
         val ticket: Long,
         val diskCaptureStore: TshCaptureDiskStore,
+        val diskRenderedLineStore: TshRenderedLineDiskStore,
         val documentRevision: AtomicLong = AtomicLong(),
         // Mirrors the native document's committed edit version. Dirty ranges are
         // consumed only after the matching edit transaction has fully committed.
@@ -292,6 +293,18 @@ class TshSyntaxHighlighter(
             dark = engine.isDark(extension)
         )
         renderedLineCache.get(renderKey)?.let { return it }
+        active.diskRenderedLineStore.get(
+            renderKey.documentRevision,
+            renderKey.lineStartOffset,
+            renderKey.visibleStart,
+            renderKey.visibleEnd,
+            renderKey.scheme,
+            renderKey.dark,
+            text
+        )?.let { restored ->
+            renderedLineCache.put(renderKey, restored)
+            return restored
+        }
 
         val boundedStart = queryStart.coerceAtMost(active.lengthChars.get())
         val boundedEnd = queryEnd.coerceAtMost(active.lengthChars.get())
@@ -321,7 +334,21 @@ class TshSyntaxHighlighter(
             return null
         }
         // Immutable spans can be safely reused after scrolling away and back.
-        return SpannedString(styled).also { renderedLineCache.put(renderKey, it) }
+        val immutable = SpannedString(styled)
+        renderedLineCache.put(renderKey, immutable)
+        runCatching {
+            active.diskRenderedLineStore.put(
+                renderKey.documentRevision,
+                renderKey.lineStartOffset,
+                renderKey.visibleStart,
+                renderKey.visibleEnd,
+                renderKey.scheme,
+                renderKey.dark,
+                text,
+                immutable
+            )
+        }.onFailure { Log.w(TAG, "Unable to persist TSH rendered line $renderKey", it) }
+        return immutable
     }
 
     override fun isStyleReady(
@@ -476,6 +503,7 @@ class TshSyntaxHighlighter(
         var nativeHandle = 0L
         var cacheSessionId = 0L
         var diskCaptureStore: TshCaptureDiskStore? = null
+        var diskRenderedLineStore: TshRenderedLineDiskStore? = null
         try {
             // Native owns the canonical Piece Tree and sparse partition index. Kotlin
             // does not rebuild a second full-document index for each edit.
@@ -518,9 +546,13 @@ class TshSyntaxHighlighter(
                 cacheSessionId
             )
             diskCaptureStore = sessionDiskCaptureStore
+            val sessionRenderedLineStore = TshRenderedLineDiskStore(
+                File(temporaryDirectory, "tsh-rendered-$cacheSessionId")
+            )
+            diskRenderedLineStore = sessionRenderedLineStore
             val active = LargeSession(
                 nativeHandle, AtomicLong(snapshot.length.toLong()),
-                cacheSessionId, ticket, sessionDiskCaptureStore
+                cacheSessionId, ticket, sessionDiskCaptureStore, sessionRenderedLineStore
             )
             if (generation.get() == ticket) {
                 synchronized(nativeEditLock) {
@@ -552,6 +584,7 @@ class TshSyntaxHighlighter(
                 nativeHandle = 0L
                 cacheSessionId = 0L
                 diskCaptureStore = null
+                diskRenderedLineStore = null
                 parsing = false
                 Log.i(
                     TAG,
@@ -572,6 +605,7 @@ class TshSyntaxHighlighter(
         } finally {
             if (nativeHandle != 0L) engine.closeNativeDocument(nativeHandle)
             diskCaptureStore?.close()
+            diskRenderedLineStore?.close()
             if (cacheSessionId != 0L) {
                 captureCache.invalidate { key, _ -> key.sessionId == cacheSessionId }
             }
@@ -933,6 +967,7 @@ class TshSyntaxHighlighter(
                     // Until dependency envelopes are recorded, invalidate the cold
                     // capture tier at the same committed-edit boundary as the hot tier.
                     active.diskCaptureStore.clear()
+                    active.diskRenderedLineStore.clear()
                     renderedLineCache.invalidate { key, _ ->
                         key.sessionId == active.cacheSessionId
                     }
@@ -1033,6 +1068,7 @@ class TshSyntaxHighlighter(
             }.onFailure { Log.w(TAG, "Failed to close native TSH document", it) }
             captureCache.invalidate { key, _ -> key.sessionId == active.cacheSessionId }
             active.diskCaptureStore.close()
+            active.diskRenderedLineStore.close()
             renderedLineCache.invalidate { key, _ -> key.sessionId == active.cacheSessionId }
         }
     }
