@@ -444,12 +444,12 @@
             {
                 id: "java-any-equal-name"
                 priority: 120
-                source: `(method_declaration name: (identifier) @function (#any-eq? @function "run"))`
+                source: `(method_declaration name: (identifier) @function parameters: (formal_parameters (formal_parameter name: (identifier) @variable)) (#any-eq? @function @variable))`
             },
             {
                 id: "java-any-not-equal-name"
                 priority: 119
-                source: `(method_declaration name: (identifier) @function (#any-not-eq? @function "toString"))`
+                source: `(method_declaration name: (identifier) @function parameters: (formal_parameters (formal_parameter name: (identifier) @variable)) (#any-not-eq? @function @variable))`
             },
             {
                 id: "java-not-any-of-excluded-methods"
