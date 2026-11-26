@@ -1097,7 +1097,7 @@ class MainActivity : AppCompatActivity() {
                     report.appendLine("2) TSH native pipeline: " + captures.size + " raw captures · " +
                         String.format(Locale.US, "%.3f", queryNanos / 1_000_000.0) + " ms")
                     val sourceNames = mapOf(
-                        0 to "Oniguruma Regex", 1 to "Monarch",
+                        0 to "Oniguruma Regex", 1 to "Regex State / Contains",
                         2 to "ATS Selector", 3 to "Tree-sitter Query"
                     )
                     for (sourceId in 0..3) {
@@ -1382,7 +1382,7 @@ class MainActivity : AppCompatActivity() {
             report.append("=== ⚡ 四管线混合扫描线合成报告 ===\n\n")
             report.append("源码字符总数: ${text.length} (UTF-16LE bytes: ${text.length * 2})\n")
             report.append("原始候选捕获: ${diagnostics.captures.size} · 最终渲染 Span: ${spans.size}\n")
-            val pipelineNames = mapOf(0 to "Oniguruma", 1 to "Monarch", 2 to "ATS", 3 to "Native Query")
+            val pipelineNames = mapOf(0 to "Oniguruma", 1 to "Regex State / Contains", 2 to "ATS", 3 to "Native Query")
             for (id in 0..3) {
                 report.appendLine("${pipelineNames.getValue(id)} matches=${diagnostics.matchCounts[id] ?: 0} captures=${diagnostics.captures.count { it.source == id }}")
             }
