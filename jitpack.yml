@@ -30,6 +30,7 @@ install:
   # configures/builds the dynamic grammar modules.
   - npm install --prefix grammars/cpp
   - npm install --prefix grammars/starlark --ignore-scripts --omit=dev
+  - npm install --prefix grammars/svelte --ignore-scripts --omit=dev
   # Phase 1: build the complete project and all configured Maven modules.
   - ./gradlew clean build --parallel --no-daemon --stacktrace
   # Phase 2: publish every configured MavenPublication into the local Maven
