@@ -811,6 +811,8 @@ class MainActivity : AppCompatActivity() {
             return
         }
         javaTshProfileLoadJob?.cancel()
+        val previousScheme = WindbellTshEngine.instance.getSelectedScheme("java")
+        val previousDarkAppearance = WindbellTshEngine.instance.isDark("java")
         // Detach the previous document runtime before replacing the engine's grammar.
         editorView?.setSyntaxHighlighter(null)
         activeTshHighlighter = null
@@ -830,6 +832,8 @@ class MainActivity : AppCompatActivity() {
                     }
                     error(diagnostics.ifBlank { "Native TSH compiler returned false without diagnostics." })
                 }
+                previousScheme?.let { engine.selectScheme("java", it) }
+                engine.setAppearance("java", previousDarkAppearance)
             }
             // Compilation and runtime probing are separate outcomes: a diagnostic
             // failure must never leave the newly compiled profile mislabeled as the old one.
