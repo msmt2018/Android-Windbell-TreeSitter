@@ -1855,6 +1855,54 @@ class WindbellTshLinkageTest {
     }
 
     @Test
+    fun testUnboundedRegexViewportOnlyScansAndPreservesCrossBoundaryMatch() {
+        val engine = WindbellTshEngine.instance
+        val dsl = """
+            name: ["Regex Range", ".rr"]
+            styles { token { scope: "variable.other" } }
+            schemes {
+                plain {
+                    light [ token: #123456 ]
+                    dark [ token: #ABCDEF ]
+                }
+            }
+            contains: [
+                { match: /[A-Za-z_][A-Za-z0-9_]*/, 0: "token" }
+            ]
+        """.trimIndent()
+        assertTrue(engine.loadTshSource("regex-range", dsl, null))
+
+        val prefix = (0 until 12000).joinToString("\n") { index ->
+            "declaration_$index = value_$index;"
+        }
+        val target = "crossViewportIdentifier"
+        val source = "$prefix\n$target\nfinalIdentifier"
+        val full = engine.computeHighlights(null, source, "regex-range")
+            .filter { it.source == 0 }
+        val targetStart = source.indexOf(target)
+        val start = targetStart + 7 // Deliberately begin inside an unbounded match.
+        val end = source.indexOf("finalIdentifier") + 5
+        val viewport = engine.computeHighlights(
+            null, source, "regex-range", start.toLong() * 2L, end.toLong() * 2L
+        ).filter { it.source == 0 }
+
+        val expected = full.mapNotNull { span ->
+            val clippedStart = maxOf(span.startByte.toLong(), start.toLong() * 2L)
+            val clippedEnd = minOf(span.endByte.toLong(), end.toLong() * 2L)
+            if (clippedStart < clippedEnd) {
+                listOf(clippedStart, clippedEnd, span.styleId.toLong(),
+                    span.priority.toLong(), span.declarationOrder.toLong())
+            } else null
+        }.sortedWith(compareBy<List<Long>> { it[0] }.thenBy { it[1] }.thenBy { it[2] })
+        val actual = viewport.map { span ->
+            listOf(span.startByte.toLong(), span.endByte.toLong(), span.styleId.toLong(),
+                span.priority.toLong(), span.declarationOrder.toLong())
+        }.sortedWith(compareBy<List<Long>> { it[0] }.thenBy { it[1] }.thenBy { it[2] })
+        assertEquals(expected, actual,
+            "Viewport Regex must preserve captures crossing its left boundary and avoid rescanning prior matches")
+    }
+
+    @Test
     fun testSurrogatePairsAndHighlightingStability() {
         val engine = WindbellTshEngine.instance
         if (engine.listSchemes("java-test").isEmpty()) {
