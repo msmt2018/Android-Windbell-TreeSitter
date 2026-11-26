@@ -912,6 +912,8 @@ class MainActivity : AppCompatActivity() {
                     return value;
                 }
 
+                public void same(int same) { value = null; }
+
                 public void run() {
                     List<String> names = new ArrayList<>();
                     names.add("alpha");
