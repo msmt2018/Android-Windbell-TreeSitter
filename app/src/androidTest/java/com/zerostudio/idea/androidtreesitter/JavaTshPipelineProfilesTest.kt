@@ -13,12 +13,15 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class JavaTshPipelineProfilesTest {
     private val sample = """
+        package com.example.profile;
+        import java.util.List;
+
         /** Java pipeline fixture.
          * @param value input value
          * @return result
          */
         @Deprecated
-        public class Demo {
+        public class Demo<T extends Number> {
             private static final int MAX_SIZE = 0x7FFF;
             private String value = "hello";
             public Demo(String value) { this.value = value; }
