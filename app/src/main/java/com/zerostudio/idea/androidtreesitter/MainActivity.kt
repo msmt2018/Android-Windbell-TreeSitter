@@ -969,7 +969,7 @@ class MainActivity : AppCompatActivity() {
         }
         val language = languageMap["Java"]
         if (language == null) {
-            showResultDialog("TSH 配置加载失败", "Java Tree-sitter Parser 尚未注册。\\n\\n" + nativeBootstrapReport())
+            showResultDialog("TSH 配置加载失败", "Java Tree-sitter Parser 尚未注册。\n\n" + nativeBootstrapReport())
             return
         }
         val displayName = runCatching {
@@ -980,7 +980,7 @@ class MainActivity : AppCompatActivity() {
             ?: uri.lastPathSegment?.substringAfterLast('/')?.takeIf { it.isNotBlank() }
             ?: "selected.tsh"
         if (!displayName.endsWith(".tsh", ignoreCase = true)) {
-            showResultDialog("文件类型不受支持", "请选择扩展名为 .tsh 的配置文件。\\n当前文件：" + displayName)
+            showResultDialog("文件类型不受支持", "请选择扩展名为 .tsh 的配置文件。\n当前文件：" + displayName)
             return
         }
 
@@ -998,7 +998,7 @@ class MainActivity : AppCompatActivity() {
                     ?: error("The selected document provider returned no readable stream.")
                 val compiled = synchronized(engine) { engine.loadTshSource("java", source, language) }
                 if (!compiled) {
-                    val diagnostics = engine.lastCompileDiagnostics.joinToString("\\n") { diagnostic ->
+                    val diagnostics = engine.lastCompileDiagnostics.joinToString("\n") { diagnostic ->
                         diagnostic.code + "@" + diagnostic.line + ":" + diagnostic.column + ": " + diagnostic.message
                     }
                     error(diagnostics.ifBlank { "Native TSH compiler returned false without diagnostics." })
@@ -1026,16 +1026,16 @@ class MainActivity : AppCompatActivity() {
                     editorView?.invalidate()
                     applyTshThemeTokens()
                     val report = probe?.getOrElse { diagnosticError ->
-                        "PIPELINE DIAGNOSTICS ERROR\\n" + diagnosticError.stackTraceToString()
+                        "PIPELINE DIAGNOSTICS ERROR\n" + diagnosticError.stackTraceToString()
                     } ?: "Pipeline probe did not run."
                     showResultDialog("已加载外部 TSH：" + displayName, report +
-                        "\\n\\n当前编辑器文档未更换；新配置已编译并绑定到实际 EditorView 高亮器。")
+                        "\n\n当前编辑器文档未更换；新配置已编译并绑定到实际 EditorView 高亮器。")
                 } else {
                     javaTshReady = engine.isGrammarLoaded("java")
                     if (javaTshReady) installTshHighlighterIfReady()
                     val error = compilation.exceptionOrNull()
                     showResultDialog("外部 TSH 配置加载失败",
-                        "目标文件：" + displayName + "\\nURI：" + uri + "\\n\\n" +
+                        "目标文件：" + displayName + "\nURI：" + uri + "\n\n" +
                             (error?.stackTraceToString() ?: "Unknown compiler failure"))
                 }
             }
@@ -1236,7 +1236,7 @@ class MainActivity : AppCompatActivity() {
                     finalSpans.isNotEmpty() && foregroundSpans.isNotEmpty()
                 val renderStatus = if (foregroundSpans.isNotEmpty()) "RENDER PASS" else "RENDER FAIL"
                 val report = StringBuilder()
-                report.appendLine("配置：${profile.assetName}")
+                report.appendLine("配置：" + profile.assetName.ifBlank { activeJavaTshConfigName ?: "External .tsh" })
                 report.appendLine("Java parser：$parserDescription")
                 report.appendLine("源代码：${sample.length} UTF-16 units / ${sample.length * 2} UTF-16LE bytes")
                 report.appendLine("原始 captures：${diagnostics.captures.size}")
@@ -1261,7 +1261,7 @@ class MainActivity : AppCompatActivity() {
                     val start = (capture.startByte shr 1).coerceIn(0, sample.length)
                     val end = (capture.endByte shr 1).coerceIn(start, sample.length)
                     val snippet = sample.substring(start, end)
-                        .replace("\n", "\\n")
+                        .replace("\n", "\n")
                         .replace("\r", "\\r")
                     val style = styleNames[capture.styleId]?.name ?: "style#${capture.styleId}"
                     val sourceName = sourceLabels[capture.source] ?: "source#${capture.source}"
@@ -1455,7 +1455,7 @@ class MainActivity : AppCompatActivity() {
                             "   " + sourceNames[span.source] +
                                 " [" + from + "," + to + ") " +
                                 (styles[span.styleId]?.name ?: "style#" + span.styleId) +
-                                " = " + symbolText.substring(from, to).replace("\n", "\\n")
+                                " = " + symbolText.substring(from, to).replace("\n", "\n")
                         )
                     }
                     if (symbolCaptures.isEmpty()) report.appendLine("NO SYMBOL CAPTURES: inspect TSH rule match, ATS selector, query predicate and parser grammar.")
@@ -1723,7 +1723,7 @@ class MainActivity : AppCompatActivity() {
             for (span in spans.take(12)) {
                 val startChar = span.startByte shr 1
                 val endChar = span.endByte shr 1
-                val snippet = text.substring(startChar, minOf(endChar, text.length)).replace("\n", "\\n")
+                val snippet = text.substring(startChar, minOf(endChar, text.length)).replace("\n", "\n")
                 report.append("  [${span.startByte}..${span.endByte}] Id:${span.styleId} -> \"$snippet\"\n")
             }
 
