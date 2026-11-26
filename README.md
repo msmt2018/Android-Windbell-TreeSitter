@@ -1,272 +1,423 @@
-# android-tree-sitter
+<div align="center">
+  <img src="logo.png" alt="Android Windbell Tree-sitter logo" width="180" />
+  <h1>Android Windbell Tree-sitter</h1>
+  <p><strong>Android Tree-sitter bindings, modular language grammars, and the Windbell TSH highlighting engine.</strong></p>
+  <p><a href="README_CN.md">简体中文</a> · <a href="https://github.com/msmt2018/Android-Windbell-TreeSitter">GitHub</a> · <a href="https://tree-sitter.github.io/tree-sitter/">Tree-sitter</a> · <a href="https://jitpack.io/#msmt2018/Android-Windbell-TreeSitter">JitPack</a></p>
+</div>
 
-<a href="https://github.com/itsaky/AndroidIDE"><img src="https://androidide.com/github/img/androidide.php?part&for-the-badge"/></a><br><br>
-Android Java bindings for [tree-sitter](https://tree-sitter.github.io/tree-sitter/). Currently used
-in [AndroidIDE](https://github.com/AndroidIDEOfficial/AndroidIDE)
-and [sora-editor](https://github.com/Rosemoe/sora-editor).
+---
 
-## Add to your project
+## Overview
 
-![Latest maven release](https://img.shields.io/maven-central/v/com.zerostudio.idea.treesitter/android-tree-sitter)
+**Android Windbell Tree-sitter** is an Android-focused Tree-sitter integration project. It combines a JNI binding layer, native Tree-sitter runtime, separately packaged language grammars, and **Windbell TSH (Tree-sitter Highlighting)**.
 
-```gradle
-// main library
-implementation 'io.github.msmt2018:android-tree-sitter:<version>'
+The repository is intended for Android code editors and developer tools that need syntax-tree parsing, structural language information, incremental document processing, and syntax highlighting.
 
-// grammar libraries
-// <language> is the name of the language grammar. e.g. 'java', 'python', 'xml', etc.
-implementation 'io.github.msmt2018:tree-sitter-<language>:<version>'
-```
+### Main capabilities
 
-Before using tree sitter, load the native library when appropriate (e.g. in the `onCreate()` method of your `Application` class, or in your activity) :
+- **Android JNI binding:** a single maintained binding module, <code>android-tree-sitter</code>, exposes the Tree-sitter API to Java and Kotlin.
+- **Modular grammars:** language parsers are built as independent Android native-library modules. Applications can include only the grammars they need.
+- **Windbell TSH:** a <code>.tsh</code> configuration engine combining Tree-sitter ATS selectors / native Tree-sitter queries with an optional, independent Oniguruma Regex rule path.
+- **Semantic styles and themes:** <code>.tsh</code> files can describe language metadata, editor behavior, style catalogs, light/dark palettes, and highlighting rules.
+- **Large-document infrastructure:** native text-source adapters include bounded window access, mapped/file-backed sources, and Piece Tree support. Incremental parsing and viewport-oriented capture APIs are available for editor integration.
+- **Android rendering integration:** editor-side adapters turn TSH captures and resolved styles into Android text spans.
 
-```java
-TreeSitter.loadLibrary();
-```
+The TSH highlighting model is deliberately limited to **Tree-sitter ATS / Tree-sitter Query plus optional Regex**. This project does not use a Monarch pipeline or generated <code>.scm</code> highlighting pipeline.
 
-The following grammars have been published to Maven central :
+> Large-file support is an architectural capability, not a universal performance guarantee. Actual parsing, capture, and final on-screen rendering performance depends on the grammar, document structure, device memory, and editor integration. Use the included tests and device measurements when evaluating a target workload.
 
-- Java
-- JSON
-- Kotlin
-- Logs (for highlighting logs in AndroidIDE)
-- Python
-- XML
+## Architecture
 
-## Building
+~~~text
+Android editor / application
+        |
+        +-- Editor integration and Android span rendering
+        |
+        +-- Windbell TSH Kotlin API
+        |      |
+        |      +-- .tsh parser, compiler, styles and palettes
+        |      +-- Tree-sitter ATS / native Query execution
+        |      +-- optional Oniguruma Regex execution
+        |
+        +-- android-tree-sitter JNI binding
+               |
+               +-- Tree-sitter native runtime
+               +-- generated grammar JNI libraries
+               +-- native TextSource / Piece Tree / mapped-file adapters
+~~~
 
-### Prerequisites
+<code>android-tree-sitter</code> is the formal JNI binding and the home of the TSH engine. Grammar modules depend on this binding; they do not introduce a second Tree-sitter binding.
 
-- Android NDK
-- `JDK 11` or newer.
-    - `JAVA_HOME` must be set to a JDK installation containing header files in
-      the `JAVA_HOME/include` directory. The JDK bundled with Android Studio does not contain these
-      headers.
-- `build-essential`, `nodejs`, `cmake` and `ninja-build` packages are required for builds.
-  Install them with :
-  ```
-  sudo apt install build-essential nodejs cmake ninja-build
-  ```
+### Repository layout
 
-- You'll also need to install `rust` and `cargo` (>= v1.74.0). Follow the
-  instructions [here](https://www.rust-lang.org/learn/get-started) to get started with the
-  installation.
+| Path | Purpose |
+| --- | --- |
+| <code>android-tree-sitter/</code> | Android Java/Kotlin API, JNI implementation, native Tree-sitter integration, TSH engine and tests |
+| <code>grammars/</code> | Grammar Git submodules and grammar metadata |
+| <code>grammar-modules/</code> | Gradle grammar modules generated from <code>grammars/grammars.json</code> during project configuration |
+| <code>tree-sitter-lib/</code> | Tree-sitter source submodule, including the CLI source used by the build |
+| <code>editor/</code> | Editor integration and Piece Tree / TSH adapters |
+| <code>piecetable/</code> | Piece Tree implementation |
+| <code>annotations/</code>, <code>annotation-processors/</code> | Native header and JNI registration annotation support |
+| <code>build-logic/</code> | Gradle plugins and grammar module generation/build logic |
+| <code>app/</code> | Sample Android application and integration tests |
+| <code>docs/</code> | TSH language, architecture, rendering, and development documentation |
 
-- [`tree-sitter-cli`](https://github.com/tree-sitter/tree-sitter/tree/master/cli) - To build
-  grammars.
+## Quick start: use Tree-sitter
 
-As tree-sitter is already included in the source (as a submodule), the `tree-sitter-cli` is built
-from source and then used to build the grammars.
+### 1. Add JitPack to dependency resolution
 
-Read [the documentation](https://github.com/tree-sitter/tree-sitter/tree/master/cli) on how to
-install pre-built versions of `tree-sitter`.
+In the consuming Android project's <code>settings.gradle.kts</code>:
 
-If you want to use a prebuilt `tree-sitter` binary (either manually installed or installed
-with `npm` or `cargo`), make sure it is accessible in the `PATH`, then set
-the `TS_CLI_BUILD_FROM_SOURCE` environment variable :
-
-```bash
-export TS_CLI_BUILD_FROM_SOURCE=false
-```
-
-> _IMPORTANT: Building on a Linux machine is recommended._
-
-### Get source
-
-Clone this repo with :
-
-```bash
-git clone --recurse-submodules https://github.com/AndroidIDEOfficial/android-tree-sitter
-```
-
-### Install grammar dependencies
-
-You might need to install the Node packages required by the grammars. For example, the `cpp` grammar
-requires you to install the packages:
-
-```bash
-# from the root directory of this project
-cd grammars/cpp && npm install && cd -
-```
-
-### Build
-
-A normal Gradle build (`./gradlew build`) can be executed in order to build everything for Android
-_and_ the host OS. To build `android-tree-sitter` and the grammars _only_ for the host OS, you can
-execute `buildForHost` task on appropriate subprojects.
-
-## Adding grammars
-
-The Gradle modules for the grammars are almost identical, with only minor differences in the
-CMakeLists file and the Java binding class.
-
-These Gradle modules are automatically generated by
-the [`DynamicModulePlugin`](https://github.com/AndroidIDEOfficial/android-tree-sitter/tree/dev/build-logic/ats/src/main/java/com.zerostudio.idea/treesitter/DynamicModulePlugin.kt).
-The generation process relies on
-the [`grammars.json`](https://github.com/AndroidIDEOfficial/android-tree-sitter/tree/dev/grammars/grammars.json)
-file. More information about the structure of this JSON file can be found in
-the [README](https://github.com/AndroidIDEOfficial/android-tree-sitter/blob/dev/grammars/README.md)
-under the `grammars` directory.
-
-Apart from the `DynamicModulePlugin`, there
-are [other Gradle plugins](https://github.com/AndroidIDEOfficial/android-tree-sitter/tree/dev/build-logic/ats/src/main/java/com.zerostudio.idea/treesitter)
-which are used to configure and build the grammars effectively.
-
-The common configuration for the grammars can be found in
-the [`build.gradle.kts`](https://github.com/AndroidIDEOfficial/android-tree-sitter/blob/52cc0400feee5079cac25b27d1e7b673ee53f436/build.gradle.kts#L136)
-file. This is where you can make changes or adjustments to the module configuration that applies to
-all grammars.
-
-The generated modules are located in the `rootDir/grammar-modules` directory. This is where you can
-find the output of the module generation process.
-
-To add a new grammar to the project, follow these steps:
-
-1. Begin by adding the grammar source code to the `grammars` directory. To accomplish this, you can
-   add a submodule using the following command:
-
-    ```bash
-    git submodule add <remote_url> grammars/<language_name>
-    ```
-
-2. The `language_name` should be the simple name of the language, without the `tree-sitter-` prefix.
-   This name is used to generate both the shared library and the Gradle module. For example, if
-   the `language_name` is `abc`:
-    - The module `tree-sitter-abc` will be automatically generated.
-    - The name of the resulting shared library will be `libtree-sitter-abc.so`.
-3. After adding the grammar source, update the `grammars.json` file to include the newly added
-   grammar in the project.
-4. Finally, sync the project to trigger the generation of the module for the newly added grammar.
-
-## Loading external grammars
-
-You have two ways to load grammars that are not published along with this project :
-
-- Package the grammar with your application.
-- Load the grammar at runtime using `TSLanguage.loadLanguage`.
-
-`TSLanguage.loadLanguage` uses `dlopen` to load the library and must be CAREFULLY used. Also,
-grammars that are loaded using this method must be closed when they are not used.
-
-> **_Prefer using the first method whenever possible._**
-
-### Package the grammar with your application
-
-You can package the grammar in your Android application as you would package any other shared
-library :
-
-- Include the `libtree-sitter-myLang.so` file in the `jniLibs` directory of your project.
-- Create a native method in a Java class which will return the pointer to the language :
-
-```java
-package com.my.app;
-
-public class MyClass {
-
-  static {
-    System.loadLibrary("tree-sitter-myLang");
-  }
-
-  public static native long myLang();
+~~~kotlin
+dependencyResolutionManagement {
+    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+    repositories {
+        google()
+        mavenCentral()
+        maven { url = uri("https://jitpack.io") }
+    }
 }
-```
+~~~
 
-- Write the C/C++ implementation for the method :
+### 2. Add the binding and the grammar you need
 
-```c++
-extern "C" TSLanguage *tree_sitter_myLang();
+This is a multi-module repository. The JitPack coordinate form for an individual module is:
 
-extern "C"
-JNIEXPORT jlong JNICALL
-Java_com_my_app_MyClass_myLang(JNIEnv *env, jclass clazz) {
-  // simply cast the language pointer to jlong
-  return (jlong) tree_sitter_myLang();
+~~~kotlin
+dependencies {
+    implementation("com.github.msmt2018.Android-Windbell-TreeSitter:android-tree-sitter:VERSION")
+    implementation("com.github.msmt2018.Android-Windbell-TreeSitter:tree-sitter-java:VERSION")
 }
-```
+~~~
 
-- Create and use the `TSLanguage` instance :
+Replace <code>VERSION</code> with a Git tag or commit version that JitPack has successfully built. Add one <code>tree-sitter-&lt;language&gt;</code> module for each language your application needs; do not add every grammar by default.
 
-```java
-final TSLanguage myLang=TSLanguage.create("myLang",MyClass.myLang());
+**Publication status:** the repository's current <code>publish-packages.yml</code> workflow targets **GitHub Packages**, not JitPack. The repository currently has no root <code>jitpack.yml</code>, and a successful JitPack build for a release tag is not asserted here. Check the [JitPack project page](https://jitpack.io/#msmt2018/Android-Windbell-TreeSitter) and its build log before relying on a version. JitPack's multi-module coordinate format and Android requirements are documented in the [JitPack Android guide](https://docs.jitpack.io/android/) and [multi-module build guide](https://docs.jitpack.io/building/).
 
-// use it with TSParser
-  try(final var parser=TSParser.create()){
-  parser.setLanguage(myLang);
-  ...
-  }
-```
+### 3. Parse source code
 
-### Load grammars at runtime
+The following Java example uses the generated Java grammar binding:
 
-> android-tree-sitter `v3.1.0` or newer is required for this method.
+~~~java
+import com.zerostudio.idea.treesitter.TreeSitter;
+import com.zerostudio.idea.treesitter.TSNode;
+import com.zerostudio.idea.treesitter.TSParser;
+import com.zerostudio.idea.treesitter.TSTree;
+import com.zerostudio.idea.treesitter.java.TSLanguageJava;
 
-`TSLanguage` provides `loadLanguage(String, String)` method which can be used to load the grammars
-at runtime. This method uses `dlopen` to load the shared library, get the language instance and
-return its pointer. Use this method CAREFULLY.
+public final class ParseExample {
+    public static void parse(String source) {
+        TreeSitter.loadLibrary();
 
-The language instances created using this method **MUST** be closed using `TSLanguage.close()`.
-Calling the `close` method ensures that the underlying `dlopen`'ed library handle is closed
-using `dlclose`.
+        try (TSParser parser = TSParser.create()) {
+            parser.setLanguage(TSLanguageJava.getInstance());
 
-Usage :
+            try (TSTree tree = parser.parseString(source)) {
+                if (tree == null) {
+                    throw new IllegalStateException("Tree-sitter did not return a syntax tree");
+                }
 
-```java
-// provide the path to the shared library and the name of the language
-// the name is used to cache the language instance
-// further invocations of this method with the same lang name returns the
-// cached language instance
-final TSLanguage myLang=TSLanguage.loadLanguage("/path/to/libtree-sitter-myLang.so","myLang");
+                TSNode root = tree.getRootNode();
+                String rootType = root.getType();
+                // Inspect node types, ranges, fields and children here.
+            }
+        }
+    }
+}
+~~~
 
-  if(myLang!=null){
-  // loaded successfully
-  }else{
-  // failed to load the language
-  // see logcat for details
-  }
-```
+Load the core native library before using parser APIs. Close native-backed objects when their ownership ends; <code>TSParser</code> and <code>TSTree</code> are used with try-with-resources above.
 
-Use this language :
+## Quick start: load a TSH profile
 
-```java
-try(final var parser=TSParser.create()){
-  parser.setLanguage(myLang);
-  ...
-  }
-```
+The TSH engine is included in <code>android-tree-sitter</code>. A grammar module supplies the matching <code>TSLanguage</code> instance; the <code>.tsh</code> file supplies highlighting rules and style configuration.
 
-You don't have to keep a reference to `myLang`. Once loaded, the language can be accessed
-using `TSLanguageCache` :
+~~~kotlin
+import com.zerostudio.idea.treesitter.java.TSLanguageJava
+import com.zerostudio.idea.treesitter.tsh.WindbellTshEngine
 
-```java
-// returns the 'myLang' instance i.e. both are same
-final TSLanguage cachedMyLang=TSLanguageCache.get("myLang");
-```
+fun loadJavaTshProfile() {
+    val language = TSLanguageJava.getInstance()
+    val source = assets.open("tsh/java-ats-only.tsh")
+        .bufferedReader()
+        .use { it.readText() }
 
-**DO NOT FORGET** to close the language :
+    val engine = WindbellTshEngine.instance
+    val loaded = engine.loadTshSource(
+        extension = "java",
+        tshSourceContent = source,
+        language = language
+    )
 
-```java
-// this closes the underlying library handle
-myLang.close();
-```
+    check(loaded) {
+        engine.lastCompileDiagnostics.joinToString("\n") {
+            it.line.toString() + ":" + it.column + " " + it.code + ": " + it.message
+        }
+    }
+}
+~~~
 
-## Examples
+The example profile path is from the sample application's assets. In your application, package your own <code>.tsh</code> profile in assets or load it from your configuration source.
 
-For examples, see
-the [tests](https://github.com/AndroidIDEOfficial/android-tree-sitter/tree/dev/android-tree-sitter/src/test/java/com.zerostudio.idea/treesitter).
+### TSH document and editor integration
+
+For an editor, the high-level flow is:
+
+1. Load the grammar library and obtain its <code>TSLanguage</code>.
+2. Load and compile the matching <code>.tsh</code> source with <code>WindbellTshEngine.loadTshSource</code>.
+3. Provide the document through <code>NativeTextWindowReader</code> and <code>createNativeDocument</code>.
+4. Request the required byte range with <code>highlightNativeDocument</code>.
+5. Resolve capture style IDs against the active TSH palette and apply the result through the editor's rendering layer.
+6. On edits, send the committed edit to the native document and refresh only the invalidated editor ranges.
+7. Close the native document when the editor session ends.
+
+The native document reader uses **UTF-16LE byte offsets**. Offsets and lengths passed to the native document APIs must be even. For large documents, connect the reader to the editor's Piece Tree or another windowed text source; avoid flattening the entire document into a second full-size byte array merely to satisfy the reader interface.
+
+Implementation references:
+
+- <code>editor/src/main/java/x/github/module/editor/tsh/TshPieceTreeEditorBinding.kt</code>
+- <code>editor/src/main/java/x/github/module/editor/tsh/TshPieceTreeTextAccessProvider.kt</code>
+- <code>editor/src/main/java/x/github/module/editor/tsh/TshPieceTreeIncrementalSession.kt</code>
+- <code>app/src/main/java/com/zerostudio/idea/androidtreesitter/TshSyntaxHighlighter.kt</code>
+- <code>android-tree-sitter/src/main/java/com/zerostudio/idea/treesitter/tsh/WindbellTshEngine.kt</code>
+
+## Supported grammar modules
+
+The repository currently contains the following grammar submodules. Gradle generates a corresponding <code>tree-sitter-&lt;language&gt;</code> module for each entry in <code>grammars/grammars.json</code>.
+
+| Group | Grammar identifiers |
+| --- | --- |
+| Android and native | <code>aidl</code>, <code>arm64</code>, <code>asm</code>, <code>c</code>, <code>cmake</code>, <code>cpp</code>, <code>disassembly</code>, <code>llvm</code>, <code>llvm_mir</code>, <code>smali</code> |
+| Shell and build | <code>bash</code>, <code>containerfile</code>, <code>dockerfile</code>, <code>gdb</code>, <code>make</code>, <code>starlark</code>, <code>zsh</code> |
+| C-family and JVM | <code>csharp</code>, <code>go</code>, <code>gomod</code>, <code>groovy</code>, <code>java</code>, <code>kotlin</code>, <code>rust</code>, <code>swift</code> |
+| Web and scripting | <code>dart</code>, <code>javascript</code>, <code>jsdoc</code>, <code>lua</code>, <code>php</code>, <code>ruby</code>, <code>scss</code>, <code>svelte</code>, <code>typescript</code>, <code>vue</code> |
+| Data and configuration | <code>csv</code>, <code>gitattributes</code>, <code>gitcommit</code>, <code>gitignore</code>, <code>git_rebase</code>, <code>graphql</code>, <code>ini</code>, <code>json</code>, <code>logcat</code>, <code>markdwon</code>, <code>properties</code>, <code>proto</code>, <code>regex</code>, <code>requirements</code>, <code>sql</code>, <code>ssh</code>, <code>toml</code>, <code>xml</code>, <code>yaml</code> |
+| Documentation | <code>asciidoc</code>, <code>diff</code>, <code>rst</code> |
+
+The identifiers above preserve the repository's actual grammar directory names, including <code>markdwon</code>.
+
+A grammar being present as a Git submodule does not by itself mean that its artifact has been published to every Maven repository. Check the target repository's module/version listing before adding a dependency.
+
+## Grammar metadata generation: <code>generate_grammars.py</code>
+
+Run this script from the repository root:
+
+~~~bash
+python generate_grammars.py
+~~~
+
+The script maintains <code>grammars/grammars.json</code>, which is consumed by <code>DynamicModulePlugin</code> in <code>build-logic</code>.
+
+### What the script does
+
+1. Reads <code>.gitmodules</code> and collects registered paths under <code>grammars/</code>.
+2. Intersects those paths with grammar directories currently checked out under <code>grammars/</code>. An uninitialized submodule is therefore not treated as an available local grammar.
+3. Recursively searches each grammar directory for <code>src/parser.c</code> or <code>src/parser.cc</code>.
+4. Skips hidden directories and excluded directories such as <code>node_modules</code>, <code>.git</code>, <code>.github</code>, <code>build</code>, and <code>target</code>.
+5. Extracts the exported <code>tree_sitter_*</code> C entry symbol from the parser source where possible, rather than relying only on a guessed symbol name.
+6. Detects composite grammars and records their nested <code>sub.paths</code> and matching <code>sub.entries</code>.
+7. Records an external scanner as <code>src.extra</code> when <code>scanner.c</code> or <code>scanner.cc</code> is present.
+8. Writes the resulting JSON to <code>grammars/grammars.json</code> through a temporary file.
+
+The JSON describes either a single-parser grammar (<code>entry</code>) or a composite grammar (<code>sub.paths</code> / <code>sub.entries</code>), together with any extra scanner sources. The Gradle settings plugin reads that JSON and generates module build files, JNI glue, and CMake configuration under <code>grammar-modules/&lt;language&gt;</code>.
+
+**Important distinction:** <code>generate_grammars.py</code> generates grammar-module metadata; it does not generate Tree-sitter parser source code. Parser source files must already exist in the checked-out grammar submodule. The Tree-sitter CLI / Gradle grammar tasks handle parser generation and native compilation.
+
+After adding, removing, or changing grammar submodules:
+
+~~~bash
+git submodule update --init --recursive
+python generate_grammars.py
+~~~
+
+Review the resulting <code>grammars/grammars.json</code> diff before committing it.
+
+More details: [README_grammars.md](README_grammars.md).
+
+## Build from source
+
+### Toolchain versions used by CI
+
+The following versions are pinned or selected by the current GitHub Actions build workflow and version catalog:
+
+| Component | Version / requirement |
+| --- | --- |
+| JDK used to run Gradle | Temurin 17 |
+| Gradle wrapper | 8.14.8 |
+| Android Gradle Plugin | 8.13.2 |
+| Kotlin Gradle plugin | 2.4.21 |
+| Android NDK | r29 / <code>29.0.14206865</code> |
+| Android CMake | 3.31.6 |
+| Android Build Tools | 35.0.0 |
+| Android compile SDK | API 34 |
+| Android minimum SDK | API 21 |
+| Python | 3.12 |
+| Node.js | 22.22.2 |
+| Rust / Cargo | Required for building the bundled Tree-sitter CLI |
+| Bun | Used by the grammar package setup workflow |
+| Native host tools | C/C++ compiler, <code>build-essential</code>, CMake, Ninja |
+
+The Android library source/bytecode compatibility is configured separately from the JDK used to run Gradle. Use **JDK 17 to run the build**; the shared Android compile configuration targets Java 11.
+
+### Windows setup
+
+The most reproducible Windows environment is **Windows 10/11 with WSL2 (Ubuntu)**. The repository's CI runs on Ubuntu and uses Bash, Cargo, CMake, Ninja, Node package installation, and native host tests.
+
+For Android Studio on Windows:
+
+1. Install Android Studio and the Android SDK.
+2. Install a JDK 17 distribution, such as Eclipse Temurin 17.
+3. In **Android Studio → Settings → Build, Execution, Deployment → Build Tools → Gradle**, set **Gradle JDK** to JDK 17.
+4. In **SDK Manager → SDK Platforms**, install Android API 34.
+5. In **SDK Manager → SDK Tools**, install Android SDK Build-Tools 35.0.0, NDK (Side by side) 29.0.14206865, CMake 3.31.6, and Android SDK Command-line Tools.
+6. Install Git for Windows (including Git Bash), Python 3.12, Node.js 22.22.2, Rust/Cargo, and Bun. Ensure <code>git</code>, <code>bash</code>, <code>python</code>, <code>node</code>, <code>npm</code>, <code>cargo</code>, <code>cmake</code>, and <code>ninja</code> are available in the terminal.
+7. Clone the repository with submodules and open the root project in Android Studio.
+
+~~~powershell
+git clone --recurse-submodules https://github.com/msmt2018/Android-Windbell-TreeSitter.git
+cd Android-Windbell-TreeSitter
+git submodule update --init --recursive
+python generate_grammars.py
+.\gradlew.bat assembleDebug
+~~~
+
+The Java grammar ABI regeneration task invokes a Bash script. If building from native Windows, make sure Bash is available on <code>PATH</code>. For CI-equivalent host JNI and sanitizer tests, use WSL2 Ubuntu; the checked-in workflow is Linux-based and Windows is not currently a CI matrix target.
+
+### Linux setup (Ubuntu)
+
+Install the native system packages used by CI:
+
+~~~bash
+sudo apt-get update
+sudo apt-get install -y build-essential cargo cmake ninja-build git curl unzip
+~~~
+
+Install and select these tool versions:
+
+- Temurin JDK 17
+- Python 3.12
+- Node.js 22.22.2 and npm
+- Bun
+- Android SDK command-line tools
+- Android NDK 29.0.14206865
+- Android CMake 3.31.6
+- Android Build Tools 35.0.0
+
+In Android Studio, set **Gradle JDK = JDK 17** and install Android API 34 plus the SDK tools listed above. Alternatively, configure <code>ANDROID_SDK_ROOT</code> to your SDK directory and accept the Android SDK licenses with <code>sdkmanager --licenses</code>.
+
+~~~bash
+git clone --recurse-submodules https://github.com/msmt2018/Android-Windbell-TreeSitter.git
+cd Android-Windbell-TreeSitter
+git submodule update --init --recursive
+python3 generate_grammars.py
+chmod +x ./gradlew
+./gradlew assembleDebug
+~~~
+
+### Install grammar package dependencies
+
+The CI workflow scans grammar submodules for <code>package.json</code>, installs each independent package root, and avoids separately installing children already managed by an npm workspace. It uses <code>npm install --legacy-peer-deps --no-audit --no-fund</code> with bounded parallelism.
+
+For a grammar that needs a local npm install, run it from that grammar directory. For example:
+
+~~~bash
+cd grammars/cpp
+npm install
+cd ../..
+~~~
+
+Do not run <code>npm install</code> indiscriminately inside every nested workspace package; install the workspace root once.
+
+### Build the release APK
+
+Linux / macOS / WSL2:
+
+~~~bash
+./gradlew assembleRelease generateDebugSymbolsRelease --parallel --stacktrace
+~~~
+
+Windows PowerShell:
+
+~~~powershell
+.\gradlew.bat assembleRelease generateDebugSymbolsRelease --parallel --stacktrace
+~~~
+
+The sample APK is written under <code>app/build/outputs/apk/release/</code>.
+
+### Run the local test suite
+
+The main local test command used by CI is:
+
+~~~bash
+./gradlew testDebug :editor:compileDebugAndroidTestKotlin :app:compileDebugAndroidTestKotlin --continue --parallel --stacktrace
+~~~
+
+Windows PowerShell:
+
+~~~powershell
+.\gradlew.bat testDebug :editor:compileDebugAndroidTestKotlin :app:compileDebugAndroidTestKotlin --continue --parallel --stacktrace
+~~~
+
+The workflow also performs native host checks on Linux, including large-file storage tests with ASan/UBSan and native TSH cache tests. The following commands show the corresponding test setup:
+
+~~~bash
+cmake -S android-tree-sitter/src/main/cpp/largefile/tests -B build/largefile-tests -DCMAKE_BUILD_TYPE=Debug
+cmake --build build/largefile-tests --parallel 2
+ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+  ctest --test-dir build/largefile-tests --output-on-failure
+
+./gradlew :android-tree-sitter:generateNativeHeadersDebug --stacktrace
+cmake -S android-tree-sitter/src/main/cpp -B build/host \
+  -DCMAKE_BUILD_TYPE=Debug \
+  -DBUILD_TESTING=OFF \
+  -DAUTOGEN_HEADERS="$PWD/android-tree-sitter/build/generated/native_headers"
+cmake --build build/host --target android-tree-sitter --parallel 2
+~~~
+
+For the complete device test matrix, refer to <code>.github/workflows/build.yml</code>. The current workflow uses Android emulator API levels 26, 30, and 35.
+
+### Android Studio project configuration
+
+- Open the repository root (the directory containing <code>settings.gradle</code>), not an individual module.
+- Set the Gradle JDK to 17.
+- Install API 34, Build Tools 35.0.0, NDK 29.0.14206865, and CMake 3.31.6 through SDK Manager.
+- Let Gradle Sync finish so the settings plugin can generate the grammar modules from <code>grammars/grammars.json</code>.
+- Do not manually edit generated files under <code>grammar-modules/</code>; update the grammar metadata or generator inputs instead.
+- Keep the SDK location in the local <code>local.properties</code> file; do not commit machine-specific SDK paths.
+
+## Maven packages and JitPack
+
+There are two different distribution concepts:
+
+- **GitHub Packages:** the repository's current <code>publish-packages.yml</code> workflow publishes a selected set of artifacts to GitHub Packages.
+- **JitPack:** builds artifacts from Git tags or commits and serves them from <code>https://jitpack.io</code>.
+
+For JitPack, use the repository lookup page to confirm that the tag/commit has a successful build and that the required module is listed. For this multi-module repository, the expected individual-module coordinate shape is:
+
+~~~kotlin
+dependencies {
+    implementation("com.github.msmt2018.Android-Windbell-TreeSitter:android-tree-sitter:VERSION")
+    implementation("com.github.msmt2018.Android-Windbell-TreeSitter:tree-sitter-java:VERSION")
+}
+~~~
+
+Use the exact artifact name shown by JitPack. Replace the Java grammar example with the grammar module your application uses. A grammar module depends on the core binding module, so normally include both the core module and the selected grammar module.
+
+For branch snapshots or commit builds, use the version form shown by JitPack for that branch or commit. JitPack's version syntax and build requirements can change; consult the official [Android publishing guide](https://docs.jitpack.io/android/) and [build guide](https://docs.jitpack.io/building/).
+
+## Further documentation
+
+- [Grammar module metadata and generation](README_grammars.md)
+- [TSH DSL v2 specification](docs/TSH_DSL_V2_SPEC.md)
+- [TSH large-text native token architecture](docs/TSH_LARGE_TEXT_NATIVE_TOKEN_ARCHITECTURE.md)
+- [TSH highlighting accuracy and rendering integrity](docs/TSH_HIGHLIGHT_ACCURACY_AND_RENDERING_INTEGRITY.md)
+- [TSH extreme optimization and flicker remediation](docs/TSH_EXTREME_OPTIMIZATION_AND_FLICKER_REMEDIATION.md)
+- [TSH engine completion and performance roadmap](android-tree-sitter/TSH_ENGINE_COMPLETION_AND_PERFORMANCE_ROADMAP.md)
+- [Sample Java ATS-only profile](app/src/main/assets/tsh/java-ats-only.tsh)
+- [Build and test workflow](.github/workflows/build.yml)
+- [GitHub Packages workflow](.github/workflows/publish-packages.yml)
 
 ## License
 
-```
-android-tree-sitter library is free software; you can redistribute it and/or
-modify it under the terms of the GNU Lesser General Public
-License as published by the Free Software Foundation; either
-version 2.1 of the License, or (at your option) any later version.
-
-android-tree-sitter library is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
-Lesser General Public License for more details.
-
-You should have received a copy of the GNU General Public License
-along with android-tree-sitter.  If not, see <https://www.gnu.org/licenses/>.
-```
+See [LICENSE](LICENSE) for the license text and the repository's applicable licensing terms.
