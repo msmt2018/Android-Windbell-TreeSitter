@@ -132,6 +132,75 @@ public:
         return &best->second.value;
     }
 
+    // Compose adjacent/overlapping cached viewports when their union fully
+    // covers a new request. Editor viewport batches can shift by a few lines
+    // between frames, so requiring one cached range to contain the whole new
+    // range causes needless re-execution even when every byte was captured.
+    // Diagnostics are excluded here because per-range counters cannot be
+    // combined without double-counting overlapping cached segments.
+    bool findCovering(
+        const Key &key,
+        std::vector<const Value*> &segments
+    ) {
+        segments.clear();
+        if (key.diagnostics || key.start_byte >= key.end_byte) return false;
+
+        if (const Value *contained = find(key)) {
+            // find() is exact-key lookup; use the containing lookup below for
+            // wider retained viewports.
+            segments.push_back(contained);
+            return true;
+        }
+
+        const Key *containedKey = nullptr;
+        if (const Value *contained = findContaining(key, &containedKey)) {
+            segments.push_back(contained);
+            return true;
+        }
+
+        std::vector<Entry*> candidates;
+        candidates.reserve(entries_.size());
+        for (auto &item : entries_) {
+            const Key &candidate = item.first;
+            if (candidate.version != key.version ||
+                candidate.source_version != key.source_version ||
+                candidate.partition_version != key.partition_version ||
+                candidate.grammar_revision != key.grammar_revision ||
+                candidate.diagnostics != key.diagnostics ||
+                candidate.end_byte <= key.start_byte ||
+                candidate.start_byte >= key.end_byte) continue;
+            candidates.push_back(&item.second);
+        }
+        std::sort(candidates.begin(), candidates.end(),
+            [](const Entry *left, const Entry *right) {
+                if (left->key->start_byte != right->key->start_byte)
+                    return left->key->start_byte < right->key->start_byte;
+                return left->key->end_byte > right->key->end_byte;
+            });
+
+        uint32_t coveredUntil = key.start_byte;
+        for (Entry *candidate : candidates) {
+            const Key &candidateKey = *candidate->key;
+            if (candidateKey.start_byte > coveredUntil) break;
+            if (candidateKey.end_byte <= coveredUntil) continue;
+            segments.push_back(&candidate->value);
+            coveredUntil = candidateKey.end_byte;
+            if (coveredUntil >= key.end_byte) break;
+        }
+        if (coveredUntil < key.end_byte) {
+            segments.clear();
+            return false;
+        }
+        for (Entry *candidate : candidates) {
+            if (std::find_if(segments.begin(), segments.end(),
+                [candidate](const Value *value) { return value == &candidate->value; })
+                != segments.end()) {
+                touch(candidate);
+            }
+        }
+        return true;
+    }
+
     void put(Key key, Value value) {
         constexpr size_t kEntryOverhead =
             sizeof(Value) + sizeof(Key) + 5u * sizeof(void *);
