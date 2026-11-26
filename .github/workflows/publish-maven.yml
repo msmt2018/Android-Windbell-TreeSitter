@@ -2,12 +2,6 @@ name: Publish Maven to JitPack
 
 on:
   workflow_dispatch:
-    inputs:
-      version:
-        description: Maven package version and JitPack release tag
-        required: true
-        default: 0.1.0
-        type: string
 
 permissions:
   contents: write
@@ -30,21 +24,48 @@ jobs:
           fetch-depth: 0
           submodules: recursive
 
-      - name: Validate release version
+      - name: Generate release version automatically
+        id: version
         shell: bash
-        env:
-          RELEASE_VERSION: ${{ inputs.version }}
         run: |
           set -Eeuo pipefail
-          if [[ ! "$RELEASE_VERSION" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
-            echo "::error::Invalid Maven release version: $RELEASE_VERSION"
+          commit="$(git rev-parse HEAD)"
+          short_commit="$(git rev-parse --short=7 HEAD)"
+          date_utc="$(date -u +%Y%m%d)"
+          base_version="$date_utc-$short_commit"
+
+          # Reuse an existing release tag only when it points to this exact commit.
+          existing_tag="$(
+            git ls-remote --tags origin "refs/tags/${base_version}*" |
+              awk -v commit="$commit" '
+                /\^\{\}$/ && $1 == commit {
+                  sub(/\^\{\}$/, "", $2)
+                  sub(/^refs\/tags\//, "", $2)
+                  print $2
+                  exit
+                }
+              '
+          )"
+
+          if [[ -n "$existing_tag" ]]; then
+            release_version="$existing_tag"
+            echo "Reusing existing tag for current commit: $release_version"
+          else
+            release_version="$base_version"
+            suffix=2
+            while git ls-remote --exit-code --tags origin "refs/tags/$release_version" >/dev/null 2>&1; do
+              release_version="$base_version-$suffix"
+              suffix=$((suffix + 1))
+            done
+          fi
+
+          if [[ ! "$release_version" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
+            echo "::error::Generated invalid Maven release version: $release_version"
             exit 1
           fi
-          if git ls-remote --exit-code --tags origin "refs/tags/$RELEASE_VERSION" >/dev/null 2>&1; then
-            echo "::error::Release tag $RELEASE_VERSION already exists"
-            exit 1
-          fi
-          echo "VERSION=$RELEASE_VERSION" >> "$GITHUB_ENV"
+
+          echo "VERSION=$release_version" >> "$GITHUB_ENV"
+          echo "version=$release_version" >> "$GITHUB_OUTPUT"
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -185,13 +206,28 @@ jobs:
         id: release
         shell: bash
         env:
-          RELEASE_VERSION: ${{ inputs.version }}
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
         run: |
           set -Eeuo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag -a "$RELEASE_VERSION" -m "Release $RELEASE_VERSION"
-          git push origin "refs/tags/$RELEASE_VERSION"
+
+          remote_tag="$(git ls-remote --tags origin "refs/tags/$RELEASE_VERSION" "refs/tags/$RELEASE_VERSION^{}")"
+          if [[ -n "$remote_tag" ]]; then
+            peeled_commit="$(printf '%s\n' "$remote_tag" | awk '$2 ~ /\^\{\}$/ { print $1; exit }')"
+            if [[ -z "$peeled_commit" ]]; then
+              peeled_commit="$(printf '%s\n' "$remote_tag" | awk 'NR == 1 { print $1 }')"
+            fi
+            current_commit="$(git rev-parse HEAD)"
+            if [[ "$peeled_commit" != "$current_commit" ]]; then
+              echo "::error::Existing tag $RELEASE_VERSION points to $peeled_commit, not $current_commit"
+              exit 1
+            fi
+            echo "Existing tag already points to the verified build commit; no push needed."
+          else
+            git tag -a "$RELEASE_VERSION" -m "Release $RELEASE_VERSION"
+            git push origin "refs/tags/$RELEASE_VERSION"
+          fi
           echo "version=$RELEASE_VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Release summary
