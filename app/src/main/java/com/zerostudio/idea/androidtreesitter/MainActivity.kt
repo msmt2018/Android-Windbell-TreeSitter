@@ -869,8 +869,8 @@ class MainActivity : AppCompatActivity() {
             public sealed class PipelineProbe<T extends Number> permits RecordProbe {
                 private static final int MAX_BUFFER_SIZE = 0x7FFF;
                 private static final long BINARY_MASK = 0b1010_0101L;
-                private final String message = "Hello \\"Tree-sitter\\"";
-                private final char marker = '\\n';
+                private final String message = "Hello \"Tree-sitter\"";
+                private final char marker = '\n';
 
                 public PipelineProbe(T input) {
                     this.value = input;
