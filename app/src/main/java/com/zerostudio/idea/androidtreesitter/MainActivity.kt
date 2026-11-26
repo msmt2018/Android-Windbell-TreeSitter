@@ -748,7 +748,14 @@ class MainActivity : AppCompatActivity() {
                 return true
             }
             R.id.test_tsh_java_pipeline -> {
-                showJavaTshPipelineProfileDialog()
+                if (javaTshReady) {
+                    showJavaTshPipelineProfileDialog()
+                } else {
+                    showResultDialog(
+                        "Java TSH 尚未就绪",
+                        "请等待 Java Parser 与当前 .tsh 配置完成初始化后再切换管道。"
+                    )
+                }
                 return true
             }
             R.id.test_tsh_cursor_capture -> {
