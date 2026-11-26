@@ -229,6 +229,7 @@ class TshSyntaxHighlighter(
     private val firstStyleCallbackNanos = AtomicLong()
     private val firstNativeReadyNanos = AtomicLong()
     private val firstViewportQueuedNanos = AtomicLong()
+    private val firstViewportQueryStartedNanos = AtomicLong()
     private val firstViewportQueryCompletedNanos = AtomicLong()
     private val firstViewportCaptureCount = AtomicLong(-1L)
     private val firstStyledLineNanos = AtomicLong()
@@ -676,6 +677,7 @@ class TshSyntaxHighlighter(
         firstStyleCallbackNanos.set(0L)
         firstNativeReadyNanos.set(0L)
         firstViewportQueuedNanos.set(0L)
+        firstViewportQueryStartedNanos.set(0L)
         firstViewportQueryCompletedNanos.set(0L)
         firstViewportCaptureCount.set(-1L)
         firstStyledLineNanos.set(0L)
@@ -848,14 +850,19 @@ class TshSyntaxHighlighter(
         val nativeReady = firstNativeReadyNanos.get()
         val rendererCallback = firstStyleCallbackNanos.get()
         val viewportQueued = firstViewportQueuedNanos.get()
+        val queryStarted = firstViewportQueryStartedNanos.get()
         val queryCompleted = firstViewportQueryCompletedNanos.get()
         val nativeReadyToQueueMs =
             if (nativeReady > 0L && viewportQueued >= nativeReady) {
                 (viewportQueued - nativeReady) / 1_000_000L
             } else -1L
-        val queueToQueryMs =
-            if (viewportQueued > 0L && queryCompleted >= viewportQueued) {
-                (queryCompleted - viewportQueued) / 1_000_000L
+        val queueToNativeStartMs =
+            if (viewportQueued > 0L && queryStarted >= viewportQueued) {
+                (queryStarted - viewportQueued) / 1_000_000L
+            } else -1L
+        val nativeQueryMs =
+            if (queryStarted > 0L && queryCompleted >= queryStarted) {
+                (queryCompleted - queryStarted) / 1_000_000L
             } else -1L
         val queryToSpansMs =
             if (queryCompleted > 0L && styledAtNanos >= queryCompleted) {
@@ -871,7 +878,8 @@ class TshSyntaxHighlighter(
                 "nativeReadyMs=${elapsedMillis(nativeReady)} " +
                 "firstRendererCallbackMs=${elapsedMillis(rendererCallback)} " +
                 "nativeReadyToViewportQueueMs=$nativeReadyToQueueMs " +
-                "viewportNativeQueryMs=$queueToQueryMs queryToAndroidSpansMs=$queryToSpansMs " +
+                "viewportQueueToNativeStartMs=$queueToNativeStartMs nativeHighlightQueryMs=$nativeQueryMs " +
+                "queryToAndroidSpansMs=$queryToSpansMs " +
                 "viewportCaptures=${firstViewportCaptureCount.get()} " +
                 "lineCaptures=$lineCaptureCount androidSpans=$androidSpanCount"
         )
@@ -1349,6 +1357,7 @@ class TshSyntaxHighlighter(
                         throw CancellationException("Stale native viewport request")
                     }
                     val queryStarted = System.nanoTime()
+                    firstViewportQueryStartedNanos.compareAndSet(0L, queryStarted)
                     try {
                         val result = active.documentRuntime.parser.highlight(
                             start = missingStart.toLong() * 2L,
