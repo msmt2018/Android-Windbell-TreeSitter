@@ -2085,10 +2085,29 @@ Java_com_zerostudio_idea_treesitter_tsh_WindbellTshEngine_nativeHighlightDocumen
         static_cast<uint32_t>(range_end_byte),
         diagnostics == JNI_TRUE
     };
-    if (const auto *cached = document->highlight_cache.find(cache_key)) {
+    const NativeHighlightCache::Key *cached_key = nullptr;
+    if (const auto *cached = document->highlight_cache.findContaining(cache_key, &cached_key)) {
         try {
+            if (cached_key && *cached_key == cache_key) {
+                return encodeNativeHighlightResult(
+                    env, cached->spans, cached->match_counts,
+                    diagnostics == JNI_TRUE);
+            }
+            // The retained viewport contains this request. Clip its immutable
+            // captures to the narrower range before crossing JNI; the source,
+            // grammar and all document versions are identical by key check.
+            std::vector<HighlightSpan> clipped;
+            clipped.reserve(cached->spans.size());
+            for (const HighlightSpan &span : cached->spans) {
+                if (span.end_byte <= requested_start || span.start_byte >= requested_end)
+                    continue;
+                HighlightSpan visible = span;
+                visible.start_byte = std::max(visible.start_byte, requested_start);
+                visible.end_byte = std::min(visible.end_byte, requested_end);
+                if (visible.start_byte < visible.end_byte) clipped.push_back(visible);
+            }
             return encodeNativeHighlightResult(
-                env, cached->spans, cached->match_counts,
+                env, clipped, cached->match_counts,
                 diagnostics == JNI_TRUE);
         } catch (const std::bad_alloc&) {
             throwNativeAllocationFailure(env, "Unable to allocate cached JNI highlight result");
