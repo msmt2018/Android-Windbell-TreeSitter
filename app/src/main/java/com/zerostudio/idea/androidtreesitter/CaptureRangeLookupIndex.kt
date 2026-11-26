@@ -69,14 +69,21 @@ internal class CaptureRangeLookupIndex {
             )
             val selected = ArrayList<CaptureRangeKey>()
             var coveredUntil = startUtf16
-            for (candidate in candidates) {
-                if (candidate.startUtf16 > coveredUntil) break
-                if (candidate.endUtf16 <= coveredUntil) continue
-                selected += candidate
-                coveredUntil = candidate.endUtf16
-                if (coveredUntil >= endUtf16) return@synchronized selected
+            var candidateIndex = 0
+            while (coveredUntil < endUtf16) {
+                var best: CaptureRangeKey? = null
+                while (candidateIndex < candidates.size &&
+                    candidates[candidateIndex].startUtf16 <= coveredUntil) {
+                    val candidate = candidates[candidateIndex++]
+                    if (candidate.endUtf16 > (best?.endUtf16 ?: coveredUntil)) {
+                        best = candidate
+                    }
+                }
+                val next = best ?: return@synchronized null
+                selected += next
+                coveredUntil = next.endUtf16
             }
-            null
+            selected
         }
     }
 
