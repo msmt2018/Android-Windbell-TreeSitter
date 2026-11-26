@@ -265,12 +265,38 @@ class TshRenderPlanSyntaxHighlighter(
     }
 
     private fun currentSnapshot(): RenderSnapshot? {
-        // RenderPlan publication is atomic. During edits and while the next plan is
-        // being produced, keep drawing with the last committed snapshot instead of
-        // toggling all syntax spans off/on on every document-version change.
-        // Line caches are keyed by generation + version, so stale line spans are
-        // never reused across edits. The next valid plan replaces this snapshot.
-        return synchronized(stateLock) { snapshot }
+        val installed = synchronized(stateLock) { snapshot } ?: return null
+        val version = try {
+            currentDocumentVersion()
+        } catch (_: Exception) {
+            -1L
+        } catch (_: LinkageError) {
+            -1L
+        }
+
+        // A RenderPlan is tied to an immutable document revision. Keeping its spans
+        // after the PieceTree version advances can paint tokens over different text
+        // (including text inserted by the edit). Drop it immediately; the next
+        // successful parse publishes a plan for the new revision.
+        if (version != installed.plan.revisions.documentVersion) {
+            val removed = synchronized(stateLock) {
+                if (snapshot === installed) {
+                    snapshot = null
+                    diagnostics = emptyList()
+                    true
+                } else {
+                    false
+                }
+            }
+            if (removed) clearLineStyleCache()
+            return null
+        }
+
+        return synchronized(stateLock) {
+            snapshot?.takeIf {
+                it === installed && it.plan.revisions.documentVersion == version
+            }
+        }
     }
  
     private fun lineStyleCache(
