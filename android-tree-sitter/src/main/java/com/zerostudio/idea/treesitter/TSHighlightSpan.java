@@ -1,6 +1,6 @@
 /*
  * This file is part of android-tree-sitter.
- * Licensed under the GNU Lesser General Public License, version 2.1 or later.
+ * Licensed under the GNU Affero General Public License, version 3.
  */
 package com.zerostudio.idea.treesitter;
 
