@@ -39,6 +39,7 @@
             triggerCharacters: [".", "@", ":"]
         }
         electricCharacters: ["}", ";"]
+        }
 
     // =========================================================================
     // 2. Shared semantic styles and color schemes
