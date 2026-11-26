@@ -57,11 +57,11 @@ jobs:
           {
             echo "## JitPack release"
             echo
-            echo "Tag: `$RELEASE_VERSION`"
+            printf 'Tag: `%s`\n' "$RELEASE_VERSION"
             echo
             echo "JitPack builds this tag on demand. No GitHub Packages upload is performed."
             echo
             echo "Repository: https://jitpack.io/#msmt2018/Android-Windbell-TreeSitter"
             echo
-            echo "Core library: `com.github.msmt2018.Android-Windbell-TreeSitter:android-tree-sitter:$RELEASE_VERSION`"
+            printf 'Core library: `com.github.msmt2018.Android-Windbell-TreeSitter:android-tree-sitter:%s`\n' "$RELEASE_VERSION"
           } >> "$GITHUB_STEP_SUMMARY"
