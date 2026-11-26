@@ -1444,7 +1444,13 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
         // proven maximum-match overlap. mmap contiguity must not trigger a full
         // document scan for every editor draw.
         constexpr uint64_t kRegexCoreWindowBytes = 256u * 1024u;
-        for (const auto& rule : grammar->regex_rules) {
+        // Reuse the UTF-16LE window allocation and Oniguruma capture region
+        // across every bounded MATCH rule and every core window in this request.
+        // The previous inner-loop allocation created one vector and one region
+        // per rule/window pair, even though neither needs to outlive this call.
+        std::vector<UChar> regex_window;
+        OnigRegion* regex_window_region = onig_region_new();
+        if (regex_window_region) for (const auto& rule : grammar->regex_rules) {
             if (!rule.enabled || rule.type != RegexRuleType::MATCH ||
                 !rule.onig_start ||
                 rule.execution_capability != RegexExecutionCapability::BOUNDED_WINDOW ||
@@ -1464,16 +1470,15 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                 if (window_bytes == 0 || (window_bytes & 1u) != 0 ||
                     window_bytes > static_cast<uint64_t>(std::numeric_limits<size_t>::max()) /
                         sizeof(UChar)) break;
-                std::vector<UChar> window;
-                try { window.resize(static_cast<size_t>(window_bytes / sizeof(UChar))); }
+                try { regex_window.resize(static_cast<size_t>(window_bytes / sizeof(UChar))); }
                 catch (...) { break; }
                 if (!windbell::largefile::copyTextRange(
-                        *text_source, core_start, window_bytes, window.data())) break;
-                const UChar* window_start = window.data();
-                const UChar* window_end_ptr = window_start + window.size();
+                        *text_source, core_start, window_bytes, regex_window.data())) break;
+                const UChar* window_start = regex_window.data();
+                const UChar* window_end_ptr = window_start + regex_window.size();
                 const UChar* current = window_start;
-                OnigRegion* region = onig_region_new();
-                if (!region) break;
+                onig_region_clear(regex_window_region);
+                OnigRegion* region = regex_window_region;
                 while (current < window_end_ptr) {
                     const int hit = onig_search(
                         rule.onig_start, window_start, window_end_ptr,
@@ -1548,10 +1553,10 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
                         static_cast<uint64_t>(next) >= window.size()) break;
                     current = window_start + next;
                 }
-                onig_region_free(region, 1);
                 core_start = core_end;
             }
         }
+        onig_region_free(regex_window_region, 1);
     }
 
     if (has_contiguous_text) for (const auto& rule : grammar->regex_rules) {
