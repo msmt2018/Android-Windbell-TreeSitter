@@ -10,7 +10,10 @@
 | [源码 API 参考](api/README.md) | 根据 `android-tree-sitter/src/main/java/com/zerostudio/idea/treesitter` 当前源码编写的 Java/Kotlin API 参考 |
 | [编辑器集成](guides/editor-integration.md) | 宿主编辑器如何接入现有 TSH 能力 |
 | [高亮与渲染](guides/highlight-render-pipeline.md) | 配置、匹配、样式与 Android 渲染链路 |
-| [TSH 语言与配置](language/tsh-language.md) | `.tsh` 配置语法及其当前实现边界 |
+| [TSH DSL v2 规范](TSH_DSL_V2_SPEC.md) | 文件结构、架构边界、两条管线、必需定义与实现状态 |
+| [TSH DSL v2 语法参考](TSH_DSL_V2_SYNTAX.md) | 根字段、ATS、Query、Regex、predicates、样式、主题与 editor 字段 |
+| [SCM → TSH 迁移指南](TSH_SCM_TO_TSH_MIGRATION.md) | highlights.scm 的 Query、capture 与 predicate 迁移方法 |
+| [TSH 语言工具链](language/tsh-language.md) | Lexer/Parser/Schema/Validator/Compiler 工具链职责与边界 |
 | [ATS 与 Regex](engine/ats-regex.md) | Tree-sitter/ATS 与独立 Regex 匹配管线 |
 | [诊断规范](diagnostics/diagnostics.md) | 诊断模型与错误定位 |
 | [开发路线图](roadmap.md) | 分阶段工作与验收状态 |

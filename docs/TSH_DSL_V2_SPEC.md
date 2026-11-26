@@ -1,341 +1,226 @@
-# TSH DSL v2 — Language, Theme and Editor Behavior Specification
+# TSH DSL v2 规范
 
-> Status: architecture contract for the TSH rework. This document describes the target v2 DSL. A construct is not considered implemented merely because it is documented; implementation status is tracked in the rework plan and tests.
+> 对象：Windbell Tree-sitter Highlighting（TSH）.tsh 配置文件  
+> 版本：2  
+> 实现基线：当前 Native WindbellTshCompiler、WindbellTshCore 与 Java/Kotlin TSH 绑定源码。
 
-## 1. Design invariants
+## 1. 设计目标与硬性边界
 
-1. **The .tsh file is the source of truth.** Language names, file matching, symbol names, semantic scopes, colors, fonts, theme tokens, rule order, regexes, Tree-sitter queries, bracket pairs and editor behavior are declared by the language package.
-2. **The C++ core is a generic runtime, not a language/theme catalog.** It may implement lexing, parsing, regex execution, Tree-sitter query execution, interval arbitration, capture transport and JNI. It must not contain language-specific keyword lists, token names, colors, theme defaults, editor behavior defaults, or assumptions such as “style id 2 is a string”.
-3. **No implicit visible color.** Missing colors are represented as absent values. The renderer must not substitute black/white or any other visible color. A host editor may decide to leave its existing foreground unchanged.
-4. **Stable semantic names, dynamic numeric IDs.** IDs are compiled implementation details. Rules and themes refer to names; IDs are assigned deterministically from declarations and are never interpreted by meaning.
-5. **Two independent matching backends.** ATS (Tree-sitter AST/query) and Oniguruma regex are peers. Either may be disabled or used alone. Their results are normalized into the same capture/span model.
-6. **No external .scm dependency.** Tree-sitter query source is embedded in the .tsh file and compiled with the grammar's TSLanguage.
-7. **No outline or folding extraction in TSH.** Those APIs and heuristics are outside this highlighting/configuration core and are not part of the v2 runtime contract.
+TSH 是语言高亮配置与运行时。语言特有的节点名、关键字、正则、样式名称、颜色、主题与规则优先级应由 .tsh 声明。Native 内核只实现通用解析、匹配、capture/span 仲裁与渲染数据传输，不保存语言特有颜色或关键字表。
 
-## 2. File shape
+必须遵守：
 
-A v2 file is a brace-delimited document. Commas after entries are optional. Strings support single and double quotes with JSON escapes (`\\n`, `\\r`, `\\t`, quotes, backslash and `\\uXXXX` including valid surrogate pairs); backticks are raw strings. Comments support // and /* */. Regex literals use /.../ with optional flags. Unknown punctuation, malformed escapes, unterminated strings/comments/regexes, and unescaped newlines in quoted strings are lexical errors rather than silently skipped input.
+1. 配置是语言行为与主题数据的事实来源。
+2. 只有两条匹配管线：ATS（Tree-sitter AST Selector）与 Oniguruma Regex。二者独立执行，结果统一为 capture/span 后仲裁。
+3. ATS 不等于 Tree-sitter Query。ATS 是 TSH 的结构化节点选择器；原生 Query 是 Tree-sitter Query 语言本身。
+4. Query 源码内嵌于 treeSitter.queries[].source，编译时直接交给目标 TSLanguage 的 ts_query_new；不生成、不加载、不依赖外部 .scm。
+5. Regex 不代替语法树结构解析。能由 grammar 节点、field、父子/兄弟关系准确表达的语义，应优先使用 ATS/Query。
+6. 规则使用语义 style 名称。数值 style ID 是编译产物，不得硬编码或赋予固定含义。
+7. 缺失 foreground/background 表示不覆盖。不得自动补黑、白或其他可见颜色。
+8. 未知根字段、未知属性、重复声明、无效 style/capture 绑定、无效 Regex/Query、无效 grammar 节点/字段名必须明确失败，不得静默忽略。
+9. TSH 不负责 Outline、Folding、locals、tags 或嵌入语言 injection 管线。
 
-```tsh
+## 2. 文件封套与最小结构
+
+新文件必须使用版本封套：
+
+~~~tsh
 tsh 2 {
   language {
     id: "java"
     name: "Java"
-    extensions: [".java", ".jav"]
-    aliases: ["Java"]
-    mimeTypes: ["text/x-java"]
-    firstLine: /^#!.*\bjava\b/
-  }
-  matching {
-    caseSensitive: true
-    multiline: false
-    dotAll: false
-    extended: false
-    unicode: true
+    extensions: [".java"]
   }
 
-  styles { /* semantic style declarations */ }
-  schemes { /* unlimited named schemes */ }
-  treeSitter { queries: [ /* embedded query sources */ ] }
-  ast: [ /* Tree-sitter node/field selectors */ ]
-  repository { /* reusable Oniguruma fragments */ }
-  contains: [ /* Oniguruma match and begin/end rules */ ]
-  editor {
-    tabSize: 4
-    fontSize: 14
-    insertSpaces: true
-    autoIndent: true
-    trimTrailingWhitespace: true
-    formatOnType: false
-    renderWhitespace: "selection"
-    lineNumbers: true
+  styles {
+    keyword { scope: "keyword.control", tags: ["keyword"] }
   }
-}
-```
 
-The compiler accepts the versioned `tsh 2 { ... }` envelope and the legacy root-object form. The currently implemented root rule sections are `treeSitter.queries`, `ast`, `repository`, and `contains`; the higher-level unified `rules { ats { ... } regex { ... } }` façade remains a planned syntax layer. It rejects unsupported DSL versions, duplicate root sections/style/scheme IDs, malformed blocks, unknown root/style/editor properties, invalid color values, unresolved style references, inheritance cycles, invalid regexes and invalid Tree-sitter queries with source diagnostics (file, line, column, code and message). Unknown keys are errors by default. A vendor/user extension namespace is not yet implemented and must not be used as if it were accepted syntax.
-
-## 3. Semantic style catalog
-
-Styles declare semantic roles, not colors. The catalog is user-authored and can contain any number of entries.
-
-```tsh
-styles {
-  keyword       { scope: "keyword.control", tags: ["keyword"] }
-  keywordType   { scope: "keyword.type", tags: ["keyword", "type"] }
-  type          { scope: "entity.name.type", tags: ["type", "declaration"] }
-  typeBuiltin   { scope: "support.type", tags: ["type", "builtin"] }
-  function      { scope: "entity.name.function", tags: ["function"] }
-  variable      { scope: "variable.other", tags: ["variable"] }
-  parameter     { scope: "variable.parameter", tags: ["variable", "parameter"] }
-  property      { scope: "variable.other.property", tags: ["property"] }
-  string        { scope: "string.quoted", tags: ["string"] }
-  comment       { scope: "comment", tags: ["comment"] }
-  number        { scope: "constant.numeric", tags: ["number", "constant"] }
-  operator      { scope: "keyword.operator", tags: ["operator"] }
-}
-```
-
-A style may declare `scope`, `tags`, `description`, `deprecated`, `parent`, and arbitrary string-valued `metadata`. Unknown style properties are compile errors. A child style inherits missing light/dark palette values from its parent style; explicit child values override the inherited values. Parent cycles and unknown parents are compile errors. Scope names follow TextMate-style dotted scope conventions. Tags are open strings; the runtime must not reserve a closed list of token categories. `parent` allows semantic inheritance for theme matching; cycles are compile errors.
-
-## 4. Unlimited named schemes and appearance
-
-`schemes` has no fixed count. Each scheme has independent light and dark maps. A symbol may be omitted in one mode; omission means “do not override”, not black/white.
-
-```tsh
-schemes {
-  darcula {
-    light [
-      keyword: #0000FF @bold
-      string: #A31515
-      comment: #008000 @italic
-    ]
-    dark [
-      keyword: #CC7832 @bold
-      string: #6A8759
-      comment: #808080 @italic
-    ]
-    ui {
-      light {
-        editor.background: #FFFFFF
-        editor.foreground: #202020
-        editor.selection: #ADD6FF
-        editor.lineHighlight: #F2F2F2
-        editor.gutter: #858585
-      }
-      dark {
-        editor.background: #2B2B2B
-        editor.foreground: #A9B7C6
-        editor.selection: #214283
-        editor.lineHighlight: #323232
-        editor.gutter: #6B6B6B
-      }
-      diagnostics.error: #E51400
-      diagnostics.warning: #BF8803
+  schemes {
+    default {
+      light [ keyword: #0000FF ]
+      dark  [ keyword: #79C0FF ]
     }
   }
 
-  github {
-    extends: "darcula"
-    light [ keyword: #0550AE, string: #0A3069, comment: #6E7781 ]
-    dark  [ keyword: #79C0FF, string: #A5D6FF, comment: #8B949E ]
-  }
+  ast: [
+    { node: "if_statement", style: "keyword" }
+  ]
 }
-```
+~~~
 
-Color syntax accepts #RGB, #RGBA, #RRGGBB and #AARRGGBB; canonical runtime representation is AARRGGBB. Theme values are data, never C++ constants. Theme UI tokens are arbitrary dotted names, not a hard-coded enum. A scheme may optionally declare `extends: "otherScheme"`; inheritance is resolved by the compiler and cycles/missing parents are errors. The active appearance is a runtime selection (`light` or `dark`) and does not require reparsing the syntax tree.
+Native 编译器保留旧根对象形式（以 { 开始，不带 tsh 2）用于兼容；新配置不得继续采用无版本封套形式。版本目前只接受整数 2。
 
-TextMate block rules support separate `beginCaptures`/`startCaptures` and `endCaptures` maps, including named Oniguruma capture groups. The begin/end delimiter captures are emitted independently from the enclosing region style and nested patterns. A `repository` block currently supports named reusable regex fragments referenced with `include("#name")`, including recursive references with cycle detection. Pattern-object repositories, external `$self`/`$base` includes and injection selectors remain planned. Scope-based theme selectors are implemented separately through `scopeRules`.
+### 2.1 必需项与条件必需项
 
-Implemented scheme modifiers are `@bold`, `@italic`, `@underline`, `@strikethrough`, and `@dim`, independently tracked for light/dark. `@dim` applies a reduced text alpha in the Android renderer. Reset modifiers, font family/size, independent opacity, border and background decorations remain planned and must not be treated as implemented.
+| 声明 | 要求 | 说明 |
+|---|---|---|
+| tsh 2 封套 | 新文件必须 | 版本必须为 2 |
+| language.id/name | 强烈建议定义 | 稳定语言标识与显示名 |
+| language.extensions | 需要按扩展名识别时必需 | 例如 .java；内部去点并去重 |
+| styles | 产生可见 capture 时必须有对应 style | 集中定义语义样式 |
+| schemes | 需要主题着色时必需 | 可定义多个主题与 light/dark |
+| ast | 使用 ATS 时必需 | 数组可为空，但不会产生 ATS capture |
+| treeSitter.queries | 使用原生 Query 时必需 | 启用 Query 必须绑定目标 grammar |
+| contains | 使用 Regex 时必需 | MATCH 或 BLOCK 规则 |
+| defines/repository | 可选 | Regex 片段复用 |
+| editor | 可选 | 宿主编辑器元数据 |
+| matching | 可选 | Regex 全局选项 |
 
-## 5. Rule model and arbitration
+ATS-only、Regex-only 与 Hybrid 均合法。不要求每个文件都启用两条管线。
 
-The `language` block defines `id`, `name`, `extensions`, `aliases`, `mimeTypes`, and a first-line detection regex. Extensions are normalized by removing a leading dot and deduplicated while preserving declaration order.
+## 3. 两条管线与配置分区
 
-The `editor` block includes host-consumable editing options such as `tabSize`, `fontSize`, `lineHeight`, `letterSpacing`, `insertSpaces`, `autoIndent`, `trimTrailingWhitespace`, `formatOnType`, `formatOnPaste`, `renderWhitespace`, `lineNumbers`, and `maxTokenizationLineLength`. Options are exported as typed-at-source values for host adapters; a host only applies options supported by its editor API.
+~~~text
+.tsh
+ ├─ language / editor / matching
+ ├─ styles / schemes
+ ├─ defines / repository
+ ├─ ast                         ATS selector pipeline
+ ├─ treeSitter.queries          原生 Tree-sitter Query
+ └─ contains                    Oniguruma Regex
+                   |
+                   v
+        normalized capture/span
+                   |
+                   v
+       priority/order arbitration
+                   |
+                   v
+        style/theme resolution
+                   |
+                   v
+             Android renderer
+~~~
 
-Language-wide regex behavior is declared in `matching`: `caseSensitive`, `multiline` (line-anchor behavior), `dotAll` (dot matches newline), `extended`, and `unicode`. Individual regex rules may add Oniguruma flags with `flags: ["i", "m", "s", "x"]`: `i` ignores case, Oniguruma `m` enables dot-newline matching, `s` makes anchors match only the whole input, and `x` enables extended syntax. Named capture groups and numeric capture groups can both bind semantic styles. UTF-8/modified-UTF-8 source patterns are decoded to UTF-16 before Oniguruma compilation.
+原生 Tree-sitter Query 是 ATS/Tree-sitter 侧的 Query 执行入口，不是第三条管线。ATS selector 与 native Query 可以同时使用；Regex 独立执行。
 
-The currently executable regex-rule attributes are `id`, `match` (or `start/end`), `style` (with `name` as a compatibility alias), `contentName`, `flags`, `enabled`, `priority`, `overlap: "allow"|"deny"`, `captures`, `beginCaptures`/`startCaptures`, `endCaptures`, and nested `contains`/`patterns`. Numeric and named capture keys are resolved against the compiled Oniguruma expression. Higher priority participates in span arbitration; declaration order breaks ties. `overlap: "allow"` opts a span out of exclusive overlap suppression. The parser rejects unknown rule attributes rather than silently accepting them.
+### 3.1 ast：ATS 结构选择器
 
-Planned, not currently executable: rule-level `when` predicates, independent capture `scope` assignment, arbitrary rule `metadata`, `applyEndPatternLast`, `while`, `maxIterations`, and lookaround convenience properties. Do not add these keys to a production .tsh file until the compiler and runtime implement them. A rule never infers priority from its style name.
+ATS 根据 grammar 的节点类型、field、父/祖先/子/兄弟关系、节点标记与节点文本条件选择节点。适合声明名称、类型节点、注解、字面量、注释以及结构上下文条件。ATS 不接受 query/source 属性。
 
-### 5.1 Tree-sitter query / ATS
+### 3.2 treeSitter.queries：原生 Query
 
-```tsh
-rules {
-  ats {
-    query "declarations" {
+~~~tsh
+treeSitter {
+  queries: [
+    {
+      id: "java-declarations"
       source: `
-        (class_declaration
-          name: (identifier) @type)
-        (method_declaration
-          name: (identifier) @function)
+        (class_declaration name: (identifier) @class_name)
+        (method_declaration name: (identifier) @method_name)
       `
       captures {
-        type: { style: "type", priority: 100 }
-        function: { style: "function", priority: 90 }
+        class_name: type
+        method_name: function
       }
+      priority: 100
+      enabled: true
     }
-  }
-}
-```
-
-Query source is embedded and compiled unchanged with the provided language; it is never generated from ATS and no `.scm` file is emitted or required. Capture names map to semantic style names. ATS is a separate selector pipeline. For structural node selectors (`node`, `parent`, `ancestor`, `child`, `previousSibling`, and `nextSibling`), compilation resolves exact grammar symbol IDs by scanning the language symbol table instead of relying only on `ts_language_symbol_for_name` (which maps aliases through `public_symbol_map`). Runtime matching accepts either the node's visible/public symbol or its original grammar symbol. This preserves both selector spellings when aliases change a node's visible identity. `ancestor` additionally checks both visible and grammar type names. This preserves matching when Tree-sitter aliases change a node's visible identity. The `ancestor` walk starts at the target node's parent, so the target node itself does not satisfy its own `ancestor` constraint. Field-selector dispatch checks both visible and grammar identities of the field-owner node. Implemented ATS selector properties include `node`, `field`, `parent`, `ancestor`, `child`, `previousSibling`, `nextSibling`, `childIndex`, `namedChildIndex`, `firstChild`, `lastChild`, `named`, `missing`, `extra`, `error`, `hasError`, `text`, `textPrefix`, `textSuffix`, and `textRegex`, plus style, priority, enabled, id, and overlap controls. `textRegex` is compiled once during TSH compilation and evaluated against the selected node's UTF-16 text at runtime. Span resolution is shared by ATS, native Tree-sitter queries, Oniguruma rules, and Monarch tokens. Each candidate retains a source tag (ATS, native query, Oniguruma, or Monarch) in the existing reserved tail of the 24-byte native span record; this does not change the JNI span ABI size. Invalid or empty ranges are discarded before conflict handling. Candidate precedence is deterministic: higher priority first, then lower declaration order, then stable range, source, and style tie-breakers. Exact duplicate emissions with identical range, style, priority, declaration order, overlap policy, source, and flags are collapsed. Strict partial overlaps are resolved by interval subtraction: the higher-precedence span owns the intersecting interval, while non-conflicting fragments of the lower-precedence span remain. If either span explicitly allows overlap, both complete ranges remain. Proper containment is retained so nested scopes can coexist. Adjacent fragments with identical style, priority, declaration order, overlap policy, source, and flags are merged again. Final output is ordered by start offset, outer range before inner range, then priority, declaration order, source, and style. Source is a deterministic tie-breaker only; it does not silently override an explicitly configured priority or declaration order.
-
-Unknown or unsupported ATS properties are rejected rather than ignored. At compilation, ATS rules are partitioned into immutable dispatch indexes keyed by target node symbol, field-owner symbol, and wildcard selectors. During tree traversal, only the relevant indexed rule sets are evaluated; field selectors are dispatched from the owner node symbol and then checked against the selected child's field ID. Query errors carry exact offsets.
-
-### 5.2 Oniguruma regex
-
-```tsh
-rules {
-  regex {
-    rule "line-comment" {
-      match: /\/\/[^\\r\\n]*/
-      style: "comment"
-      priority: 30
-      flags: [unicode]
-      captures { 0: "comment" }
-    }
-
-    rule "block-comment" {
-      begin: /\/\*/
-      end: /\*\//
-      style: "comment"
-      priority: 80
-      while: /\\* /
-      contains: ["todo-marker"]
-      captures { 0: "comment" }
-    }
-
-    rule "todo-marker" {
-      match: /\\b(TODO|FIXME|XXX)\\b/
-      captures { 1: "keyword" }
-      priority: 110
-    }
-  }
-}
-```
-
-The implemented regex rule parser accepts `match` or `start/end`, `style`/`name`, `contentName`, `flags`, `enabled`, `priority`, `overlap`, numeric/named `captures`, `beginCaptures`/`startCaptures`, `endCaptures`, and nested `contains`/`patterns`. `while`, `include` on rule objects, `when`, lookbehind/lookahead convenience properties, `maxIterations`, and `applyEndPatternLast` are not implemented by the current regex runtime. Empty matches in active scanners advance by one Unicode code point to prevent infinite loops. A failed regex compilation invalidates the document instead of silently dropping the rule.
-
-### 5.3 Common rule attributes
-
-- `id`: unique rule identity.
-- `priority`: explicit integer precedence.
-- `enabled`: runtime-toggleable rule.
-- `when`: planned conditional rule activation; not accepted by the current regex rule parser.
-- `scope`: semantic style scope is declared under `styles`; per-capture scope assignment is not implemented.
-- `captures`: numeric or named capture-to-style mapping is implemented.
-- `overlap`: currently accepts `allow` or `deny`; `exclusive` and `contained` aliases are not accepted.
-- `contentName`: style name for the interior of a begin/end region.
-- `applyEndPatternLast`: planned ordering behavior; not currently accepted.
-- `metadata`: arbitrary string metadata is supported on style declarations, not on regex rule declarations.
-
-## 6. TextMate-inspired features
-
-Implemented today:
-- Nested Oniguruma match and begin/end block rules.
-- Numeric and named capture-to-style bindings.
-- Separate `beginCaptures`/`startCaptures` and `endCaptures`.
-- Region-wide `style` and interior-only `contentName` style spans.
-- A `repository` block for reusable regex fragments, referenced with `include("#name")`.
-- Recursive repository fragment expansion with cycle detection.
-
-Scope theme rules use `scopeRules: [{ selector, light, dark }]`. The current selector evaluator supports comma and grouped `|` alternatives (including nested parenthesized groups), descendant selectors, direct-child `>`, exclusion terms with `-`, exact/prefix scope matching, `*` and `.*` wildcards, and strips the `L:`/`R:` priority prefixes. Full TextMate selector precedence/priority semantics and injection-selector semantics are not implemented. Specificity is resolved before palette assignment. Matching stacks are built from `source.<language.id>` and the semantic style's parent-scope chain. Explicit per-style colors take precedence over scope rules.
-
-Still planned:
-- Pattern-object repositories and external `$self`/`$base` scope includes.
-- Injection selectors, scope inheritance across nested patterns, `while` continuation and complete begin/end precedence semantics.
-- Per-rule metadata, full TextMate begin/end precedence, `while` continuation and per-capture scope assignment.
-
-Includes are resolved within the same .tsh document; there is no external .scm or sidecar grammar file.
-
-## 7. Monarch-inspired tokenizer features
-
-The currently executable Monarch subset is optional and may coexist with ATS and Oniguruma rules. It supports ordered state-local regex rules, token styles, state includes, persistent state stacks, `variables`, `cases` with literal/variable matchers and `@default`, `next`, `push`, `switchTo`, `pop`, `rematch`, `enabled`, `priority`, `ignoreCase`, `tokenPostfix`, and per-rule Oniguruma flags. The full Monarch action object model (for example `goBack`, `log`, `bracket`, `nextEmbedded`) is not implemented.
-
-```tsh
-monarch {
-  start: "root"
-  ignoreCase: false
-  tokenPostfix: ".java"
-  variables {
-    identifier: /[A-Za-z_$][A-Za-z0-9_$]*/
-    digits: /[0-9]+/
-    keywords: /(?:if|else|return)/
-  }
-  defaultToken: "invalid"
-  tokenizer {
-    root: [
-      { match: /"/, token: "string", push: "@string" }
-      { include: "@identifiers" }
-    ]
-    identifiers: [
-      { match: /@identifier/, cases: {
-          "@keywords": "keyword"
-          "@default": "identifier"
-        }
-      }
-      { match: /@digits/, token: "number" }
-    ]
-    string: [
-      { match: /"/, token: "string", pop: true }
-      { match: /[^"]+/, token: "string" }
-    ]
-  }
-}
-```
-
-The runtime tokenizes the complete UTF-16 document with a persistent state stack and emits normalized spans into the shared arbitration pipeline. State references and include cycles are validated. Regex variables declared in `variables` before `tokenizer` are recursively expanded (with unknown references and cycles rejected, including unused cyclic definitions); escaped references and character classes are not rewritten. `tokenPostfix` is appended to token names and `defaultToken` after parsing, so the postfix declaration itself may appear in any position. `ignoreCase` must be declared before `tokenizer` and sets the tokenizer's default Oniguruma option. The currently implemented `cases` map supports ordered exact-literal keys, regex-variable keys such as `"@keywords"`, and a final `"@default"` token fallback. Case entries select token styles; state-transition actions inside cases are not yet implemented. Remaining planned Monarch features include action arrays, embedded-language tokens, `goBack`, `@rematch` action syntax, and bracket actions.
-
-## 8. Editor/language metadata
-
-```tsh
-editor {
-  comments {
-    line: ["//"]
-    block: [["/*", "*/"]]
-  }
-  brackets: ["{}", "[]", "()", "<>"]
-  bracketNotIn: ["string", "comment"]
-  autoClosingPairs: [
-    { open: "(", close: ")", notIn: ["string", "comment"] }
-    { open: "\"", close: "\"", notIn: ["string", "comment"] }
   ]
-  surroundingPairs: ["{}", "[]", "()", "\"\""]
-  wordPattern: /[A-Za-z_$][A-Za-z0-9_$]*/
-  indentation {
-    increaseIndentPattern: /\\{[^}]*$/
-    decreaseIndentPattern: /^\\s*\\}/
-    indentNextLine: /=>\\s*$/
-    unIndentedLinePattern: /^\\s*(//|\\*)/
-  }
-  onEnterRules: [
-    { beforeText: /\\{[^}]*$/, action: { indent: "indentOutdent" } }
-  ]
-  completion {
-    triggerCharacters: [".", "@", ":"]
-  }
 }
-```
+~~~
 
-This metadata is declarative and may be exposed to the host editor. The native compiler validates all on-enter regexes with Oniguruma before accepting the grammar. An on-enter action supports `none`, `indent`, `indentOutdent`, and `outdent`, plus optional `appendText` and non-negative `removeText`. `electricCharacters` identifies characters that may trigger host-side indentation recalculation; `autoCloseBefore` declares the allowed following-character pattern for auto-closing pairs. The Kotlin API exposes these rules as structured metadata. The current sample adapter consumes bracket and auto-pair scopes; it does not yet execute on-enter/electric-character rules inside the editor's Enter/type event pipeline. TSH does not implement completion providers, language servers, symbol outline, or code folding. It only provides metadata that a host may choose to consume.
+source 是原始 Tree-sitter Query。每个输出 capture 必须绑定 style；未显式绑定时，编译器尝试用 capture 名作为 style 名。仅作为 predicate operand 的 capture 可不绑定输出 style。启用 Query 必须提供目标 TSLanguage；节点名、field、Query 与 predicate 都在目标 grammar 上校验。
 
-## 9. Runtime API contract
+Query block 支持 id、source、captures、enabled、priority、patterns。patterns 可按 0-based pattern index 设置 enabled、priority、overlap、order；这是 TSH 元数据，不属于 Query 文法。禁用 Query 不得同时声明 patterns 元数据。
 
-The Kotlin API should expose:
-- `load(extension, source, language)` returning structured diagnostics and a compiled grammar handle;
-- `listSchemes(extension)`;
-- `getDefaultScheme(extension)`;
-- `selectScheme(extension, name)`;
-- `setAppearance(extension, isDark)`;
-- `getStyleCatalog(extension)`;
-- `getThemeTokens(extension)`;
-- `setRuleEnabled(extension, ruleId, enabled)`;
-- `computeCaptures(tree, text, extension)` returning ordered captures with byte ranges, style name/id, scope, flags, priority and source backend;
-- `getEditorMetadata(extension)`.
+### 3.3 contains：Oniguruma Regex
 
-Scheme and appearance changes must only change rendering data; they must not reparse source or rebuild the Tree-sitter tree. The JNI boundary must use versioned, length-checked data structures (or structured objects) and never rely on undocumented magic style IDs.
+~~~tsh
+contains: [
+  {
+    id: "line-comment"
+    match: /\/\/[^\\r\\n]*/
+    style: comment
+    priority: 30
+  }
+  {
+    id: "block-comment"
+    style: comment
+    start: { match: /\/\*/ }
+    end: { match: /\*\// }
+    contains: [
+      { match: /\\b(TODO|FIXME)\\b/, 0: keyword, priority: 120 }
+    ]
+  }
+]
+~~~
 
-## 10. Implementation layers
+MATCH 使用 match（兼容别名 builtin）；BLOCK 使用 start/end（begin 是 start 的兼容别名）。BLOCK 可使用 style、contentName、startCaptures/beginCaptures、endCaptures 与嵌套 contains/patterns。
 
-1. Lexer/parser and source diagnostics.
-2. Immutable compiled document model and validation.
-3. Scheme/style catalog and runtime selection.
-4. Embedded Tree-sitter query compilation and capture mapping.
-5. Oniguruma match/begin-end/capture/nesting engine.
-6. Common capture arbitration and Unicode-safe UTF-16 ranges.
-7. JNI API and Kotlin public facade.
-8. Android editor adapter and theme-token bridge.
-9. Tests: parser fixtures, malformed input, query errors, regex errors, Unicode, overlaps, scheme switching, no-color behavior, and editor integration.
+### 3.4 组合策略
 
-## 11. Non-goals and safety rails
+- ATS-only：ast 和/或 treeSitter.queries；不声明 contains。
+- Regex-only：声明 contains；不声明 ATS/Query 规则。
+- Hybrid：ATS/Query 与 Regex 同时声明，彼此独立执行。
+- 当前不支持统一 façade rules { ats { ... } regex { ... } }。
+- 不得引入 Monarch 或 TextMate tokenizer 作为第三条管线。
 
-- No hard-coded syntax colors, semantic token names, language keywords, language-specific regex snippets, or theme values in C++.
-- No numeric style-ID meaning in arbitration (e.g. no special cases for ID 2 or 3).
-- No black/white fallback when a style or theme color is missing.
-- No external .scm files.
-- No outline/folding APIs or AST heuristics.
-- No silent parser recovery that yields a partially valid grammar without diagnostics.
+## 4. language 与 editor
+
+language 接受 id、name、extensions、aliases、mimeTypes（兼容 mimetypes）和 firstLine（Oniguruma Regex）。扩展名可带点，内部会去点并去重。旧根字段 name: [...] 与 ignoreCase: true/false 仅作兼容。
+
+editor 当前接受：
+- 基础选项：tabSize、fontSize、lineHeight、letterSpacing、insertSpaces、autoIndent、trimTrailingWhitespace、formatOnType、formatOnPaste、renderWhitespace、lineNumbers、maxTokenizationLineLength。
+- comments.line/block、brackets、bracketNotIn、autoClosingPairs、surroundingPairs。
+- wordPattern、autoCloseBefore。
+- indentation.increaseIndentPattern/decreaseIndentPattern/indentNextLine/unIndentedLinePattern。
+- completion.triggerCharacters、electricCharacters、onEnterRules。
+
+这些是宿主可消费的元数据，不会自动实现补全、自动缩进、格式化或编辑事件。宿主必须明确消费。未知 editor 字段会使 Native 编译失败。
+
+## 5. matching 与 Regex 全局选项
+
+matching 支持 caseSensitive、multiline、dotAll、extended、unicode，值均为布尔值。unicode 当前必须为 true，因为 Oniguruma 固定使用 UTF-16LE。单条 Regex flags 支持 i/ignoreCase、m/dotAll、s/singlelineAnchors、x/extended。注意 Oniguruma m/s 语义按本规范解释，不要照搬其他引擎的惯例。
+
+## 6. styles 与 schemes
+
+styles 定义语义样式，不在其中写颜色。可用字段：scope、tags、description、deprecated、parent、metadata。style 名称是用户自定义标识，不存在固定 token 枚举。parent 允许语义继承；未知父样式或继承环会失败。子样式缺失的 light/dark palette 值可继承父样式，显式子值覆盖。
+
+schemes 可定义任意多个命名主题。每个主题可定义 light、dark、ui 与 extends。颜色格式为 #RGB、#RGBA、#RRGGBB、#AARRGGBB，内部规范化为 AARRGGBB。light/dark 中省略某样式颜色表示不覆盖。ui token 使用点分隔名称，例如 editor.background、activity.toolbar.foreground。
+
+已实现 modifier：@bold/@B、@italic/@I、@underline/@U、@strike/@strikethrough/@S、@dim，以及 @no-bold、@no-italic、@no-underline、@no-strike/@no-strikethrough、@no-dim。@dim 会降低 Android renderer 的文本 alpha。字体 family/size、任意 opacity、background decoration 等不属于当前 palette modifier。
+
+scopeRules 当前支持逗号 alternatives、分组和 | alternatives、descendant、direct-child >、exclusion -、exact/prefix scope、* 与 .* wildcard；L:/R: 前缀会被剥离。它不是完整 TextMate selector 引擎。显式 style 颜色优先于 scopeRules。
+
+## 7. Regex 复用、规则与捕获
+
+defines 使用数组形式的 name → Regex/string 映射，可通过 match: include("name") 或 builtin: name 引用；keywordsToRegex("if else return") 可将空格分隔词展开。repository 使用命名 Regex 片段，可通过 include("#name") 引用。未知引用与循环引用失败。
+
+MATCH 规则支持 match/builtin、style/name、id、priority、enabled、overlap、flags、captures、contains/patterns。BLOCK 支持 start/begin、end、style/name、contentName、id、priority、enabled、overlap、flags、captures、startCaptures/beginCaptures、endCaptures、contains/patterns。捕获组 key 可为数字索引或命名组名；0 表示整个匹配。
+
+overlap 仅接受 allow/deny。priority 为整数，越大越优先；声明顺序用于同优先级决胜。空匹配会推进一个 Unicode code point 防止死循环。Regex 编译失败会使整个配置编译失败。
+
+当前不支持 rule-level when、while、maxIterations、applyEndPatternLast、规则对象 include、lookahead/lookbehind 便利字段和任意 rule metadata。Oniguruma 本身支持的 Regex 语法不代表这些 TSH 结构字段可用。
+
+## 8. Capture 仲裁与渲染
+
+ATS、native Query 与 Regex 结果统一为 capture/span。候选 span 按优先级、声明顺序、范围、来源与 style 稳定排序。完全重复项去重；严格部分重叠按优先级/声明顺序切分；allow span 保留完整范围；父子包含关系允许嵌套 scope 共存。规则优先级是显式配置，不从 style 名称推断。来源只用于稳定决胜，不覆盖显式 priority/order。
+
+最终 renderer 必须保留显式颜色与 alpha。缺失颜色不能被自动补色。
+
+## 9. SCM 迁移原则
+
+SCM 是 Tree-sitter Query 源码。将 highlights.scm 原文放进 treeSitter.queries[].source，并用 captures 将 capture 名绑定到 semantic style。不要转换为 ATS，也不要生成新的 .scm。只有可明确表示为单个节点结构条件的规则，才考虑人工重写为 ATS。TextMate Regex grammar 应迁移到 contains。locals/tags/injections 不属于当前 TSH 高亮管线。
+
+逐项转换见 [SCM → TSH DSL v2 迁移指南](TSH_SCM_TO_TSH_MIGRATION.md)。
+
+## 10. 非当前实现语法
+
+以下不能作为生产配置使用：rules { ats/regex } façade、Monarch、Regex when/while/maxIterations/applyEndPatternLast、TextMate 外部 $self/$base、pattern-object repository、injection selector、完整 TextMate precedence、per-capture scope assignment、完整 decoration/font family/size/opacity 模型、Outline/Folding。
+
+Kotlin TshDslModel/TshSchemaRegistry 可表示的通用 declaration kind、unit、color space 或 value，不代表 Native .tsh 文件解析器已支持对应语法。
+
+## 11. 编写检查表
+
+- 使用 tsh 2 封套。
+- language 与目标 grammar/文件类型一致。
+- 每个输出 capture 都能解析到有效 style。
+- ATS 节点/field 名来自目标 grammar。
+- Query 能在目标 TSLanguage 编译，predicate 在支持清单内。
+- Regex 使用 Oniguruma 语法，include 存在且无循环。
+- BLOCK 具备 start/end，捕获组绑定正确。
+- light/dark 分别声明，不依赖隐式颜色回退。
+- 不包含 Monarch 或规划字段。
+- 通过实际加载/编译验证后，才能标记配置可用。

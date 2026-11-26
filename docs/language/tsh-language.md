@@ -1,38 +1,45 @@
 # TSH 语言与 .tsh 配置工具链
 
-## 1. 目标与边界
+具体文件语法以以下规范为准：
 
-.tsh 是 TSH 引擎的声明式配置语言。核心工具链负责加载、词法分析、语法分析、AST、Schema/类型/语义校验、编译、诊断、格式化与版本迁移。Completion/Hover 等语言编辑体验可由宿主工具消费，但不是 TSH 执行引擎 API 的职责。
+- [TSH DSL v2 规范](../TSH_DSL_V2_SPEC.md)
+- [TSH DSL v2 语法参考](../TSH_DSL_V2_SYNTAX.md)
+- [SCM → TSH 迁移指南](../TSH_SCM_TO_TSH_MIGRATION.md)
 
-## 2. 工具链阶段
+## 1. 工具链职责
 
-1. Source Manager：文件 URI、版本、编码和来源映射。
-2. Lexer：Token、注释、字符串、正则字面量和错误恢复。
-3. Parser：递归下降/声明式语法解析并生成 AST。
-4. AST：稳定节点类型、父子关系、精确源范围。
-5. Schema：字段、类型、必填、默认值、约束和版本。
-6. Semantic Validator：名称引用、规则冲突、语言符号、正则可编译性、样式引用。
-7. Compiler：将合法配置转换为运行时模型；编译失败不得污染已生效配置。
-8. Language Service：补全、Hover、定义、引用、重命名、格式化和 Code Action。
-9. Debugger：规则命中、管线执行、样式来源与诊断追踪。
+目标工具链可包含 Source Manager、Lexer、Parser、不可变 AST、Schema/类型校验、语义校验、Compiler、诊断、格式化与 Language Service。当前 Native WindbellTshCompiler 是从 .tsh 文本编译为运行时 TshGrammar 的入口；不能把规划中的 IDE 语言服务能力描述为已完成。
 
-## 3. 诊断要求
+## 2. 当前 Native 配置入口
 
-每条诊断包含 code、severity、message、source URI、range、related information、可选 quick fix 和文档版本。区分词法错误、语法错误、Schema 错误、类型错误、语义错误、编译错误和运行时警告。
+当前根入口包括 language、兼容 name/ignoreCase、matching、editor、styles、schemes、defaultScheme、isDark、defines、repository、treeSitter.queries、ast 与 contains。
 
-## 4. 语言规范治理
+当前只有 ATS 与 Oniguruma Regex 两条匹配管线。Tree-sitter Query 是 ATS/Tree-sitter 侧的原生 Query 执行方式，不是第三条管线。Native compiler 不接受 Monarch，也不接受尚未实现的统一 rules { ats/regex } façade。
 
-在实现 Parser 前先维护正式语法规范和版本号。新语法必须有兼容策略、迁移规则、正反例和测试夹具。不要把当前编译器接受的语法自动视为完整、稳定的语言规范。
+## 3. 编译阶段
 
-## 5. 当前已知基线
+1. Lexer：读取标识符、字符串、反引号原始字符串、Regex、颜色、注释与结构标点。
+2. Parser：识别根区块、规则对象、Query source 与嵌套 Regex 规则。
+3. Grammar binding：将 ATS 节点/field 与 Query 绑定到传入的 TSLanguage。
+4. Regex/Query compilation：编译 Oniguruma 表达式与原生 Tree-sitter Query。
+5. Semantic binding：解析 style 名、capture group、Query capture、repository/defines 引用和 scheme inheritance。
+6. Runtime materialization：生成可执行 grammar、selector index、query program 与 regex rules。
+7. Capture arbitration/rendering：将两条管线结果统一为 span，交给主题与 Android renderer。
 
-现有 Native TshCompiler 提供 .tsh 源码到 TshGrammar 的编译入口，当前 Kotlin API 的 loadTshSource 返回 Boolean。该接口没有暴露完整诊断列表、AST、Schema、格式化或语言服务结果。上述功能属于待建设目标，不能标记为已完成。
+## 4. DSL Model/Schema API 与文件语法的区别
 
+TshDslModel.kt、TshSchemaRegistry.kt 与 TshDslRuntimeDispatcher.kt 定义 parser-neutral 声明模型、Schema 校验与属性消费者分发机制。它们是 DSL/API foundation 的类型系统，不意味着所有 TshDslDeclarationKind、单位、颜色空间或通用值类型都已映射为 Native .tsh 文件语法。
 
-## 6. 配置对象与管理 API
+必须区分：
+- 文件 Parser 接受：Native WindbellTshCompiler 实际识别的字段与结构。
+- Schema model 可表示：Kotlin DSL model 能表达的通用声明/值。
+- Runtime consumer 已注册：某属性有实际 consumer 可执行。
+- 宿主已消费并绘制：Android/editor adapter 已将结果用于最终输出。
 
-应用必须能通过 ConfigRepository/Catalog 查询和管理 .tsh 编译产物：配置源 load/reload/validate/compile/install/replace/unload；Theme/Style/Font/Color/Scope/Selector/Attribute/Grammar/Query/Regex/Injection 对象 get/list/resolve；Theme preview/activate/reset；Style resolve/explain。运行时对象不可变，变更经 ConfigTransaction 或新的 .tsh 源重新编译并原子替换。详细契约见 api/tsh-file-config-management-api.md。
+这四种状态不能互相推断。
 
-## 7. DSL 属性和底层语义契约
+## 5. 诊断与验证
 
-每个可写属性必须在 Schema 中声明名称、类型、默认值、单位、继承与合并策略、能力要求和版本。字体必须覆盖 family、weight、style、size、stretch、lineHeight、letterSpacing、baselineShift、OpenType features、variable axes、fallback 和 synthesis；颜色必须定义格式、alpha 与颜色空间；Decoration 必须定义类型、范围、层级和合成。Parser 接受语法不代表 Runtime 已执行，必须由底层 Resolver/Render Backend 消费并完成真实绘制。见 api/tsh-dsl-syntax-and-semantic-contract.md 与 api/theme-style-font-color-api.md。
+Native compiler 的 compileDetailed 返回本次编译结果及 offset/line/column 诊断。TshDslRuntimeDispatcher 对未应用属性、缺失 consumer、能力不满足与 consumer 异常保留诊断；Schema 验证通过并不等于属性已应用。
+
+正式语言服务仍需持续补齐完整 AST/source range、字段 Schema、语义引用解析、formatting、completion、hover、definition/references 与迁移测试。不要通过文档声称尚未落地的能力已实现。
