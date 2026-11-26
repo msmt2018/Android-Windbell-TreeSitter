@@ -713,7 +713,10 @@ set(TSH_PARSER_REDUCE_CANDIDATE_NEW [=[      // Build the candidate parent from 
         array_swap(&self->trailing_extras, &self->trailing_extras2);
         parent = next_parent;
       } else {
-        array_clear(&self->trailing_extras2);
+        // The candidate parent owns the non-extra children. The extras were
+        // detached into trailing_extras2 before parent construction, so release
+        // that array separately instead of deleting the now-overwritten slice.
+        ts_subtree_array_delete(&self->tree_pool, &self->trailing_extras2);
         ts_subtree_release(&self->tree_pool, ts_subtree_from_mut(next_parent));
       }]=])
 string(REPLACE "${TSH_PARSER_REDUCE_CANDIDATE_OLD}"
