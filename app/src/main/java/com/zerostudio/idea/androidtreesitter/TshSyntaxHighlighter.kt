@@ -89,6 +89,7 @@ class TshSyntaxHighlighter(
         val lengthChars: AtomicLong,
         val cacheSessionId: Long,
         val ticket: Long,
+        val diskCaptureStore: TshCaptureDiskStore,
         val documentRevision: AtomicLong = AtomicLong(),
         // Mirrors the native document's committed edit version. Dirty ranges are
         // consumed only after the matching edit transaction has fully committed.
@@ -474,6 +475,7 @@ class TshSyntaxHighlighter(
     private suspend fun initializeLargeSession(snapshot: EditorTextSnapshot, ticket: Long) {
         var nativeHandle = 0L
         var cacheSessionId = 0L
+        var diskCaptureStore: TshCaptureDiskStore? = null
         try {
             // Native owns the canonical Piece Tree and sparse partition index. Kotlin
             // does not rebuild a second full-document index for each edit.
@@ -511,9 +513,13 @@ class TshSyntaxHighlighter(
             if (generation.get() != ticket) throw CancellationException("Stale native document")
 
             cacheSessionId = nextSessionId.getAndIncrement()
+            diskCaptureStore = TshCaptureDiskStore(
+                File(temporaryDirectory, "tsh-captures-$cacheSessionId"),
+                cacheSessionId
+            )
             val active = LargeSession(
                 nativeHandle, AtomicLong(snapshot.length.toLong()),
-                cacheSessionId, ticket
+                cacheSessionId, ticket, diskCaptureStore
             )
             if (generation.get() == ticket) {
                 synchronized(nativeEditLock) {
@@ -544,6 +550,7 @@ class TshSyntaxHighlighter(
                 }
                 nativeHandle = 0L
                 cacheSessionId = 0L
+                diskCaptureStore = null
                 parsing = false
                 Log.i(
                     TAG,
@@ -563,6 +570,7 @@ class TshSyntaxHighlighter(
             }
         } finally {
             if (nativeHandle != 0L) engine.closeNativeDocument(nativeHandle)
+            diskCaptureStore?.close()
             if (cacheSessionId != 0L) {
                 captureCache.invalidate { key, _ -> key.sessionId == cacheSessionId }
             }
@@ -766,7 +774,31 @@ class TshSyntaxHighlighter(
     private suspend fun executeNativeRangeNow(key: CaptureRangeKey): Boolean {
         val active = largeSession ?: return false
         if (generation.get() != active.ticket || active.cacheSessionId != key.sessionId ||
+            active.pendingEditEpoch.get() != active.appliedEditEpoch.get() ||
             hasCachedCaptureCoverage(key)) return false
+
+        // Restore a previously captured viewport from the bounded disk tier
+        // before scheduling any native work. This path is used after the hot LRU
+        // has evicted a range during long-distance scrolling.
+        val restored = active.diskCaptureStore.restoreCovering(key)
+        if (restored != null) {
+            val unique = LinkedHashSet<WindbellTshEngine.HighlightSpan>()
+            restored.forEach { range ->
+                range.index.appendQuery(key.startUtf16, key.endUtf16, unique)
+            }
+            val restoredSpans = unique.sortedWith(
+                compareBy<WindbellTshEngine.HighlightSpan> { it.startByteUnsigned }
+                    .thenByDescending { it.priority }
+                    .thenBy { it.declarationOrder }
+                    .thenBy { it.endByteUnsigned }
+            )
+            captureCache.put(key, CaptureIntervalIndex(restoredSpans))
+            // Refresh the disk LRU with a compact combined page for the next
+            // viewport request; failure here must not force Regex execution.
+            runCatching { active.diskCaptureStore.put(key, restoredSpans) }
+            return true
+        }
+
         val existing = active.rangeWork[key]
         val work = if (existing == null) {
             val initial = RangeWork()
@@ -802,6 +834,10 @@ class TshSyntaxHighlighter(
             if (generation.get() == active.ticket && largeSession === active &&
                 active.documentRevision.get() == requestedRevision) {
                 captureCache.put(key, CaptureIntervalIndex(spans))
+                // Disk persistence is a cold tier only. A write failure never
+                // invalidates the successful native result or its hot-cache entry.
+                runCatching { active.diskCaptureStore.put(key, spans) }
+                    .onFailure { Log.w(TAG, "Unable to persist TSH capture range $key", it) }
                 work.state = RangeWorkState.SUCCEEDED
             } else work.state = RangeWorkState.CANCELLED
         } catch (cancelled: CancellationException) {
@@ -892,6 +928,10 @@ class TshSyntaxHighlighter(
                     captureCache.invalidate { key, _ ->
                         key.sessionId == active.cacheSessionId
                     }
+                    // Query and lexical state can depend on distant source text.
+                    // Until dependency envelopes are recorded, invalidate the cold
+                    // capture tier at the same committed-edit boundary as the hot tier.
+                    active.diskCaptureStore.clear()
                     renderedLineCache.invalidate { key, _ ->
                         key.sessionId == active.cacheSessionId
                     }
@@ -991,6 +1031,7 @@ class TshSyntaxHighlighter(
                 }
             }.onFailure { Log.w(TAG, "Failed to close native TSH document", it) }
             captureCache.invalidate { key, _ -> key.sessionId == active.cacheSessionId }
+            active.diskCaptureStore.close()
             renderedLineCache.invalidate { key, _ -> key.sessionId == active.cacheSessionId }
         }
     }
