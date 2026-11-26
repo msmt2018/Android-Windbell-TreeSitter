@@ -972,6 +972,7 @@ class MainActivity : AppCompatActivity() {
                 val regexTotal = regex + regexState
                 val ats = sourceCounts[2] ?: 0
                 val query = sourceCounts[3] ?: 0
+                val parserDescription = tree?.rootNode?.type ?: "not invoked (Regex-only profile)"
                 val passed = when (profile) {
                     JavaTshPipelineProfile.REGEX_ONLY ->
                         regexTotal > 0 && ats == 0 && query == 0
@@ -982,7 +983,7 @@ class MainActivity : AppCompatActivity() {
                 }
                 val report = StringBuilder()
                 report.appendLine("配置：${profile.assetName}")
-                report.appendLine("Java parser：${tree?.rootNode?.type ?: "not invoked (Regex-only profile)"}")
+                report.appendLine("Java parser：$parserDescription")
                 report.appendLine("源代码：${sample.length} UTF-16 units / ${sample.length * 2} UTF-16LE bytes")
                 report.appendLine("原始 captures：${diagnostics.captures.size}")
                 report.appendLine("最终合成 spans：${finalSpans.size}")
