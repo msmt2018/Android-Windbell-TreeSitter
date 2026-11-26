@@ -938,15 +938,22 @@ class MainActivity : AppCompatActivity() {
             interface ProbeContract { void execute(); }
             """.trimIndent()
 
-        val parser = TSParser.create().apply { setLanguage(language) }
+        // Regex-only deliberately runs without constructing or passing a Tree-sitter tree.
+        val parser = if (profile == JavaTshPipelineProfile.REGEX_ONLY) {
+            null
+        } else {
+            TSParser.create().apply { setLanguage(language) }
+        }
+        var tree: TSTree? = null
         try {
-            val tree = parser.parseString(sample)
-                ?: error("Tree-sitter Java parser returned a null tree.")
-            tree.use { parsedTree ->
-                val diagnostics = WindbellTshEngine.instance
-                    .computePipelineDiagnostics(parsedTree, sample, "java")
-                val finalSpans = WindbellTshEngine.instance
-                    .computeHighlights(parsedTree, sample, "java")
+            tree = parser?.parseString(sample)
+            if (profile != JavaTshPipelineProfile.REGEX_ONLY && tree == null) {
+                error("Tree-sitter Java parser returned a null tree.")
+            }
+            val diagnostics = WindbellTshEngine.instance
+                .computePipelineDiagnostics(tree, sample, "java")
+            val finalSpans = WindbellTshEngine.instance
+                .computeHighlights(tree, sample, "java")
                 val preview = android.text.SpannableStringBuilder(sample)
                 WindbellTshEngine.instance.applyHighlightSpansToSpannable(
                     finalSpans, 0, sample, "java", preview
@@ -972,7 +979,7 @@ class MainActivity : AppCompatActivity() {
                 }
                 val report = StringBuilder()
                 report.appendLine("配置：${profile.assetName}")
-                report.appendLine("Java parser：${parsedTree.rootNode.type}")
+                report.appendLine("Java parser：${tree?.rootNode?.type ?: "not invoked (Regex-only profile)"}")
                 report.appendLine("源代码：${sample.length} UTF-16 units / ${sample.length * 2} UTF-16LE bytes")
                 report.appendLine("原始 captures：${diagnostics.captures.size}")
                 report.appendLine("最终合成 spans：${finalSpans.size}")
@@ -987,10 +994,10 @@ class MainActivity : AppCompatActivity() {
                 if (!passed) {
                     report.appendLine("Expected producer counts do not match the selected profile. Inspect the compiler diagnostics and captures before treating this profile as valid.")
                 }
-                return report.toString()
-            }
+            return report.toString()
         } finally {
-            parser.close()
+            tree?.close()
+            parser?.close()
         }
     }
 
