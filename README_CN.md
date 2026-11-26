@@ -1,375 +1,428 @@
 <div align="center">
-
-# Android Windbell Treesitter
-
-**Android Java bindings for [Tree-sitter](https://tree-sitter.github.io/tree-sitter/)**
-
-为 Android 提供 Tree-sitter 原生解析能力与多语言语法模块，适用于代码编辑器、语法分析和开发工具。
-
-[![Maven Central](https://img.shields.io/maven-central/v/io.github.msmt2018/android-windchime-tree-sitter-highlight?label=Maven%20Central&logo=apachemaven)](https://central.sonatype.com/)
-[![License](https://img.shields.io/badge/license-LGPL--2.1-blue.svg)](LICENSE)
-[![GitHub](https://img.shields.io/badge/GitHub-Repository-181717?logo=github)](https://github.com/msmt2018/Android-windChime-tree-sitter-highlight)
-
+  <img src="logo.png" alt="Android Windbell Tree-sitter 标志" width="180" />
+  <h1>Android Windbell Tree-sitter</h1>
+  <p><strong>面向 Android 的 Tree-sitter JNI 绑定、多语言语法模块与 Windbell TSH 高亮引擎。</strong></p>
+  <p><a href="README.md">English</a> · <a href="https://github.com/msmt2018/Android-Windbell-TreeSitter">GitHub 仓库</a> · <a href="https://tree-sitter.github.io/tree-sitter/">Tree-sitter</a> · <a href="https://jitpack.io/#msmt2018/Android-Windbell-TreeSitter">JitPack</a></p>
 </div>
 
 ---
 
-## ✨ 项目简介
+## 项目简介
 
-**Android Windbell Treesitter** 是面向 Android 的 Tree-sitter Java 绑定项目，提供核心解析库及可独立引入的语言语法模块。
+**Android Windbell Tree-sitter** 是面向 Android 编辑器和开发工具的 Tree-sitter 集成项目。仓库包含统一 JNI 绑定层、Tree-sitter Native 运行时、独立语言语法模块，以及 **Windbell TSH（Tree-sitter Highlighting）高亮引擎**。
 
-- 📦 **Maven Central** — 通过 Gradle 依赖快速集成。
-- 🧩 **模块化语法** — 按需添加语言，避免引入不需要的语法模块。
-- ⚙️ **原生解析** — 通过 JNI 调用 Tree-sitter。
-- 🛠️ **适用于开发工具** — 可用于代码编辑器、语法树分析、代码结构识别等场景。
+项目面向需要语法树解析、语言结构信息、增量文档处理和语法高亮能力的 Android 应用。
 
-> 本项目提供 Tree-sitter 的 Android 绑定与语法模块；语法高亮的 UI、主题映射和编辑器交互由上层应用实现。
+### 核心能力
 
-## 🚀 快速接入
+- **Android JNI 绑定：** 由唯一的正式绑定模块 <code>android-tree-sitter</code> 向 Java / Kotlin 暴露 Tree-sitter API。
+- **模块化 Grammar：** 各语言解析器可独立构建为 Android Native Library，应用按需依赖语言模块。
+- **Windbell TSH：** 使用 <code>.tsh</code> 配置文件，组合 Tree-sitter ATS 选择器 / Native Tree-sitter Query 与可选的独立 Oniguruma Regex 规则执行路径。
+- **语义样式与主题：** <code>.tsh</code> 可声明语言元数据、编辑器行为、样式目录、浅色 / 深色调色板和高亮规则。
+- **大文档基础设施：** Native 文本源适配器包含有界窗口读取、映射文件 / 文件窗口和 Piece Tree 支持，并提供增量解析及视口捕获接口供编辑器集成。
+- **Android 渲染集成：** 编辑器侧适配层将 TSH 捕获结果和解析后的样式转换为 Android 文本 Span。
 
-### 1. 配置 Maven Central
+TSH 高亮体系严格采用 **Tree-sitter ATS / Tree-sitter Query + 可选 Regex**。项目不使用 Monarch 高亮管线，也不依赖生成的 <code>.scm</code> 高亮管线。
 
-确保项目仓库包含 `mavenCentral()`。通常在 `settings.gradle.kts` 中配置：
+> 大文件支持属于架构能力，不代表所有设备、语法和编辑器场景都具有固定性能保证。实际解析、捕获和最终屏幕绘制性能取决于语法复杂度、文档结构、设备内存和编辑器集成方式。评估目标工作负载时应以仓库测试和真实设备测量为准。
 
-```kotlin
+## 引擎架构
+
+~~~text
+Android 编辑器 / 应用
+        |
+        +-- 编辑器集成与 Android Span 渲染
+        |
+        +-- Windbell TSH Kotlin API
+        |      |
+        |      +-- .tsh 解析、编译、样式与调色板
+        |      +-- Tree-sitter ATS / Native Query 执行
+        |      +-- 可选 Oniguruma Regex 执行
+        |
+        +-- android-tree-sitter JNI 绑定层
+               |
+               +-- Tree-sitter Native Runtime
+               +-- 自动生成的 Grammar JNI 库
+               +-- Native TextSource / Piece Tree / 映射文件适配器
+~~~
+
+<code>android-tree-sitter</code> 是项目唯一正式 JNI 绑定层，也是 TSH 引擎的归属模块。Grammar 模块依赖该绑定层，不额外引入第二套 Tree-sitter 绑定。
+
+### 仓库目录结构
+
+| 路径 | 用途 |
+| --- | --- |
+| <code>android-tree-sitter/</code> | Android Java/Kotlin API、JNI 实现、Tree-sitter Native 集成、TSH 引擎与测试 |
+| <code>grammars/</code> | Grammar Git Submodule 与语法元数据 |
+| <code>grammar-modules/</code> | Gradle 根据 <code>grammars/grammars.json</code> 在项目配置阶段生成的语法模块 |
+| <code>tree-sitter-lib/</code> | Tree-sitter 源码 Submodule，包含构建使用的 CLI 源码 |
+| <code>editor/</code> | 编辑器集成、Piece Tree / TSH 适配 |
+| <code>piecetable/</code> | Piece Tree 实现 |
+| <code>annotations/</code>、<code>annotation-processors/</code> | Native Header 与 JNI 注册注解处理 |
+| <code>build-logic/</code> | Gradle 插件、Grammar 模块生成和构建逻辑 |
+| <code>app/</code> | Android 示例应用与集成测试 |
+| <code>docs/</code> | TSH 语言规范、架构、渲染和开发文档 |
+
+## 快速开始：使用 Tree-sitter
+
+### 1. 添加 JitPack 仓库
+
+在使用方 Android 项目的 <code>settings.gradle.kts</code> 中添加：
+
+~~~kotlin
 dependencyResolutionManagement {
+    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
     repositories {
         google()
         mavenCentral()
+        maven { url = uri("https://jitpack.io") }
     }
 }
-```
+~~~
 
-### 2. 添加依赖
+### 2. 添加核心绑定和所需 Grammar 依赖
 
-在应用模块的 `build.gradle.kts` 中添加核心库和需要的语法模块。
+本仓库属于多模块 Gradle 项目。JitPack 单独模块依赖的坐标格式如下：
 
-```kotlin
+~~~kotlin
 dependencies {
-    // 核心 Java / JNI 绑定
-    implementation("io.github.msmt2018:android-tree-sitter:<version>")
-
-    // 按需添加语法模块（示例）
-    implementation("io.github.msmt2018:tree-sitter-java:<version>")
-    implementation("io.github.msmt2018:tree-sitter-kotlin:<version>")
-    implementation("io.github.msmt2018:tree-sitter-json:<version>")
+    implementation("com.github.msmt2018.Android-Windbell-TreeSitter:android-tree-sitter:VERSION")
+    implementation("com.github.msmt2018.Android-Windbell-TreeSitter:tree-sitter-java:VERSION")
 }
-```
+~~~
 
-Groovy DSL (`build.gradle`)：
+将 <code>VERSION</code> 替换为已经由 JitPack 成功构建的 Git Tag 或 Commit 版本。每种语言按需添加一个 <code>tree-sitter-&lt;language&gt;</code> 模块，不需要默认引入全部 Grammar。
 
-```groovy
-dependencies {
-    implementation 'io.github.msmt2018:android-tree-sitter:<version>'
-    implementation 'io.github.msmt2018:tree-sitter-java:<version>'
-    implementation 'io.github.msmt2018:tree-sitter-kotlin:<version>'
-    implementation 'io.github.msmt2018:tree-sitter-json:<version>'
-}
-```
+**当前发布状态说明：** 仓库现有 <code>publish-packages.yml</code> 工作流的发布目标是 **GitHub Packages**，不是 JitPack。仓库根目录目前没有 <code>jitpack.yml</code>，因此这里不宣称某个 Release Tag 已经通过 JitPack 构建。正式依赖前，请先在 [JitPack 项目页面](https://jitpack.io/#msmt2018/Android-Windbell-TreeSitter)确认构建成功，并确认所需模块已列出。多模块坐标格式及 Android 构建要求请参考 [JitPack Android 指南](https://docs.jitpack.io/android/) 和 [多模块构建说明](https://docs.jitpack.io/building/)。
 
-> **版本提示：** 将 `<version>` 替换为 Maven Central 中已发布的版本。核心库与语法模块应优先使用相同版本。上面的坐标示例按项目命名规则书写；发布前请以实际已发布的 artifact 名称为准。
+### 3. 解析源码
 
-### 3. 初始化原生库
+下面使用自动生成的 Java Grammar 绑定：
 
-在使用解析器之前加载 native library，例如在 `Application.onCreate()` 中：
+~~~java
+import com.zerostudio.idea.treesitter.TreeSitter;
+import com.zerostudio.idea.treesitter.TSNode;
+import com.zerostudio.idea.treesitter.TSParser;
+import com.zerostudio.idea.treesitter.TSTree;
+import com.zerostudio.idea.treesitter.java.TSLanguageJava;
 
-```java
-import com.zerostudio.treesitter.TreeSitter;
-
-public class App extends Application {
-    @Override
-    public void onCreate() {
-        super.onCreate();
+public final class ParseExample {
+    public static void parse(String source) {
         TreeSitter.loadLibrary();
+
+        try (TSParser parser = TSParser.create()) {
+            parser.setLanguage(TSLanguageJava.getInstance());
+
+            try (TSTree tree = parser.parseString(source)) {
+                if (tree == null) {
+                    throw new IllegalStateException("Tree-sitter did not return a syntax tree");
+                }
+
+                TSNode root = tree.getRootNode();
+                String rootType = root.getType();
+                // 在这里读取节点类型、范围、字段和子节点。
+            }
+        }
     }
 }
-```
+~~~
 
-如果你的应用中使用的初始化类或包路径与示例不同，请以当前发布版本中的 API 为准。
+使用解析器 API 前先加载核心 Native Library。Native 对象应在所有权结束时及时释放；示例通过 try-with-resources 管理 <code>TSParser</code> 和 <code>TSTree</code>。
 
----
+## 快速开始：加载 TSH 配置
 
-## 🧪 使用示例
+TSH 引擎包含在 <code>android-tree-sitter</code> 模块中。Grammar 模块提供对应的 <code>TSLanguage</code> 实例，<code>.tsh</code> 文件提供高亮规则与样式配置。
 
-下面是核心 API 的基本使用流程示意。请根据当前版本的实际类名和方法签名调整语言绑定类。
+~~~kotlin
+import com.zerostudio.idea.treesitter.java.TSLanguageJava
+import com.zerostudio.idea.treesitter.tsh.WindbellTshEngine
 
-```java
-// 1. 创建解析器
-try (TSParser parser = TSParser.create()) {
-    // 2. 设置语言
-    parser.setLanguage(language);
+fun loadJavaTshProfile() {
+    val language = TSLanguageJava.getInstance()
+    val source = assets.open("tsh/java-ats-only.tsh")
+        .bufferedReader()
+        .use { it.readText() }
 
-    // 3. 解析源码
-    TSTree tree = parser.parseString(null, sourceCode);
+    val engine = WindbellTshEngine.instance
+    val loaded = engine.loadTshSource(
+        extension = "java",
+        tshSourceContent = source,
+        language = language
+    )
 
-    // 4. 使用语法树
-    TSNode rootNode = tree.getRootNode();
-    // 读取节点类型、范围、子节点等信息
-
-    // 5. 释放语法树资源
-    tree.close();
+    check(loaded) {
+        engine.lastCompileDiagnostics.joinToString("\n") {
+            it.line.toString() + ":" + it.column + " " + it.code + ": " + it.message
+        }
+    }
 }
-```
+~~~
 
-**注意：** 上述代码用于展示解析流程。请以你使用的版本中 `TSParser`、`TSLanguage`、`TSTree` 的具体 API 为准，并及时释放 native 资源。
+示例中的配置文件路径来自示例应用的 assets。实际应用可以将自己的 <code>.tsh</code> 配置放入 assets，或从应用配置源读取。
 
----
+### TSH 文档与编辑器集成流程
 
-## 🌐 语法目录与上游仓库
+编辑器集成的基本流程：
 
-这里列出的项目均来自仓库 `.gitmodules` 中配置的 grammar submodule。每一行都提供三项信息：
+1. 加载 Grammar Native Library，并获取对应的 <code>TSLanguage</code>。
+2. 调用 <code>WindbellTshEngine.loadTshSource</code> 加载并编译对应的 <code>.tsh</code> 配置。
+3. 通过 <code>NativeTextWindowReader</code> 和 <code>createNativeDocument</code> 提供文档数据。
+4. 调用 <code>highlightNativeDocument</code> 请求所需字节区间的高亮捕获结果。
+5. 使用当前 TSH 调色板解析捕获结果中的样式 ID，并由编辑器渲染层应用样式。
+6. 文档编辑提交后，将编辑区间同步到 Native 文档，并刷新失效的编辑器区间。
+7. 编辑器会话结束时关闭 Native 文档。
 
-- **语言 / Grammar**：语法名称。
-- **项目内目录**：点击可查看本仓库对应的语法目录。
-- **上游语法仓库**：点击进入语法作者或维护组织的原始 GitHub 仓库，查看源码、许可证、更新记录与使用说明。
+Native 文档读取接口使用 **UTF-16LE 字节偏移量**，传入的偏移量和长度必须为偶数。对于大文档，应将 Reader 连接到编辑器 Piece Tree 或其他窗口化文本源；不要为了满足 Reader 接口而额外创建整份文档的完整字节数组副本。
 
-> **注意：** 配置为 Git submodule 不等于已经发布到 Maven Central。Maven 依赖请以实际发布的 artifact 为准；同一语言也可能有不同上游实现。Markdown 的目录在当前仓库中拼写为 `grammars/markdwon`，这里按仓库现有路径保留。
+实现参考：
 
-<details open>
-<summary><strong>🧩 全部语法模块（点击展开 / 收起）</strong></summary>
+- <code>editor/src/main/java/x/github/module/editor/tsh/TshPieceTreeEditorBinding.kt</code>
+- <code>editor/src/main/java/x/github/module/editor/tsh/TshPieceTreeTextAccessProvider.kt</code>
+- <code>editor/src/main/java/x/github/module/editor/tsh/TshPieceTreeIncrementalSession.kt</code>
+- <code>app/src/main/java/com/zerostudio/idea/androidtreesitter/TshSyntaxHighlighter.kt</code>
+- <code>android-tree-sitter/src/main/java/com/zerostudio/idea/treesitter/tsh/WindbellTshEngine.kt</code>
 
-| 语言 / Grammar | 项目内目录 | 上游语法仓库 |
-|---|---|---|
-| **JSON** | [`grammars/json`](grammars/json) | [tree-sitter](https://github.com/tree-sitter/tree-sitter-json) |
-| **Kotlin** | [`grammars/kotlin`](grammars/kotlin) | [fwcd](https://github.com/fwcd/tree-sitter-kotlin) |
-| **Logs** | [`grammars/log`](grammars/log) | [AndroidIDEOfficial](https://github.com/AndroidIDEOfficial/tree-sitter-log) |
-| **XML** | [`grammars/xml`](grammars/xml) | [WillBooster](https://github.com/WillBooster/tree-sitter-xml) |
-| **iRules** | [`grammars/irules`](grammars/irules) | [dekobon](https://github.com/dekobon/tree-sitter-irules) |
-| **Properties** | [`grammars/properties`](grammars/properties) | [tree-sitter-grammars](https://github.com/tree-sitter-grammars/tree-sitter-properties) |
-| **C** | [`grammars/c`](grammars/c) | [tree-sitter](https://github.com/tree-sitter/tree-sitter-c) |
-| **Groovy** | [`grammars/groovy`](grammars/groovy) | [dekobon](https://github.com/dekobon/tree-sitter-groovy) |
-| **Java** | [`grammars/java`](grammars/java) | [WillBooster](https://github.com/WillBooster/tree-sitter-java) |
-| **AIDL** | [`grammars/aidl`](grammars/aidl) | [amaanq](https://github.com/amaanq/tree-sitter-aidl) |
-| **Python** | [`grammars/python`](grammars/python) | [tree-sitter](https://github.com/tree-sitter/tree-sitter-python) |
-| **C++** | [`grammars/cpp`](grammars/cpp) | [tree-sitter](https://github.com/tree-sitter/tree-sitter-cpp) |
-| **C#** | [`grammars/c_sharp`](grammars/c_sharp) | [WillBooster](https://github.com/WillBooster/tree-sitter-c-sharp) |
-| **Bash** | [`grammars/bash`](grammars/bash) | [tree-sitter](https://github.com/tree-sitter/tree-sitter-bash) |
-| **Clojure** | [`grammars/clojure`](grammars/clojure) | [kodine-ai](https://github.com/kodine-ai/tree-sitter-clojure) |
-| **SCSS** | [`grammars/scss`](grammars/scss) | [simeonoff](https://github.com/simeonoff/tree-sitter-scss) |
-| **Dockerfile** | [`grammars/dockerfile`](grammars/dockerfile) | [camdencheek](https://github.com/camdencheek/tree-sitter-dockerfile) |
-| **Containerfile** | [`grammars/containerfile`](grammars/containerfile) | [wharflab](https://github.com/wharflab/tree-sitter-containerfile) |
-| **Diff** | [`grammars/diff`](grammars/diff) | [tree-sitter-grammars](https://github.com/tree-sitter-grammars/tree-sitter-diff) |
-| **Elixir** | [`grammars/elixir`](grammars/elixir) | [elixir-lang](https://github.com/elixir-lang/tree-sitter-elixir) |
-| **Elm** | [`grammars/elm`](grammars/elm) | [elm-tooling](https://github.com/elm-tooling/tree-sitter-elm) |
-| **Go** | [`grammars/go`](grammars/go) | [tree-sitter](https://github.com/tree-sitter/tree-sitter-go) |
-| **Go Modules** | [`grammars/gomod`](grammars/gomod) | [camdencheek](https://github.com/camdencheek/tree-sitter-go-mod) |
-| **Haskell** | [`grammars/haskell`](grammars/haskell) | [tree-sitter](https://github.com/tree-sitter/tree-sitter-haskell) |
-| **HCL** | [`grammars/hcl`](grammars/hcl) | [tree-sitter-grammars](https://github.com/tree-sitter-grammars/tree-sitter-hcl) |
-| **HTML** | [`grammars/html`](grammars/html) | [tree-sitter](https://github.com/tree-sitter/tree-sitter-html) |
-| **JavaScript** | [`grammars/javascript`](grammars/javascript) | [tree-sitter](https://github.com/tree-sitter/tree-sitter-javascript) |
-| **JSDoc** | [`grammars/jsdoc`](grammars/jsdoc) | [tree-sitter](https://github.com/tree-sitter/tree-sitter-jsdoc) |
-| **Julia** | [`grammars/julia`](grammars/julia) | [tree-sitter](https://github.com/tree-sitter/tree-sitter-julia) |
-| **LaTeX** | [`grammars/latex`](grammars/latex) | [latex-lsp](https://github.com/latex-lsp/tree-sitter-latex) |
-| **Lua** | [`grammars/lua`](grammars/lua) | [Azganoth](https://github.com/Azganoth/tree-sitter-lua) |
-| **Markdown** | [`grammars/markdwon`](grammars/markdwon) | [tree-sitter-grammars](https://github.com/tree-sitter-grammars/tree-sitter-markdown) |
-| **OCaml** | [`grammars/ocaml`](grammars/ocaml) | [msmt2018](https://github.com/msmt2018/tree-sitter-ocaml) |
-| **Perl** | [`grammars/perl`](grammars/perl) | [ganezdragon](https://github.com/ganezdragon/tree-sitter-perl) |
-| **PHP** | [`grammars/php`](grammars/php) | [tree-sitter](https://github.com/tree-sitter/tree-sitter-php) |
-| **Pkl** | [`grammars/pkl`](grammars/pkl) | [apple](https://github.com/apple/tree-sitter-pkl) |
-| **Ruby** | [`grammars/ruby`](grammars/ruby) | [tree-sitter](https://github.com/tree-sitter/tree-sitter-ruby) |
-| **Scala** | [`grammars/scala`](grammars/scala) | [tree-sitter](https://github.com/tree-sitter/tree-sitter-scala) |
-| **SQL** | [`grammars/sql`](grammars/sql) | [DerekStride](https://github.com/DerekStride/tree-sitter-sql) |
-| **SSH Client Config** | [`grammars/ssh`](grammars/ssh) | [metio](https://github.com/metio/tree-sitter-ssh-client-config) |
-| **Swift** | [`grammars/swift`](grammars/swift) | [alex-pinkus](https://github.com/alex-pinkus/tree-sitter-swift) |
-| **TOML** | [`grammars/toml`](grammars/toml) | [konomanoasa](https://github.com/konomanoasa/tree-sitter-toml) |
-| **Tree-sitter Query** | [`grammars/query`](grammars/query) | [tree-sitter-grammars](https://github.com/tree-sitter-grammars/tree-sitter-query) |
-| **TypeScript / TSX** | [`grammars/typescript`](grammars/typescript) | [tree-sitter](https://github.com/tree-sitter/tree-sitter-typescript) |
-| **Verilog** | [`grammars/verilog`](grammars/verilog) | [tree-sitter](https://github.com/tree-sitter/tree-sitter-verilog) |
-| **Zig** | [`grammars/zig`](grammars/zig) | [maxxnino](https://github.com/maxxnino/tree-sitter-zig) |
-| **CMake** | [`grammars/cmake`](grammars/cmake) | [uyha](https://github.com/uyha/tree-sitter-cmake) |
-| **YAML** | [`grammars/yaml`](grammars/yaml) | [konomanoasa](https://github.com/konomanoasa/tree-sitter-yaml) |
-| **Smali** | [`grammars/smali`](grammars/smali) | [msmt2018](https://github.com/msmt2018/Tree-Sitter-smali) |
-| **Dart** | [`grammars/dart`](grammars/dart) | [WillBooster](https://github.com/WillBooster/tree-sitter-dart) |
-| **Assembly** | [`grammars/asm`](grammars/asm) | [RubixDev](https://github.com/RubixDev/tree-sitter-asm) |
-| **ARM64 Assembly** | [`grammars/arm64`](grammars/arm64) | [PhilippReinke](https://github.com/PhilippReinke/tree-sitter-arm64) |
-| **LLVM IR** | [`grammars/llvm`](grammars/llvm) | [benwilliamgraham](https://github.com/benwilliamgraham/tree-sitter-llvm) |
-| **LLVM MIR** | [`grammars/llvm_mir`](grammars/llvm_mir) | [Flakebi](https://github.com/Flakebi/tree-sitter-llvm-mir) |
-| **YARA** | [`grammars/yara`](grammars/yara) | [pop-ecx](https://github.com/pop-ecx/tree-sitter-yara) |
-| **Radare2 Shell** | [`grammars/radare2`](grammars/radare2) | [ret2libc](https://github.com/ret2libc/radare2-shell-parser) |
-| **Radare2 Commands** | [`grammars/r2cmd`](grammars/r2cmd) | [ret2libc](https://github.com/ret2libc/radare2-shell-parser) |
-| **Disassembly** | [`grammars/disassembly`](grammars/disassembly) | [ColinKennedy](https://github.com/ColinKennedy/tree-sitter-disassembly) |
-| **Rust** | [`grammars/rust`](grammars/rust) | [tree-sitter](https://github.com/tree-sitter/tree-sitter-rust) |
-| **F#** | [`grammars/fsharp`](grammars/fsharp) | [MangelMaxime](https://github.com/MangelMaxime/tree-sitter-fsharp) |
-| **Erlang** | [`grammars/erlang`](grammars/erlang) | [WhatsApp](https://github.com/WhatsApp/tree-sitter-erlang) |
-| **Nim** | [`grammars/nim`](grammars/nim) | [alaviss](https://github.com/alaviss/tree-sitter-nim) |
-| **Crystal** | [`grammars/crystal`](grammars/crystal) | [crystal-lang-tools](https://github.com/crystal-lang-tools/tree-sitter-crystal) |
-| **V** | [`grammars/v`](grammars/v) | [undivisible](https://github.com/undivisible/tree-sitter-v) |
-| **D** | [`grammars/d`](grammars/d) | [gdamore](https://github.com/gdamore/tree-sitter-d) |
-| **Fortran** | [`grammars/fortran`](grammars/fortran) | [stadelmanma](https://github.com/stadelmanma/tree-sitter-fortran) |
-| **COBOL** | [`grammars/cobol`](grammars/cobol) | [yutaro-sakamoto](https://github.com/yutaro-sakamoto/tree-sitter-cobol) |
-| **GraphQL** | [`grammars/graphql`](grammars/graphql) | [joowani](https://github.com/joowani/tree-sitter-graphql) |
-| **Svelte** | [`grammars/svelte`](grammars/svelte) | [tree-sitter-grammars](https://github.com/tree-sitter-grammars/tree-sitter-svelte) |
-| **Vue** | [`grammars/vue`](grammars/vue) | [kodine-ai](https://github.com/kodine-ai/tree-sitter-vue) |
-| **Astro** | [`grammars/astro`](grammars/astro) | [alexandreteles](https://github.com/alexandreteles/tree-sitter-astro) |
-| **Twig** | [`grammars/twig`](grammars/twig) | [gbprod](https://github.com/gbprod/tree-sitter-twig) |
-| **Jinja2** | [`grammars/jinja2`](grammars/jinja2) | [geigerzaehler](https://github.com/geigerzaehler/tree-sitter-jinja2) |
-| **Handlebars** | [`grammars/handlebars`](grammars/handlebars) | [bennypowers](https://github.com/bennypowers/tree-sitter-handlebars) |
-| **Pug** | [`grammars/pug`](grammars/pug) | [codepen](https://github.com/codepen/tree-sitter-pug) |
-| **Prisma** | [`grammars/prisma`](grammars/prisma) | [victorhqc](https://github.com/victorhqc/tree-sitter-prisma) |
-| **HEEx** | [`grammars/heex`](grammars/heex) | [phoenixframework](https://github.com/phoenixframework/tree-sitter-heex) |
-| **CSV** | [`grammars/csv`](grammars/csv) | [tree-sitter-grammars](https://github.com/tree-sitter-grammars/tree-sitter-csv) |
-| **INI** | [`grammars/ini`](grammars/ini) | [justinmk](https://github.com/justinmk/tree-sitter-ini) |
-| **Org Mode** | [`grammars/org`](grammars/org) | [nvim-orgmode](https://github.com/nvim-orgmode/tree-sitter-org) |
-| **reStructuredText** | [`grammars/rst`](grammars/rst) | [stsewd](https://github.com/stsewd/tree-sitter-rst) |
-| **AsciiDoc** | [`grammars/asciidoc`](grammars/asciidoc) | [cathaysia](https://github.com/cathaysia/tree-sitter-asciidoc) |
-| **RON** | [`grammars/ron`](grammars/ron) | [zee-editor](https://github.com/zee-editor/tree-sitter-ron) |
-| **Dhall** | [`grammars/dhall`](grammars/dhall) | [waves](https://github.com/waves/tree-sitter-dhall) |
-| **Nix** | [`grammars/nix`](grammars/nix) | [nix-community](https://github.com/nix-community/tree-sitter-nix) |
-| **KDL** | [`grammars/kdl`](grammars/kdl) | [tree-sitter-grammars](https://github.com/tree-sitter-grammars/tree-sitter-kdl) |
-| **BibTeX** | [`grammars/bibtex`](grammars/bibtex) | [latex-lsp](https://github.com/latex-lsp/tree-sitter-bibtex) |
-| **Protocol Buffers (proto)** | [`grammars/proto`](grammars/proto) | [coder3101](https://github.com/coder3101/tree-sitter-proto) |
-| **Protocol Buffers** | [`grammars/protobuf`](grammars/protobuf) | [gortexhq](https://github.com/gortexhq/tree-sitter-protobuf) |
-| **Make** | [`grammars/make`](grammars/make) | [make-language-server](https://github.com/make-language-server/tree-sitter-make) |
-| **Nginx** | [`grammars/nginx`](grammars/nginx) | [opa-oz](https://github.com/opa-oz/tree-sitter-nginx) |
-| **Zsh** | [`grammars/zsh`](grammars/zsh) | [zchee](https://github.com/zchee/tree-sitter-zsh) |
-| **Gitignore** | [`grammars/gitignore`](grammars/gitignore) | [konomanoasa](https://github.com/konomanoasa/tree-sitter-gitignore) |
-| **Git Rebase** | [`grammars/git_rebase`](grammars/git_rebase) | [the-mikedavis](https://github.com/the-mikedavis/tree-sitter-git-rebase) |
-| **Git Commit** | [`grammars/gitcommit`](grammars/gitcommit) | [gbprod](https://github.com/gbprod/tree-sitter-gitcommit) |
-| **Regex** | [`grammars/regex`](grammars/regex) | [konomanoasa](https://github.com/konomanoasa/tree-sitter-regex) |
-| **printf** | [`grammars/printf`](grammars/printf) | [ozacod](https://github.com/ozacod/tree-sitter-printf) |
-| **Requirements** | [`grammars/requirements`](grammars/requirements) | [tree-sitter-grammars](https://github.com/tree-sitter-grammars/tree-sitter-requirements) |
-| **Mermaid** | [`grammars/mermaid`](grammars/mermaid) | [pappasam](https://github.com/pappasam/tree-sitter-mermaid) |
-| **Thrift** | [`grammars/thrift`](grammars/thrift) | [tree-sitter-grammars](https://github.com/tree-sitter-grammars/tree-sitter-thrift) |
-| **Git Attributes** | [`grammars/gitattributes`](grammars/gitattributes) | [tree-sitter-grammars](https://github.com/tree-sitter-grammars/tree-sitter-gitattributes) |
-| **GDB** | [`grammars/gdb`](grammars/gdb) | [Shane-Gadsby](https://github.com/Shane-Gadsby/godot-gdb-tree-sitter) |
+## 已有 Grammar Language
 
-</details>
+仓库当前包含以下 Grammar Submodule。Gradle 会根据 <code>grammars/grammars.json</code> 中的每个条目生成对应的 <code>tree-sitter-&lt;language&gt;</code> 模块。
 
-
-### Maven 依赖说明
-
-已发布的语法模块通常遵循以下命名形式：
-
-```kotlin
-dependencies {
-    implementation("io.github.msmt2018:android-tree-sitter:<version>")
-    implementation("io.github.msmt2018:tree-sitter-java:<version>")
-    implementation("io.github.msmt2018:tree-sitter-kotlin:<version>")
-}
-```
-
-只有已在 Maven Central 发布的模块才能直接通过该方式引用。其余 grammar 可按项目构建方式编译，或使用项目支持的外部 native grammar 加载方式。请勿将上表理解为所有语法均已发布。
-
----
-
-## 🔧 从源码构建
-
-### 环境要求
-
-| 工具 | 要求 |
+| 分类 | Grammar 标识符 |
 | --- | --- |
-| JDK | JDK 11-17 或更高版本；`JAVA_HOME` 应指向包含 JNI 头文件的 JDK |
-| Android NDK | r24 | 使用项目 Gradle / CMake 配置所要求的版本 |
-| CMake | 必需 |
-| Ninja | 必需 |
-| Node.js（Version：20） + npm | 部分 grammar 需要安装 Node 依赖 |
-| Rust + Cargo | Cargo / Rust 工具链，按项目要求安装 |
-| tree-sitter CLI | 用于构建 grammar |
+| Android 与 Native | <code>aidl</code>、<code>arm64</code>、<code>asm</code>、<code>c</code>、<code>cmake</code>、<code>cpp</code>、<code>disassembly</code>、<code>llvm</code>、<code>llvm_mir</code>、<code>smali</code> |
+| Shell 与构建配置 | <code>bash</code>、<code>containerfile</code>、<code>dockerfile</code>、<code>gdb</code>、<code>make</code>、<code>starlark</code>、<code>zsh</code> |
+| C 系与 JVM | <code>csharp</code>、<code>go</code>、<code>gomod</code>、<code>groovy</code>、<code>java</code>、<code>kotlin</code>、<code>rust</code>、<code>swift</code> |
+| Web 与脚本语言 | <code>dart</code>、<code>javascript</code>、<code>jsdoc</code>、<code>lua</code>、<code>php</code>、<code>ruby</code>、<code>scss</code>、<code>svelte</code>、<code>typescript</code>、<code>vue</code> |
+| 数据与配置 | <code>csv</code>、<code>gitattributes</code>、<code>gitcommit</code>、<code>gitignore</code>、<code>git_rebase</code>、<code>graphql</code>、<code>ini</code>、<code>json</code>、<code>logcat</code>、<code>markdwon</code>、<code>properties</code>、<code>proto</code>、<code>regex</code>、<code>requirements</code>、<code>sql</code>、<code>ssh</code>、<code>toml</code>、<code>xml</code>、<code>yaml</code> |
+| 文档格式 | <code>asciidoc</code>、<code>diff</code>、<code>rst</code> |
 
-Linux 环境通常更适合执行完整的 native 构建。
+以上标识符保持仓库实际 Grammar 目录名称，包括当前目录中使用的 <code>markdwon</code> 拼写。
 
-Ubuntu / Debian 可先安装常用系统依赖：
+Grammar 存在于 Git Submodule 中，不代表它已经发布到所有 Maven 仓库。添加 Maven 依赖前，应检查目标仓库中实际可用的模块和版本。
 
-```bash
-sudo apt update
-sudo apt install build-essential nodejs npm cmake ninja-build git
-```
+## Grammar 元数据生成：<code>generate_grammars.py</code>
 
-安装 Rust 工具链：<https://www.rust-lang.org/tools/install>
+在仓库根目录执行：
 
-### 1. 获取源码
+~~~bash
+python generate_grammars.py
+~~~
 
-```bash
-git clone --recurse-submodules https://github.com/msmt2018/Android-windChime-tree-sitter-highlight.git
-cd Android-windChime-tree-sitter-highlight
-```
+该脚本维护 <code>grammars/grammars.json</code>，Gradle 的 <code>DynamicModulePlugin</code> 会读取该文件并动态生成语法模块。
 
-如果已经克隆项目但没有初始化子模块：
+### 脚本具体工作
 
-```bash
+1. 读取 <code>.gitmodules</code>，提取所有注册在 <code>grammars/</code> 下的 Submodule 路径。
+2. 将 Submodule 路径与当前已经检出的本地 Grammar 目录取交集。未初始化的 Submodule 不会被误认为本地可用语法。
+3. 递归扫描 Grammar 目录，查找 <code>src/parser.c</code> 或 <code>src/parser.cc</code>。
+4. 跳过隐藏目录，以及 <code>node_modules</code>、<code>.git</code>、<code>.github</code>、<code>build</code>、<code>target</code> 等排除目录。
+5. 尽可能从 parser 源码中提取真实导出的 <code>tree_sitter_*</code> C 入口符号，而不是单纯猜测函数名称。
+6. 自动识别 Composite Grammar，并记录嵌套的 <code>sub.paths</code> 与一一对应的 <code>sub.entries</code>。
+7. 检测 <code>scanner.c</code> 或 <code>scanner.cc</code>，并记录到 <code>src.extra</code>。
+8. 先写入临时文件，再生成 <code>grammars/grammars.json</code>。
+
+JSON 使用两种结构描述 Grammar：
+
+- 单解析器：使用 <code>entry</code> 记录 C 入口符号。
+- Composite 多解析器：使用 <code>sub.paths</code> 和 <code>sub.entries</code> 记录各个子解析器及入口符号。
+
+此外，<code>src.extra</code> 用于记录需要一起编译的外部 Scanner 源文件。Gradle Settings 插件读取 JSON 后，会在 <code>grammar-modules/&lt;language&gt;</code> 下生成模块构建文件、JNI glue 和 CMake 配置。
+
+**特别注意：** <code>generate_grammars.py</code> 负责生成 Grammar 模块元数据，不负责生成 Tree-sitter parser 源码。被扫描的 Grammar Submodule 中必须已经存在 parser 源文件。Tree-sitter CLI / Gradle Grammar 任务负责 Parser 生成和 Native 编译。
+
+新增、移除或调整 Grammar Submodule 后执行：
+
+~~~bash
 git submodule update --init --recursive
-```
+python generate_grammars.py
+~~~
 
-### 2. 安装 grammar 依赖
+检查 <code>grammars/grammars.json</code> 的变更后再提交。
 
-部分 grammar 可能需要单独安装 npm 依赖。例如：
+详细说明见：[README_grammars.md](README_grammars.md)。
 
-```bash
+## 从源码构建项目
+
+### CI 使用的工具链版本
+
+以下版本来自当前 GitHub Actions 构建工作流和 Gradle Version Catalog：
+
+| 组件 | 版本 / 要求 |
+| --- | --- |
+| Gradle 运行 JDK | Temurin 17 |
+| Gradle Wrapper | 8.14.8 |
+| Android Gradle Plugin | 8.13.2 |
+| Kotlin Gradle Plugin | 2.4.21 |
+| Android NDK | r29 / <code>29.0.14206865</code> |
+| Android CMake | 3.31.6 |
+| Android Build Tools | 35.0.0 |
+| Android compile SDK | API 34 |
+| Android minimum SDK | API 21 |
+| Python | 3.12 |
+| Node.js | 22.22.2 |
+| Rust / Cargo | 构建仓库内 Tree-sitter CLI 所需 |
+| Bun | Grammar package 工作流使用 |
+| Native 主机工具 | C/C++ 编译器、<code>build-essential</code>、CMake、Ninja |
+
+注意：Gradle 运行环境的 JDK 版本与 Android 源码 / 字节码兼容级别是不同配置。构建项目时使用 **JDK 17**；共享 Android 编译配置目标为 Java 11。
+
+### Windows 环境配置
+
+最接近 CI 的 Windows 开发环境是 **Windows 10/11 + WSL2（Ubuntu）**。仓库 CI 运行在 Ubuntu，使用 Bash、Cargo、CMake、Ninja、Node package 安装和 Native 主机测试。
+
+在 Windows Android Studio 中配置：
+
+1. 安装 Android Studio 和 Android SDK。
+2. 安装 JDK 17，例如 Eclipse Temurin 17。
+3. 打开 **Android Studio → Settings → Build, Execution, Deployment → Build Tools → Gradle**，将 **Gradle JDK** 设置为 JDK 17。
+4. 在 **SDK Manager → SDK Platforms** 中安装 Android API 34。
+5. 在 **SDK Manager → SDK Tools** 中安装 Android SDK Build-Tools 35.0.0、NDK (Side by side) 29.0.14206865、CMake 3.31.6 和 Android SDK Command-line Tools。
+6. 安装 Git for Windows（包含 Git Bash）、Python 3.12、Node.js 22.22.2、Rust/Cargo 和 Bun。确保终端能够找到 <code>git</code>、<code>bash</code>、<code>python</code>、<code>node</code>、<code>npm</code>、<code>cargo</code>、<code>cmake</code> 和 <code>ninja</code>。
+7. 递归克隆仓库 Submodule，然后在 Android Studio 中打开仓库根目录。
+
+~~~powershell
+git clone --recurse-submodules https://github.com/msmt2018/Android-Windbell-TreeSitter.git
+cd Android-Windbell-TreeSitter
+git submodule update --init --recursive
+python generate_grammars.py
+.\gradlew.bat assembleDebug
+~~~
+
+Java Grammar ABI 重新生成任务会调用 Bash 脚本。如果在原生 Windows 环境构建，必须确保 Bash 已加入 <code>PATH</code>。需要执行与 CI 一致的 Host JNI 和 Sanitizer 测试时，建议使用 WSL2 Ubuntu；当前仓库工作流基于 Linux，Windows 尚未列入 CI 矩阵。
+
+### Linux 环境配置（Ubuntu）
+
+安装 CI 使用的 Native 系统依赖：
+
+~~~bash
+sudo apt-get update
+sudo apt-get install -y build-essential cargo cmake ninja-build git curl unzip
+~~~
+
+安装并选择以下工具版本：
+
+- Temurin JDK 17
+- Python 3.12
+- Node.js 22.22.2 与 npm
+- Bun
+- Android SDK Command-line Tools
+- Android NDK 29.0.14206865
+- Android CMake 3.31.6
+- Android Build Tools 35.0.0
+
+在 Android Studio 中将 **Gradle JDK 设置为 JDK 17**，并安装 Android API 34 及上述 SDK 工具。也可以配置 <code>ANDROID_SDK_ROOT</code> 指向 SDK 目录，并使用 <code>sdkmanager --licenses</code> 接受 Android SDK 许可证。
+
+~~~bash
+git clone --recurse-submodules https://github.com/msmt2018/Android-Windbell-TreeSitter.git
+cd Android-Windbell-TreeSitter
+git submodule update --init --recursive
+python3 generate_grammars.py
+chmod +x ./gradlew
+./gradlew assembleDebug
+~~~
+
+### 安装 Grammar package 依赖
+
+CI 工作流会扫描 Grammar Submodule 中的 <code>package.json</code>，安装各个独立 package 根目录，并跳过已经由 npm workspace 管理的子 package。安装命令使用 <code>npm install --legacy-peer-deps --no-audit --no-fund</code>，并发数量受到控制。
+
+某个 Grammar 需要本地 npm 依赖时，在对应目录中安装。例如：
+
+~~~bash
 cd grammars/cpp
 npm install
 cd ../..
-```
+~~~
 
-只有在对应 grammar 存在 `package.json` 且构建需要时才执行此步骤。
+不要在每个嵌套 workspace 子目录中无差别重复执行 <code>npm install</code>；应先识别 workspace 根目录并只安装一次。
 
-### 3. 构建
+### 构建 Release APK
 
-构建整个项目：
+Linux / macOS / WSL2：
 
-```bash
-./gradlew build
-```
+~~~bash
+./gradlew assembleRelease generateDebugSymbolsRelease --parallel --stacktrace
+~~~
 
-仅构建指定模块时，可先查看 Gradle 任务：
+Windows PowerShell：
 
-```bash
-./gradlew tasks
-```
+~~~powershell
+.\gradlew.bat assembleRelease generateDebugSymbolsRelease --parallel --stacktrace
+~~~
 
-如果项目提供 `buildForHost` 任务，可在相应子项目执行它以构建 host 版本。具体任务名称以当前分支的 Gradle 配置为准。
+示例 APK 输出目录为 <code>app/build/outputs/apk/release/</code>。
 
-### 4. 使用预构建的 tree-sitter CLI（可选）
+### 执行本地测试
 
-如果已经通过系统包管理器、npm 或 Cargo 安装 `tree-sitter` CLI，并且该命令已加入 `PATH`，可尝试设置：
+CI 使用的主要本地测试命令：
 
-```bash
-export TS_CLI_BUILD_FROM_SOURCE=false
-```
+~~~bash
+./gradlew testDebug :editor:compileDebugAndroidTestKotlin :app:compileDebugAndroidTestKotlin --continue --parallel --stacktrace
+~~~
 
-若构建脚本仍尝试从源码编译 CLI，请检查当前分支的构建逻辑及环境变量支持情况。
+Windows PowerShell：
 
----
+~~~powershell
+.\gradlew.bat testDebug :editor:compileDebugAndroidTestKotlin :app:compileDebugAndroidTestKotlin --continue --parallel --stacktrace
+~~~
 
-## 🧩 添加新的语法
+工作流还会在 Linux 主机执行 Native 测试，包括带 ASan/UBSan 的大文件存储测试和 Native TSH 缓存测试。对应的测试配置示例：
 
-1. 将 grammar 仓库作为 Git submodule 添加到 `grammars/<language>`。
-2. 在项目的 grammar 配置清单中登记该语言。
-3. 按项目现有模块生成规则生成或配置 Gradle 模块。
-4. 检查 JNI 绑定、CMake 配置及上游 grammar 的构建依赖。
-5. 执行构建与测试，并确认目标 ABI 的 native library 已正确打包。
+~~~bash
+cmake -S android-tree-sitter/src/main/cpp/largefile/tests -B build/largefile-tests -DCMAKE_BUILD_TYPE=Debug
+cmake --build build/largefile-tests --parallel 2
+ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+  ctest --test-dir build/largefile-tests --output-on-failure
 
-示例：
+./gradlew :android-tree-sitter:generateNativeHeadersDebug --stacktrace
+cmake -S android-tree-sitter/src/main/cpp -B build/host \
+  -DCMAKE_BUILD_TYPE=Debug \
+  -DBUILD_TESTING=OFF \
+  -DAUTOGEN_HEADERS="$PWD/android-tree-sitter/build/generated/native_headers"
+cmake --build build/host --target android-tree-sitter --parallel 2
+~~~
 
-```bash
-git submodule add <grammar-repository-url> grammars/<language>
-git submodule update --init --recursive
-```
+完整设备测试矩阵请查看 <code>.github/workflows/build.yml</code>。当前工作流使用 Android Emulator API 26、30 和 35。
 
-请参考仓库中已有 grammar 的目录结构和构建脚本，保持模块命名一致。
+### Android Studio 项目配置
 
----
+- 打开仓库根目录，即包含 <code>settings.gradle</code> 的目录，不要单独打开某个子模块。
+- 将 Gradle JDK 设置为 17。
+- 通过 SDK Manager 安装 API 34、Build Tools 35.0.0、NDK 29.0.14206865 和 CMake 3.31.6。
+- 等待 Gradle Sync 完成；Settings 插件会根据 <code>grammars/grammars.json</code> 生成 Grammar 模块。
+- 不要手动修改 <code>grammar-modules/</code> 下的生成文件，应修改 Grammar 元数据或生成器输入。
+- SDK 路径保存在本机 <code>local.properties</code> 中，不要提交机器专属 SDK 路径。
 
-## ⚠️ 外部语法与 native 资源
+## Maven 包与 JitPack
 
-- 优先使用随应用打包的语法库，避免运行时加载带来的路径、ABI 和生命周期问题。
-- 如果使用 `TSLanguage.loadLanguage(...)` 加载外部 `.so`，请确认当前版本支持该 API，并遵循对应版本的关闭规则。
-- 对 parser、tree、language 等 native 资源，应按 API 要求及时释放，避免 native 内存或动态库句柄泄漏。
-- 应用需要覆盖哪些 ABI，取决于所使用的预编译库或 native 构建产物。
+需要区分两种不同的分发方式：
 
----
+- **GitHub Packages：** 仓库当前的 <code>publish-packages.yml</code> 工作流将选定模块发布到 GitHub Packages。
+- **JitPack：** 根据 Git Tag 或 Commit 构建源码，并从 <code>https://jitpack.io</code> 提供 Maven 依赖。
 
-## 📄 许可证
+使用 JitPack 时，先在仓库查询页面确认目标 Tag / Commit 构建成功，并且目标模块已列出。对于本多模块仓库，单独模块的依赖坐标形式为：
 
-本项目的许可证以仓库中的 [`LICENSE`](LICENSE) 文件为准。若当前分支沿用上游 android-tree-sitter 的 LGPL-2.1 许可，请阅读完整许可证及其对分发、修改和链接方式的要求。
+~~~kotlin
+dependencies {
+    implementation("com.github.msmt2018.Android-Windbell-TreeSitter:android-tree-sitter:VERSION")
+    implementation("com.github.msmt2018.Android-Windbell-TreeSitter:tree-sitter-java:VERSION")
+}
+~~~
 
-- [Tree-sitter 官方文档](https://tree-sitter.github.io/tree-sitter/)
-- [项目源码](https://github.com/msmt2018/Android-windChime-tree-sitter-highlight)
-- [Maven Central](https://central.sonatype.com/)
+以 JitPack 页面实际显示的 artifact 名称为准。将 Java 示例替换为应用所需的 Grammar 模块。Grammar 模块依赖核心绑定模块，因此通常同时添加核心绑定和所选语言模块。
 
----
+分支快照或 Commit 构建应使用 JitPack 页面为对应分支或 Commit 提供的版本写法。JitPack 版本规则和构建要求可能变化，请以官方 [Android 发布指南](https://docs.jitpack.io/android/) 和 [构建指南](https://docs.jitpack.io/building/) 为准。
 
-<div align="center">
+## 更多文档
 
-Made for Android developers · **Android Windbell Treesitter**
+- [Grammar 模块元数据与生成说明](README_grammars.md)
+- [TSH DSL v2 规范](docs/TSH_DSL_V2_SPEC.md)
+- [TSH 大文本 Native Token 架构](docs/TSH_LARGE_TEXT_NATIVE_TOKEN_ARCHITECTURE.md)
+- [TSH 高亮准确性与渲染完整性](docs/TSH_HIGHLIGHT_ACCURACY_AND_RENDERING_INTEGRITY.md)
+- [TSH 极限优化与闪烁修复](docs/TSH_EXTREME_OPTIMIZATION_AND_FLICKER_REMEDIATION.md)
+- [TSH 引擎完成度与性能路线图](android-tree-sitter/TSH_ENGINE_COMPLETION_AND_PERFORMANCE_ROADMAP.md)
+- [Java ATS-only 示例配置](app/src/main/assets/tsh/java-ats-only.tsh)
+- [构建与测试工作流](.github/workflows/build.yml)
+- [GitHub Packages 发布工作流](.github/workflows/publish-packages.yml)
 
-</div>
+## 许可证
+
+许可证文本及仓库适用的授权条款请查看 [LICENSE](LICENSE)。
