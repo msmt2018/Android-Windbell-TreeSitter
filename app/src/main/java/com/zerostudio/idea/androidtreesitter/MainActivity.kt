@@ -856,7 +856,7 @@ class MainActivity : AppCompatActivity() {
 
     /**
      * Exercises the real Java parser and each independent producer. Source ordinals:
-     * 0=Oniguruma Regex, 1=Monarch, 2=ATS selector, 3=Native Tree-sitter Query.
+     * 0=Oniguruma Regex, 1=Regex State / Contains, 2=ATS selector, 3=Native Tree-sitter Query.
      */
     private fun runJavaTshPipelineProfileProbe(
         profile: JavaTshPipelineProfile,
@@ -1257,7 +1257,7 @@ class MainActivity : AppCompatActivity() {
     private fun showTshCoreTestSuiteDialog() {
         val testOptions = arrayOf(
             "1. 🎨 Scheme / Style ID / UI Token 颜色映射",
-            "2. ⚡ Regex / Monarch / ATS / Native Query 四管线覆盖",
+            "2. ⚡ Regex / Regex State / ATS / Native Query 四管线覆盖",
             "3. 🧩 Tree-sitter Parser 与 TSH 配置注册审计",
             "4. 🧵 32 线程并发重入与资源释放压测"
         )
