@@ -85,7 +85,8 @@ class JavaTshPipelineProfilesTest {
                         "$label must compile: ${engine.lastCompileDiagnostics}",
                         compiled
                     )
-                    val diagnostics = engine.computePipelineDiagnostics(parsedTree, sample, extension)
+                    val pipelineTree = if (profile == 0) null else parsedTree
+                    val diagnostics = engine.computePipelineDiagnostics(pipelineTree, sample, extension)
                     val captures = diagnostics.captures
                     val regex = captures.count { it.source == 0 }
                     val regexState = captures.count { it.source == 1 }
@@ -110,7 +111,7 @@ class JavaTshPipelineProfilesTest {
                             assertTrue("Hybrid must produce native SCM captures", query > 0)
                         }
                     }
-                    val spans = engine.computeHighlights(parsedTree, sample, extension)
+                    val spans = engine.computeHighlights(pipelineTree, sample, extension)
                     assertTrue("$label must produce final render spans", spans.isNotEmpty())
                     val styled = android.text.SpannableStringBuilder(sample)
                     engine.applyHighlightSpansToSpannable(spans, 0, sample, extension, styled)
