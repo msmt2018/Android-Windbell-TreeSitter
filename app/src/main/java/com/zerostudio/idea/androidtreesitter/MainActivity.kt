@@ -973,7 +973,7 @@ class MainActivity : AppCompatActivity() {
                 val ats = sourceCounts[2] ?: 0
                 val query = sourceCounts[3] ?: 0
                 val parserDescription = tree?.rootNode?.type ?: "not invoked (Regex-only profile)"
-                val passed = when (profile) {
+                val producerIsolationPassed = when (profile) {
                     JavaTshPipelineProfile.REGEX_ONLY ->
                         regexTotal > 0 && ats == 0 && query == 0
                     JavaTshPipelineProfile.ATS_ONLY ->
@@ -981,13 +981,15 @@ class MainActivity : AppCompatActivity() {
                     JavaTshPipelineProfile.HYBRID ->
                         regexTotal > 0 && ats > 0 && query > 0
                 }
+                val passed = producerIsolationPassed &&
+                    finalSpans.isNotEmpty() && foregroundSpans.isNotEmpty()
                 val report = StringBuilder()
                 report.appendLine("配置：${profile.assetName}")
                 report.appendLine("Java parser：$parserDescription")
                 report.appendLine("源代码：${sample.length} UTF-16 units / ${sample.length * 2} UTF-16LE bytes")
                 report.appendLine("原始 captures：${diagnostics.captures.size}")
                 report.appendLine("最终合成 spans：${finalSpans.size}")
-                report.appendLine("Android ForegroundColorSpan：${foregroundSpans.size}")
+                report.appendLine("Android ForegroundColorSpan：${foregroundSpans.size} (${if (foregroundSpans.isNotEmpty()) "RENDER PASS" else "RENDER FAIL"})")
                 report.appendLine("Oniguruma Regex：${diagnostics.matchCounts[0] ?: 0} matches / $regex captures")
                 report.appendLine("Regex State / Contains：${diagnostics.matchCounts[1] ?: 0} matches / $regexState captures")
                 report.appendLine("Regex total captures：$regexTotal")
