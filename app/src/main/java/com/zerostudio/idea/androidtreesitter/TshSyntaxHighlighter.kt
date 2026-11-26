@@ -388,6 +388,14 @@ class TshSyntaxHighlighter(
             dark = engine.isDark(extension)
         )
         if (renderedLineCache.get(renderedKey) != null) return true
+        if (active.diskRenderedLineStore.contains(
+                renderedKey.documentRevision,
+                renderedKey.lineStartOffset,
+                renderedKey.visibleStart,
+                renderedKey.visibleEnd,
+                renderedKey.scheme,
+                renderedKey.dark
+            )) return true
 
         val key = CaptureRangeKey(active.cacheSessionId, boundedStart.toInt(), boundedEnd.toInt())
         if (hasCachedCaptureCoverage(key)) return true
