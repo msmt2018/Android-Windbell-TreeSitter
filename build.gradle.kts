@@ -180,8 +180,11 @@ subprojects {
   )
 
   if (name in jitPackModules) {
-    group = "com.github.msmt2018.Android-Windbell-TreeSitter"
-    version = providers.gradleProperty("jitpackVersion")
+    group = providers.environmentVariable("GROUP")
+      .orElse("com.github.msmt2018.Android-Windbell-TreeSitter")
+      .get()
+    version = providers.environmentVariable("VERSION")
+      .orElse(providers.gradleProperty("jitpackVersion"))
       .orElse(providers.environmentVariable("JITPACK_TAG"))
       .orElse(buildVersionName)
       .get()
