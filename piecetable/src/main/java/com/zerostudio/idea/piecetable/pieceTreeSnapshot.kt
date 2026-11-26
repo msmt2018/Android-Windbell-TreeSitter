@@ -197,6 +197,68 @@ class PieceTreeSnapshot internal constructor(
         return this.sources[piece].substring(start, start + chunkLength)
     }
 
+    /**
+     * Copies a bounded UTF-16 window across as many backing pieces as needed.
+     *
+     * Unlike [getNearestChunk], this method does not stop at the end of the current piece.
+     * String-backed pieces are copied with String.getChars, so a native transfer can fill a
+     * large reusable buffer without allocating one temporary String per small piece.
+     *
+     * The snapshot is immutable, therefore this method is safe to call from a background
+     * transfer thread while the live PieceTree continues to receive edits.
+     *
+     * @return the number of UTF-16 code units copied; zero at end-of-input.
+     */
+    fun copyTo(
+        destination: CharArray,
+        destinationOffset: Int,
+        startIndex: Int,
+        maxLength: Int
+    ): Int {
+        if (destinationOffset < 0 || destinationOffset > destination.size) {
+            throw IndexOutOfBoundsException("destinationOffset: $destinationOffset, size: ${destination.size}")
+        }
+        if (startIndex < 0 || startIndex > length) {
+            throw IndexOutOfBoundsException("startIndex: $startIndex, length: $length")
+        }
+        require(maxLength >= 0) { "maxLength must be non-negative" }
+
+        var remaining = minOf(maxLength, destination.size - destinationOffset, length - startIndex)
+        if (remaining == 0) return 0
+
+        var piece = pieceAt(startIndex)
+        var sourceOffsetInDocument = startIndex
+        var targetOffset = destinationOffset
+        val copied = remaining
+        while (remaining > 0) {
+            val pieceEnd = pieceStarts[piece + 1]
+            val count = minOf(pieceEnd - sourceOffsetInDocument, remaining)
+            check(count > 0) { "PieceTree snapshot contains an empty piece at $piece" }
+
+            val sourceOffset = sourceStarts[piece] +
+                sourceOffsetInDocument - pieceStarts[piece]
+            val source = sources[piece]
+            if (source is String) {
+                source.getChars(
+                    sourceOffset,
+                    sourceOffset + count,
+                    destination,
+                    targetOffset
+                )
+            } else {
+                for (index in 0 until count) {
+                    destination[targetOffset + index] = source[sourceOffset + index]
+                }
+            }
+
+            sourceOffsetInDocument += count
+            targetOffset += count
+            remaining -= count
+            piece++
+        }
+        return copied
+    }
+
     /** Hands the whole content to [callback], one piece at a time, in order, without the BOM. */
     fun readPiecesContent(callback: (String) -> Unit) {
         for (piece in 0 until this.sources.size) {
