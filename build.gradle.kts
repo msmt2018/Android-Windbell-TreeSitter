@@ -245,6 +245,14 @@ subprojects {
 
           repositories {
             maven {
+              name = "GitHubPackages"
+              url = uri("https://maven.pkg.github.com/${githubPackagesOwner()}/${githubPackagesRepository()}")
+              credentials {
+                username = providers.environmentVariable("GITHUB_ACTOR").orNull
+                password = providers.environmentVariable("GITHUB_TOKEN").orNull
+              }
+            }
+            maven {
               name = "MavenCentral"
               url = uri("https://sonatype.com")
               credentials {
