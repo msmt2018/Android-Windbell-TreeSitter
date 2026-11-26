@@ -922,6 +922,7 @@ class MainActivity : AppCompatActivity() {
                     Runnable task = this::execute;
                     task.run();
                     double ratio = 1.25e-3;
+                    double hexRatio = 0x1.8p1;
                     long mask = 0xFF_FF_FF_FFL;
                     boolean enabled = true && (ratio > 0);
                     if (enabled) { execute(); } else { value = null; }
