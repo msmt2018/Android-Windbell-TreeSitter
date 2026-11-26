@@ -297,9 +297,9 @@ class MainActivity : AppCompatActivity() {
                     ensureEditorHighlighterInstalled()
                     Toast.makeText(this@MainActivity, "已切换 Java TSH 配置：$displayName", Toast.LENGTH_LONG).show()
                 }.onFailure { error ->
-                    tshConfigurationStates["java"] = "FAILED: ${error.message}"
-                    javaTshReady = false
-                    Log.e(TAG, "Unable to switch Java TSH configuration", error)
+                    val previousState = if (javaTshReady) "READY" else "FAILED"
+                    tshConfigurationStates["java"] = "$previousState (configuration switch failed: ${error.message})"
+                    Log.e(TAG, "Unable to switch Java TSH configuration; retaining previous active configuration", error)
                     showResultDialog("TSH 配置切换失败", error.stackTraceToString())
                 }
             }
@@ -308,6 +308,26 @@ class MainActivity : AppCompatActivity() {
 
     private fun chooseTshConfiguration() {
         openTshConfigurationLauncher.launch(arrayOf("text/*", "application/octet-stream"))
+    }
+
+    private fun requireJavaTshReady(feature: String): Boolean {
+        val parserReady = languageMap["Java"]?.self?.let { it != 0L } == true
+        val configState = tshConfigurationStates["java"] ?: "INITIALIZING"
+        if (parserReady && javaTshReady && WindbellTshEngine.instance.isGrammarLoaded("java")) {
+            return true
+        }
+        val coreState = nativeLibraryStates["android-tree-sitter"] ?: "NOT_LOADED"
+        val grammarState = nativeLibraryStates["tree-sitter-java"] ?: "NOT_LOADED"
+        showResultDialog(
+            feature,
+            "TSH 尚未就绪，未执行测试。\\n" +
+                "libandroid-tree-sitter.so: $coreState\\n" +
+                "libtree-sitter-java.so: $grammarState\\n" +
+                "Java Parser: ${if (parserReady) "READY" else "MISSING"}\\n" +
+                "Java TSH: $configState\\n" +
+                "请查看 Logcat 标签 Windbell_MainActivity / WindbellTSH 的初始化错误。"
+        )
+        return false
     }
 
     private fun setupTabs() {
@@ -769,6 +789,7 @@ class MainActivity : AppCompatActivity() {
 
     /** Reparse the editor's current source and report parser, captures and Android spans. */
     private fun runCursorCaptureDiagnostic() {
+        if (!requireJavaTshReady("TSH 捕获诊断")) return
         val view = editorView
         if (view == null || !javaTshReady) {
             showResultDialog("TSH 捕获诊断", "编辑器或 Java TSH 尚未就绪。")
@@ -938,6 +959,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun applyTshScheme(scheme: String, isDark: Boolean) {
+        if (!requireJavaTshReady("TSH Scheme")) return
         val engine = WindbellTshEngine.instance
         val selected = activeTshHighlighter?.selectScheme(scheme) ?: engine.selectScheme("java", scheme)
         if (!selected) {
@@ -954,6 +976,7 @@ class MainActivity : AppCompatActivity() {
 
     /** Browse all compiled schemes and their light/dark semantic colors. */
     private fun showTshSchemesDialog() {
+        if (!requireJavaTshReady("TSH Scheme 列表")) return
         val engine = WindbellTshEngine.instance
         val schemes = engine.listSchemes("java")
         if (schemes.isEmpty()) {
@@ -1009,6 +1032,7 @@ class MainActivity : AppCompatActivity() {
      * 切换 TSH 白天/黑夜多态调色板
      */
     private fun toggleTshTheme() {
+        if (!requireJavaTshReady("TSH 主题切换")) return
         val engine = WindbellTshEngine.instance
         val nextDark = !engine.isDark("java")
         engine.setAppearance("java", nextDark)
@@ -1079,6 +1103,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun runTshPaletteTest() {
+        if (!requireJavaTshReady("TSH 调色板测试")) return
         val report = StringBuilder()
         report.append("=== 🎨 TSH 调色板映射测试 ===\n\n")
 
@@ -1123,6 +1148,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun runTshHybridCoverageTest() {
+        if (!requireJavaTshReady("TSH ATS / Native Query / Regex 覆盖测试")) return
         val pd = ProgressDialog(this).apply {
             setMessage("正在测试双通道扫描线合并仲裁...")
             show()
@@ -1190,6 +1216,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun runTshConcurrencyTest() {
+        if (!requireJavaTshReady("TSH Native 并发压测")) return
         val pd = ProgressDialog(this).apply {
             setTitle("TSH Native 并发重入压测")
             setMessage("32 个线程执行 Tree-sitter parse + 四管线高亮 + 释放…")
