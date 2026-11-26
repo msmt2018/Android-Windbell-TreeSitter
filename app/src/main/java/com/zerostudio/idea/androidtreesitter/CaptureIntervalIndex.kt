@@ -53,7 +53,7 @@ internal class CaptureIntervalIndex(
     fun appendQuery(
         startUtf16: Int,
         endUtf16: Int,
-        destination: MutableList<WindbellTshEngine.HighlightSpan>
+        destination: MutableCollection<WindbellTshEngine.HighlightSpan>
     ) {
         if (startUtf16 < 0 || endUtf16 <= startUtf16 || spans.isEmpty()) return
         val startByte = (startUtf16.toLong() * 2L).toInt()
