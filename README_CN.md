@@ -307,7 +307,7 @@ dependencies {
 
 将 <code>VERSION</code> 替换为已经由 JitPack 成功构建的 Git Tag 或 Commit 版本。每种语言按需添加一个 <code>tree-sitter-&lt;language&gt;</code> 模块，不需要默认引入全部 Grammar。
 
-**当前发布状态说明：** Maven 发布渠道已切换为 JitPack。<code>release-jitpack.yml</code> 工作流负责创建版本 Tag；JitPack 根据 Tag 按需构建并提供 Maven 模块。Tag 创建成功不代表 JitPack 构建成功，正式依赖前仍需在 [JitPack 项目页面](https://jitpack.io/#msmt2018/Android-Windbell-TreeSitter)检查构建日志和模块列表。
+**当前发布流程：** <code>release-jitpack.yml</code> 首先完整构建 Gradle 项目，然后验证全部 60 个 Maven Publication 均可发布到 Maven Local；只有这两个阶段全部成功后才会创建并推送版本 Tag。随后由 JitPack 按需构建/缓存 Tag 对应模块并提供 Maven 工件。GitHub Actions 构建成功不等于 JitPack 工件已可下载，正式使用前仍需在 [JitPack 项目页面](https://jitpack.io/#msmt2018/Android-Windbell-TreeSitter)核对 JitPack 构建结果及目标 AAR/POM。
 
 ### 3. 解析源码
 
