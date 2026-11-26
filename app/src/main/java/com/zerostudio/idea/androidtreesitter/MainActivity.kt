@@ -950,7 +950,8 @@ class MainActivity : AppCompatActivity() {
             "${profile.displayName}$marker\n${profile.description}"
         }.toTypedArray()
         MaterialAlertDialogBuilder(this)
-            .setTitle("Java TSH 配置 / 管道切换")
+            .setTitle("Java TSH 配置 / 管道切换（当前：" +
+                (activeJavaTshConfigName ?: activeJavaTshProfile.displayName) + "）")
             .setItems(labels) { _, index ->
                 switchJavaTshPipelineProfile(profiles[index])
             }
