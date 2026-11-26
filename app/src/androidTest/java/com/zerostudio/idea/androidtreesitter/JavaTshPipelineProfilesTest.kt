@@ -25,6 +25,7 @@ class JavaTshPipelineProfilesTest {
         @Deprecated
         public class Demo<T extends Number> extends Base {
             private static final int MAX_SIZE = 0x7FFF;
+            private static final int MAX_CACHE_CAPACITY = 1024;
             private String value = "hello";
             public Demo(String value) { this.value = value; }
             public String getValue(int index) {
