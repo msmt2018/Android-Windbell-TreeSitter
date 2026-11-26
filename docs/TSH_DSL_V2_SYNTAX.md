@@ -69,8 +69,8 @@ styles {
 
 绑定方式：
 - ATS：style: "type"。
-- Regex：style: "comment" 或 captures { 1: keyword }。
-- Native Query：captures { capture_name: style_name }。
+- Regex：style: "comment" 或 captures: { 1: keyword }。
+- Native Query：captures: { capture_name: style_name }。
 - Query 未显式映射时，默认按 capture 名查找同名 style。
 - 仅作为 predicate operand 的 capture 可以不绑定输出 style。
 
@@ -185,7 +185,7 @@ ast: [
 | enabled | boolean | 是否启用 |
 | overlap | allow/deny | 是否允许 span 重叠 |
 
-所有结构名称必须来自目标 grammar。field 不是 style。child 是直接子节点，不是任意后代。ancestor 不包含目标节点自身。sibling 按真实 Tree-sitter sibling 顺序判断。textRegex 在编译阶段编译，运行时针对节点文本执行。ATS 不接受 query/source。
+所有结构名称必须来自目标 grammar。field 不是 style。**当规则同时声明 node 与 field 时，node 指字段所有者（父/owner 节点），field 指要选择并着色的子节点字段；不声明 field 时，规则直接作用于 node 自身。** child 是直接子节点，不是任意后代。ancestor 不包含目标节点自身。sibling 按真实 Tree-sitter sibling 顺序判断。textRegex 在编译阶段编译，运行时针对节点文本执行。ATS 不接受 query/source。
 
 ## 9. treeSitter.queries
 
@@ -198,7 +198,7 @@ treeSitter {
         (method_declaration
           name: (identifier) @method_name)
       `
-      captures {
+      captures: {
         method_name: function
       }
       priority: 100
@@ -240,10 +240,10 @@ Query source 使用 Tree-sitter Query 结构语法：node pattern、field constr
 |---|---|---|
 | #eq? | capture + string 或 capture | 文本相等 |
 | #not-eq? | capture + string 或 capture | 文本不相等 |
-| #any-eq? | capture + string 或 capture | 任一 capture 满足相等 |
-| #any-not-eq? | capture + string 或 capture | 任一 capture 满足不相等 |
-| #any-of? | capture + 1+ strings | 文本属于给定集合 |
-| #not-any-of? | capture + 1+ strings | 文本不属于给定集合 |
+| #any-eq? | capture + string 或 capture | 至少一个 capture（或 capture 对）满足相等 |
+| #any-not-eq? | capture + string 或 capture | 至少一个 capture（或 capture 对）满足不相等 |
+| #any-of? | capture + 1+ strings | 所有该 capture 的文本都属于给定集合 |
+| #not-any-of? | capture + 1+ strings | 没有任何该 capture 的文本属于给定集合 |
 | #match? | capture + regex string | 文本匹配 Regex |
 | #not-match? | capture + regex string | 文本不匹配 Regex |
 | #contains? | capture + 1+ strings | 文本包含任一子串 |
@@ -263,7 +263,7 @@ Query source 使用 Tree-sitter Query 结构语法：node pattern、field constr
 | #any-kind-eq? | capture + 1+ node types | 至少一个 capture 节点类型属于集合 |
 | #any-not-kind-eq? | capture + 1+ node types | 至少一个 capture 节点类型不属于集合 |
 
-第一个参数必须为 capture。eq/match 是固定参数形式；除 equality 的 capture-to-capture 比较外，后续参数必须是字符串 literal。结构 predicate 的 node type 必须能在目标 grammar 中解析。Regex predicate 在编译阶段建立。
+第一个参数必须为 capture。eq/match 是固定参数形式；除 equality 的 capture-to-capture 比较外，后续参数必须是字符串 literal。结构 predicate 的 node type 必须能在目标 grammar 中解析。Regex predicate 在编译阶段建立。普通 eq/not-eq、contains 与结构谓词对已存在的多个 capture 按 all 语义检查；any-* 变体按至少一个满足检查。any-of? 的实现要求所有 capture 值都属于给定集合；not-any-of? 要求没有 capture 值属于集合。对于字符串 eq?，capture 缺失时正向 eq? 为 false、not-eq? 为 true；any-eq? 与 any-not-eq? 也遵循此缺失极性。capture-to-capture equality 若左侧缺失，普通形式按空集合语义通过；左侧存在但右侧缺失则不通过；any 形式要求两侧都存在且有满足条件的 pair。contains/结构谓词目标 capture 缺失时按 vacuous true 处理。
 
 正确分组：
 
@@ -307,8 +307,8 @@ contains: [
     contentName: comment
     start: { match: /\\/\\*\\*/ }
     end: { match: /\\*\\// }
-    startCaptures { 0: docTag }
-    endCaptures { 0: docTag }
+    startCaptures: { 0: docTag }
+    endCaptures: { 0: docTag }
     contains: [
       { match: /\\{@[A-Za-z]+/, 0: annotation, priority: 140 }
     ]
@@ -323,7 +323,7 @@ BLOCK 必须有 start 与 end；begin 是 start 兼容别名。start/end 可直�
 ~~~tsh
 {
   match: /([A-Z][A-Za-z0-9_]*)(\\s*)(=)/
-  captures {
+  captures: {
     1: type
     3: operator
   }
@@ -444,7 +444,7 @@ tsh 2 {
         source: `
           ["if" "else" "return"] @keyword
         `
-        captures { keyword: keyword }
+        captures: { keyword: keyword }
       }
     ]
   }

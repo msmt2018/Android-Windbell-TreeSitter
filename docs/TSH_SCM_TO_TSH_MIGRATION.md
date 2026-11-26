@@ -59,7 +59,7 @@ tsh 2 {
 
           (string_literal) @string
         `
-        captures {
+        captures: {
           function_method: function
           type: type
           string: string
@@ -85,7 +85,7 @@ tsh 2 {
 | (#match? ...) | Query 原样保留，且在 TSH 白名单内 | 或单节点 textRegex ATS |
 | (#any-of? ...) | Query 原样保留，且在 TSH 白名单内 |  |
 | #set! metadata directive | 当前 Native TSH 不接受 | 不要直接复制 |
-| capture 名称 | captures { name: semanticStyle } | 显式绑定 |
+| capture 名称 | captures: { name: semanticStyle } | 显式绑定 |
 | highlights.scm | treeSitter.queries[].source | Query 原文嵌入 |
 | TextMate Regex match | contains 的 MATCH rule | 重新表达 Regex |
 | TextMate begin/end | contains 的 BLOCK start/end | 只支持当前 BLOCK 子集 |
@@ -159,7 +159,7 @@ treeSitter {
         ((identifier) @constant
          (#match? @constant "^[A-Z][A-Z0-9_]+$"))
       `
-      captures { constant: constant }
+      captures: { constant: constant }
     }
   ]
 }
@@ -207,7 +207,7 @@ treeSitter {
       source: `
         (method_declaration name: (identifier) @function)
       `
-      captures { function: function }
+      captures: { function: function }
     }
   ]
 }
@@ -287,7 +287,7 @@ treeSitter {
           object: (identifier) @type)
          (#match? @type "^[A-Z]"))
       `
-      captures { type: type }
+      captures: { type: type }
     }
   ]
 }
