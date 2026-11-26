@@ -120,7 +120,7 @@ class MainActivity : AppCompatActivity() {
             try {
                 System.loadLibrary(libraryName)
                 val language = languageFactory()
-                check(language.self != 0L) { "$libraryName returned a null TSLanguage pointer" }
+                check(language.getNativeObject() != 0L) { "$libraryName returned a null TSLanguage pointer" }
                 languageMap[displayName] = language
                 nativeLibraryStates[libraryName] = "READY"
                 Log.i(TAG, "Loaded lib$libraryName.so; ABI=${language.abiVersion}")
