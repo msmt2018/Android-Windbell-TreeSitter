@@ -413,6 +413,32 @@
                 id: "java-exact-demo-type"
                 priority: 136
                 source: `(class_declaration name: (identifier) @type (#eq? @type "Demo"))`
+            },
+
+            {
+                id: "java-primitive-types"
+                priority: 98
+                source: `["boolean" "byte" "char" "short" "int" "long" "float" "double" "void"] @typeBuiltin`
+            },
+            {
+                id: "java-operator-tokens"
+                priority: 66
+                source: `["->" "::" "==" "!=" "<=" ">=" "&&" "||" "++" "--" "+=" "-=" "*=" "/=" "%=" "=" "+" "-" "*" "/" "%" "!" "~" "^" "&" "|" "<" ">"] @operator`
+            },
+            {
+                id: "java-punctuation-tokens"
+                priority: 56
+                source: `["{" "}" "(" ")" "[" "]" "," ";" "." ":" "?"] @operator`
+            },
+            {
+                id: "java-package-and-import-names"
+                priority: 92
+                source: `[(package_declaration (scoped_identifier) @type) (import_declaration (scoped_identifier) @type)]`
+            },
+            {
+                id: "java-type-parameters"
+                priority: 112
+                source: `(type_parameter (type_identifier) @type)`
             }
         ]
     },
