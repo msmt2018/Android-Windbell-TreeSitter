@@ -115,6 +115,10 @@ class TshSyntaxHighlighter(
     private var queuedViewportRanges: List<CaptureRangeKey> = emptyList()
     private var viewportWorkerActive = false
     @Volatile private var viewportFrameActive = false
+    // Some editor integrations invoke styleLine without explicit viewport-frame
+    // callbacks. Coalesce those per-line misses into one native viewport request
+    // instead of dispatching one JNI/native scan for every visible row.
+    private val viewportFlushScheduled = AtomicBoolean(false)
 
     override fun onViewportFrameStarted() {
         synchronized(viewportRequestLock) {
@@ -569,11 +573,22 @@ class TshSyntaxHighlighter(
             }) pendingViewportRanges += key
             !viewportFrameActive
         }
-        if (flushNow) flushPendingViewportRanges()
+        if (flushNow && viewportFlushScheduled.compareAndSet(false, true)) {
+            // styleLine can be called once per row by hosts that do not expose
+            // onViewportFrameStarted/Finished. A short coalescing window lets
+            // adjacent line intervals merge before entering the serialized
+            // native mutex, dramatically reducing repeated context scans.
+            scope.launch {
+                delay(8)
+                viewportFlushScheduled.set(false)
+                flushPendingViewportRanges()
+            }
+        }
     }
 
     private fun flushPendingViewportRanges() {
         val pending = synchronized(viewportRequestLock) {
+            if (viewportFrameActive) return
             pendingViewportRanges.toList().also { pendingViewportRanges.clear() }
         }
         submitCoalescedViewportRanges(pending)
