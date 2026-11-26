@@ -34,6 +34,7 @@ class JavaTshPipelineProfilesTest {
                 Runnable action = this::execute;
                 action.run();
                 int count = 42;
+                double hexRatio = 0x1.8p1;
                 if (count > 0) execute();
             }
             private void execute() { System.out.println(value); }
