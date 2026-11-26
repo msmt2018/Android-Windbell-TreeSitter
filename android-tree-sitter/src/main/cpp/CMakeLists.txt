@@ -668,6 +668,34 @@ set(TSH_PARSER_REDUCE_CANDIDATE_OLD [=[      if (ts_parser__select_children(
         array_clear(&self->trailing_extras2);
         ts_subtree_array_delete(&self->tree_pool, &next_slice.subtrees);
       }]=])
+set(TSH_PARSER_SELECT_CHILDREN_HELPER [=[static bool ts_parser__select_children(
+  TSParser *self,
+  Subtree left,
+  const SubtreeArray *children
+) {
+  array_assign(&self->scratch_trees, children);
+
+  // Create a temporary subtree using the scratch trees array. This node does
+  // not perform any allocation except for possibly growing the array to make
+  // room for its own heap data. The scratch tree is never explicitly released,
+  // so the same 'scratch trees' array can be reused again later.
+  MutableSubtree scratch_tree = ts_subtree_new_node(
+    ts_subtree_symbol(left),
+    &self->scratch_trees,
+    0,
+    self->language
+  );
+
+  return ts_parser__select_tree(
+    self,
+    left,
+    ts_subtree_from_mut(scratch_tree)
+  );
+}
+
+]=])
+string(REPLACE "${TSH_PARSER_SELECT_CHILDREN_HELPER}" ""
+    TSH_PARSER_SOURCE "${TSH_PARSER_SOURCE}")
 set(TSH_PARSER_REDUCE_CANDIDATE_NEW [=[      // Build the candidate parent from its owned slice exactly once. The old
       // path summarized a scratch copy for comparison, then summarized and
       // rebuilt the same parent again when the candidate won. Reuse this node
