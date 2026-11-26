@@ -604,7 +604,7 @@ For the complete device test matrix, refer to <code>.github/workflows/build.yml<
 
 There are two different distribution concepts:
 
-- **JitPack:** the supported Maven distribution channel. The release workflow creates a Git tag, and JitPack builds and serves module artifacts from <code>https://jitpack.io</code>.
+- **JitPack:** the supported Maven distribution channel. The release workflow builds the project and verifies all 60 Maven publications locally before creating the Git tag; JitPack then builds/caches tagged modules and serves them from <code>https://jitpack.io</code>.
 - **GitHub Packages:** no longer used for project Maven releases.
 
 For JitPack, use the repository lookup page to confirm that the tag/commit has a successful build and that the required module is listed. For this multi-module repository, the expected individual-module coordinate shape is:
