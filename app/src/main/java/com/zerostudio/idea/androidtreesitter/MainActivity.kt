@@ -896,6 +896,7 @@ class MainActivity : AppCompatActivity() {
             @Deprecated
             public sealed class PipelineProbe<T extends Number> permits RecordProbe {
                 private static final int MAX_BUFFER_SIZE = 0x7FFF;
+                private static final int MAX_CACHE_CAPACITY = 1024;
                 private static final long BINARY_MASK = 0b1010_0101L;
                 private final String message = "Hello \"Tree-sitter\"";
                 private final char marker = '\n';
