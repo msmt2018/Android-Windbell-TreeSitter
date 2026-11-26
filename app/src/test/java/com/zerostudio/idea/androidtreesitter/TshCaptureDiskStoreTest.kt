@@ -69,4 +69,21 @@ class TshCaptureDiskStoreTest {
             store.close()
         }
     }
+
+    @Test fun replacingSameRangePublishesNewPageAndRemainsReadable() {
+        val directory = directory()
+        val store = TshCaptureDiskStore(directory, 45)
+        try {
+            val key = CaptureRangeKey(45, 0, 100)
+            store.put(key, listOf(span(0, 20, 1)))
+            store.put(key, listOf(span(20, 40, 2)))
+            val restored = store.restoreCovering(CaptureRangeKey(45, 10, 20))
+            assertNotNull(restored)
+            assertEquals(listOf(2), restored!!.single().index.query(10, 20).map { it.styleId })
+            assertEquals(1, store.size)
+        } finally {
+            store.close()
+        }
+    }
+
 }
