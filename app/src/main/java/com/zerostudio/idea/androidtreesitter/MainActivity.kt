@@ -76,6 +76,9 @@ class MainActivity : AppCompatActivity() {
     private val openLocalFileLauncher = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) openLocalFile(uri)
     }
+    private val openTshConfigurationLauncher = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) loadSelectedTshConfiguration(uri)
+    }
     private var editorTree: TSTree? = null
     @Volatile private var javaTshReady: Boolean = false
     private var activeTshHighlighter: TshSyntaxHighlighter? = null
@@ -87,22 +90,44 @@ class MainActivity : AppCompatActivity() {
         private const val TAG = "Windbell_MainActivity"
         // Keep Java first and make the console language spinner deterministic.
         private val languageMap = java.util.Collections.synchronizedMap(linkedMapOf<String, TSLanguage>())
+        private val nativeLibraryStates = java.util.concurrent.ConcurrentHashMap<String, String>()
 
         init {
-            TreeSitter.loadLibrary()
-            try { System.loadLibrary("tree-sitter-java") } catch (_: Throwable) {}
-            try { System.loadLibrary("tree-sitter-json") } catch (_: Throwable) {}
-            try { System.loadLibrary("tree-sitter-kotlin") } catch (_: Throwable) {}
-            try { System.loadLibrary("tree-sitter-logcat") } catch (_: Throwable) {}
-            try { System.loadLibrary("tree-sitter-python") } catch (_: Throwable) {}
-            try { System.loadLibrary("tree-sitter-xml") } catch (_: Throwable) {}
+            try {
+                TreeSitter.loadLibrary()
+                nativeLibraryStates["android-tree-sitter"] = "READY"
+                Log.i(TAG, "Loaded libandroid-tree-sitter.so")
+            } catch (error: Throwable) {
+                nativeLibraryStates["android-tree-sitter"] = "FAILED: ${error.message}"
+                Log.e(TAG, "FATAL: unable to load libandroid-tree-sitter.so", error)
+                throw ExceptionInInitializerError(error)
+            }
 
-            runCatching { languageMap["Java"] = TSLanguageJava.getInstance() }
-            runCatching { languageMap["JSON"] = TSLanguageJson.getInstance() }
-            runCatching { languageMap["Kotlin"] = TSLanguageKotlin.getInstance() }
-            runCatching { languageMap["Logcat"] = TSLanguageLogcat.getInstance() }
-            runCatching { languageMap["Python"] = TSLanguagePython.getInstance() }
-            runCatching { languageMap["XML"] = TSLanguageXml.getInstance() }
+            registerGrammarLibrary("Java", "java") { TSLanguageJava.getInstance() }
+            registerGrammarLibrary("JSON", "json") { TSLanguageJson.getInstance() }
+            registerGrammarLibrary("Kotlin", "kotlin") { TSLanguageKotlin.getInstance() }
+            registerGrammarLibrary("Logcat", "logcat") { TSLanguageLogcat.getInstance() }
+            registerGrammarLibrary("Python", "python") { TSLanguagePython.getInstance() }
+            registerGrammarLibrary("XML", "xml") { TSLanguageXml.getInstance() }
+        }
+
+        private inline fun registerGrammarLibrary(
+            displayName: String,
+            extension: String,
+            languageFactory: () -> TSLanguage
+        ) {
+            val libraryName = "tree-sitter-$extension"
+            try {
+                System.loadLibrary(libraryName)
+                val language = languageFactory()
+                check(language.nativeObject != 0L) { "$libraryName returned a null TSLanguage pointer" }
+                languageMap[displayName] = language
+                nativeLibraryStates[libraryName] = "READY"
+                Log.i(TAG, "Loaded lib$libraryName.so; ABI=${language.abiVersion}")
+            } catch (error: Throwable) {
+                nativeLibraryStates[libraryName] = "FAILED: ${error.javaClass.simpleName}: ${error.message}"
+                Log.e(TAG, "Unable to load/register lib$libraryName.so", error)
+            }
         }
     }
 
@@ -175,7 +200,10 @@ class MainActivity : AppCompatActivity() {
                     return@forEach
                 }
                 val result = runCatching {
-                    val source = assets.open("tsh/$assetName").bufferedReader().use { it.readText() }
+                    val customSource = if (extension == "java") {
+                        getSharedPreferences("windbell_tsh_config", MODE_PRIVATE).getString("java.source", null)
+                    } else null
+                    val source = customSource ?: assets.open("tsh/$assetName").bufferedReader().use { it.readText() }
                     val compiled = synchronized(engine) {
                         engine.loadTshSource(extension, source, language)
                     }
@@ -228,6 +256,58 @@ class MainActivity : AppCompatActivity() {
 
     private fun loadExternalTshConfiguration(extension: String, language: TSLanguage) {
         loadAvailableTshConfigurations(mapOf(extension to language))
+    }
+
+    /** Load a user-selected .tsh file and replace the active Java configuration atomically. */
+    private fun loadSelectedTshConfiguration(uri: Uri) {
+        val language = languageMap["Java"]
+        if (language == null) {
+            showResultDialog("TSH 配置切换失败", "Java Grammar 尚未注册。请先检查 Native 库加载状态。")
+            return
+        }
+        activityScope.launch(Dispatchers.IO) {
+            val loaded = runCatching {
+                val source = contentResolver.openInputStream(uri)?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }
+                    ?: error("无法读取所选 .tsh 文件")
+                require(source.isNotBlank()) { ".tsh 文件为空" }
+                val engine = WindbellTshEngine.instance
+                val compiled = synchronized(engine) { engine.loadTshSource("java", source, language) }
+                if (!compiled) {
+                    val diagnostics = engine.lastCompileDiagnostics.joinToString("\\n") {
+                        "${it.code}@${it.line}:${it.column}: ${it.message}"
+                    }
+                    error(diagnostics.ifBlank { "TSH 编译失败，Native 编译器未提供诊断" })
+                }
+                source
+            }
+            val displayName = runCatching {
+                contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)
+                    ?.use { cursor -> if (cursor.moveToFirst()) cursor.getString(0) else null }
+            }.getOrNull() ?: uri.lastPathSegment ?: "custom.tsh"
+            withContext(Dispatchers.Main) {
+                loaded.onSuccess { source ->
+                    getSharedPreferences("windbell_tsh_config", MODE_PRIVATE).edit()
+                        .putString("java.source", source)
+                        .putString("java.name", displayName)
+                        .apply()
+                    tshConfigurationStates["java"] = "READY"
+                    javaTshReady = true
+                    activeTshHighlighter = null
+                    installTshHighlighterIfReady()
+                    ensureEditorHighlighterInstalled()
+                    Toast.makeText(this@MainActivity, "已切换 Java TSH 配置：$displayName", Toast.LENGTH_LONG).show()
+                }.onFailure { error ->
+                    tshConfigurationStates["java"] = "FAILED: ${error.message}"
+                    javaTshReady = false
+                    Log.e(TAG, "Unable to switch Java TSH configuration", error)
+                    showResultDialog("TSH 配置切换失败", error.stackTraceToString())
+                }
+            }
+        }
+    }
+
+    private fun chooseTshConfiguration() {
+        openTshConfigurationLauncher.launch(arrayOf("text/*", "application/octet-stream"))
     }
 
     private fun setupTabs() {
@@ -951,7 +1031,7 @@ class MainActivity : AppCompatActivity() {
     private fun showTshCoreTestSuiteDialog() {
         val testOptions = arrayOf(
             "1. 🎨 Scheme / Style ID / UI Token 颜色映射",
-            "2. ⚡ Regex / Monarch / ATS / Native Query 四管线覆盖",
+            "2. ⚡ ATS / Native Query / Regex 覆盖诊断",
             "3. 🧩 Tree-sitter Parser 与 TSH 配置注册审计",
             "4. 🧵 32 线程并发重入与资源释放压测"
         )
@@ -965,7 +1045,17 @@ class MainActivity : AppCompatActivity() {
                     3 -> runTshConcurrencyTest()
                 }
             }
+            .setNeutralButton("切换 Java .tsh 配置", null)
             .setNegativeButton("关闭", null)
+            .create().also { dialog ->
+                dialog.setOnShowListener {
+                    dialog.getButton(androidx.appcompat.app.AlertDialog.BUTTON_NEUTRAL)
+                        ?.setOnClickListener {
+                            dialog.dismiss()
+                            chooseTshConfiguration()
+                        }
+                }
+            }
             .show()
     }
 
@@ -974,12 +1064,13 @@ class MainActivity : AppCompatActivity() {
         val labels = linkedMapOf("Java" to "java", "JSON" to "json", "Kotlin" to "kotlin", "Logcat" to "logcat", "Python" to "python", "XML" to "xml", "C" to "c")
         labels.forEach { (name, extension) ->
             val parserState = if (languageMap.containsKey(name)) "READY" else "PARSER_MISSING"
+            val libraryState = nativeLibraryStates["tree-sitter-$extension"] ?: "NOT_LOADED"
             val configState = tshConfigurationStates[extension] ?: "NOT_CHECKED"
             val schemes = if (configState == "READY") WindbellTshEngine.instance.listSchemes(extension) else emptyList()
             val styles = if (configState == "READY") WindbellTshEngine.instance.getStyleCatalog(extension).size else 0
             val bindingClass = if (name == "C") "TSLanguage.loadLanguage" else "TSLanguage$name"
             val nativeLibrary = "libtree-sitter-$extension.so"
-            report.appendLine("$name (.$extension): parser=$parserState · binding=$bindingClass · native=$nativeLibrary · tsh=$configState · schemes=${schemes.size} · styles=$styles")
+            report.appendLine("$name (.$extension): parser=$parserState · binding=$bindingClass · native=$nativeLibrary [$libraryState] · tsh=$configState · schemes=${schemes.size} · styles=$styles")
             if (schemes.isNotEmpty()) report.appendLine("   " + schemes.joinToString())
         }
         report.appendLine()
