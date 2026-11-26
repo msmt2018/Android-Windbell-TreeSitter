@@ -234,6 +234,37 @@
                 id: "java-type-parameters"
                 priority: 112
                 source: `(type_parameter (type_identifier) @type)`
+            },
+
+            {
+                id: "java-any-equal-name"
+                priority: 120
+                source: `(method_declaration name: (identifier) @function (#any-eq? @function "run"))`
+            },
+            {
+                id: "java-any-not-equal-name"
+                priority: 119
+                source: `(method_declaration name: (identifier) @function (#any-not-eq? @function "toString"))`
+            },
+            {
+                id: "java-not-any-of-excluded-methods"
+                priority: 118
+                source: `(method_declaration name: (identifier) @function (#not-any-of? @function "test" "skip"))`
+            },
+            {
+                id: "java-any-contains-getter"
+                priority: 117
+                source: `(method_declaration name: (identifier) @function (#any-contains? @function "get"))`
+            },
+            {
+                id: "java-any-not-contains-test"
+                priority: 116
+                source: `(method_declaration name: (identifier) @function (#any-not-contains? @function "test"))`
+            },
+            {
+                id: "java-not-direct-field-parent"
+                priority: 115
+                source: `(method_declaration name: (identifier) @function (#not-has-parent? @function "field_declaration"))`
             }
 
 
