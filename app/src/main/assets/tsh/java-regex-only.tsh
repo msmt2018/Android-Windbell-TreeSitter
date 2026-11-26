@@ -364,6 +364,6 @@
         { match: /\.\.\./, 0: "operator", priority: 65 },
         { match: /(?:>>>?=?|<<=?|->|::|\+\+|--|&&|\|\||==|!=|<=|>=|\+=|-=|\*=|\/=|%=|&=|\|=|\^=)/, 0: "operator", priority: 64 },
         // Fallback for identifier references not covered by a declaration/call context.
-        { match: /\\b[A-Za-z_$][A-Za-z0-9_$]*\\b/, 0: "variable", priority: 42 }
+        { match: /\b[A-Za-z_$][A-Za-z0-9_$]*\b/, 0: "variable", priority: 42 }
     ]
 }
