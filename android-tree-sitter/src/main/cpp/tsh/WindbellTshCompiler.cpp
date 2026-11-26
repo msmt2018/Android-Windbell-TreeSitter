@@ -2652,6 +2652,7 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                         };
                         program.declaration_order = native_query_declaration_order++;
                         std::string query_source;
+                        uint32_t query_source_content_offset = 0;
                         while (true) {
                             auto field = lexer.nextToken();
                             if (field.type == TshLexer::TokenType::TOK_RBRACE) break;
@@ -2737,6 +2738,14 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                             } else if (field.text == "source") {
                                 if (value.type != TshLexer::TokenType::TOK_STRING) return nullptr;
                                 query_source = value.text;
+                                // Query errors are reported in byte offsets relative to
+                                // the embedded raw-string body. Preserve the body's source
+                                // position so diagnostics point into the actual .tsh query,
+                                // not to an unrelated line near the beginning of the file.
+                                // All production query examples use backtick raw strings.
+                                query_source_content_offset =
+                                    g_tsh_last_source_offset +
+                                    (g_tsh_last_source_offset < UINT32_MAX ? 1U : 0U);
                             } else if (field.text == "enabled") {
                                 if (value.text == "true") program.enabled = true;
                                 else if (value.text == "false") program.enabled = false;
@@ -2769,10 +2778,24 @@ std::shared_ptr<TshGrammar> TshCompiler::compileInternal(const std::string& sour
                                 static_cast<uint32_t>(query_source.size()),
                                 &error_offset, &error_type);
                             if (!program.query) {
-                                g_tsh_last_source_offset = error_offset;
+                                const size_t error_position = std::min<size_t>(
+                                    error_offset, query_source.size());
+                                const size_t context_start =
+                                    error_position > 24 ? error_position - 24 : 0;
+                                const size_t context_length = std::min<size_t>(
+                                    64, query_source.size() - context_start);
+                                std::string context =
+                                    query_source.substr(context_start, context_length);
+                                std::replace(context.begin(), context.end(), '\\n', ' ');
+                                std::replace(context.begin(), context.end(), '\\r', ' ');
+                                g_tsh_last_source_offset =
+                                    query_source_content_offset + error_offset;
                                 g_tsh_last_error_detail =
-                                    "native Tree-sitter query compilation failed (error " +
-                                    std::to_string(static_cast<int>(error_type)) + ")";
+                                    "native Tree-sitter query compilation failed: id='" +
+                                    (program.id.empty() ? std::string("<unnamed>") : program.id) +
+                                    "', error=" + std::to_string(static_cast<int>(error_type)) +
+                                    ", queryByteOffset=" + std::to_string(error_offset) +
+                                    ", near='" + context + "'";
                                 return nullptr;
                             }
                             try {
