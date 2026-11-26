@@ -1188,9 +1188,10 @@ void WindbellEngine::matchBlockRecursive(
             ONIG_OPTION_NONE
         );
 
+        const uint32_t block_scan_end_byte = static_cast<uint32_t>(range_end - text_start);
         uint32_t block_end_byte = (hit_end >= 0) ?
             static_cast<uint32_t>(end_region->end[0]) :
-            output_end_byte;
+            std::min(output_end_byte, block_scan_end_byte);
 
         if ((block_start_byte & 1u) == 0 && (block_end_byte & 1u) == 0) {
             if (rule.has_style && block_start_byte < block_end_byte) {
@@ -1211,7 +1212,7 @@ void WindbellEngine::matchBlockRecursive(
                 const uint32_t content_start = static_cast<uint32_t>(start_region->end[0]);
                 const uint32_t content_end = hit_end >= 0 ?
                     static_cast<uint32_t>(end_region->beg[0]) :
-                    output_end_byte;
+                    std::min(output_end_byte, block_scan_end_byte);
                 if (content_start < content_end &&
                     (content_start & 1u) == 0 && (content_end & 1u) == 0 &&
                     content_end > output_start_byte && content_start < output_end_byte) {
@@ -1242,7 +1243,7 @@ void WindbellEngine::matchBlockRecursive(
                 const UChar* inner_start = content_start;
                 const UChar* inner_end = hit_end >= 0
                     ? text_start + end_region->beg[0]
-                    : text_start + output_end_byte;
+                    : text_start + block_scan_end_byte;
 
                 for (const auto& nested : rule.nested_rules) {
                     if (!nested.enabled) continue;
