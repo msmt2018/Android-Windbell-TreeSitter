@@ -179,8 +179,8 @@ subprojects {
                 url.set("https://github.com/${githubPackagesOwner()}/${githubPackagesRepository()}")
                 licenses {
                   license {
-                    name.set("GNU Lesser General Public License v3.0")
-                    url.set("https://www.gnu.org/licenses/gpl-3.0.html#license-text")
+                    name.set("GNU Affero General Public License v3.0")
+                    url.set("https://www.gnu.org/licenses/agpl-3.0.html")
                     distribution.set("repo")
                   }
                 }
