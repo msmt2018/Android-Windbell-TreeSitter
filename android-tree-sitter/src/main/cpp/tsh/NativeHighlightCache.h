@@ -95,6 +95,43 @@ public:
         return &found->second.value;
     }
 
+    // Reuse a previously captured viewport when it fully contains the new
+    // request. Editor draw ranges are not guaranteed to be identical between
+    // frames (line coalescing, horizontal clipping and viewport geometry can
+    // change), so exact-key-only lookup needlessly reran Regex for overlapping
+    // ranges whose captures were already retained.
+    const Value *findContaining(const Key &key, const Key **matchedKey = nullptr) noexcept {
+        auto exact = entries_.find(key);
+        if (exact != entries_.end()) {
+            touch(&exact->second);
+            if (matchedKey) *matchedKey = &exact->first;
+            return &exact->second.value;
+        }
+
+        auto best = entries_.end();
+        uint64_t best_width = UINT64_MAX;
+        for (auto it = entries_.begin(); it != entries_.end(); ++it) {
+            const Key &candidate = it->first;
+            if (candidate.version != key.version ||
+                candidate.source_version != key.source_version ||
+                candidate.partition_version != key.partition_version ||
+                candidate.grammar_revision != key.grammar_revision ||
+                candidate.diagnostics != key.diagnostics ||
+                candidate.start_byte > key.start_byte ||
+                candidate.end_byte < key.end_byte) continue;
+            const uint64_t width = static_cast<uint64_t>(candidate.end_byte) -
+                candidate.start_byte;
+            if (width < best_width) {
+                best = it;
+                best_width = width;
+            }
+        }
+        if (best == entries_.end()) return nullptr;
+        touch(&best->second);
+        if (matchedKey) *matchedKey = &best->first;
+        return &best->second.value;
+    }
+
     void put(Key key, Value value) {
         constexpr size_t kEntryOverhead =
             sizeof(Value) + sizeof(Key) + 5u * sizeof(void *);
