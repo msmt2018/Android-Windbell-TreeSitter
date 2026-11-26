@@ -804,22 +804,27 @@ class MainActivity : AppCompatActivity() {
 
         javaTshProfileLoadJob = activityScope.launch(Dispatchers.IO) {
             val engine = WindbellTshEngine.instance
-            val result = runCatching {
+            val compilation = runCatching {
                 val source = assets.open("tsh/${profile.assetName}")
                     .bufferedReader(Charsets.UTF_8).use { it.readText() }
                 val compiled = synchronized(engine) {
                     engine.loadTshSource("java", source, language)
                 }
                 if (!compiled) {
-                    val diagnostics = engine.lastCompileDiagnostics.joinToString("\n") {
+                    val diagnostics = engine.lastCompileDiagnostics.joinToString("\\n") {
                         "${it.code}@${it.line}:${it.column}: ${it.message}"
                     }
                     error(diagnostics.ifBlank { "Native TSH compiler returned false without diagnostics." })
                 }
-                runJavaTshPipelineProfileProbe(profile, language)
             }
+            // Compilation and runtime probing are separate outcomes: a diagnostic
+            // failure must never leave the newly compiled profile mislabeled as the old one.
+            val probe = if (compilation.isSuccess) {
+                runCatching { runJavaTshPipelineProfileProbe(profile, language) }
+            } else null
+
             withContext(Dispatchers.Main) {
-                result.onSuccess { report ->
+                if (compilation.isSuccess) {
                     activeJavaTshProfile = profile
                     getSharedPreferences("tsh_pipeline_profiles", MODE_PRIVATE)
                         .edit().putString("java.profile", profile.id).apply()
@@ -828,17 +833,21 @@ class MainActivity : AppCompatActivity() {
                     installTshHighlighterIfReady()
                     editorView?.invalidate()
                     applyTshThemeTokens()
+                    val report = probe?.getOrElse { diagnosticError ->
+                        "PIPELINE DIAGNOSTICS ERROR\\n${diagnosticError.stackTraceToString()}"
+                    } ?: "Pipeline probe did not run."
                     showResultDialog(
                         "Java TSH 已切换：${profile.displayName}",
-                        report + "\n\n编辑器原文档已保留；新高亮器已重新绑定，后续绘制使用当前配置。"
+                        report + "\\n\\n编辑器原文档已保留；新高亮器已重新绑定，后续绘制使用当前配置。"
                     )
-                }.onFailure { error ->
+                } else {
                     // A failed compile leaves the engine's previous grammar snapshot intact.
                     javaTshReady = engine.isGrammarLoaded("java")
                     if (javaTshReady) installTshHighlighterIfReady()
+                    val error = compilation.exceptionOrNull()
                     showResultDialog(
                         "Java TSH 配置加载失败",
-                        "目标文件：assets/tsh/${profile.assetName}\n\n${error.stackTraceToString()}"
+                        "目标文件：assets/tsh/${profile.assetName}\\n\\n${error?.stackTraceToString() ?: "Unknown compiler failure"}"
                     )
                 }
             }
