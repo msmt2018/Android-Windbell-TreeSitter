@@ -13,6 +13,11 @@
   app:showAsAction="never" />
 
  <item
+  android:id="@+id/action_open_tsh_file"
+  android:title="📂 从文件选择 .tsh 配置..."
+  app:showAsAction="never" />
+
+ <item
   android:id="@+id/test_tsh_suite"
   android:title="⚙️ TSH 核心测试套件"
   app:showAsAction="never" />
