@@ -994,6 +994,28 @@ class MainActivity : AppCompatActivity() {
                 report.appendLine("ATS Selector：${diagnostics.matchCounts[2] ?: 0} matches / $ats captures")
                 report.appendLine("Native SCM Query：${diagnostics.matchCounts[3] ?: 0} matches / $query captures")
                 report.appendLine()
+                report.appendLine("Capture preview (first 24):")
+                val sourceLabels = mapOf(
+                    0 to "Oniguruma Regex",
+                    1 to "Regex State / Contains",
+                    2 to "ATS Selector",
+                    3 to "Native SCM Query"
+                )
+                val styleNames = WindbellTshEngine.instance
+                    .getStyleCatalog("java").associateBy { it.styleId }
+                diagnostics.captures.take(24).forEach { capture ->
+                    val start = (capture.startByte shr 1).coerceIn(0, sample.length)
+                    val end = (capture.endByte shr 1).coerceIn(start, sample.length)
+                    val snippet = sample.substring(start, end)
+                        .replace("\\n", "\\\\n")
+                        .replace("\\r", "\\\\r")
+                    val style = styleNames[capture.styleId]?.name ?: "style#${capture.styleId}"
+                    report.appendLine(
+                        "  [${sourceLabels[capture.source] ?: "source#${capture.source}"} " +
+                            "p=${capture.priority} style=$style] \"$snippet\""
+                    )
+                }
+                report.appendLine()
                 report.appendLine(if (passed) "PIPELINE ISOLATION: PASS" else "PIPELINE ISOLATION: FAIL")
                 if (!passed) {
                     report.appendLine("Expected producer counts do not match the selected profile. Inspect the compiler diagnostics and captures before treating this profile as valid.")
