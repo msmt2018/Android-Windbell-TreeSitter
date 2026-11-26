@@ -313,8 +313,7 @@
                 priority: 120
                 source: `(marker_annotation "@" @annotationMarker)`
                 captures: { annotationMarker: annotation }
-            }
-
+            },
             {
                 id: "java-type-declarations"
                 priority: 135
