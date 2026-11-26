@@ -40,6 +40,14 @@ internal class TshCaptureDiskStore(
     init {
         require(sessionId >= 0L)
         require(maxBytes > 0L)
+        // Session IDs are unique within this process. A same-named directory
+        // can therefore only be residue from a previous process/session and
+        // must not be mistaken for indexed entries in this fresh cache.
+        if (directory.exists()) {
+            check(directory.deleteRecursively()) {
+                "Unable to clear stale TSH capture cache directory: $directory"
+            }
+        }
         check((directory.isDirectory || directory.mkdirs()) && directory.canWrite()) {
             "Unable to create app-private TSH capture cache directory: $directory"
         }
