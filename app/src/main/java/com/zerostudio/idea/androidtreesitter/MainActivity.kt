@@ -110,7 +110,7 @@ class MainActivity : AppCompatActivity() {
     private var editorView: EditorView? = null
     private var editorTree: TSTree? = null
     @Volatile private var javaTshReady: Boolean = false
-    private var activeJavaTshProfile: JavaTshPipelineProfile = JavaTshPipelineProfile.HYBRID
+    @Volatile private var activeJavaTshProfile: JavaTshPipelineProfile = JavaTshPipelineProfile.HYBRID
     private var javaTshProfileLoadJob: Job? = null
     private var activeTshHighlighter: TshSyntaxHighlighter? = null
     private val tshConfigurationStates = java.util.concurrent.ConcurrentHashMap<String, String>()
