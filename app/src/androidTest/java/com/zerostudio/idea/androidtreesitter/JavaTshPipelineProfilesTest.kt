@@ -64,6 +64,8 @@ class JavaTshPipelineProfilesTest {
                         .bufferedReader(Charsets.UTF_8).use { it.readText() }
                     when (profile) {
                         0 -> {
+                            assertTrue("Regex-only must declare Regex contains rules", source.contains("contains: ["))
+                            assertTrue("Regex-only must declare Regex definitions", source.contains("defines: ["))
                             assertTrue("Regex-only must not declare AST selectors", !source.contains("ast: ["))
                             assertTrue("Regex-only must not declare Tree-sitter SCM queries", !source.contains("treeSitter {"))
                         }
@@ -71,12 +73,13 @@ class JavaTshPipelineProfilesTest {
                             assertTrue("ATS-only must not declare Regex contains rules", !source.contains("contains: ["))
                             assertTrue("ATS-only must not declare Regex defines", !source.contains("defines: ["))
                             assertTrue("ATS-only must not use regex SCM predicates", !source.contains("#match?"))
+                            assertTrue("ATS-only must not contain Regex match expressions", !source.contains("match: /") && !source.contains("start: {match: /"))
                             assertTrue("ATS-only must not use regex editor metadata", !source.contains("wordPattern:") && !source.contains("firstLine:") && !source.contains("onEnterRules:"))
                         }
                         2 -> {
                             assertTrue("Hybrid must include AST selectors", source.contains("ast: ["))
                             assertTrue("Hybrid must include native SCM queries", source.contains("treeSitter {"))
-                            assertTrue("Hybrid must include Regex rules", source.contains("contains: ["))
+                            assertTrue("Hybrid must include Regex rules", source.contains("contains: [") && source.contains("defines: ["))
                         }
                     }
                     val isolatedSource = source
