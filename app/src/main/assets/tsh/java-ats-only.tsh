@@ -1,0 +1,322 @@
+/* Java TSH isolation profile: TREE-SITTER ATS ONLY. No Regex rules, regex metadata or regex SCM predicates. */
+{
+    language {
+        id: "java"
+        name: "Java"
+        extensions: [".java", ".jav"]
+        aliases: ["Java"]
+        mimeTypes: ["text/x-java-source", "text/x-java"]
+    }
+    name: ["Java", ".java", ".jav"],
+    ignoreCase: false,
+
+    // =========================================================================
+    // 1. Editor language metadata
+    // =========================================================================
+    editor {
+        tabSize: 4
+        fontSize: 14
+        insertSpaces: true
+        autoIndent: true
+        trimTrailingWhitespace: true
+        formatOnType: false
+        renderWhitespace: "selection"
+        lineNumbers: true
+        comments {
+            line: ["//"]
+            block: [["/*", "*/"]]
+        }
+        brackets: ["{}", "[]", "()", "<>"]
+        bracketNotIn: ["string", "comment"]
+        autoClosingPairs: [
+            { open: "(", close: ")", notIn: ["string", "comment"] }
+            { open: "[", close: "]", notIn: ["string", "comment"] }
+            { open: "{", close: "}", notIn: ["string", "comment"] }
+            { open: "\"", close: "\"", notIn: ["string", "comment"] }
+        ]
+        surroundingPairs: ["{}", "[]", "()", "\"\""]
+        completion {
+            triggerCharacters: [".", "@", ":"]
+        }
+        electricCharacters: ["}", ";"]
+
+    // =========================================================================
+    // 4. Tree-sitter ATS AST selector rules (Regex pipeline disabled)
+    // =========================================================================
+    ast: [
+        // --- 4.1 类型声明节点 ---
+        { node: "class_declaration", field: "name", style: "type", priority: 110 },
+        { node: "interface_declaration", field: "name", style: "type", priority: 110 },
+        { node: "record_declaration", field: "name", style: "type", priority: 110 },
+        { node: "enum_declaration", field: "name", style: "type", priority: 110 },
+
+        // --- 4.2 方法与构造器声明 ---
+        { node: "method_declaration", field: "name", style: "function", priority: 115 },
+        { node: "constructor_declaration", field: "name", style: "function", priority: 115 },
+        // Variable declarators cover both field and local declaration names.
+        { node: "variable_declarator", field: "name", style: "variable", priority: 100 },
+
+        // --- 4.3 枚举常量声明 ---
+        { node: "enum_constant", field: "name", style: "constant", priority: 105 },
+
+        // --- 4.4 函数调用与动态属性绑定 (消除 AST 歧义) ---
+        { node: "method_invocation", field: "name", style: "function", priority: 105 },
+        { node: "field_access", field: "field", style: "variable", priority: 100 },
+
+        // --- 4.5 类型标识符宏观着色 ---
+        { node: "type_identifier", style: "type", priority: 95 },
+        { node: "scoped_type_identifier", style: "type", priority: 95 },
+        { node: "@", named: false, parent: "annotation", style: "annotation", priority: 120 },
+        { node: "@", named: false, parent: "marker_annotation", style: "annotation", priority: 120 },
+        { node: "annotation", field: "name", style: "annotation", priority: 120 },
+        { node: "marker_annotation", field: "name", style: "annotation", priority: 120 },
+
+        // --- 4.6 字符串、字符、数值与注释节点：避免无界 Regex 全文扫描 ---
+        { node: "string_literal", style: "string", priority: 125 },
+        { node: "character_literal", style: "string", priority: 125 },
+        { node: "line_comment", style: "comment", priority: 130 },
+        { node: "block_comment", style: "comment", priority: 130 },
+        { node: "decimal_integer_literal", style: "number", priority: 90 },
+        { node: "hex_integer_literal", style: "number", priority: 90 },
+        { node: "octal_integer_literal", style: "number", priority: 90 },
+        { node: "binary_integer_literal", style: "number", priority: 90 },
+        { node: "decimal_floating_point_literal", style: "number", priority: 90 },
+        { node: "hex_floating_point_literal", style: "number", priority: 90 },
+
+        // --- 4.7 常量命名约定在 AST 标识符范围内判定 ---
+
+        { node: "annotation_type_declaration", field: "name", style: "type", priority: 110 },
+        { node: "formal_parameter", field: "name", style: "variable", priority: 105 },
+        { node: "catch_formal_parameter", field: "name", style: "variable", priority: 105 },
+        { node: "method_reference", field: "name", style: "function", priority: 105 },
+    ],
+
+    // =========================================================================
+    // 4.6 Native Tree-sitter SCM query and predicate pipeline
+    // =========================================================================
+    treeSitter {
+        queries: [
+
+            {
+                id: "java-annotation-marker"
+                priority: 120
+                source: `(annotation "@" @annotationMarker)`
+                captures: { annotationMarker: annotation }
+            },
+            {
+                id: "java-marker-annotation-marker"
+                priority: 120
+                source: `(marker_annotation "@" @annotationMarker)`
+                captures: { annotationMarker: annotation }
+            }
+
+            {
+                id: "java-type-declarations"
+                priority: 135
+                source: `[(class_declaration name: (identifier) @type) (interface_declaration name: (identifier) @type) (enum_declaration name: (identifier) @type) (record_declaration name: (identifier) @type) (annotation_type_declaration name: (identifier) @type)]`
+            },
+            {
+                id: "java-method-declarations"
+                priority: 132
+                source: `(method_declaration name: (identifier) @function (#kind-eq? @function "identifier"))`
+            },
+            {
+                id: "java-constructor-declarations"
+                priority: 132
+                source: `(constructor_declaration name: (identifier) @function)`
+            },
+            {
+                id: "java-formal-parameters"
+                priority: 128
+                source: `(formal_parameter name: (identifier) @variable (#has-parent? @variable "formal_parameter"))`
+            },
+            {
+                id: "java-method-invocations"
+                priority: 126
+                source: `(method_invocation name: (identifier) @function)`
+            },
+            {
+                id: "java-field-access"
+                priority: 124
+                source: `(field_access field: (identifier) @variable)`
+            },
+            {
+                id: "java-javadoc-blocks"
+                priority: 145
+                source: `((block_comment) @docComment (#contains? @docComment "@"))`
+            },
+            {
+                id: "java-line-comments"
+                priority: 130
+                source: `(line_comment) @comment`
+            },
+            {
+                id: "java-string-literals"
+                priority: 140
+                source: `(string_literal) @string`
+            },
+            {
+                id: "java-character-literals"
+                priority: 140
+                source: `(character_literal) @string`
+            },
+            {
+                id: "java-number-literals"
+                priority: 120
+                source: `[(decimal_integer_literal) (hex_integer_literal) (octal_integer_literal) (binary_integer_literal) (decimal_floating_point_literal) (hex_floating_point_literal)] @number`
+            },
+            {
+                id: "java-keyword-tokens"
+                priority: 96
+                source: `["public" "protected" "private" "abstract" "static" "final" "native" "synchronized" "volatile" "transient" "strictfp" "class" "interface" "enum" "record" "extends" "implements" "permits" "return" "throw" "throws" "new" "this" "super" "if" "else" "switch" "case" "default" "for" "while" "do" "break" "continue" "try" "catch" "finally" "yield" "assert" "package" "import"] @keyword`
+            },
+            {
+                id: "java-literal-constants"
+                priority: 96
+                source: `["true" "false" "null"] @constant`
+            },
+            {
+                id: "java-annotation-names"
+                priority: 138
+                source: `[(annotation name: (identifier) @annotation) (marker_annotation name: (identifier) @annotation)]`
+            },
+            {
+                id: "java-selected-entry-points"
+                priority: 127
+                source: `(method_declaration name: (identifier) @function (#any-of? @function "main" "run" "execute" "invoke"))`
+            },
+            {
+                id: "java-exclude-object-method-name"
+                priority: 125
+                source: `(method_declaration name: (identifier) @function (#not-eq? @function "toString"))`
+            },
+            {
+                id: "java-methods-inside-types"
+                priority: 123
+                source: `(method_declaration name: (identifier) @function (#has-ancestor? @function "class_declaration"))`
+            },
+            {
+                id: "java-non-test-method-names"
+                priority: 122
+                source: `(method_declaration name: (identifier) @function (#not-contains? @function "test"))`
+            },
+            {
+                id: "java-getter-method-names"
+                priority: 121
+                source: `(method_declaration name: (identifier) @function (#contains? @function "get"))`
+            },
+            {
+                id: "java-exact-demo-type"
+                priority: 136
+                source: `(class_declaration name: (identifier) @type (#eq? @type "Demo"))`
+            },
+
+            {
+                id: "java-type-declarations"
+                priority: 135
+                source: `[(class_declaration name: (identifier) @type) (interface_declaration name: (identifier) @type) (enum_declaration name: (identifier) @type) (record_declaration name: (identifier) @type) (annotation_type_declaration name: (identifier) @type)]`
+            },
+            {
+                id: "java-method-declarations"
+                priority: 132
+                source: `(method_declaration name: (identifier) @function (#kind-eq? @function "identifier"))`
+            },
+            {
+                id: "java-constructor-declarations"
+                priority: 132
+                source: `(constructor_declaration name: (identifier) @function)`
+            },
+            {
+                id: "java-formal-parameters"
+                priority: 128
+                source: `(formal_parameter name: (identifier) @variable (#has-parent? @variable "formal_parameter"))`
+            },
+            {
+                id: "java-method-invocations"
+                priority: 126
+                source: `(method_invocation name: (identifier) @function)`
+            },
+            {
+                id: "java-field-access"
+                priority: 124
+                source: `(field_access field: (identifier) @variable)`
+            },
+            {
+                id: "java-javadoc-blocks"
+                priority: 145
+                source: `((block_comment) @docComment (#contains? @docComment "@"))`
+            },
+            {
+                id: "java-line-comments"
+                priority: 130
+                source: `(line_comment) @comment`
+            },
+            {
+                id: "java-string-literals"
+                priority: 140
+                source: `(string_literal) @string`
+            },
+            {
+                id: "java-character-literals"
+                priority: 140
+                source: `(character_literal) @string`
+            },
+            {
+                id: "java-number-literals"
+                priority: 120
+                source: `[(decimal_integer_literal) (hex_integer_literal) (octal_integer_literal) (binary_integer_literal) (decimal_floating_point_literal) (hex_floating_point_literal)] @number`
+            },
+            {
+                id: "java-keyword-tokens"
+                priority: 96
+                source: `["public" "protected" "private" "abstract" "static" "final" "native" "synchronized" "volatile" "transient" "strictfp" "class" "interface" "enum" "record" "extends" "implements" "permits" "return" "throw" "throws" "new" "this" "super" "if" "else" "switch" "case" "default" "for" "while" "do" "break" "continue" "try" "catch" "finally" "yield" "assert" "package" "import"] @keyword`
+            },
+            {
+                id: "java-literal-constants"
+                priority: 96
+                source: `["true" "false" "null"] @constant`
+            },
+            {
+                id: "java-annotation-names"
+                priority: 138
+                source: `[(annotation name: (identifier) @annotation) (marker_annotation name: (identifier) @annotation)]`
+            },
+            {
+                id: "java-selected-entry-points"
+                priority: 127
+                source: `(method_declaration name: (identifier) @function (#any-of? @function "main" "run" "execute" "invoke"))`
+            },
+            {
+                id: "java-exclude-object-method-name"
+                priority: 125
+                source: `(method_declaration name: (identifier) @function (#not-eq? @function "toString"))`
+            },
+            {
+                id: "java-methods-inside-types"
+                priority: 123
+                source: `(method_declaration name: (identifier) @function (#has-ancestor? @function "class_declaration"))`
+            },
+            {
+                id: "java-non-test-method-names"
+                priority: 122
+                source: `(method_declaration name: (identifier) @function (#not-contains? @function "test"))`
+            },
+            {
+                id: "java-getter-method-names"
+                priority: 121
+                source: `(method_declaration name: (identifier) @function (#contains? @function "get"))`
+            },
+            {
+                id: "java-exact-demo-type"
+                priority: 136
+                source: `(class_declaration name: (identifier) @type (#eq? @type "Demo"))`
+            },
+        ]
+    },
+
+    // =========================================================================
+    // 5. 微观正则流与下推自动机 Block 匹配流 (Contains)
+    // =========================================================================
+
+    ]
+}
