@@ -239,11 +239,11 @@ class PieceTreeSnapshot internal constructor(
                 sourceOffsetInDocument - pieceStarts[piece]
             val source = sources[piece]
             if (source is String) {
-                source.getChars(
-                    sourceOffset,
-                    sourceOffset + count,
-                    destination,
-                    targetOffset
+                source.toCharArray(
+                    destination = destination,
+                    destinationOffset = targetOffset,
+                    startIndex = sourceOffset,
+                    endIndex = sourceOffset + count
                 )
             } else {
                 for (index in 0 until count) {
