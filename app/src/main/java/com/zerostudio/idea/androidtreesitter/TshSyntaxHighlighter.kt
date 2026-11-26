@@ -369,12 +369,16 @@ class TshSyntaxHighlighter(
         if (active.pendingEditEpoch.get() != active.appliedEditEpoch.get()) return false
         if (lineStartOffset < 0 || start < 0 || end <= start) return false
 
-        // start/end are columns in the current buffer line. Omitting start here used
-        // to test the first columns even when the renderer was painting a later
-        // horizontal slice, allowing an uncached partition to be treated as ready.
-        val queryStart = lineStartOffset.toLong() + start.toLong()
-        val queryEnd = lineStartOffset.toLong() + end.toLong() +
-            visibleLineBreakLength(bufferLine, end, host?.buffer?.getLineLength(bufferLine) ?: end).toLong()
+        // start/end are columns in the current buffer line. Normalize them in
+        // exactly the same way as styleLine so rendered-cache keys match at EOL
+        // and for horizontally clipped lines.
+        val lineLength = host?.buffer?.getLineLength(bufferLine) ?: end
+        val visibleStart = start.coerceIn(0, lineLength)
+        val visibleEnd = end.coerceIn(visibleStart, lineLength)
+        if (visibleStart >= visibleEnd) return true
+        val queryStart = lineStartOffset.toLong() + visibleStart.toLong()
+        val queryEnd = lineStartOffset.toLong() + visibleEnd.toLong() +
+            visibleLineBreakLength(bufferLine, visibleEnd, lineLength).toLong()
         val length = active.lengthChars.get()
         if (queryStart >= length) return true
         if (queryStart > Int.MAX_VALUE || queryEnd > Int.MAX_VALUE || queryEnd < queryStart) return false
@@ -390,8 +394,8 @@ class TshSyntaxHighlighter(
             sessionId = active.cacheSessionId,
             documentRevision = active.documentRevision.get(),
             lineStartOffset = lineStartOffset,
-            visibleStart = start,
-            visibleEnd = end,
+            visibleStart = visibleStart,
+            visibleEnd = visibleEnd,
             scheme = engine.getSelectedScheme(extension) ?: engine.getDefaultScheme(extension).orEmpty(),
             dark = engine.isDark(extension)
         )
