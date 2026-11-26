@@ -344,7 +344,7 @@
         {match: /->/, 0: "operator", priority: 60},
         {match: /[?:]/, 0: "operator", priority: 50},
         {match: /[=+\-*\/%&|^!~<>]/, 0: "operator", priority: 50},
-        {match: /[{}()\[\],;.]/, 0: "operator", priority: 40}
+        {match: /[{}()\[\],;.]/, 0: "operator", priority: 40},
 
         // Java quoted strings and character literals (single lexical matches).
         { match: /"(?:\\.|[^"\\])*"/, 0: "string", priority: 126 },
