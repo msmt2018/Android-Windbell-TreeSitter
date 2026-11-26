@@ -351,7 +351,7 @@
         { match: /'(?:\\.|[^'\\])'/, 0: "string", priority: 126 },
 
         // Java numeric literal families, including separators, radix prefixes and suffixes.
-        { match: /(?:0[xX][0-9a-fA-F](?:_?[0-9a-fA-F])*(?:[lL])?|0[bB][01](?:_?[01])*(?:[lL])?|0[0-7](?:_?[0-7])*(?:[lL])?|[0-9](?:_?[0-9])*(?:\.[0-9](?:_?[0-9])*)?(?:[eE][+-]?[0-9](?:_?[0-9])*)?[fFdDlL]?)/, 0: "number", priority: 92 },
+        { match: /(?:0[xX][0-9a-fA-F](?:_?[0-9a-fA-F])*(?:\.[0-9a-fA-F](?:_?[0-9a-fA-F])*)?[pP][+-]?[0-9](?:_?[0-9])*(?:[fFdD])?|0[xX][0-9a-fA-F](?:_?[0-9a-fA-F])*(?:[lL])?|0[bB][01](?:_?[01])*(?:[lL])?|0[0-7](?:_?[0-7])*(?:[lL])?|[0-9](?:_?[0-9])*(?:\.[0-9](?:_?[0-9])*)?(?:[eE][+-]?[0-9](?:_?[0-9])*)?[fFdDlL]?)/, 0: "number", priority: 92 },
 
         // Annotation names, declaration-like type names and identifier contexts.
         { match: /@[A-Za-z_$][A-Za-z0-9_$]*/, 0: "annotation", priority: 88 },
