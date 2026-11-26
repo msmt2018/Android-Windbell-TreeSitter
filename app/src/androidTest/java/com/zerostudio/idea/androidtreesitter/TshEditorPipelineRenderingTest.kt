@@ -908,6 +908,72 @@ class TshEditorPipelineRenderingTest {
     }
 
     @Test
+    fun javaJavadocCommentOccludesLowerPriorityKeywordBold() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        TreeSitter.loadLibrary()
+        System.loadLibrary("tree-sitter-java")
+        val language = TSLanguageJava.getInstance()
+        assertTrue("Java Tree-sitter language must be registered", language.nativeObject != 0L)
+
+        val sourceDsl = context.assets.open("tsh/java.tsh")
+            .bufferedReader(Charsets.UTF_8).use { it.readText() }
+        val engine = WindbellTshEngine.instance
+        assertTrue(
+            "Java TSH must compile: ${engine.lastCompileDiagnostics}",
+            engine.loadTshSource("java", sourceDsl, language)
+        )
+        assertTrue(engine.selectScheme("java", "darcula"))
+        engine.setAppearance("java", false)
+
+        val source = "/** if @param value */\nclass Probe { void f() { if (true) {} } }"
+        val captures = engine.computeHighlights(null, source, "java")
+        val catalog = engine.getStyleCatalog("java")
+        val keywordId = catalog.first { it.name == "keyword" }.styleId
+        val commentIf = source.indexOf("if")
+        val codeIf = source.lastIndexOf("if")
+        val param = source.indexOf("@param")
+        assertTrue(
+            "The low-priority keyword capture must overlap the Javadoc comment for this regression",
+            captures.any {
+                it.styleId == keywordId &&
+                    it.startByteUnsigned <= commentIf.toLong() * 2L &&
+                    it.endByteUnsigned >= (commentIf + 2).toLong() * 2L
+            }
+        )
+
+        val styled = SpannableStringBuilder(source)
+        try {
+            engine.applyHighlightSpansToSpannable(
+                spans = captures,
+                documentOffset = 0,
+                text = source,
+                extension = "java",
+                spannable = styled
+            )
+            fun hasBold(start: Int, end: Int): Boolean =
+                styled.getSpans(start, end, StyleSpan::class.java).any {
+                    it.style == android.graphics.Typeface.BOLD &&
+                        styled.getSpanStart(it) < end && styled.getSpanEnd(it) > start
+                }
+
+            assertFalse(
+                "Javadoc body keyword 'if' must not inherit bold from the lower-priority keyword capture",
+                hasBold(commentIf, commentIf + 2)
+            )
+            assertTrue(
+                "The @param docTag must retain its explicitly configured bold style",
+                hasBold(param, param + "@param".length)
+            )
+            assertTrue(
+                "A Java keyword outside Javadoc must remain bold",
+                hasBold(codeIf, codeIf + 2)
+            )
+        } finally {
+            engine.clearAppearanceOverride("java")
+        }
+    }
+
+    @Test
     fun javaAstSymbolColorReachesEditorCanvas() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         TreeSitter.loadLibrary()
