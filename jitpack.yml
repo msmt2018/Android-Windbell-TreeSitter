@@ -2,19 +2,30 @@ jdk:
   - openjdk17
 
 before_install:
-  - git submodule update --init --recursive
-  - sudo apt-get update
-  - sudo apt-get install -y build-essential cargo cmake ninja-build curl
-  - curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
-  - sudo apt-get install -y nodejs
-  - sdk_root="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"; test -n "$sdk_root"
-  - sdkmanager="$sdk_root/cmdline-tools/latest/bin/sdkmanager"; test -x "$sdkmanager"
-  - yes | "$sdkmanager" --licenses >/dev/null || true
-  - "$sdkmanager" --install "ndk;29.0.14206865" "cmake;3.31.6" "build-tools;35.0.0"
-  - node --version
-  - npm --version
-  - chmod +x ./gradlew scripts/install-grammar-node-dependencies.sh
-  - bash scripts/install-grammar-node-dependencies.sh
+  - |
+    set -Eeuo pipefail
+    sdk_root="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
+    if [[ -z "$sdk_root" ]]; then
+      echo "Android SDK is not configured by JitPack" >&2
+      exit 1
+    fi
+    sdkmanager="$sdk_root/cmdline-tools/latest/bin/sdkmanager"
+    if [[ ! -x "$sdkmanager" ]]; then
+      sdkmanager="$(command -v sdkmanager || true)"
+    fi
+    if [[ -z "$sdkmanager" || ! -x "$sdkmanager" ]]; then
+      echo "Android sdkmanager was not found" >&2
+      exit 1
+    fi
+    yes | "$sdkmanager" --licenses >/dev/null || true
+    "$sdkmanager" --install \
+      "ndk;29.0.14206865" \
+      "cmake;3.31.6" \
+      "build-tools;35.0.0"
+    sudo apt-get update
+    sudo apt-get install -y build-essential cargo nodejs npm ninja-build
 
 install:
-  - ./gradlew publishToMavenLocal -PjitpackVersion="$JITPACK_TAG" -x test -x lint --no-daemon --stacktrace
+  - npm install --prefix grammars/cpp
+  - npm install --prefix grammars/starlark --ignore-scripts --omit=dev
+  - ./gradlew publishToMavenLocal --no-daemon --stacktrace
