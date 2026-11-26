@@ -362,6 +362,6 @@
 
         // Java operator and punctuation coverage outside higher-priority lexical regions.
         { match: /\.\.\./, 0: "operator", priority: 65 },
-        { match: /(?:>>>?=?|<<=?|->|::|\+\+|--|&&|\|\||==|!=|<=|>=|\+=|-=|\*=|\/=|%=|&=|\|=|\^=)/, 0: "operator", priority: 64 },
+        { match: /(?:>>>?=?|<<=?|->|::|\+\+|--|&&|\|\||==|!=|<=|>=|\+=|-=|\*=|\/=|%=|&=|\|=|\^=)/, 0: "operator", priority: 64 }
     ]
 }
