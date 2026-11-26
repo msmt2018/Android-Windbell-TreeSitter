@@ -110,7 +110,7 @@ treeSitter {
         (class_declaration name: (identifier) @class_name)
         (method_declaration name: (identifier) @method_name)
       `
-      captures {
+      captures: {
         class_name: type
         method_name: function
       }
