@@ -1,4 +1,4 @@
-/* Java TSH isolation profile: TREE-SITTER ATS ONLY. No Regex rules, regex metadata or regex SCM predicates. */
+/* Java TSH isolation profile: TREE-SITTER ATS ONLY. Only AST selectors and native SCM queries are enabled. */
 {
     language {
         id: "java"
@@ -41,7 +41,7 @@
         electricCharacters: ["}", ";"]
 
     // =========================================================================
-    // 4. Tree-sitter ATS AST selector rules (Regex pipeline disabled)
+    // 4. Tree-sitter ATS AST selector rules (native syntax-node captures only)
     // =========================================================================
     ast: [
         // --- 4.1 类型声明节点 ---
@@ -71,7 +71,7 @@
         { node: "annotation", field: "name", style: "annotation", priority: 120 },
         { node: "marker_annotation", field: "name", style: "annotation", priority: 120 },
 
-        // --- 4.6 字符串、字符、数值与注释节点：避免无界 Regex 全文扫描 ---
+        // --- 4.6 字符串、字符、数值与注释节点：仅使用语法节点范围捕获 ---
         { node: "string_literal", style: "string", priority: 125 },
         { node: "character_literal", style: "string", priority: 125 },
         { node: "line_comment", style: "comment", priority: 130 },
