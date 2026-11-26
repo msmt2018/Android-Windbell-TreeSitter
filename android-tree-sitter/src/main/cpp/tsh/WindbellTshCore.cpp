@@ -1573,21 +1573,41 @@ std::vector<HighlightSpan> WindbellEngine::highlightHybrid(
         const UChar* viewport_start = text_start + range_start_byte;
         const UChar* viewport_end = text_start + range_end_byte;
         const UChar* current = viewport_start;
-        if (viewport_start > text_start) {
+        auto previousCodePoint = [text_start](const UChar* position) noexcept {
+            const auto* units = reinterpret_cast<const uint16_t*>(text_start);
+            const size_t unit_index = static_cast<size_t>(position - text_start) / 2u;
+            if (unit_index == 0) return text_start;
+            size_t step_units = 1;
+            const uint16_t previous_unit = units[unit_index - 1u];
+            if (previous_unit >= 0xDC00u && previous_unit <= 0xDFFFu &&
+                unit_index >= 2u) {
+                step_units = 2;
+            }
+            return position - step_units * 2u;
+        };
+        // A greedy/unbounded expression can match from many earlier positions
+        // and still overlap the viewport (for example [a-z]+ inside a long
+        // identifier). Walk backward through only those overlapping candidates
+        // until the earliest one is found, preserving the original forward,
+        // non-overlapping scan result without visiting unrelated prior matches.
+        const UChar* previous_search = viewport_start;
+        while (previous_search > text_start) {
+            previous_search = previousCodePoint(previous_search);
             const int previous_hit = onig_search(
                 rule.onig_start,
                 text_start,
                 text_end,
-                viewport_start,
+                previous_search,
                 text_start,
                 region,
                 ONIG_OPTION_NONE
             );
-            if (previous_hit >= 0 && region->beg[0] >= 0 &&
-                region->end[0] > static_cast<int>(range_start_byte) &&
-                region->beg[0] < static_cast<int>(range_start_byte)) {
-                current = text_start + region->beg[0];
+            if (previous_hit < 0 || region->beg[0] < 0 ||
+                region->end[0] <= static_cast<int>(range_start_byte) ||
+                region->beg[0] >= static_cast<int>(range_start_byte)) {
+                break;
             }
+            current = text_start + region->beg[0];
         }
 
         while (current < viewport_end) {
