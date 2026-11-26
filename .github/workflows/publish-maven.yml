@@ -1,4 +1,4 @@
-name: Publish GitHub Packages
+name: Publish Maven to JitPack
 
 on:
   workflow_dispatch:
