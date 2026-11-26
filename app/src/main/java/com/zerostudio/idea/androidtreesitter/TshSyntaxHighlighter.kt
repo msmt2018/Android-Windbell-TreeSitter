@@ -613,11 +613,23 @@ class TshSyntaxHighlighter(
         if (key.startUtf16 >= key.endUtf16) return
         val active = largeSession ?: return
         if (generation.get() != active.ticket || active.cacheSessionId != key.sessionId) return
-        if (findContainingCaptureRange(key) != null) return
+
+        // Normalize ordinary viewport requests to stable document pages. Editor
+        // line batches otherwise produce slightly different [start, end) keys on
+        // every scroll frame, defeating the native exact-range cache even when
+        // the same source region is revisited. Keep exceptionally long lines or
+        // cross-page slices exact: a single page entry must fully cover a query.
+        val requestKey = CapturePageRanges.canonicalize(
+            key,
+            active.lengthChars.get().coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+        )
+        if (findContainingCaptureRange(requestKey) != null) return
         val flushNow = synchronized(viewportRequestLock) {
             if (pendingViewportRanges.none {
-                it.sessionId == key.sessionId && it.startUtf16 <= key.startUtf16 && it.endUtf16 >= key.endUtf16
-            }) pendingViewportRanges += key
+                it.sessionId == requestKey.sessionId &&
+                    it.startUtf16 <= requestKey.startUtf16 &&
+                    it.endUtf16 >= requestKey.endUtf16
+            }) pendingViewportRanges += requestKey
             !viewportFrameActive
         }
         if (flushNow && viewportFlushScheduled.compareAndSet(false, true)) {
@@ -654,7 +666,7 @@ class TshSyntaxHighlighter(
         var current = sorted.first()
         for (index in 1 until sorted.size) {
             val next = sorted[index]
-            if (next.sessionId == current.sessionId && next.startUtf16 <= current.endUtf16) {
+            if (next.sessionId == current.sessionId && next.startUtf16 < current.endUtf16) {
                 current = current.copy(endUtf16 = maxOf(current.endUtf16, next.endUtf16))
             } else {
                 merged += current
