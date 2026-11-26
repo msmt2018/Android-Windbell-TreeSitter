@@ -336,18 +336,26 @@ class TshSyntaxHighlighter(
         // Immutable spans can be safely reused after scrolling away and back.
         val immutable = SpannedString(styled)
         renderedLineCache.put(renderKey, immutable)
-        runCatching {
-            active.diskRenderedLineStore.put(
-                renderKey.documentRevision,
-                renderKey.lineStartOffset,
-                renderKey.visibleStart,
-                renderKey.visibleEnd,
-                renderKey.scheme,
-                renderKey.dark,
-                text,
-                immutable
-            )
-        }.onFailure { Log.w(TAG, "Unable to persist TSH rendered line $renderKey", it) }
+        // Disk writes stay off the editor/render thread. The in-memory immutable
+        // result is immediately available; the cold copy is published asynchronously.
+        scope.launch(Dispatchers.IO) {
+            if (generation.get() == active.ticket && largeSession === active) {
+                runCatching {
+                    active.diskRenderedLineStore.put(
+                        renderKey.documentRevision,
+                        renderKey.lineStartOffset,
+                        renderKey.visibleStart,
+                        renderKey.visibleEnd,
+                        renderKey.scheme,
+                        renderKey.dark,
+                        text,
+                        immutable
+                    )
+                }.onFailure {
+                    Log.w(TAG, "Unable to persist TSH rendered line $renderKey", it)
+                }
+            }
+        }
         return immutable
     }
 
