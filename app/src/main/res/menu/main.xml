@@ -9,7 +9,7 @@
 
  <item
   android:id="@+id/test_tsh_java_pipeline"
-  android:title="🧪 Java TSH 管道隔离测试"
+  android:title="🧪 Java TSH 配置 / 管道切换"
   app:showAsAction="never" />
 
  <item
