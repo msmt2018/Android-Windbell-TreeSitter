@@ -94,7 +94,7 @@ private class TshAndroidTypefaceSpan(
             // unavailable base weight as the platform's normal weight.
             val resolvedWeight = weight ?: baseTypeface.weight
                 .takeIf { it in 1..1000 }
-                ?: Typeface.NORMAL_WEIGHT
+                ?: 400
             return Typeface.create(
                 baseTypeface,
                 resolvedWeight,
