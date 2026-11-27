@@ -354,6 +354,8 @@ class CompletionWindow(context: Context) : FrameLayout(context) {
     private fun themeColor(attr: Int, fallback: Int): Int = MaterialColors.getColor(context, attr, fallback)
 
     private fun View.systemInsets(): Rect {
+        // View.rootWindowInsets was added in API 23; the editor still supports API 21.
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return Rect()
         val insets = rootWindowInsets ?: return Rect()
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             val i = insets.getInsets(
