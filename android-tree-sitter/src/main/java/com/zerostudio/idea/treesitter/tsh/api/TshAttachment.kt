@@ -1,7 +1,7 @@
 package com.zerostudio.idea.treesitter.tsh.api
 
 import java.util.concurrent.atomic.AtomicLong
-import java.util.concurrent.CompletableFuture
+import java.util.concurrent.CountDownLatch
 
 /** Host-owned lifecycle scope. Closing a scope runs registered detach actions exactly once. */
 class TshOwnerScope(val id: String = "tsh-owner-${NEXT_ID.incrementAndGet()}") : AutoCloseable {
@@ -10,7 +10,7 @@ class TshOwnerScope(val id: String = "tsh-owner-${NEXT_ID.incrementAndGet()}") :
     private val actions = LinkedHashMap<Long, () -> Unit>()
     @Volatile private var closed = false
     @Volatile private var closeFailures: List<TshDiagnostic> = emptyList()
-    private var closeCompletion: CompletableFuture<List<TshDiagnostic>>? = null
+    private var closeCompletion: CountDownLatch? = null
     /** Prevents a cleanup callback recursively closing its own scope from joining itself. */
     private var closingThread: Thread? = null
 
@@ -41,7 +41,7 @@ class TshOwnerScope(val id: String = "tsh-owner-${NEXT_ID.incrementAndGet()}") :
             } else {
                 closed = true
                 closingThread = Thread.currentThread()
-                val created = CompletableFuture<List<TshDiagnostic>>()
+                val created = CountDownLatch(1)
                 closeCompletion = created
                 created to actions.values.toList().also { actions.clear() }
             }
@@ -72,10 +72,22 @@ class TshOwnerScope(val id: String = "tsh-owner-${NEXT_ID.incrementAndGet()}") :
             synchronized(lock) {
                 closeFailures = failures.toList()
                 closingThread = null
-                completion.complete(closeFailures)
+                completion.countDown()
             }
         }
-        return completion.join()
+        var interrupted = false
+        while (true) {
+            try {
+                completion.await()
+                break
+            } catch (_: InterruptedException) {
+                // Preserve close's completion guarantee while restoring the caller's
+                // interrupt status after every registered cleanup action has finished.
+                interrupted = true
+            }
+        }
+        if (interrupted) Thread.currentThread().interrupt()
+        return closeFailures
     }
 
     override fun close() {
