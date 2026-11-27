@@ -89,9 +89,15 @@ private class TshAndroidTypefaceSpan(
     private fun resolve(base: Typeface): Typeface {
         if (Build.VERSION.SDK_INT >= 28) {
             val baseTypeface = family?.let { Typeface.create(it, Typeface.NORMAL) } ?: base
+            // Typeface.weight may be 0 for legacy/unknown typefaces, while the
+            // weighted Typeface.create overload accepts only 1..1000. Treat an
+            // unavailable base weight as the platform's normal weight.
+            val resolvedWeight = weight ?: baseTypeface.weight
+                .takeIf { it in 1..1000 }
+                ?: Typeface.NORMAL_WEIGHT
             return Typeface.create(
                 baseTypeface,
-                weight ?: baseTypeface.weight,
+                resolvedWeight,
                 (style and Typeface.ITALIC) != 0
             )
         }
