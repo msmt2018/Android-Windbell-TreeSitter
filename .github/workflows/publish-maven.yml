@@ -126,6 +126,7 @@ jobs:
           npm install --prefix grammars/cpp
           npm install --prefix grammars/starlark --ignore-scripts --omit=dev
           npm install --prefix grammars/svelte --ignore-scripts --omit=dev
+          npm install --prefix grammars/typescript --ignore-scripts --omit=dev
 
       - name: Enable Gradle wrapper
         run: chmod +x gradlew
