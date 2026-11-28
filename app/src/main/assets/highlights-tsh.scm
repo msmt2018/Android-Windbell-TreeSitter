@@ -5,6 +5,7 @@
 (block_comment) @comment
 
 (string) @string
+(template_string) @string
 (regex) @string.special
 (color) @constant
 (number) @number
