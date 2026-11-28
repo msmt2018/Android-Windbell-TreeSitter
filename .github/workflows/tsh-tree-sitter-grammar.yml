@@ -31,9 +31,6 @@ jobs:
           fetch-depth: 1
           submodules: false
 
-      - name: Fetch Tree-sitter runtime headers
-        run: git submodule update --init --depth 1 tree-sitter-lib
-
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
@@ -58,12 +55,12 @@ jobs:
           out="$GITHUB_WORKSPACE/build/tsh-tree-sitter"
           mkdir -p "$out"
 
-          parser_header="$(find "$GITHUB_WORKSPACE/tree-sitter-lib" -path '*/tree_sitter/parser.h' -type f -print -quit)"
-          if [[ -z "$parser_header" ]]; then
-            echo "::error::Tree-sitter parser.h was not found in the checked-out runtime"
+          parser_header="$grammar_dir/src/tree_sitter/parser.h"
+          [[ -s "$parser_header" ]] || {
+            echo "::error::Generated Tree-sitter parser.h is missing"
             exit 1
-          fi
-          include_dir="$(dirname "$(dirname "$parser_header")")"
+          }
+          include_dir="$grammar_dir/src"
 
           toolchain="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
           [[ -x "$toolchain/clang" && -x "$toolchain/llvm-ar" ]] || {
@@ -91,6 +88,7 @@ jobs:
           mkdir -p "$out/src"
           cp "$grammar_dir/src/grammar.json" "$grammar_dir/src/parser.c" \
             "$grammar_dir/src/node-types.json" "$out/src/"
+          cp -R "$grammar_dir/src/tree_sitter" "$out/src/tree_sitter"
           printf 'ABI=15\nTREE_SITTER_CLI=0.25.10\n' > "$out/BUILD-METADATA.txt"
 
       - name: Upload generated grammar sources and Android archives
@@ -107,7 +105,7 @@ jobs:
           set -Eeuo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add grammars/tsh/src/grammar.json grammars/tsh/src/parser.c grammars/tsh/src/node-types.json
+          git add grammars/tsh/src/grammar.json grammars/tsh/src/parser.c grammars/tsh/src/node-types.json grammars/tsh/src/tree_sitter/
           if ! git diff --cached --quiet; then
             git commit -m "chore(tsh): generate Tree-sitter ABI 15 parser [skip ci]"
             git push origin "HEAD:${GITHUB_REF_NAME}"
