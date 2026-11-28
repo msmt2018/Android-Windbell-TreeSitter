@@ -109,7 +109,13 @@ def generate_grammars_json():
     local_dirs = set([d for d in os.listdir(grammars_dir) 
                       if os.path.isdir(os.path.join(grammars_dir, d)) and not d.startswith('.') and d not in EXCLUDED_DIR_NAMES])
 
-    valid_languages = sorted(list(git_languages.intersection(local_dirs)))
+    # First-party grammars are maintained in this repository rather than as
+    # Git submodules. Keep them in the same generation pipeline without
+    # fabricating a remote .gitmodules entry.
+    local_grammars = {"tsh"}
+    valid_languages = sorted(
+        (git_languages.intersection(local_dirs) | (local_grammars & local_dirs))
+    )
 
     new_grammars_list = []
     for lang_name in valid_languages:
