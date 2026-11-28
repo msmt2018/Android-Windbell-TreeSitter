@@ -162,7 +162,6 @@ class TextRenderer(
         // which part of which line a row shows.
         val rowsAreLines = layout is UnwrappedLayout
         val wrapped = layout.isWrapping
-        val cached = canvas.isHardwareAccelerated && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
 
         val lineCount = source.getLineCount()
         // Without wrapping a row is a line, and the text alone says how many there
@@ -209,17 +208,29 @@ class TextRenderer(
             // Cache a row only when its measured content fits the current viewport.
             // Long unwrapped lines are painted by visible columns, regardless of their
             // character count; wrapped rows already carry their visual slice.
-            if (shouldCacheRow(cached, text, rowStart, rowEnd, wrapped)) {
-                drawRowCached(canvas, row, visible, bufferLine, text, rowStart, rowEnd, isFirstRowOfLine, textLeft)
+            if (canvas.isHardwareAccelerated && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                if (shouldCacheRow(true, text, rowStart, rowEnd, wrapped)) {
+                    drawRowCached(
+                        canvas, row, visible, bufferLine, text, rowStart, rowEnd, isFirstRowOfLine, textLeft
+                    )
+                } else {
+                    drawRowDirect(
+                        canvas, row, bufferLine, text, rowStart, rowEnd, isFirstRowOfLine, textLeft, wrapped
+                    )
+                }
             } else {
-                drawRowDirect(canvas, row, bufferLine, text, rowStart, rowEnd, isFirstRowOfLine, textLeft, wrapped)
+                drawRowDirect(
+                    canvas, row, bufferLine, text, rowStart, rowEnd, isFirstRowOfLine, textLeft, wrapped
+                )
             }
 
             // continue to next row
             row++
         }
         // the rows of the edits before this frame have been drawn
-        if (cached) rows().endFrame()
+        if (canvas.isHardwareAccelerated && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            rows().endFrame()
+        }
     }
 
     // #region render nodes
