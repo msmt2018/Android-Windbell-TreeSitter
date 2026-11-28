@@ -20,6 +20,7 @@ module.exports = grammar({
     source_file: $ => choice(
       $.versioned_document,
       $.legacy_document,
+      $.object,
     ),
 
     versioned_document: $ => seq(
@@ -97,18 +98,18 @@ module.exports = grammar({
 
     string: $ => choice(
       seq('"', repeat(choice(
-        token.immediate(/[^"\\\n\r]+/),
+        token.immediate(prec(1, /[^"\\\n\r]+/)),
         $.escape_sequence,
       )), '"'),
       seq("'", repeat(choice(
-        token.immediate(/[^'\\\n\r]+/),
+        token.immediate(prec(1, /[^'\\\n\r]+/)),
         $.escape_sequence,
       )), "'"),
     ),
 
     raw_string: $ => seq(
       '\x60',
-      repeat(token.immediate(/[^\x60]+/)),
+      repeat(token.immediate(prec(1, /[^\x60]+/))),
       '\x60',
     ),
 
