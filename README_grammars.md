@@ -98,3 +98,32 @@ To ensure zero manual maintenance and avoid configuration typos, two automation 
 # Run anytime you add, remove, or modify grammar submodules:
 python3 generate_grammars.py
 ```
+
+---
+
+## First-party TSH configuration grammar
+
+The `.tsh` extension is parsed by the in-repository grammar at `grammars/tsh`.
+It is not routed through Java, TOML, JSON, or a generic fallback grammar. The
+grammar models TSH's own blocks, key/value properties, arrays, nested objects,
+regular-expression literals, CSS color literals, quoted/template strings,
+annotations, numbers, booleans, and comments.
+
+The grammar is registered in `grammars/grammars.json`, generated as the
+`:tree-sitter-tsh` native module, and packaged by the sample app. Its editor
+profile is `app/src/main/assets/tsh/tsh.tsh`; Tree-sitter capture definitions
+are kept in `app/src/main/assets/highlights-tsh.scm`.
+
+Performance policy:
+- Structural captures use Tree-sitter nodes and field selectors.
+- Common TSH keywords are captured by bounded identifier predicates.
+- Color values are parsed as dedicated tokens, preserving the original source
+  text rather than normalizing or replacing the configured color.
+- The profile avoids document-wide regular-expression highlighting passes.
+- The grammar is permissive about property names so new TSH directives remain
+  parseable without requiring a parser release for every configuration option.
+
+The first-party grammar is included explicitly by `generate_grammars.py`, so
+regenerating the grammar registry does not discard it merely because it is not
+a Git submodule.
+
