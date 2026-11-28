@@ -17,11 +17,6 @@ module.exports = grammar({
 
   word: $ => $.identifier,
 
-  conflicts: $ => [
-    [$._value, $.block],
-    [$.identifier, $.dotted_identifier],
-  ],
-
   rules: {
     source_file: $ => repeat($._statement),
 
@@ -29,7 +24,6 @@ module.exports = grammar({
       $.property,
       $.block,
       $.array_block,
-      $.expression_statement,
     ),
 
     property: $ => seq(
@@ -47,8 +41,6 @@ module.exports = grammar({
       '}',
       optional(','),
     ),
-
-    expression_statement: $ => seq($._value, optional(',')),
 
     // TSH scheme sections use the concise "light [ ... ]" form.
     array_block: $ => seq(
@@ -85,7 +77,7 @@ module.exports = grammar({
       '}',
     ),
 
-    _object_entry: $ => choice($.property, $.block, $.expression_statement),
+    _object_entry: $ => choice($.property, $.block),
 
     array: $ => seq(
       '[',
