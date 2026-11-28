@@ -180,6 +180,18 @@
                 priority: 90
                 source: `((identifier) @keywordName (#match? @keywordName "^(?:language|editor|comments|indentation|completion|styles|schemes|defines|ast|treeSitter|contains|queries|captures|ui|light|dark)$"))`
                 captures: { keywordName: keyword }
+            },
+            {
+                id: "tsh-punctuation"
+                priority: 50
+                source: `["{" "}" "[" "]" "(" ")" "," ":" "=" "."] @punctuationToken`
+                captures: { punctuationToken: punctuation }
+            },
+            {
+                id: "tsh-string-escapes"
+                priority: 100
+                source: `(escape_sequence) @escapeToken`
+                captures: { escapeToken: operator }
             }
         ]
     }
