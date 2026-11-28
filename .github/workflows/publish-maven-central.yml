@@ -1,0 +1,383 @@
+name: Publish Maven to Maven Central
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Optional release version (default: UTC date + current 7-character commit hash)"
+        required: false
+        type: string
+      publishing_type:
+        description: "Central Portal publishing mode"
+        required: true
+        default: AUTOMATIC
+        type: choice
+        options:
+          - AUTOMATIC
+          - USER_MANAGED
+
+permissions:
+  contents: read
+
+env:
+  ANDROID_NDK_REVISION: "29.0.14206865"
+  ANDROID_CMAKE_VERSION: "3.31.6"
+  ANDROID_BUILD_TOOLS_VERSION: "35.0.0"
+  GROUP: ${{ vars.CENTRAL_GROUP_ID || 'io.github.msmt2018' }}
+
+jobs:
+  publish:
+    name: Build, sign and publish all Maven modules
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Generate and validate release coordinates
+        id: release
+        shell: bash
+        env:
+          REQUESTED_VERSION: ${{ inputs.version }}
+        run: |
+          set -Eeuo pipefail
+          if [[ -n "${REQUESTED_VERSION//[[:space:]]/}" ]]; then
+            release_version="$REQUESTED_VERSION"
+          else
+            release_version="$(date -u +%Y%m%d)-$(git rev-parse --short=7 HEAD)"
+          fi
+          if [[ ! "$release_version" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
+            echo "::error::Invalid Maven version: $release_version"
+            exit 1
+          fi
+          if [[ ! "$GROUP" =~ ^[A-Za-z0-9_-]+(\.[A-Za-z0-9_-]+)+$ ]]; then
+            echo "::error::Invalid Maven groupId: $GROUP"
+            exit 1
+          fi
+          echo "VERSION=$release_version" >> "$GITHUB_ENV"
+          echo "MAVEN_GROUP_PATH=${GROUP//.//}" >> "$GITHUB_ENV"
+          echo "version=$release_version" >> "$GITHUB_OUTPUT"
+          echo "group=$GROUP" >> "$GITHUB_OUTPUT"
+          {
+            echo "## Maven Central release"
+            echo
+            echo "Group: $GROUP"
+            echo "Version: $release_version"
+            echo "Commit: $(git rev-parse HEAD)"
+            echo "Publishing mode: ${{ inputs.publishing_type }}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Validate Central Portal and GPG credentials
+        shell: bash
+        env:
+          CENTRAL_USERNAME: ${{ secrets.MAVEN_USERNAME }}
+          CENTRAL_PASSWORD: ${{ secrets.MAVEN_PASSWORD }}
+          SIGNING_KEY: ${{ secrets.GPG_SIGNING_KEY }}
+        run: |
+          set -Eeuo pipefail
+          [[ -n "$CENTRAL_USERNAME" ]] || { echo "::error::Missing MAVEN_USERNAME (Central Portal user-token username)"; exit 1; }
+          [[ -n "$CENTRAL_PASSWORD" ]] || { echo "::error::Missing MAVEN_PASSWORD (Central Portal user-token password)"; exit 1; }
+          [[ -n "$SIGNING_KEY" ]] || { echo "::error::Missing GPG_SIGNING_KEY"; exit 1; }
+          echo "Required publishing secrets are present."
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+      - name: Install pinned Android NDK, CMake and Build Tools
+        timeout-minutes: 90
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          sdk_root="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
+          [[ -n "$sdk_root" ]] || { echo "::error::Android SDK path is missing"; exit 1; }
+          sdkmanager="$sdk_root/cmdline-tools/latest/bin/sdkmanager"
+          [[ -x "$sdkmanager" ]] || sdkmanager="$(command -v sdkmanager || true)"
+          [[ -x "$sdkmanager" ]] || { echo "::error::sdkmanager was not found"; exit 1; }
+          yes | "$sdkmanager" --licenses >/dev/null || true
+          "$sdkmanager" --install "ndk;$ANDROID_NDK_REVISION" "cmake;$ANDROID_CMAKE_VERSION" "build-tools;$ANDROID_BUILD_TOOLS_VERSION"
+          ndk_path="$sdk_root/ndk/$ANDROID_NDK_REVISION"
+          ndk_revision="$(sed -n 's/^Pkg.Revision = //p' "$ndk_path/source.properties" | head -n 1)"
+          [[ "$ndk_revision" == "$ANDROID_NDK_REVISION" ]] || { echo "::error::Unexpected NDK revision: $ndk_revision"; exit 1; }
+          echo "ANDROID_NDK_HOME=$ndk_path" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_ROOT=$ndk_path" >> "$GITHUB_ENV"
+          echo "$sdk_root/cmake/$ANDROID_CMAKE_VERSION/bin" >> "$GITHUB_PATH"
+          "$sdk_root/cmake/$ANDROID_CMAKE_VERSION/bin/cmake" --version
+          "$sdk_root/build-tools/$ANDROID_BUILD_TOOLS_VERSION/aapt" version
+
+      - name: Install native build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential cargo cmake ninja-build zip gnupg curl jq python3
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22.22.2"
+
+      - name: Install grammar package dependencies
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mapfile -d '' manifests < <(
+            while IFS= read -r -d '' manifest; do
+              package_dir="$(dirname "$manifest")"
+              ancestor="$(dirname "$package_dir")"
+              workspace_managed=false
+              while [[ "$ancestor" == grammars/* ]]; do
+                parent_manifest="$GITHUB_WORKSPACE/$ancestor/package.json"
+                if [[ -f "$parent_manifest" ]] && node -e 'const p=require(process.argv[1]); process.exit(p.workspaces ? 0 : 1)' "$parent_manifest"; then
+                  workspace_managed=true
+                  break
+                fi
+                next_ancestor="$(dirname "$ancestor")"
+                [[ "$next_ancestor" == "$ancestor" ]] && break
+                ancestor="$next_ancestor"
+              done
+              if [[ "$workspace_managed" == false ]]; then
+                printf '%s\0' "$manifest"
+              fi
+            done < <(find grammars -mindepth 2 -maxdepth 4 -type f -name package.json ! -path 'grammars/asm/*' ! -path 'grammars/*/test-npm-package/*' -print0 | sort -z)
+          )
+          (( ${#manifests[@]} > 0 )) || { echo "::error::No grammar package manifests found"; exit 1; }
+          failed_file="$(mktemp)"
+          export failed_file
+          install_grammar() {
+            local dir
+            dir="$(dirname "$1")"
+            local attempt=1
+            while (( attempt <= 4 )); do
+              if (cd "$dir" && npm install --legacy-peer-deps --no-audit --no-fund); then return 0; fi
+              if (( attempt < 4 )); then sleep $((attempt * 15)); fi
+              attempt=$((attempt + 1))
+            done
+            printf '%s\n' "$dir" >> "$failed_file"
+            return 1
+          }
+          export -f install_grammar
+          printf '%s\0' "${manifests[@]}" | xargs -0 -r -n 1 -P 4 bash -c 'install_grammar "$1"' _ || true
+          if [[ -s "$failed_file" ]]; then
+            echo "::error::Grammar dependency installation failed:"
+            sed 's/^/ - /' "$failed_file"
+            exit 1
+          fi
+          rm -f "$failed_file"
+          echo "Installed dependencies for ${#manifests[@]} grammar packages."
+
+      - name: Enable Gradle wrapper
+        run: chmod +x ./gradlew
+
+      - name: Generate Java grammar ABI 15
+        run: ./gradlew generateJavaGrammarAbi15 --no-daemon --stacktrace
+
+      - name: Build all modules and release variants
+        run: ./gradlew clean build --parallel --no-daemon --stacktrace
+
+      - name: Publish all configured Maven modules to local staging
+        run: ./gradlew publishToMavenLocal --parallel --no-daemon --stacktrace
+
+      - name: Assemble, enrich, sign and checksum Central bundle
+        id: bundle
+        shell: bash
+        env:
+          SIGNING_KEY: ${{ secrets.GPG_SIGNING_KEY }}
+          SIGNING_PASSWORD: ${{ secrets.GPG_PASSWORD }}
+        run: |
+          set -Eeuo pipefail
+          if grep -q -- '-----BEGIN PGP PRIVATE KEY BLOCK-----' <<< "$SIGNING_KEY"; then
+            printf '%s\n' "$SIGNING_KEY" > "$RUNNER_TEMP/central-signing-key.asc"
+          else
+            printf '%s' "$SIGNING_KEY" | tr -d '\r\n ' | base64 --decode > "$RUNNER_TEMP/central-signing-key.asc"
+          fi
+          chmod 600 "$RUNNER_TEMP/central-signing-key.asc"
+          gpg --batch --import "$RUNNER_TEMP/central-signing-key.asc"
+          rm -f "$RUNNER_TEMP/central-signing-key.asc"
+          gpg --batch --list-secret-keys --with-colons | grep -q '^sec:' || { echo "::error::No GPG private key was imported"; exit 1; }
+
+          local_repo="$HOME/.m2/repository/$MAVEN_GROUP_PATH"
+          bundle_root="$RUNNER_TEMP/central-bundle"
+          mkdir -p "$bundle_root"
+          mapfile -t pom_files < <(find "$local_repo" -mindepth 3 -maxdepth 3 -type f -name "*-$VERSION.pom" | sort)
+          [[ "${#pom_files[@]}" -eq 60 ]] || { echo "::error::Expected 60 POMs, found ${#pom_files[@]}"; exit 1; }
+
+          python3 - "$local_repo" "$bundle_root" "$GROUP" "$VERSION" <<'PY'
+          import pathlib
+          import shutil
+          import sys
+          import xml.etree.ElementTree as ET
+
+          source_root = pathlib.Path(sys.argv[1])
+          bundle_root = pathlib.Path(sys.argv[2])
+          group_id = sys.argv[3]
+          version = sys.argv[4]
+          ns = "http://maven.apache.org/POM/4.0.0"
+          ET.register_namespace("", ns)
+          q = lambda name: f"{{{ns}}}{name}"
+
+          pom_files = sorted(source_root.glob(f"*/{version}/*-{version}.pom"))
+          if len(pom_files) != 60:
+              raise SystemExit(f"Expected 60 POM files, found {len(pom_files)}")
+
+          for pom in pom_files:
+              module_dir = pom.parent
+              module = module_dir.parent.name
+              target_dir = bundle_root / group_id.replace(".", "/") / module / version
+              target_dir.mkdir(parents=True, exist_ok=True)
+
+              for item in module_dir.iterdir():
+                  if not item.is_file():
+                      continue
+                  if item.name == "_remote.repositories" or item.name.startswith("maven-metadata"):
+                      continue
+                  if item.name.endswith((".lastUpdated", ".asc")):
+                      continue
+                  shutil.copy2(item, target_dir / item.name)
+
+              target_pom = target_dir / pom.name
+              tree = ET.parse(target_pom)
+              root = tree.getroot()
+              if root.find(q("developers")) is None:
+                  developers = ET.Element(q("developers"))
+                  developer = ET.SubElement(developers, q("developer"))
+                  ET.SubElement(developer, q("id")).text = "msmt2018"
+                  ET.SubElement(developer, q("name")).text = "msmt2018"
+                  ET.SubElement(developer, q("url")).text = "https://github.com/msmt2018"
+                  scm = root.find(q("scm"))
+                  if scm is not None:
+                      root.insert(list(root).index(scm), developers)
+                  else:
+                      root.append(developers)
+              tree.write(target_pom, encoding="UTF-8", xml_declaration=True)
+
+              binaries = [
+                  f for f in target_dir.iterdir()
+                  if f.is_file() and f.name.startswith(f"{module}-{version}.")
+                  and f.suffix in (".aar", ".jar")
+              ]
+              if not binaries:
+                  raise SystemExit(f"Missing AAR/JAR for {module}")
+
+          print(f"Prepared Maven Central layout for {len(pom_files)} modules.")
+          PY
+
+          while IFS= read -r -d '' file; do
+            case "$file" in *.asc|*.md5|*.sha1|*.sha256|*.sha512) continue ;; esac
+            gpg --batch --yes --pinentry-mode loopback --passphrase "$SIGNING_PASSWORD" --armor --detach-sign --output "$file.asc" "$file"
+            md5sum "$file" | awk '{print $1}' > "$file.md5"
+            sha1sum "$file" | awk '{print $1}' > "$file.sha1"
+            sha256sum "$file" | awk '{print $1}' > "$file.sha256"
+            sha512sum "$file" | awk '{print $1}' > "$file.sha512"
+          done < <(find "$bundle_root" -type f -print0)
+
+          bundle="$GITHUB_WORKSPACE/central-bundle.zip"
+          (cd "$bundle_root" && zip -qr "$bundle" .)
+          test -s "$bundle"
+          echo "path=$bundle" >> "$GITHUB_OUTPUT"
+          echo "bundle_size=$(du -h "$bundle" | cut -f1)" >> "$GITHUB_OUTPUT"
+
+      - name: Upload Central bundle as a workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: maven-central-bundle-${{ steps.release.outputs.version }}
+          path: central-bundle.zip
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload deployment bundle to Sonatype Central Portal
+        id: upload
+        shell: bash
+        env:
+          CENTRAL_USERNAME: ${{ secrets.MAVEN_USERNAME }}
+          CENTRAL_PASSWORD: ${{ secrets.MAVEN_PASSWORD }}
+          PUBLISHING_TYPE: ${{ inputs.publishing_type }}
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          set -Eeuo pipefail
+          bearer="$(printf '%s:%s' "$CENTRAL_USERNAME" "$CENTRAL_PASSWORD" | base64 -w 0)"
+          response_file="$RUNNER_TEMP/central-upload-response.txt"
+          http_code="$(curl --silent --show-error --retry 5 --retry-all-errors --retry-delay 10 \
+            --output "$response_file" --write-out '%{http_code}' \
+            --request POST --header "Authorization: Bearer $bearer" \
+            --form "bundle=@central-bundle.zip;type=application/zip" \
+            "https://central.sonatype.com/api/v1/publisher/upload?name=Android-Windbell-TreeSitter-$RELEASE_VERSION&publishingType=$PUBLISHING_TYPE")"
+          if [[ "$http_code" != "201" && "$http_code" != "200" ]]; then
+            echo "::error::Central Portal upload failed (HTTP $http_code)"
+            cat "$response_file"
+            exit 1
+          fi
+          deployment_id="$(tr -d '\r\n ' < "$response_file")"
+          [[ -n "$deployment_id" ]] || { echo "::error::Central Portal returned an empty deployment ID"; cat "$response_file"; exit 1; }
+          echo "deployment_id=$deployment_id" >> "$GITHUB_OUTPUT"
+          echo "Central deployment ID: $deployment_id" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Wait for Central Portal deployment
+        shell: bash
+        env:
+          CENTRAL_USERNAME: ${{ secrets.MAVEN_USERNAME }}
+          CENTRAL_PASSWORD: ${{ secrets.MAVEN_PASSWORD }}
+          DEPLOYMENT_ID: ${{ steps.upload.outputs.deployment_id }}
+          PUBLISHING_TYPE: ${{ inputs.publishing_type }}
+        run: |
+          set -Eeuo pipefail
+          bearer="$(printf '%s:%s' "$CENTRAL_USERNAME" "$CENTRAL_PASSWORD" | base64 -w 0)"
+          status_url="https://central.sonatype.com/api/v1/publisher/status?id=$DEPLOYMENT_ID"
+          for attempt in $(seq 1 240); do
+            response="$(curl --fail --silent --show-error --retry 3 --retry-all-errors --retry-delay 5 \
+              --request POST --header "Authorization: Bearer $bearer" "$status_url")"
+            state="$(jq -r '.deploymentState // .state // empty' <<< "$response")"
+            echo "Central deployment state ($attempt/240): ${state:-unknown}"
+            case "$state" in
+              PUBLISHED)
+                echo "Maven Central deployment is PUBLISHED." >> "$GITHUB_STEP_SUMMARY"
+                exit 0
+                ;;
+              FAILED)
+                echo "::error::Maven Central deployment failed:"
+                jq . <<< "$response"
+                exit 1
+                ;;
+              VALIDATED)
+                if [[ "$PUBLISHING_TYPE" == "USER_MANAGED" ]]; then
+                  echo "Validated; manual publication is required: https://central.sonatype.com/publishing/deployments" >> "$GITHUB_STEP_SUMMARY"
+                  exit 0
+                fi
+                ;;
+              PENDING|VALIDATING|PUBLISHING) ;;
+              *)
+                echo "::warning::Unexpected Central response:"
+                jq . <<< "$response" || true
+                ;;
+            esac
+            sleep 15
+          done
+          echo "::error::Timed out waiting for Central. Check https://central.sonatype.com/publishing/deployments"
+          exit 1
+
+      - name: Publish result summary
+        if: success()
+        env:
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+          RELEASE_GROUP: ${{ steps.release.outputs.group }}
+          DEPLOYMENT_ID: ${{ steps.upload.outputs.deployment_id }}
+        run: |
+          {
+            echo
+            echo "## Maven Central publishing result"
+            echo
+            echo "Coordinates: $RELEASE_GROUP:*:$RELEASE_VERSION"
+            echo "Modules: 60"
+            echo "GPG signatures and MD5/SHA checksums: generated"
+            echo "Central deployment ID: $DEPLOYMENT_ID"
+          } >> "$GITHUB_STEP_SUMMARY"
