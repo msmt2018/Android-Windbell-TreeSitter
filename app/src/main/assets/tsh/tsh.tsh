@@ -146,6 +146,7 @@
     ast: [
         { node: "property", field: "key", style: "property", priority: 120 },
         { node: "block", field: "name", style: "type", priority: 115 },
+        { node: "array_block", field: "name", style: "type", priority: 115 },
         { node: "identifier", style: "identifier", priority: 20 },
         { node: "string", style: "string", priority: 125 },
         { node: "regex", style: "regex", priority: 130 },
@@ -170,14 +171,17 @@
             {
                 id: "tsh-section-names"
                 priority: 115
-                source: `(block name: (identifier) @sectionName)`
+                source: `[(block name: (identifier) @sectionName) (array_block name: (identifier) @sectionName)]`
                 captures: { sectionName: type }
+            },
+            {
+                id: "tsh-language-keywords"
+                priority: 90
+                source: `((identifier) @keywordName (#match? @keywordName "^(?:language|editor|comments|indentation|completion|styles|schemes|defines|ast|treeSitter|contains|queries|captures|ui|light|dark)$"))`
+                captures: { keywordName: keyword }
             }
         ]
     }
 
-    contains: [
-        { match: /\b(?:language|editor|styles|schemes|defines|ast|treeSitter|contains|queries|captures|ui|light|dark)\b/, 0: "keyword", priority: 90 },
-        { match: /@[A-Za-z_][A-Za-z0-9_-]*/, 0: "annotation", priority: 85 }
-    ]
+    contains: []
 }
