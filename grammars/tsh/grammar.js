@@ -61,7 +61,7 @@ module.exports = grammar({
       optional(','),
     ),
 
-    style_array: $ => seq('[', commaSep($.style_entry), ']'),
+    style_array: $ => seq('[', repeat(seq($.style_entry, optional(','))), ']'),
 
     style_entry: $ => seq(
       field('style', $.identifier),
@@ -86,11 +86,11 @@ module.exports = grammar({
 
     object: $ => seq(
       '{',
-      commaSep(choice($.property, $.block)),
+      repeat(seq(choice($.property, $.block), optional(','))),
       '}',
     ),
 
-    array: $ => seq('[', commaSep($._value), ']'),
+    array: $ => seq('[', repeat(seq($._value, optional(','))), ']'),
 
     annotated_value: $ => seq(
       choice($.color, $.string, $.number, $.identifier),
@@ -144,6 +144,3 @@ module.exports = grammar({
   },
 });
 
-function commaSep(rule) {
-  return optional(seq(rule, repeat(seq(',', rule)), optional(',')));
-}
