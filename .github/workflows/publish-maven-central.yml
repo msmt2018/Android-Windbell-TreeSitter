@@ -342,7 +342,7 @@ jobs:
           http_code="$(curl --silent --show-error --retry 5 --retry-all-errors --retry-delay 10 \
             --output "$response_file" --write-out '%{http_code}' \
             --request POST --header "Authorization: Bearer $bearer" \
-            --form "bundle=@central-bundle.zip;type=application/zip" \
+            --form "bundle=@central-bundle.zip;type=application/octet-stream" \
             "https://central.sonatype.com/api/v1/publisher/upload?name=Android-Windbell-TreeSitter-$RELEASE_VERSION&publishingType=$PUBLISHING_TYPE")"
           if [[ "$http_code" != "201" && "$http_code" != "200" ]]; then
             echo "::error::Central Portal upload failed (HTTP $http_code)"
