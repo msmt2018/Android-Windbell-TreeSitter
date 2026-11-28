@@ -17,6 +17,7 @@
 package x.github.module.editor.input
 
 import android.content.Context
+import android.os.Build
 import android.view.GestureDetector
 import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
@@ -290,7 +291,10 @@ class GestureController(
         selection.placeCursorAt(x, y)
 
         // perform haptic feedback
-        host.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
+        host.performHapticFeedback(
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) HapticFeedbackConstants.CONTEXT_CLICK
+            else HapticFeedbackConstants.KEYBOARD_TAP
+        )
         // update position
         host.onCursorTapped()
         // popup ime
