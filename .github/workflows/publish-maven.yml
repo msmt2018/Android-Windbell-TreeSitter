@@ -240,15 +240,15 @@ jobs:
             --no-daemon \
             --stacktrace
 
-      - name: Upload editor lint reports
+      - name: Upload android-tree-sitter lint reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: editor-lint-reports
+          name: android-tree-sitter-lint-reports
           path: |
-            editor/build/reports/lint-results-debug.html
-            editor/build/reports/lint-results-debug.xml
-            editor/build/reports/lint-results-debug.txt
+            android-tree-sitter/build/reports/lint-results-debug.html
+            android-tree-sitter/build/reports/lint-results-debug.xml
+            android-tree-sitter/build/reports/lint-results-debug.txt
           if-no-files-found: warn
           retention-days: 7
 
