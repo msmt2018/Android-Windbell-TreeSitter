@@ -1,6 +1,9 @@
 jdk:
   - openjdk17
 
+env:
+  GROUP: com.github.msmt2018.Android-Windbell-TreeSitter
+
 before_install:
   - |
     set -Eeuo pipefail
