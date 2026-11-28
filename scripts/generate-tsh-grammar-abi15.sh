@@ -13,12 +13,13 @@ ABI=15
 [[ -f "$SOURCE" ]] || { echo "::error::Missing TSH grammar.js"; exit 1; }
 cd "$GRAMMAR_DIR"
 
-# Tree-sitter's supported generation flow reads grammar.js and emits
-# both the canonical src/grammar.json and generated src/parser.c in one pass.
-# grammar.json is generated metadata, not a second grammar.js replacement input.
-npm exec --yes --package="tree-sitter-cli@$CLI_VERSION" -- tree-sitter generate --abi="$ABI"
+# First compile grammar.js into Tree-sitter's canonical JSON grammar
+# representation. Then generate the ABI-pinned parser from that JSON, matching
+# the repository's established generate-java-grammar-abi15.sh convention.
+npm exec --yes --package="tree-sitter-cli@$CLI_VERSION" -- tree-sitter generate
 [[ -s "$GRAMMAR_JSON" ]] || { echo "::error::Tree-sitter did not emit src/grammar.json"; exit 1; }
 
+npm exec --yes --package="tree-sitter-cli@$CLI_VERSION" -- tree-sitter generate src/grammar.json --abi="$ABI"
 [[ -s "$PARSER" ]] || { echo "::error::Tree-sitter did not emit src/parser.c"; exit 1; }
 [[ -s "$NODE_TYPES" ]] || { echo "::error::Tree-sitter did not emit src/node-types.json"; exit 1; }
 
