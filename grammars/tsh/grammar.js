@@ -70,6 +70,7 @@ module.exports = grammar({
       $.regex,
       $.color,
       $.string,
+      $.template_string,
       $.number,
       $.boolean,
       $.null,
@@ -108,6 +109,15 @@ module.exports = grammar({
         token.immediate(/[^'\\\n\r]+/),
         $.escape_sequence,
       )), "'"),
+    ),
+
+    template_string: $ => seq(
+      '`',
+      repeat(choice(
+        token.immediate(/[^\`\\]+/),
+        $.escape_sequence,
+      )),
+      '`',
     ),
 
     escape_sequence: _ => token.immediate(seq(
