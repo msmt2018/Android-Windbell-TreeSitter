@@ -515,8 +515,7 @@ open class EditorView @JvmOverloads constructor(
             
             if (array.getBoolean(R.styleable.EditorView_wordwrap, false)) {
                 // instant here: there is no text yet
-                layoutCoordinator.setWordwrap(true)
-                scrollbarController.setHorizontalThumbVisible(true)
+                setWordwrap(true)
             }
             
             // Not applied here: setting text runs the edit hooks, which a subclass
@@ -938,8 +937,7 @@ open class EditorView @JvmOverloads constructor(
             textPaint.textSize = state.getFloat(STATE_TEXT_SIZE, textPaint.textSize)
             val wordwrap = state.getBoolean(STATE_WORDWRAP, layoutCoordinator.isWordwrap)
             if (wordwrap != layoutCoordinator.isWordwrap) {
-                layoutCoordinator.setWordwrap(wordwrap).recycle()
-                scrollbarController.setHorizontalThumbVisible(wordwrap)
+                setWordwrap(wordwrap)
             }
             refreshTextGeometry()
         }
