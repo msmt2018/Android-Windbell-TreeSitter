@@ -281,9 +281,9 @@ Android editor / application
 
 ## Quick start: use Tree-sitter
 
-### 1. Add JitPack to dependency resolution
+### 1. Add Maven repositories
 
-In the consuming Android project's <code>settings.gradle.kts</code>:
+In the consuming Android project's `settings.gradle.kts`, configure Maven Central and JitPack. Maven Central is the recommended default; JitPack remains available for the legacy coordinates and tag-based distribution.
 
 ~~~kotlin
 dependencyResolutionManagement {
@@ -296,9 +296,22 @@ dependencyResolutionManagement {
 }
 ~~~
 
-### 2. Add the binding and the grammar you need
+### 2. Add the core binding and the grammar you need
 
-This is a multi-module repository. The JitPack coordinate form for an individual module is:
+**Recommended: Maven Central**
+
+The default Maven Central group is `io.github.msmt2018`. Use the same published version for the core binding and each selected grammar module:
+
+~~~kotlin
+dependencies {
+    implementation("io.github.msmt2018:android-tree-sitter:VERSION")
+    implementation("io.github.msmt2018:tree-sitter-java:VERSION")
+}
+~~~
+
+**Alternative: JitPack**
+
+JitPack preserves the existing repository-qualified group ID:
 
 ~~~kotlin
 dependencies {
@@ -307,9 +320,11 @@ dependencies {
 }
 ~~~
 
-Replace <code>VERSION</code> with a Git tag or commit version that JitPack has successfully built. Add one <code>tree-sitter-&lt;language&gt;</code> module for each language your application needs; do not add every grammar by default.
+Replace `VERSION` with a version that has actually been published to the selected repository. The default release version is `yyyyMMdd-<7-character Git commit hash>` (UTC date plus the short commit hash). The Maven Central workflow also accepts an optional manually supplied version. For JitPack, use the exact tag/version shown on the [JitPack project page](https://jitpack.io/#msmt2018/Android-Windbell-TreeSitter).
 
-**Publication status:** The release workflow first builds the complete Gradle project, then verifies that all 60 configured Maven publications can be generated in Maven Local. Only after both steps succeed does it create and push the release tag. JitPack then builds/caches the tagged modules on demand and serves their Maven artifacts. A successful pre-release GitHub Actions build does not replace checking the JitPack build result and requested artifact on the [JitPack project page](https://jitpack.io/#msmt2018/Android-Windbell-TreeSitter).
+Add only the `tree-sitter-<language>` modules your application needs. A grammar module depends on the core `android-tree-sitter` binding; declare both dependencies explicitly in the consuming application.
+
+**Important:** a successful GitHub Actions build or local Maven publication does not by itself prove that an artifact is available remotely. Before depending on a release, verify the exact group ID, artifact ID, version, and publication status in Maven Central or on the JitPack project page.
 
 ### 3. Parse source code
 
@@ -602,25 +617,72 @@ For the complete device test matrix, refer to <code>.github/workflows/build.yml<
 - Do not manually edit generated files under <code>grammar-modules/</code>; update the grammar metadata or generator inputs instead.
 - Keep the SDK location in the local <code>local.properties</code> file; do not commit machine-specific SDK paths.
 
-## Maven packages and JitPack
+## Maven publishing: Maven Central and JitPack
 
-There are two different distribution concepts:
+This repository supports **two Maven distribution channels**. They use different group IDs and independent publishing workflows; do not mix the coordinates between them.
 
-- **JitPack:** the supported Maven distribution channel. The release workflow builds the project and verifies all 60 Maven publications locally before creating the Git tag; JitPack then builds/caches tagged modules and serves them from <code>https://jitpack.io</code>.
-- **GitHub Packages:** no longer used for project Maven releases.
+| Channel | Maven group ID | Publishing workflow | Consumer repository |
+| --- | --- | --- | --- |
+| **Maven Central** (recommended) | `io.github.msmt2018` by default | [`publish-maven-central.yml`](.github/workflows/publish-maven-central.yml) | `mavenCentral()` |
+| **JitPack** (legacy coordinates retained) | `com.github.msmt2018.Android-Windbell-TreeSitter` | [`publish-maven.yml`](.github/workflows/publish-maven.yml) | `maven { url = uri("https://jitpack.io") }` |
 
-For JitPack, use the repository lookup page to confirm that the tag/commit has a successful build and that the required module is listed. For this multi-module repository, the expected individual-module coordinate shape is:
+### Maven coordinates and versioning
+
+Each published module uses its Gradle project name as the artifact ID. The repository currently configures 60 Maven modules, including `android-tree-sitter`, `annotations`, and the `tree-sitter-<language>` grammar modules.
+
+The default version format is:
+
+```text
+yyyyMMdd-<7-character Git commit hash>
+```
+
+The date is generated in UTC. The Maven Central workflow accepts an optional manually supplied version; when omitted, it generates the default date-and-commit version. The JitPack publishing workflow generates the same format, creates and pushes a Git tag after successful build and local-artifact verification, and JitPack then builds/caches the tagged modules.
+
+**Maven Central consumer example:**
 
 ~~~kotlin
+repositories {
+    google()
+    mavenCentral()
+}
+
+dependencies {
+    implementation("io.github.msmt2018:android-tree-sitter:VERSION")
+    implementation("io.github.msmt2018:tree-sitter-java:VERSION")
+}
+~~~
+
+**JitPack consumer example:**
+
+~~~kotlin
+repositories {
+    google()
+    maven { url = uri("https://jitpack.io") }
+}
+
 dependencies {
     implementation("com.github.msmt2018.Android-Windbell-TreeSitter:android-tree-sitter:VERSION")
     implementation("com.github.msmt2018.Android-Windbell-TreeSitter:tree-sitter-java:VERSION")
 }
 ~~~
 
-Use the exact artifact name shown by JitPack. Replace the Java grammar example with the grammar module your application uses. A grammar module depends on the core binding module, so normally include both the core module and the selected grammar module.
+Replace the Java grammar artifact with the grammar module required by your application. Use the same release version across the core binding and grammar dependencies. Check the destination repository before copying a version into a production build: a Git tag, a successful local publication, and remote artifact availability are separate states.
 
-For branch snapshots or commit builds, use the version form shown by JitPack for that branch or commit. JitPack's version syntax and build requirements can change; consult the official [Android publishing guide](https://docs.jitpack.io/android/) and [build guide](https://docs.jitpack.io/building/).
+### Publishing to Maven Central
+
+Run **Actions → Publish Maven to Maven Central → Run workflow** using [`.github/workflows/publish-maven-central.yml`](.github/workflows/publish-maven-central.yml).
+
+Before the first release, the repository owner must verify the `io.github.msmt2018` namespace in Sonatype Central Portal and configure the five required GitHub Actions secrets: `MAVEN_USERNAME`, `MAVEN_PASSWORD`, `MAVEN_PASSWORD_BASE64`, `GPG_SIGNING_KEY`, and `GPG_PASSWORD`. The workflow supports `AUTOMATIC` publication or `USER_MANAGED` validation followed by manual publication in Central Portal. The group ID can be overridden with the repository Actions variable `CENTRAL_GROUP_ID`, but it must be a namespace verified by Central Portal.
+
+The workflow builds the project, publishes all configured modules to Maven Local, assembles and signs the Maven repository-layout bundle, uploads it to Sonatype Central Portal, and waits for the deployment result. Its current publication audit expects 60 modules. See the [Maven Central publishing setup](.github/MAVEN-CENTRAL-PUBLISHING.md) for the exact credential, signing, and first-release requirements.
+
+### Publishing to JitPack
+
+Run **Actions → Publish Maven to JitPack → Run workflow** using [`.github/workflows/publish-maven.yml`](.github/workflows/publish-maven.yml). This manually triggered workflow derives the release version from the UTC date and current seven-character Git commit hash, builds the complete project, publishes all configured modules to Maven Local, verifies all 60 POM and AAR/JAR outputs, and only then creates and pushes the release tag.
+
+The root [`jitpack.yml`](jitpack.yml) configures JitPack's own build environment and repeats the full build plus `publishToMavenLocal` steps so JitPack can collect the Maven artifacts. The GitHub Actions workflow completing successfully means the tag was created after local verification; it does **not** mean JitPack has already finished building every artifact. Check the [JitPack project page](https://jitpack.io/#msmt2018/Android-Windbell-TreeSitter) for the requested tag, module, and build result.
+
+For JitPack branch snapshots or commit builds, follow the version syntax displayed by JitPack for that specific ref. Consult the official [JitPack Android guide](https://docs.jitpack.io/android/) and [JitPack build guide](https://docs.jitpack.io/building/).
 
 ## Further documentation
 
@@ -633,7 +695,9 @@ For branch snapshots or commit builds, use the version form shown by JitPack for
 - [TSH engine completion and performance roadmap](android-tree-sitter/TSH_ENGINE_COMPLETION_AND_PERFORMANCE_ROADMAP.md)
 - [Sample Java ATS-only profile](app/src/main/assets/tsh/java-ats-only.tsh)
 - [Build and test workflow](.github/workflows/build.yml)
-- [JitPack release workflow](.github/workflows/release-jitpack.yml)
+- [Maven Central publishing workflow](.github/workflows/publish-maven-central.yml)
+- [JitPack publishing workflow](.github/workflows/publish-maven.yml)
+- [Maven Central publishing setup](.github/MAVEN-CENTRAL-PUBLISHING.md)
 - [JitPack build configuration](jitpack.yml)
 
 ## License
