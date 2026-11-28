@@ -57,8 +57,17 @@ module.exports = grammar({
 
     array_block: $ => seq(
       field('name', $.identifier),
-      $.array,
+      $.style_array,
       optional(','),
+    ),
+
+    style_array: $ => seq('[', commaSep($.style_entry), ']'),
+
+    style_entry: $ => seq(
+      field('style', $.identifier),
+      ':',
+      field('color', $.color),
+      repeat($.annotation),
     ),
 
     _value: $ => choice(
