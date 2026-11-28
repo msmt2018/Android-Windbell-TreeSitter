@@ -32,13 +32,12 @@ module.exports = grammar({
 
     legacy_document: $ => repeat1($._root_entry),
 
-    _root_entry: $ => choice($.property, $.block),
+    _root_entry: $ => seq(choice($.property, $.block), optional(',')),
 
     property: $ => seq(
       field('key', $.identifier),
       ':',
       field('value', $._value),
-      optional(','),
     ),
 
     block: $ => seq(
@@ -46,19 +45,16 @@ module.exports = grammar({
       '{',
       repeat($._block_entry),
       '}',
-      optional(','),
     ),
 
-    _block_entry: $ => choice(
-      $.property,
-      $.block,
-      $.array_block,
+    _block_entry: $ => seq(
+      choice($.property, $.block, $.array_block),
+      optional(','),
     ),
 
     array_block: $ => seq(
       field('name', $.identifier),
       $.style_array,
-      optional(','),
     ),
 
     style_array: $ => seq('[', repeat(seq($.style_entry, optional(','))), ']'),
