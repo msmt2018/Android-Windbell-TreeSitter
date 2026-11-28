@@ -57,6 +57,7 @@ import androidx.annotation.AnyThread
 import androidx.annotation.DrawableRes
 import androidx.annotation.MainThread
 import androidx.annotation.RequiresApi
+import androidx.annotation.WorkerThread
 import androidx.core.content.res.ResourcesCompat
 import androidx.core.graphics.Insets
 import androidx.core.view.ViewCompat
@@ -640,6 +641,7 @@ open class EditorView @JvmOverloads constructor(
     }
     
     // setBuffer, on the thread that lays out
+    @WorkerThread
     private fun replaceBufferNow(buffer: EditorBuffer) {
         try {
             layoutCoordinator.relayout {
@@ -1019,6 +1021,7 @@ open class EditorView @JvmOverloads constructor(
         whenDone(runLayoutWork { setTextSizeNow(pxSize) }, onDone)
     }
     
+    @WorkerThread
     private fun setTextSizeNow(pxSize: Float) {
         layoutCoordinator.relayout {
             val factor = pxSize / textPaint.textSize
@@ -1090,13 +1093,15 @@ open class EditorView @JvmOverloads constructor(
     // thread it runs right here. On the main thread it goes to the layout thread,
     // and the editor reports it like a relayout of its own (unless [notifyRelayout]
     // is false). Returns whether it went off to the layout thread.
+    @AnyThread
     private fun runLayoutWork(notifyRelayout: Boolean = true, work: () -> Unit): Boolean {
         if (Looper.myLooper() != Looper.getMainLooper()) {
             work()
             return false
         }
         if (notifyRelayout) {
-            onBackgroundRelayoutStarted()
+            // The helper can be called from any thread; this branch is the main thread.
+            runOnMainThread { onBackgroundRelayoutStarted() }
         }
         EditorLayoutThread.executor.execute {
             try {
@@ -1114,6 +1119,7 @@ open class EditorView @JvmOverloads constructor(
     // there: if the layout went [offloaded] to the layout thread, once that thread
     // has gone through what was handed to it before; otherwise right after (the
     // steps were queued on the main thread already, and come first).
+    @AnyThread
     private fun whenDone(offloaded: Boolean, onDone: (() -> Unit)?) {
         onDone ?: return
         if (offloaded) {
@@ -2013,6 +2019,7 @@ open class EditorView @JvmOverloads constructor(
     // #region helpers for the above
     
     // Runs [action] now when already on the main thread, otherwise queues it there.
+    @AnyThread
     private fun runOnMainThread(action: () -> Unit) {
         if (Looper.myLooper() == Looper.getMainLooper()) {
             action()
