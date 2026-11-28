@@ -11,6 +11,7 @@ env:
   ANDROID_CMAKE_VERSION: '3.31.6'
   ANDROID_BUILD_TOOLS_VERSION: '35.0.0'
   MAVEN_GROUP_PATH: com/github/msmt2018/Android-Windbell-TreeSitter
+  GROUP: 'com.github.msmt2018.Android-Windbell-TreeSitter'
 
 jobs:
   publish:
