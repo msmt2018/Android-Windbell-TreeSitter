@@ -1,0 +1,183 @@
+{
+    language {
+        id: "tsh"
+        name: "TSH Configuration"
+        extensions: [".tsh"]
+        aliases: ["TSH", "TreeSitter Highlight"]
+        mimeTypes: ["text/x-tsh", "application/x-tsh"]
+        firstLine: /^\s*\{/
+    }
+    name: ["TSH Configuration", ".tsh"]
+    ignoreCase: false
+
+    editor {
+        tabSize: 4
+        fontSize: 14
+        insertSpaces: true
+        autoIndent: true
+        trimTrailingWhitespace: true
+        formatOnType: false
+        renderWhitespace: "selection"
+        lineNumbers: true
+        comments {
+            line: ["//"]
+            block: [["/*", "*/"]]
+        }
+        brackets: ["{}", "[]", "()", "<>"]
+        bracketNotIn: ["string", "comment", "regex"]
+        autoClosingPairs: [
+            { open: "(", close: ")", notIn: ["string", "comment", "regex"] }
+            { open: "[", close: "]", notIn: ["string", "comment", "regex"] }
+            { open: "{", close: "}", notIn: ["string", "comment", "regex"] }
+            { open: "\""," close: "\""," notIn: ["string", "comment"] }
+        ]
+        surroundingPairs: ["{}", "[]", "()", "\""\"""]
+        wordPattern: /[A-Za-z_$][A-Za-z0-9_$-]*/
+        indentation {
+            increaseIndentPattern: /\{[^}]*$|\[[^\]]*$/
+            decreaseIndentPattern: /^\s*[}\]]/
+            unIndentedLinePattern: /^\s*(\/\/|\*)/
+        }
+        completion {
+            triggerCharacters: [".", ":", "@", "#"]
+        }
+        electricCharacters: ["}", "]"]
+        autoCloseBefore: /[\s)\]};,]/
+    }
+
+    isDark: false
+    defaultScheme: "github"
+
+    styles {
+        keyword { scope: "keyword.control", tags: ["keyword", "control"] }
+        property { scope: "variable.other.property", tags: ["property", "configuration"] }
+        type { scope: "entity.name.type", tags: ["type", "section"] }
+        identifier { scope: "variable.other", tags: ["identifier"] }
+        string { scope: "string.quoted", tags: ["string"] }
+        regex { scope: "string.regexp", tags: ["string", "regex"] }
+        color { scope: "constant.other.color", tags: ["constant", "color"] }
+        number { scope: "constant.numeric", tags: ["constant", "number"] }
+        boolean { scope: "constant.language.boolean", tags: ["constant", "boolean"] }
+        constant { scope: "constant.language", tags: ["constant"] }
+        annotation { scope: "entity.name.tag", tags: ["annotation", "modifier"] }
+        comment { scope: "comment", tags: ["comment"] }
+        punctuation { scope: "punctuation", tags: ["punctuation"] }
+        operator { scope: "keyword.operator", tags: ["operator"] }
+        namespace { scope: "entity.name.namespace", tags: ["namespace"] }
+    }
+
+    schemes {
+        github {
+            light [
+                keyword: #0550AE @bold,
+                property: #8250DF,
+                type: #953800 @bold,
+                identifier: #24292F,
+                string: #0A3069,
+                regex: #CF222E,
+                color: #116329 @bold,
+                number: #0550AE,
+                boolean: #0550AE @bold,
+                constant: #0550AE,
+                annotation: #8250DF,
+                comment: #6E7781,
+                punctuation: #57606A,
+                operator: #CF222E,
+                namespace: #953800
+            ]
+            dark [
+                keyword: #79C0FF @bold,
+                property: #D2A8FF,
+                type: #FFA657 @bold,
+                identifier: #E6EDF3,
+                string: #A5D6FF,
+                regex: #FF7B72,
+                color: #7EE787 @bold,
+                number: #79C0FF,
+                boolean: #79C0FF @bold,
+                constant: #79C0FF,
+                annotation: #D2A8FF,
+                comment: #8B949E,
+                punctuation: #8B949E,
+                operator: #FF7B72,
+                namespace: #FFA657
+            ]
+            ui {
+                light {
+                    editor.background: #FFFFFF
+                    editor.foreground: #24292F
+                    editor.selection: #B6E3FF
+                    editor.lineHighlight: #F6F8FA
+                    editor.gutter: #6E7781
+                    editor.caret: #24292F
+                    activity.background: #FFFFFF
+                    activity.surface: #F6F8FA
+                    activity.toolbar.background: #F6F8FA
+                    activity.toolbar.foreground: #24292F
+                    activity.tabs.background: #F6F8FA
+                    activity.tabs.foreground: #6E7781
+                    activity.tabs.selected: #24292F
+                    activity.tabs.indicator: #0969DA
+                    activity.statusBar: #F6F8FA
+                    activity.navigationBar: #FFFFFF
+                }
+                dark {
+                    editor.background: #0D1117
+                    editor.foreground: #E6EDF3
+                    editor.selection: #264F78
+                    editor.lineHighlight: #161B22
+                    editor.gutter: #8B949E
+                    editor.caret: #E6EDF3
+                    activity.background: #0D1117
+                    activity.surface: #161B22
+                    activity.toolbar.background: #161B22
+                    activity.toolbar.foreground: #E6EDF3
+                    activity.tabs.background: #161B22
+                    activity.tabs.foreground: #8B949E
+                    activity.tabs.selected: #E6EDF3
+                    activity.tabs.indicator: #2F81F7
+                    activity.statusBar: #0D1117
+                    activity.navigationBar: #0D1117
+                }
+            }
+        }
+    }
+
+    ast: [
+        { node: "property", field: "key", style: "property", priority: 120 },
+        { node: "block", field: "name", style: "type", priority: 115 },
+        { node: "identifier", style: "identifier", priority: 20 },
+        { node: "string", style: "string", priority: 125 },
+        { node: "regex", style: "regex", priority: 130 },
+        { node: "color", style: "color", priority: 135 },
+        { node: "number", style: "number", priority: 110 },
+        { node: "boolean", style: "boolean", priority: 110 },
+        { node: "null", style: "constant", priority: 110 },
+        { node: "annotation", style: "annotation", priority: 120 },
+        { node: "line_comment", style: "comment", priority: 140 },
+        { node: "block_comment", style: "comment", priority: 140 },
+        { node: "dotted_identifier", style: "namespace", priority: 80 }
+    ]
+
+    treeSitter {
+        queries: [
+            {
+                id: "tsh-property-names"
+                priority: 120
+                source: `(property key: (identifier) @propertyName)`
+                captures: { propertyName: property }
+            },
+            {
+                id: "tsh-section-names"
+                priority: 115
+                source: `(block name: (identifier) @sectionName)`
+                captures: { sectionName: type }
+            }
+        ]
+    }
+
+    contains: [
+        { match: /\b(?:language|editor|styles|schemes|defines|ast|treeSitter|contains|queries|captures|ui|light|dark)\b/, 0: "keyword", priority: 90 },
+        { match: /@[A-Za-z_][A-Za-z0-9_-]*/, 0: "annotation", priority: 85 }
+    ]
+}
