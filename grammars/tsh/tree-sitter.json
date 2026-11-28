@@ -1,0 +1,25 @@
+{
+  "grammars": [
+    {
+      "name": "tsh",
+      "camelcase": "Tsh",
+      "scope": "source.tsh",
+      "path": ".",
+      "file-types": ["tsh"]
+    }
+  ],
+  "metadata": {
+    "version": "1.0.0",
+    "license": "Apache-2.0",
+    "description": "Tree-sitter grammar for the Windbell TSH configuration language",
+    "authors": [
+      {
+        "name": "msmt2018",
+        "url": "https://github.com/msmt2018"
+      }
+    ],
+    "links": {
+      "repository": "https://github.com/msmt2018/Android-Windbell-TreeSitter"
+    }
+  }
+}

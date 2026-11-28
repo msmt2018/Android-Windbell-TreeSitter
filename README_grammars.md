@@ -98,3 +98,66 @@ To ensure zero manual maintenance and avoid configuration typos, two automation 
 # Run anytime you add, remove, or modify grammar submodules:
 python3 generate_grammars.py
 ```
+
+---
+
+## First-party TSH configuration grammar
+
+The `.tsh` extension is parsed by the in-repository grammar at `grammars/tsh`.
+It is not routed through Java, TOML, JSON, or a generic fallback grammar. The
+grammar models TSH's own blocks, key/value properties, arrays, nested objects,
+regular-expression literals, CSS color literals, quoted and raw backtick strings,
+annotations, numbers, booleans, and comments.
+
+The grammar is registered in `grammars/grammars.json`, generated as the
+`:tree-sitter-tsh` native module, and packaged by the sample app. Its editor
+profile is `app/src/main/assets/tsh/tsh.tsh`; Tree-sitter capture definitions
+are kept in `app/src/main/assets/highlights-tsh.scm`.
+
+Performance policy:
+- Structural captures use Tree-sitter nodes and field selectors.
+- Common TSH keywords are captured by bounded identifier predicates.
+- Color values are parsed as dedicated tokens, preserving the original source
+  text rather than normalizing or replacing the configured color.
+- The profile avoids document-wide regular-expression highlighting passes.
+- The grammar is permissive about property names so new TSH directives remain
+  parseable without requiring a parser release for every configuration option.
+
+The first-party grammar is included explicitly by `generate_grammars.py`, so
+regenerating the grammar registry does not discard it merely because it is not
+a Git submodule.
+
+
+### TSH grammar generation and build artifact
+
+The independent workflow is `.github/workflows/tsh-tree-sitter-grammar.yml`; it does
+not edit or replace the repository's existing build workflows. It pins
+`tree-sitter-cli 0.25.10` and ABI 15. The required `grammars/tsh/tree-sitter.json`
+metadata declares the grammar package and ABI-15 generation mode. The workflow
+first generates the canonical
+`grammars/tsh/src/grammar.json` from `grammar.js`, then generates
+`src/parser.c` and `src/node-types.json` from that JSON source, including the
+`src/tree_sitter/{parser.h,alloc.h,array.h}` support headers. It also parses
+the repository's own `tsh.tsh` profile and rejects Tree-sitter `ERROR` or
+`MISSING` nodes before compiling.
+
+On successful generation and compilation, the workflow commits the generated
+Tree-sitter source files to the feature branch and uploads the
+`tsh-tree-sitter-abi15-android` artifact. The verified run generated ABI-15 sources, compiled all four Android ABIs, and
+uploaded the artifact. It contains the grammar sources and support headers plus
+`libtree-sitter-tsh.a` static archives for
+`arm64-v8a`, `armeabi-v7a`, `x86`, and `x86_64`. These archives contain the
+compiled grammar parser object; consumers link them with the matching
+Tree-sitter runtime.
+
+### TSH configuration lexer versus ATS
+
+The native `TshLexer` in `WindbellTshCompiler.cpp` tokenizes the outer
+`.tsh` configuration. It is currently an internal compiler implementation,
+not a public token-stream API. ATS is a separate Tree-sitter Query/selector
+front-end; the current engine does not implement standalone ATS Lexer,
+Parser, AST, Compiler, or Lowering APIs. The grammar in this section therefore
+parses `.tsh` configuration files, not ATS Query source. A reusable LSP-facing
+lexer/token API and an ATS Query grammar require separate, explicitly scoped
+implementations and must not be represented as already extracted from the
+existing C++ compiler.

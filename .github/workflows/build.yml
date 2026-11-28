@@ -189,6 +189,8 @@ jobs:
           rm -f "$failed_file"
           echo "✅ Installed dependencies for all ${#manifests[@]} grammar packages."
           
+      - name: Generate TSH Tree-sitter grammar with ABI 15
+        run: bash scripts/generate-tsh-grammar-abi15.sh
       - name: Regenerate Java grammar with ABI 15 supertype metadata
         run: bash scripts/generate-java-grammar-abi15.sh
       - name: Restore cache
@@ -350,6 +352,8 @@ jobs:
           fi
           rm -f "$failed_file"
           echo "✅ Installed dependencies for all ${#manifests[@]} grammar packages."
+      - name: Generate TSH Tree-sitter grammar with ABI 15
+        run: bash scripts/generate-tsh-grammar-abi15.sh
       - name: Regenerate Java grammar with ABI 15 supertype metadata
         run: bash scripts/generate-java-grammar-abi15.sh
       - name: Restore cache
@@ -544,6 +548,8 @@ jobs:
       # The current Android Emulator requires a hardware accelerator on
       # recent builds. Enable KVM for the runner when available; explicitly
       # opt into TCG only when the runner cannot expose /dev/kvm.
+      - name: Generate TSH Tree-sitter grammar with ABI 15
+        run: bash scripts/generate-tsh-grammar-abi15.sh
       - name: Regenerate Java grammar with ABI 15 supertype metadata
         run: bash scripts/generate-java-grammar-abi15.sh
       - name: Enable KVM or configure TCG fallback

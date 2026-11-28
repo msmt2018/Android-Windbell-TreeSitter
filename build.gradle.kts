@@ -172,6 +172,7 @@ subprojects {
     "tree-sitter-svelte",
     "tree-sitter-swift",
     "tree-sitter-toml",
+    "tree-sitter-tsh",
     "tree-sitter-typescript",
     "tree-sitter-vue",
     "tree-sitter-xml",

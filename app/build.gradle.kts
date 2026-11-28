@@ -97,6 +97,7 @@ dependencies {
     implementation(projects.treeSitterXml)
    
     implementation(projects.treeSitterC)
+    implementation(projects.treeSitterTsh)
     
     testImplementation(libs.tests.junit)
     androidTestImplementation(libs.tests.androidx.ext.junit)

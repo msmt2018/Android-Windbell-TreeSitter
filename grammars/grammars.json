@@ -423,6 +423,12 @@
     ]
   },
   {
+    "name": "tsh",
+    "composite": false,
+    "entry": "tree_sitter_tsh",
+    "src.extra": []
+  },
+  {
     "name": "typescript",
     "composite": true,
     "sub.paths": [
