@@ -22,6 +22,11 @@
 (block
   name: (identifier) @type)
 
+(array_block
+  name: (identifier) @type)
+
+(escape_sequence) @string.escape
+
 (block
   name: (dotted_identifier) @type)
 
