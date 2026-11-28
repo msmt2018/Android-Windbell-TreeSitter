@@ -132,16 +132,20 @@ a Git submodule.
 
 The independent workflow is `.github/workflows/tsh-tree-sitter-grammar.yml`; it does
 not edit or replace the repository's existing build workflows. It pins
-`tree-sitter-cli 0.25.10` and ABI 15, generates the canonical
+`tree-sitter-cli 0.25.10` and ABI 15. The required `grammars/tsh/tree-sitter.json`
+metadata declares the grammar package and ABI-15 generation mode. The workflow
+first generates the canonical
 `grammars/tsh/src/grammar.json` from `grammar.js`, then generates
-`src/parser.c` and `src/node-types.json` from that JSON source. It also parses
+`src/parser.c` and `src/node-types.json` from that JSON source, including the
+`src/tree_sitter/{parser.h,alloc.h,array.h}` support headers. It also parses
 the repository's own `tsh.tsh` profile and rejects Tree-sitter `ERROR` or
 `MISSING` nodes before compiling.
 
 On successful generation and compilation, the workflow commits the generated
 Tree-sitter source files to the feature branch and uploads the
-`tsh-tree-sitter-abi15-android` artifact. The artifact contains the grammar
-sources plus `libtree-sitter-tsh.a` static archives for
+`tsh-tree-sitter-abi15-android` artifact. The verified run generated ABI-15 sources, compiled all four Android ABIs, and
+uploaded the artifact. It contains the grammar sources and support headers plus
+`libtree-sitter-tsh.a` static archives for
 `arm64-v8a`, `armeabi-v7a`, `x86`, and `x86_64`. These archives contain the
 compiled grammar parser object; consumers link them with the matching
 Tree-sitter runtime.
