@@ -5,7 +5,7 @@
 (block_comment) @comment
 
 (string) @string
-(template_string) @string
+(raw_string) @string
 (regex) @string.special
 (color) @constant
 (number) @number
@@ -16,34 +16,25 @@
 (property
   key: (identifier) @property)
 
-(property
-  key: (dotted_identifier) @property)
-
 (block
   name: (identifier) @type)
 
 (array_block
   name: (identifier) @type)
 
+(style_entry
+  style: (identifier) @property)
+
 (escape_sequence) @string.escape
-
-(block
-  name: (dotted_identifier) @type)
-
-(dotted_identifier
-  (identifier) @namespace)
 
 [
   "{"
   "}"
   "["
   "]"
-  "("
-  ")"
   ","
   ":"
-  "="
-  "."
+  "@"
 ] @punctuation.delimiter
 
 [
