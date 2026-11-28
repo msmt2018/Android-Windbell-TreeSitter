@@ -24,7 +24,7 @@ Open **Repository → Settings → Secrets and variables → Actions → New rep
 | `MAVEN_PASSWORD_BASE64` | Base64 encoding of the exact `MAVEN_PASSWORD` value | Building the Publisher API bearer token |
 | `MAVEN_USERNAME` | Central Portal User Token username | Building the Publisher API bearer token |
 
-`MAVEN_PASSWORD_BASE64` must decode byte-for-byte to `MAVEN_PASSWORD`. Generate it locally without adding a newline:
+`MAVEN_PASSWORD_BASE64` may contain either the Base64 encoding of `MAVEN_PASSWORD` alone (recommended), or the Base64 encoding of `MAVEN_USERNAME:MAVEN_PASSWORD`. The workflow accepts both forms and checks that the decoded value matches the two raw credential secrets. Generate the password-only form locally without adding a newline:
 
 ```bash
 printf '%s' 'PASTE_THE_CENTRAL_USER_TOKEN_PASSWORD_HERE' | base64 -w 0
@@ -81,6 +81,6 @@ The workflow defaults to `AUTOMATIC`: Central publishes after successful validat
 
 - [ ] The `io.github.msmt2018` namespace is verified in Central Portal.
 - [ ] All five repository Actions secrets exist and are correct.
-- [ ] `MAVEN_PASSWORD_BASE64` decodes exactly to `MAVEN_PASSWORD`.
+- [ ] `MAVEN_PASSWORD_BASE64` decodes to either `MAVEN_PASSWORD` or `MAVEN_USERNAME:MAVEN_PASSWORD`.
 - [ ] The public GPG key is available from a public keyserver.
 - [ ] Run the workflow first with `USER_MANAGED` to inspect Central validation before enabling automatic publication.
