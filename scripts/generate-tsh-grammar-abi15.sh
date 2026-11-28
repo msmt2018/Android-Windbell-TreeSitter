@@ -7,6 +7,7 @@ SOURCE="$GRAMMAR_DIR/grammar.js"
 GRAMMAR_JSON="$GRAMMAR_DIR/src/grammar.json"
 PARSER="$GRAMMAR_DIR/src/parser.c"
 NODE_TYPES="$GRAMMAR_DIR/src/node-types.json"
+PARSER_HEADER="$GRAMMAR_DIR/src/tree_sitter/parser.h"
 CLI_VERSION="0.25.10"
 ABI=15
 
@@ -22,6 +23,7 @@ npm exec --yes --package="tree-sitter-cli@$CLI_VERSION" -- tree-sitter generate
 npm exec --yes --package="tree-sitter-cli@$CLI_VERSION" -- tree-sitter generate src/grammar.json --abi="$ABI"
 [[ -s "$PARSER" ]] || { echo "::error::Tree-sitter did not emit src/parser.c"; exit 1; }
 [[ -s "$NODE_TYPES" ]] || { echo "::error::Tree-sitter did not emit src/node-types.json"; exit 1; }
+[[ -s "$PARSER_HEADER" ]] || { echo "::error::Tree-sitter did not emit src/tree_sitter/parser.h"; exit 1; }
 
 sample="$ROOT/app/src/main/assets/tsh/tsh.tsh"
 if [[ -f "$sample" ]]; then
