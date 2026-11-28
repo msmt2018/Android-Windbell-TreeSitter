@@ -1,0 +1,10 @@
+{
+  "name": "tree-sitter-tsh",
+  "version": "1.0.0",
+  "description": "Tree-sitter grammar for the TSH highlighting configuration language",
+  "main": "grammar.js",
+  "license": "LGPL-2.1-or-later",
+  "devDependencies": {
+    "tree-sitter-cli": "^0.28.0"
+  }
+}
