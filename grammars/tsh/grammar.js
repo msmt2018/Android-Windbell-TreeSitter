@@ -1,59 +1,72 @@
 /**
- * Tree-sitter grammar for the TSH (TreeSitter Highlight) configuration DSL.
+ * Tree-sitter grammar for the native Windbell TSH v2 configuration DSL.
  *
- * TSH is a structured configuration language, not Java/TOML/JSON. This parser
- * intentionally models its native blocks, properties, arrays, regex literals,
- * color literals and style annotations. It is permissive around unknown keys so
- * new TSH directives remain incrementally parseable without grammar churn.
+ * Keep this grammar aligned with TshLexer/TshCompiler::compileInternal:
+ * - optional "tsh 2 { ... }" document wrapper (legacy unwrapped profiles remain valid)
+ * - colon-only properties, named blocks and bracket arrays
+ * - JSON-style quoted strings, raw backtick strings and slash-delimited regexes
+ * - colors are lexer-level identifiers beginning with '#'
+ *
+ * This grammar models the configuration language only. ATS is a separate
+ * Tree-sitter Query/selector front-end and does not have a native ATS lexer
+ * implementation in the current engine.
  */
 module.exports = grammar({
   name: 'tsh',
 
   extras: $ => [
-    /[\s\uFEFF]+/,
+    /[\\s\\uFEFF]+/,
     $.line_comment,
     $.block_comment,
   ],
 
-  word: $ => $.identifier,
-
   rules: {
-    source_file: $ => repeat($._statement),
+    source_file: $ => choice(
+      $.versioned_document,
+      $.legacy_document,
+    ),
 
-    _statement: $ => choice(
+    versioned_document: $ => seq(
+      'tsh',
+      '2',
+      '{',
+      repeat($._root_entry),
+      '}',
+    ),
+
+    legacy_document: $ => repeat($._root_entry),
+
+    _root_entry: $ => choice(
       $.property,
       $.block,
-      $.array_block,
     ),
 
     property: $ => seq(
-      field('key', $._key),
-      choice(':', '='),
+      field('key', $.identifier),
+      ':',
       field('value', $._value),
       optional(','),
     ),
 
     block: $ => seq(
-      field('name', $._key),
-      optional(seq('(', commaSep($._value), ')')),
+      field('name', $.identifier),
       '{',
-      repeat($._statement),
+      repeat($._block_entry),
       '}',
       optional(','),
     ),
 
-    // TSH scheme sections use the concise "light [ ... ]" form.
-    array_block: $ => seq(
-      field('name', $._key),
-      $.array,
-      optional(','),
+    _block_entry: $ => choice(
+      $.property,
+      $.block,
+      $.array_block,
     ),
 
-    _key: $ => choice($.identifier, $.dotted_identifier),
-
-    dotted_identifier: $ => seq(
-      $.identifier,
-      repeat1(seq('.', $.identifier)),
+    // TSH theme sections use the native "light [ ... ]" / "dark [ ... ]" form.
+    array_block: $ => seq(
+      field('name', $.identifier),
+      $.array,
+      optional(','),
     ),
 
     _value: $ => choice(
@@ -62,22 +75,19 @@ module.exports = grammar({
       $.regex,
       $.color,
       $.string,
-      $.template_string,
+      $.raw_string,
       $.number,
       $.boolean,
       $.null,
       $.annotated_value,
       $.identifier,
-      $.dotted_identifier,
     ),
 
     object: $ => seq(
       '{',
-      commaSep($._object_entry),
+      commaSep(choice($.property, $.block)),
       '}',
     ),
-
-    _object_entry: $ => choice($.property, $.block),
 
     array: $ => seq(
       '[',
@@ -86,11 +96,11 @@ module.exports = grammar({
     ),
 
     annotated_value: $ => seq(
-      choice($.string, $.number, $.color, $.identifier, $.dotted_identifier),
+      choice($.color, $.string, $.number, $.identifier),
       repeat1($.annotation),
     ),
 
-    annotation: $ => token(seq('@', /[A-Za-z_][A-Za-z0-9_-]*/)),
+    annotation: $ => seq('@', $.identifier),
 
     string: $ => choice(
       seq('"', repeat(choice(
@@ -103,47 +113,44 @@ module.exports = grammar({
       )), "'"),
     ),
 
-    template_string: $ => seq(
+    // Backtick strings are raw and may span multiple lines in the native lexer.
+    raw_string: $ => seq(
       '`',
-      repeat(choice(
-        token.immediate(/[^\`\\]+/),
-        $.escape_sequence,
-      )),
+      repeat(token.immediate(/[^\`]+/)),
       '`',
     ),
 
     escape_sequence: _ => token.immediate(seq(
-      '\\',
+      '\\\\',
       choice(
-        /[\\'"\/bfnrt]/,
+        /["'\\/bfnrt]/,
         /u[0-9a-fA-F]{4}/,
-        /x[0-9a-fA-F]{2}/,
-        /./,
       ),
     )),
 
-    regex: $ => token(seq(
+    regex: _ => token(seq(
       '/',
       repeat(choice(
-        /[^\/\\\n\r]/,
+        /[^/\\]/,
         /\\./,
       )),
       '/',
     )),
 
-    color: _ => token(/#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})\b/),
+    // The native lexer emits color literals as identifier tokens.
+    color: _ => token(/#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})/),
 
-    number: _ => token(choice(
-      /[+-]?(?:0[xX][0-9a-fA-F]+|0[bB][01]+|(?:[0-9]+\.?[0-9]*|\.[0-9]+)(?:[eE][+-]?[0-9]+)?)(?:dp|sp|px|ms|s|%|f)?/,
-    )),
+    number: _ => token(/[+-]?[0-9]+(?:\\.[0-9]+)?(?:[eE][+-]?[0-9]+)?/),
 
     boolean: _ => choice('true', 'false'),
     null: _ => choice('null', 'none'),
 
-    identifier: _ => /[A-Za-z_$][A-Za-z0-9_$-]*/,
+    // Match the C++ lexer: '.', '#', and '-' are part of identifiers, not
+    // standalone punctuation. '$' is intentionally excluded.
+    identifier: _ => /[A-Za-z_#.][A-Za-z0-9_#.-]*/,
 
-    line_comment: _ => token(seq('//', /[^\n\r]*/)),
-    block_comment: _ => token(seq('/*', /[^*]*\*+([^/*][^*]*\*+)*/, '/')),
+    line_comment: _ => token(seq('//', /[^\\n\\r]*/)),
+    block_comment: _ => token(seq('/*', /[^*]*\\*+([^/*][^*]*\\*+)*/, '/')),
   },
 });
 
