@@ -6,7 +6,8 @@ on:
     branches:
       - feat/tsh-config-tree-sitter-highlighting
     paths:
-      - 'grammars/tsh/**'
+      - 'grammars/tsh/grammar.js'
+      - 'grammars/tsh/package.json'
       - 'scripts/generate-tsh-grammar-abi15.sh'
       - '.github/workflows/tsh-tree-sitter-grammar.yml'
 
@@ -26,7 +27,10 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
-          submodules: true
+          submodules: false
+
+      - name: Fetch Tree-sitter runtime headers
+        run: git submodule update --init --depth 1 tree-sitter-lib
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
