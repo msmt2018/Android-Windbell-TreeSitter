@@ -29,6 +29,8 @@ The TSH highlighting model is deliberately limited to **Tree-sitter ATS / Tree-s
 
 ## Windbell TSH — Tree-sitter Highlighting Engine
 
+> **No external Tree-sitter `.scm` files are required.** TSH does not require, load, generate, or bundle `.scm` files as a prerequisite for Grammar registration, language loading, parsing, AST construction, or ATS execution. Grammar modules provide compiled `TSLanguage` definitions; TSH ATS compiles and executes its own selectors directly against the resulting syntax tree. If native Tree-sitter Query patterns are used, their query source is embedded in the `.tsh` profile under `treeSitter.queries`—not supplied as external `.scm` files. Configure the required Grammar and TSH profile; no separate `.scm` files need to be created or maintained.
+
 **Windbell TSH** is the repository's declarative syntax-highlighting and language-presentation engine. It is designed for Android code editors: a language package supplies its Tree-sitter grammar, a `.tsh` profile declares how that language should be recognized and styled, the native runtime produces source-ranged captures, and the editor adapter turns the resolved styles into actual line-rendering instructions.
 
 TSH is not a hard-coded collection of language colors. The `.tsh` document is the source of truth for language metadata, semantic styles, color schemes, ATS selectors, embedded Tree-sitter queries, optional Regex rules, and editor-facing metadata. The native runtime is language- and theme-neutral.
