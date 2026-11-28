@@ -106,7 +106,7 @@ python3 generate_grammars.py
 The `.tsh` extension is parsed by the in-repository grammar at `grammars/tsh`.
 It is not routed through Java, TOML, JSON, or a generic fallback grammar. The
 grammar models TSH's own blocks, key/value properties, arrays, nested objects,
-regular-expression literals, CSS color literals, quoted/template strings,
+regular-expression literals, CSS color literals, quoted and raw backtick strings,
 annotations, numbers, booleans, and comments.
 
 The grammar is registered in `grammars/grammars.json`, generated as the
