@@ -42,20 +42,6 @@ jobs:
       - name: Generate TSH Tree-sitter parser (ABI 15)
         run: bash scripts/generate-tsh-grammar-abi15.sh
 
-      - name: Commit generated Tree-sitter source files
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add grammars/tsh/src/grammar.json grammars/tsh/src/parser.c grammars/tsh/src/node-types.json
-          if ! git diff --cached --quiet; then
-            git commit -m "chore(tsh): generate Tree-sitter ABI 15 parser [skip ci]"
-            git push origin "HEAD:${GITHUB_REF_NAME}"
-          else
-            echo "Generated Tree-sitter sources are already up to date."
-          fi
-
       - name: Compile parser for Android ABIs
         shell: bash
         env:
@@ -100,6 +86,20 @@ jobs:
           cp "$grammar_dir/src/grammar.json" "$grammar_dir/src/parser.c" \
             "$grammar_dir/src/node-types.json" "$out/src/"
           printf 'ABI=15\nTREE_SITTER_CLI=0.25.10\n' > "$out/BUILD-METADATA.txt"
+
+      - name: Commit generated Tree-sitter source files
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add grammars/tsh/src/grammar.json grammars/tsh/src/parser.c grammars/tsh/src/node-types.json
+          if ! git diff --cached --quiet; then
+            git commit -m "chore(tsh): generate Tree-sitter ABI 15 parser [skip ci]"
+            git push origin "HEAD:${GITHUB_REF_NAME}"
+          else
+            echo "Generated Tree-sitter sources are already up to date."
+          fi
 
       - name: Upload generated grammar sources and Android archives
         uses: actions/upload-artifact@v4
