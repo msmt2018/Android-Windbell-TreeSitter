@@ -71,7 +71,10 @@ dependencies {
 - Requires 60 POMs and verifies the main AAR/JAR plus matching sources and Javadoc JARs.
 - Adds the required developer POM metadata and prepares Maven Repository Layout.
 - Imports the GPG key, publishes its public key to the configured keyserver, and signs every primary artifact/POM.
-- Generates MD5, SHA-1, SHA-256 and SHA-512 checksums.
+- Generates only the required MD5 and SHA-1 checksum sidecars; SHA-256 and SHA-512 sidecars are omitted to reduce monthly file usage.
+- Publishes only one main AAR/JAR, the matching sources JAR, Javadoc JAR and POM per module; excludes Gradle `.module` metadata and extra classifiers from the Central bundle.
+- Audits the final repository-layout bundle and requires exactly 960 files for the expected 60-module layout (16 files per module including signatures/checksums); fails if the count differs or exceeds 1,000.
+- Reports the uncompressed release payload size and warns if this release alone exceeds 80 MiB. The actual release-size limit is monthly and organization-wide, so check Central Portal Usage Center for prior usage before publishing.
 - Uploads a Central deployment bundle and retains a copy as a GitHub Actions artifact.
 - Polls the Central Publisher API until publication succeeds, or reports validation failure.
 
