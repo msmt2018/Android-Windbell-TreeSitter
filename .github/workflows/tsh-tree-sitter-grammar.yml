@@ -1,0 +1,96 @@
+name: Build TSH Tree-sitter Grammar
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feat/tsh-config-tree-sitter-highlighting
+    paths:
+      - 'grammars/tsh/**'
+      - 'scripts/generate-tsh-grammar-abi15.sh'
+      - '.github/workflows/tsh-tree-sitter-grammar.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tsh-tree-sitter-grammar-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  generate-and-compile:
+    name: Generate ABI 15 parser and Android static libraries
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          submodules: true
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22.22.2'
+
+      - name: Set up Android NDK
+        uses: nttld/setup-ndk@v1
+        id: ndk
+        with:
+          ndk-version: r29
+
+      - name: Generate TSH Tree-sitter parser (ABI 15)
+        run: bash scripts/generate-tsh-grammar-abi15.sh
+
+      - name: Compile parser for Android ABIs
+        shell: bash
+        env:
+          ANDROID_NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
+        run: |
+          set -Eeuo pipefail
+          grammar_dir="$GITHUB_WORKSPACE/grammars/tsh"
+          out="$GITHUB_WORKSPACE/build/tsh-tree-sitter"
+          mkdir -p "$out"
+
+          parser_header="$(find "$GITHUB_WORKSPACE/tree-sitter-lib" -path '*/tree_sitter/parser.h' -type f -print -quit)"
+          if [[ -z "$parser_header" ]]; then
+            echo "::error::Tree-sitter parser.h was not found in the checked-out runtime"
+            exit 1
+          fi
+          include_dir="$(dirname "$(dirname "$parser_header")")"
+
+          toolchain="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          [[ -x "$toolchain/clang" && -x "$toolchain/llvm-ar" ]] || {
+            echo "::error::Android NDK LLVM toolchain is incomplete"
+            exit 1
+          }
+
+          compile_abi() {
+            local abi="$1" triple="$2"
+            local abi_dir="$out/$abi"
+            mkdir -p "$abi_dir"
+            "$toolchain/clang" --target="$triple" -std=c11 -O2 -fPIC \
+              -I"$include_dir" -c "$grammar_dir/src/parser.c" \
+              -o "$abi_dir/parser.o"
+            "$toolchain/llvm-ar" rcs "$abi_dir/libtree-sitter-tsh.a" "$abi_dir/parser.o"
+            test -s "$abi_dir/libtree-sitter-tsh.a"
+          }
+
+          compile_abi arm64-v8a aarch64-linux-android21
+          compile_abi armeabi-v7a armv7a-linux-androideabi21
+          compile_abi x86 i686-linux-android21
+          compile_abi x86_64 x86_64-linux-android21
+
+          cp "$grammar_dir/grammar.js" "$out/grammar.js"
+          mkdir -p "$out/src"
+          cp "$grammar_dir/src/grammar.json" "$grammar_dir/src/parser.c" \
+            "$grammar_dir/src/node-types.json" "$out/src/"
+          printf 'ABI=15\nTREE_SITTER_CLI=0.25.10\n' > "$out/BUILD-METADATA.txt"
+
+      - name: Upload generated grammar sources and Android archives
+        uses: actions/upload-artifact@v4
+        with:
+          name: tsh-tree-sitter-abi15-android
+          path: build/tsh-tree-sitter/
+          if-no-files-found: error
+          retention-days: 90
