@@ -149,6 +149,7 @@
         { node: "array_block", field: "name", style: "type", priority: 115 },
         { node: "identifier", style: "identifier", priority: 20 },
         { node: "string", style: "string", priority: 125 },
+        { node: "template_string", style: "string", priority: 125 },
         { node: "regex", style: "regex", priority: 130 },
         { node: "color", style: "color", priority: 135 },
         { node: "number", style: "number", priority: 110 },
