@@ -91,8 +91,8 @@ jobs:
             echo "::error::MAVEN_PASSWORD_BASE64 is not valid Base64"
             exit 1
           }
-          if [[ "$decoded_password" != "$CENTRAL_PASSWORD" ]]; then
-            echo "::error::MAVEN_PASSWORD_BASE64 must decode to exactly MAVEN_PASSWORD"
+          if [[ "$decoded_password" != "$CENTRAL_PASSWORD" && "$decoded_password" != "$CENTRAL_USERNAME:$CENTRAL_PASSWORD" ]]; then
+            echo "::error::MAVEN_PASSWORD_BASE64 must decode to MAVEN_PASSWORD or MAVEN_USERNAME:MAVEN_PASSWORD"
             exit 1
           fi
           unset decoded_password
@@ -335,8 +335,14 @@ jobs:
         run: |
           set -Eeuo pipefail
           decoded_password="$(printf '%s' "$CENTRAL_PASSWORD_BASE64" | base64 --decode)"
-          [[ "$decoded_password" == "$CENTRAL_PASSWORD" ]] || { echo "::error::Maven password Base64 mismatch"; exit 1; }
-          bearer="$(printf '%s:%s' "$CENTRAL_USERNAME" "$decoded_password" | base64 -w 0)"
+          if [[ "$decoded_password" == "$CENTRAL_PASSWORD" ]]; then
+            bearer="$(printf '%s:%s' "$CENTRAL_USERNAME" "$decoded_password" | base64 -w 0)"
+          elif [[ "$decoded_password" == "$CENTRAL_USERNAME:$CENTRAL_PASSWORD" ]]; then
+            bearer="$(printf '%s' "$CENTRAL_PASSWORD_BASE64" | tr -d '[:space:]')"
+          else
+            echo "::error::Maven password Base64 does not match the configured Central token credentials"
+            exit 1
+          fi
           unset decoded_password
           response_file="$RUNNER_TEMP/central-upload-response.txt"
           http_code="$(curl --silent --show-error --retry 5 --retry-all-errors --retry-delay 10 \
@@ -365,8 +371,14 @@ jobs:
         run: |
           set -Eeuo pipefail
           decoded_password="$(printf '%s' "$CENTRAL_PASSWORD_BASE64" | base64 --decode)"
-          [[ "$decoded_password" == "$CENTRAL_PASSWORD" ]] || { echo "::error::Maven password Base64 mismatch"; exit 1; }
-          bearer="$(printf '%s:%s' "$CENTRAL_USERNAME" "$decoded_password" | base64 -w 0)"
+          if [[ "$decoded_password" == "$CENTRAL_PASSWORD" ]]; then
+            bearer="$(printf '%s:%s' "$CENTRAL_USERNAME" "$decoded_password" | base64 -w 0)"
+          elif [[ "$decoded_password" == "$CENTRAL_USERNAME:$CENTRAL_PASSWORD" ]]; then
+            bearer="$(printf '%s' "$CENTRAL_PASSWORD_BASE64" | tr -d '[:space:]')"
+          else
+            echo "::error::Maven password Base64 does not match the configured Central token credentials"
+            exit 1
+          fi
           unset decoded_password
           status_url="https://central.sonatype.com/api/v1/publisher/status?id=$DEPLOYMENT_ID"
           for attempt in $(seq 1 240); do
