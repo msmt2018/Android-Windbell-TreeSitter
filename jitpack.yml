@@ -1,8 +1,6 @@
 jdk:
   - openjdk17
 
-env:
-  GROUP: com.github.msmt2018.Android-Windbell-TreeSitter
 
 before_install:
   - |
@@ -36,7 +34,7 @@ install:
   - npm install --prefix grammars/svelte --ignore-scripts --omit=dev
   - npm install --prefix grammars/typescript --ignore-scripts --omit=dev
   # Phase 1: build the complete project and all configured Maven modules.
-  - ./gradlew clean build --parallel --no-daemon --stacktrace
+  - GROUP=com.github.msmt2018.Android-Windbell-TreeSitter ./gradlew clean build --parallel --no-daemon --stacktrace
   # Phase 2: publish every configured MavenPublication into the local Maven
   # repository. JitPack collects these artifacts and serves them as Maven files.
-  - ./gradlew publishToMavenLocal --parallel --no-daemon --stacktrace
+  - GROUP=com.github.msmt2018.Android-Windbell-TreeSitter ./gradlew publishToMavenLocal --parallel --no-daemon --stacktrace
