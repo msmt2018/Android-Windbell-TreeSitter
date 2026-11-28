@@ -5,9 +5,11 @@ on:
   push:
     branches:
       - feat/tsh-config-tree-sitter-highlighting
+      - main
     paths:
       - 'grammars/tsh/grammar.js'
       - 'grammars/tsh/package.json'
+      - 'grammars/tsh/tree-sitter.json'
       - 'scripts/generate-tsh-grammar-abi15.sh'
       - '.github/workflows/tsh-tree-sitter-grammar.yml'
 
