@@ -30,7 +30,7 @@ if [[ -f "$sample" ]]; then
     echo "::error::The repository TSH profile could not be parsed by the generated grammar"
     exit 1
   }
-  if grep -Eq '(^|[[:space:]])(ERROR|MISSING)([[:space:]]|$)' <<< "$parse_log"; then
+  if grep -Eq '(^|[^[:alnum:]_])(ERROR|MISSING)([^[:alnum:]_]|$)' <<< "$parse_log"; then
     printf '%s\n' "$parse_log"
     echo "::error::The repository TSH profile contains Tree-sitter ERROR or MISSING nodes"
     exit 1
