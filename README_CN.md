@@ -29,6 +29,8 @@ TSH 高亮体系严格采用 **Tree-sitter ATS / Tree-sitter Query + 可选 Rege
 
 ## Windbell TSH —— Tree-sitter Highlighting 高亮引擎
 
+> **TSH 完全不要求配置外部 Tree-sitter `.scm` 文件。** Grammar 注册、语言加载、源码解析、AST 构建和 ATS 执行均不以 `.scm` 文件存在为前提。Grammar 模块提供编译后的 `TSLanguage` 定义；TSH ATS 直接针对生成的语法树编译并执行自身的选择器。如果使用 Tree-sitter 原生 Query，其查询源码直接内嵌在 `.tsh` 配置的 `treeSitter.queries` 中，而不是通过外部 `.scm` 文件提供。只需配置所需 Grammar 和 TSH Profile，无需创建、打包或维护独立的 `.scm` 文件。
+
 **Windbell TSH** 是本仓库面向 Android 代码编辑器开发的声明式语法高亮与语言呈现引擎。语言包提供 Tree-sitter Grammar，`.tsh` 配置文件声明语言如何识别、匹配和着色，Native Runtime 生成带有源码范围的 Capture，最后由编辑器适配层将解析后的样式转换为真实的行渲染指令。
 
 TSH 不是一套写死语言关键字和颜色的高亮规则集合。`.tsh` 是语言元数据、语义样式、主题方案、ATS 选择器、内嵌 Tree-sitter Query、可选 Regex 规则以及编辑器元数据的唯一配置来源。Native 核心保持通用，不内置某种语言的颜色或主题语义。
