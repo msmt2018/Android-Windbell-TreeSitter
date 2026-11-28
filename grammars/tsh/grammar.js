@@ -2,20 +2,16 @@
  * Tree-sitter grammar for the native Windbell TSH v2 configuration DSL.
  *
  * Keep this grammar aligned with TshLexer/TshCompiler::compileInternal:
- * - optional "tsh 2 { ... }" document wrapper (legacy unwrapped profiles remain valid)
- * - colon-only properties, named blocks and bracket arrays
- * - JSON-style quoted strings, raw backtick strings and slash-delimited regexes
- * - colors are lexer-level identifiers beginning with '#'
- *
- * This grammar models the configuration language only. ATS is a separate
- * Tree-sitter Query/selector front-end and does not have a native ATS lexer
- * implementation in the current engine.
+ * optional "tsh 2 { ... }" wrapper, colon properties, named blocks, arrays,
+ * JSON-style quoted strings, raw backtick strings, regex and color literals.
+ * ATS is a separate Tree-sitter Query/selector front-end; the current engine
+ * does not implement a standalone ATS lexer/parser.
  */
 module.exports = grammar({
   name: 'tsh',
 
   extras: $ => [
-    /[\\s\\uFEFF]+/,
+    /[\s\uFEFF]+/,
     $.line_comment,
     $.block_comment,
   ],
@@ -36,10 +32,7 @@ module.exports = grammar({
 
     legacy_document: $ => repeat($._root_entry),
 
-    _root_entry: $ => choice(
-      $.property,
-      $.block,
-    ),
+    _root_entry: $ => choice($.property, $.block),
 
     property: $ => seq(
       field('key', $.identifier),
@@ -62,7 +55,6 @@ module.exports = grammar({
       $.array_block,
     ),
 
-    // TSH theme sections use the native "light [ ... ]" / "dark [ ... ]" form.
     array_block: $ => seq(
       field('name', $.identifier),
       $.array,
@@ -89,11 +81,7 @@ module.exports = grammar({
       '}',
     ),
 
-    array: $ => seq(
-      '[',
-      commaSep($._value),
-      ']',
-    ),
+    array: $ => seq('[', commaSep($._value), ']'),
 
     annotated_value: $ => seq(
       choice($.color, $.string, $.number, $.identifier),
@@ -113,44 +101,37 @@ module.exports = grammar({
       )), "'"),
     ),
 
-    // Backtick strings are raw and may span multiple lines in the native lexer.
     raw_string: $ => seq(
-      '`',
-      repeat(token.immediate(/[^\`]+/)),
-      '`',
+      '\x60',
+      repeat(token.immediate(/[^\x60\\]+/)),
+      '\x60',
     ),
 
     escape_sequence: _ => token.immediate(seq(
-      '\\\\',
-      choice(
-        /["'\\/bfnrt]/,
-        /u[0-9a-fA-F]{4}/,
-      ),
+      '\\',
+      choice(/["'\\/bfnrt]/, /u[0-9a-fA-F]{4}/),
     )),
 
     regex: _ => token(seq(
       '/',
-      repeat(choice(
-        /[^/\\]/,
-        /\\./,
-      )),
+      repeat(choice(/[^/\\]/, /\\./)),
       '/',
     )),
 
-    // The native lexer emits color literals as identifier tokens.
-    color: _ => token(/#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})/),
+    // The native lexer emits colors as identifier tokens; this narrower
+    // lexical precedence gives valid hex colors their own named AST node.
+    color: _ => token(prec(1, /#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})/)),
 
-    number: _ => token(/[+-]?[0-9]+(?:\\.[0-9]+)?(?:[eE][+-]?[0-9]+)?/),
+    number: _ => token(/[+-]?[0-9]+(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?/),
 
     boolean: _ => choice('true', 'false'),
     null: _ => choice('null', 'none'),
 
-    // Match the C++ lexer: '.', '#', and '-' are part of identifiers, not
-    // standalone punctuation. '$' is intentionally excluded.
+    // '.', '#', and '-' are part of native identifiers, not punctuation.
     identifier: _ => /[A-Za-z_#.][A-Za-z0-9_#.-]*/,
 
-    line_comment: _ => token(seq('//', /[^\\n\\r]*/)),
-    block_comment: _ => token(seq('/*', /[^*]*\\*+([^/*][^*]*\\*+)*/, '/')),
+    line_comment: _ => token(seq('//', /[^\n\r]*/)),
+    block_comment: _ => token(seq('/*', /[^*]*\*+([^/*][^*]*\*+)*/, '/')),
   },
 });
 
