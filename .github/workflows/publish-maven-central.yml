@@ -256,14 +256,22 @@ jobs:
               target_dir = bundle_root / group_id.replace(".", "/") / module / version
               target_dir.mkdir(parents=True, exist_ok=True)
 
+              # Publish only the Maven consumer essentials. Gradle module metadata,
+              # local-repository markers, transient files and extra classifiers are omitted.
+              required_names = {
+                  pom.name,
+                  f"{module}-{version}-sources.jar",
+                  f"{module}-{version}-javadoc.jar",
+              }
+              main_artifacts = {
+                  f"{module}-{version}.aar",
+                  f"{module}-{version}.jar",
+              }
               for item in module_dir.iterdir():
                   if not item.is_file():
                       continue
-                  if item.name == "_remote.repositories" or item.name.startswith("maven-metadata"):
-                      continue
-                  if item.name.endswith((".lastUpdated", ".asc")):
-                      continue
-                  shutil.copy2(item, target_dir / item.name)
+                  if item.name in required_names or item.name in main_artifacts:
+                      shutil.copy2(item, target_dir / item.name)
 
               target_pom = target_dir / pom.name
               tree = ET.parse(target_pom)
@@ -282,12 +290,14 @@ jobs:
               tree.write(target_pom, encoding="UTF-8", xml_declaration=True)
 
               binaries = [
-                  f for f in target_dir.iterdir()
-                  if f.is_file() and f.name.startswith(f"{module}-{version}.")
-                  and f.suffix in (".aar", ".jar")
+                  target_dir / f"{module}-{version}.aar",
+                  target_dir / f"{module}-{version}.jar",
               ]
-              if not binaries:
-                  raise SystemExit(f"Missing AAR/JAR for {module}")
+              binaries = [f for f in binaries if f.is_file()]
+              if len(binaries) != 1:
+                  raise SystemExit(
+                      f"Expected exactly one main AAR/JAR for {module}, found {len(binaries)}"
+                  )
 
               sources = target_dir / f"{module}-{version}-sources.jar"
               javadoc = target_dir / f"{module}-{version}-javadoc.jar"
@@ -305,14 +315,41 @@ jobs:
             gpg --batch --yes --pinentry-mode loopback --passphrase "$SIGNING_PASSWORD" --armor --detach-sign --output "$file.asc" "$file"
             md5sum "$file" | awk '{print $1}' > "$file.md5"
             sha1sum "$file" | awk '{print $1}' > "$file.sha1"
-            sha256sum "$file" | awk '{print $1}' > "$file.sha256"
-            sha512sum "$file" | awk '{print $1}' > "$file.sha512"
           done < <(find "$bundle_root" -type f -print0)
+
+          # Audit the complete repository-layout bundle before any Central upload.
+          file_count="$(find "$bundle_root" -type f | wc -l | tr -d '[:space:]')"
+          payload_bytes="$(du -sb "$bundle_root" | awk '{print $1}')"
+          payload_mib="$(awk -v bytes="$payload_bytes" 'BEGIN { printf "%.2f", bytes / 1048576 }')"
+          if (( file_count > 1000 )); then
+            echo "::error::Central monthly file-count target exceeded: $file_count files (target <= 1000)."
+            exit 1
+          fi
+          if (( file_count != 960 )); then
+            echo "::error::Expected the optimized 960-file layout for 60 modules, found $file_count. Inspect unexpected/missing publication files."
+            find "$bundle_root" -type f | sort
+            exit 1
+          fi
+          if (( payload_bytes > 83886080 )); then
+            echo "::warning::This release alone is larger than 80 MiB ($payload_mib MiB). Central release-size usage is aggregated monthly across the organization; check Usage Center for existing usage."
+          fi
+          {
+            echo
+            echo "## Maven Central bundle audit"
+            echo
+            echo "- Modules: 60"
+            echo "- Files in repository layout: $file_count"
+            echo "- Uncompressed published payload: $payload_mib MiB"
+            echo "- Checksums: MD5 and SHA-1 only"
+            echo "- Excluded: Gradle .module metadata, extra classifiers, SHA-256 and SHA-512 sidecars"
+          } >> "$GITHUB_STEP_SUMMARY"
 
           bundle="$GITHUB_WORKSPACE/central-bundle.zip"
           (cd "$bundle_root" && zip -qr "$bundle" .)
           test -s "$bundle"
           echo "path=$bundle" >> "$GITHUB_OUTPUT"
+          echo "file_count=$file_count" >> "$GITHUB_OUTPUT"
+          echo "payload_size_mib=$payload_mib" >> "$GITHUB_OUTPUT"
           echo "bundle_size=$(du -h "$bundle" | cut -f1)" >> "$GITHUB_OUTPUT"
 
       - name: Upload Central bundle as a workflow artifact
@@ -426,6 +463,6 @@ jobs:
             echo
             echo "Coordinates: $RELEASE_GROUP:*:$RELEASE_VERSION"
             echo "Modules: 60"
-            echo "GPG signatures and MD5/SHA checksums: generated"
+            echo "GPG signatures and MD5/SHA-1 checksums: generated"
             echo "Central deployment ID: $DEPLOYMENT_ID"
           } >> "$GITHUB_STEP_SUMMARY"
