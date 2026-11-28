@@ -316,3 +316,17 @@ fun Project.configureTsModule() {
       project.projects.androidTreeSitter)
   }
 }
+
+// Disable Android Lint everywhere except the Tree-sitter engine and grammar libraries.
+// This affects lint tasks only; compilation, tests and Maven publication remain enabled.
+subprojects {
+  tasks.configureEach {
+    if (name.startsWith("lint", ignoreCase = true)) {
+      val isLintEnabledModule =
+        project.name == "android-tree-sitter" || project.name.startsWith("tree-sitter-")
+      if (!isLintEnabledModule) {
+        enabled = false
+      }
+    }
+  }
+}
