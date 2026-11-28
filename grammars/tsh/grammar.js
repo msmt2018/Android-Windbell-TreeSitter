@@ -129,7 +129,7 @@ module.exports = grammar({
       '/',
     )),
 
-    color: _ => token(/#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})\\b/),
+    color: _ => token(/#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})\b/),
 
     number: _ => token(choice(
       /[+-]?(?:0[xX][0-9a-fA-F]+|0[bB][01]+|(?:[0-9]+\.?[0-9]*|\.[0-9]+)(?:[eE][+-]?[0-9]+)?)(?:dp|sp|px|ms|s|%|f)?/,
