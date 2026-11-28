@@ -31,7 +31,7 @@
             { open: "{", close: "}", notIn: ["string", "comment", "regex"] }
             { open: "\"", close: "\"", notIn: ["string", "comment"] }
         ]
-        surroundingPairs: ["{}", "[]", "()", "\""\"""]
+        surroundingPairs: ["{}", "[]", "()", "\"\\""]
         wordPattern: /[A-Za-z_$][A-Za-z0-9_$-]*/
         indentation {
             increaseIndentPattern: /\{[^}]*$|\[[^\]]*$/
