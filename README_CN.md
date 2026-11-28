@@ -281,9 +281,9 @@ Android 编辑器 / 应用
 
 ## 快速开始：使用 Tree-sitter
 
-### 1. 添加 JitPack 仓库
+### 1. 配置 Maven 仓库
 
-在使用方 Android 项目的 <code>settings.gradle.kts</code> 中添加：
+在使用方 Android 项目的 `settings.gradle.kts` 中同时配置 Maven Central 和 JitPack。推荐优先使用 Maven Central；JitPack 继续保留旧坐标和基于 Git Tag 的分发方式。
 
 ~~~kotlin
 dependencyResolutionManagement {
@@ -298,7 +298,20 @@ dependencyResolutionManagement {
 
 ### 2. 添加核心绑定和所需 Grammar 依赖
 
-本仓库属于多模块 Gradle 项目。JitPack 单独模块依赖的坐标格式如下：
+**推荐：Maven Central**
+
+Maven Central 默认使用的 groupId 是 `io.github.msmt2018`。核心绑定和所选 Grammar 模块使用同一个已发布版本：
+
+~~~kotlin
+dependencies {
+    implementation("io.github.msmt2018:android-tree-sitter:VERSION")
+    implementation("io.github.msmt2018:tree-sitter-java:VERSION")
+}
+~~~
+
+**可选：JitPack**
+
+JitPack 保留现有的仓库限定 groupId：
 
 ~~~kotlin
 dependencies {
@@ -307,9 +320,11 @@ dependencies {
 }
 ~~~
 
-将 <code>VERSION</code> 替换为已经由 JitPack 成功构建的 Git Tag 或 Commit 版本。每种语言按需添加一个 <code>tree-sitter-&lt;language&gt;</code> 模块，不需要默认引入全部 Grammar。
+将 `VERSION` 替换为目标仓库中已经实际发布的版本。默认发布版本格式为 `yyyyMMdd-<7 位 Git commit 哈希>`（UTC 日期加短提交哈希）。Maven Central 工作流也支持手动指定版本。使用 JitPack 时，以 [JitPack 项目页面](https://jitpack.io/#msmt2018/Android-Windbell-TreeSitter)实际显示的 Tag / 版本为准。
 
-**当前发布流程：** <code>release-jitpack.yml</code> 首先完整构建 Gradle 项目，然后验证全部 60 个 Maven Publication 均可发布到 Maven Local；只有这两个阶段全部成功后才会创建并推送版本 Tag。随后由 JitPack 按需构建/缓存 Tag 对应模块并提供 Maven 工件。GitHub Actions 构建成功不等于 JitPack 工件已可下载，正式使用前仍需在 [JitPack 项目页面](https://jitpack.io/#msmt2018/Android-Windbell-TreeSitter)核对 JitPack 构建结果及目标 AAR/POM。
+只添加应用真正需要的 `tree-sitter-<language>` 模块。Grammar 模块依赖核心 `android-tree-sitter` 绑定层，使用方应同时声明核心模块和所选语言模块。
+
+**重要：** GitHub Actions 构建成功或本地 Maven 发布成功，并不代表远端工件已经可以下载。正式依赖某个版本前，应在 Maven Central 或 JitPack 页面核对准确的 groupId、artifactId、版本及发布状态。
 
 ### 3. 解析源码
 
@@ -607,25 +622,72 @@ cmake --build build/host --target android-tree-sitter --parallel 2
 - 不要手动修改 <code>grammar-modules/</code> 下的生成文件，应修改 Grammar 元数据或生成器输入。
 - SDK 路径保存在本机 <code>local.properties</code> 中，不要提交机器专属 SDK 路径。
 
-## Maven 包与 JitPack
+## Maven 发布：Maven Central 与 JitPack
 
-需要区分两种不同的分发方式：
+本仓库支持 **两条 Maven 分发渠道**。两者使用不同的 groupId，发布工作流也相互独立；请勿混用依赖坐标。
 
-- **JitPack：** 当前唯一的项目 Maven 分发渠道。发布工作流先完整构建项目并验证全部 60 个 Maven Publication 可写入 Maven Local，成功后才创建 Git Tag；JitPack 随后按需构建/缓存各模块并提供依赖。
-- **GitHub Packages：** 不再用于本项目的 Maven Release 发布。
+| 渠道 | Maven groupId | 发布工作流 | 使用方仓库配置 |
+| --- | --- | --- | --- |
+| **Maven Central**（推荐） | 默认 `io.github.msmt2018` | [`publish-maven-central.yml`](.github/workflows/publish-maven-central.yml) | `mavenCentral()` |
+| **JitPack**（保留旧坐标） | `com.github.msmt2018.Android-Windbell-TreeSitter` | [`publish-maven.yml`](.github/workflows/publish-maven.yml) | `maven { url = uri("https://jitpack.io") }` |
 
-使用 JitPack 时，先在仓库查询页面确认目标 Tag / Commit 构建成功，并且目标模块已列出。对于本多模块仓库，单独模块的依赖坐标形式为：
+### Maven 坐标与版本规则
+
+每个已发布模块使用其 Gradle project name 作为 artifactId。仓库当前配置了 60 个 Maven 模块，包括 `android-tree-sitter`、`annotations` 和各个 `tree-sitter-<language>` Grammar 模块。
+
+默认版本格式：
+
+```text
+yyyyMMdd-<7 位 Git commit 哈希>
+```
+
+日期使用 UTC。Maven Central 工作流允许手动指定版本；未指定时自动生成上述日期与提交哈希版本。JitPack 发布工作流也生成相同格式的版本，在完整构建和本地工件校验成功后创建并推送 Git Tag，随后由 JitPack 构建/缓存对应模块。
+
+**Maven Central 使用示例：**
 
 ~~~kotlin
+repositories {
+    google()
+    mavenCentral()
+}
+
+dependencies {
+    implementation("io.github.msmt2018:android-tree-sitter:VERSION")
+    implementation("io.github.msmt2018:tree-sitter-java:VERSION")
+}
+~~~
+
+**JitPack 使用示例：**
+
+~~~kotlin
+repositories {
+    google()
+    maven { url = uri("https://jitpack.io") }
+}
+
 dependencies {
     implementation("com.github.msmt2018.Android-Windbell-TreeSitter:android-tree-sitter:VERSION")
     implementation("com.github.msmt2018.Android-Windbell-TreeSitter:tree-sitter-java:VERSION")
 }
 ~~~
 
-以 JitPack 页面实际显示的 artifact 名称为准。将 Java 示例替换为应用所需的 Grammar 模块。Grammar 模块依赖核心绑定模块，因此通常同时添加核心绑定和所选语言模块。
+将 Java Grammar 示例替换为应用实际需要的语言模块。核心绑定和 Grammar 依赖应使用同一个发布版本。复制版本到生产构建前，先检查目标仓库：Git Tag 存在、本地发布成功、远端工件可用，是三个不同的状态。
 
-分支快照或 Commit 构建应使用 JitPack 页面为对应分支或 Commit 提供的版本写法。JitPack 版本规则和构建要求可能变化，请以官方 [Android 发布指南](https://docs.jitpack.io/android/) 和 [构建指南](https://docs.jitpack.io/building/) 为准。
+### 发布到 Maven Central
+
+通过 [`.github/workflows/publish-maven-central.yml`](.github/workflows/publish-maven-central.yml) 执行 **Actions → Publish Maven to Maven Central → Run workflow**。
+
+首次发布前，仓库维护者必须在 Sonatype Central Portal 验证 `io.github.msmt2018` 命名空间，并配置五个必需的 GitHub Actions Secrets：`MAVEN_USERNAME`、`MAVEN_PASSWORD`、`MAVEN_PASSWORD_BASE64`、`GPG_SIGNING_KEY` 和 `GPG_PASSWORD`。工作流支持 `AUTOMATIC` 自动发布，以及 `USER_MANAGED` 验证后在 Central Portal 手动发布。可以通过仓库 Actions Variable `CENTRAL_GROUP_ID` 覆盖 groupId，但必须使用已通过 Central Portal 验证的命名空间。
+
+该工作流会构建项目、将全部配置模块发布到 Maven Local、组装并签名 Maven 仓库布局工件、上传到 Sonatype Central Portal，并等待部署结果。当前发布审计要求 60 个模块。凭据、签名和首次发布的详细要求见 [Maven Central 发布配置说明](.github/MAVEN-CENTRAL-PUBLISHING.md)。
+
+### 发布到 JitPack
+
+通过 [`.github/workflows/publish-maven.yml`](.github/workflows/publish-maven.yml) 执行 **Actions → Publish Maven to JitPack → Run workflow**。该手动触发工作流根据 UTC 日期和当前七位 Git commit 哈希生成版本，完整构建项目，将所有配置模块发布到 Maven Local，验证全部 60 个模块的 POM 与 AAR/JAR 输出，只有全部成功后才创建并推送发布 Tag。
+
+仓库根目录的 [`jitpack.yml`](jitpack.yml) 配置 JitPack 自身的构建环境，并执行完整构建和 `publishToMavenLocal`，供 JitPack 收集 Maven 工件。GitHub Actions 工作流成功只代表 Tag 已在本地工件验证后创建；**不代表 JitPack 已经完成所有工件的构建**。请在 [JitPack 项目页面](https://jitpack.io/#msmt2018/Android-Windbell-TreeSitter)检查目标 Tag、模块及构建结果。
+
+如果使用 JitPack 分支快照或 Commit 构建，请遵循 JitPack 针对该 ref 显示的版本写法。更多信息见官方 [JitPack Android 指南](https://docs.jitpack.io/android/) 和 [JitPack 构建指南](https://docs.jitpack.io/building/)。
 
 ## 更多文档
 
@@ -638,7 +700,9 @@ dependencies {
 - [TSH 引擎完成度与性能路线图](android-tree-sitter/TSH_ENGINE_COMPLETION_AND_PERFORMANCE_ROADMAP.md)
 - [Java ATS-only 示例配置](app/src/main/assets/tsh/java-ats-only.tsh)
 - [构建与测试工作流](.github/workflows/build.yml)
-- [JitPack 发布工作流](.github/workflows/release-jitpack.yml)
+- [Maven Central 发布工作流](.github/workflows/publish-maven-central.yml)
+- [JitPack 发布工作流](.github/workflows/publish-maven.yml)
+- [Maven Central 发布配置说明](.github/MAVEN-CENTRAL-PUBLISHING.md)
 - [JitPack 构建配置](jitpack.yml)
 
 ## 许可证
