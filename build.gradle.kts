@@ -237,6 +237,7 @@ subprojects {
                 scm {
                   url.set("https://github.com/msmt2018/Android-Windbell-TreeSitter")
                   connection.set("scm:git:https://github.com/msmt2018/Android-Windbell-TreeSitter.git")
+                  developerConnection.set("scm:git:ssh://git@github.com/msmt2018/Android-Windbell-TreeSitter.git")
                 }
               }
             }
