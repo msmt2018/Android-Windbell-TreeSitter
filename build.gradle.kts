@@ -181,7 +181,7 @@ subprojects {
 
   if (name in jitPackModules) {
     group = providers.environmentVariable("GROUP")
-      .orElse("com.github.msmt2018.Android-Windbell-TreeSitter")
+      .orElse("io.github.msmt2018")
       .get()
     version = providers.environmentVariable("VERSION")
       .orElse(providers.gradleProperty("jitpackVersion"))
@@ -225,6 +225,13 @@ subprojects {
                     name.set("GNU Affero General Public License v3.0")
                     url.set("https://www.gnu.org/licenses/agpl-3.0.html")
                     distribution.set("repo")
+                  }
+                }
+                developers {
+                  developer {
+                    id.set("msmt2018")
+                    name.set("msmt2018")
+                    url.set("https://github.com/msmt2018")
                   }
                 }
                 scm {
