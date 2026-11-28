@@ -16,7 +16,8 @@
 
 package x.github.module.editor.util
 
-import android.icu.text.BreakIterator
+import android.os.Build
+import java.text.BreakIterator as JavaBreakIterator
 
 /**
  * Where characters and words begin and end inside a piece of text.
@@ -34,21 +35,33 @@ object TextBoundaries {
 
     /** The start offset of the character that ends after [endOffset]. */
     fun graphemeStart(text: String, endOffset: Int): Int {
-        return BreakIterator.getCharacterInstance().run {
-            setText(text)
-            // end boundary
-            following(endOffset)
-            // start boundary
-            previous()
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            android.icu.text.BreakIterator.getCharacterInstance().run {
+                setText(text)
+                following(endOffset)
+                previous()
+            }
+        } else {
+            JavaBreakIterator.getCharacterInstance().run {
+                setText(text)
+                following(endOffset)
+                previous()
+            }
         }
     }
 
     /** The end offset of the character at [startOffset]. Requires startOffset < text.length. */
     fun graphemeEnd(text: String, startOffset: Int): Int {
-        return BreakIterator.getCharacterInstance().run {
-            setText(text)
-            // end boundary
-            following(startOffset)
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            android.icu.text.BreakIterator.getCharacterInstance().run {
+                setText(text)
+                following(startOffset)
+            }
+        } else {
+            JavaBreakIterator.getCharacterInstance().run {
+                setText(text)
+                following(startOffset)
+            }
         }
     }
 
@@ -58,16 +71,22 @@ object TextBoundaries {
      * @return [start, end) offsets of the word; start == end when there is no word there
      */
     fun findWordBoundary(text: String, offset: Int): IntArray {
-        return BreakIterator.getWordInstance().run {
-            setText(text)
-            // first to get the end boundary
-            val end = following(offset)
-            // then to get the start boundary
-            val start = previous()
-            if (end != BreakIterator.DONE)
-                intArrayOf(start, end)
-            else
-                intArrayOf(start, start)
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            android.icu.text.BreakIterator.getWordInstance().run {
+                setText(text)
+                val end = following(offset)
+                val start = previous()
+                if (end != android.icu.text.BreakIterator.DONE) intArrayOf(start, end)
+                else intArrayOf(start, start)
+            }
+        } else {
+            JavaBreakIterator.getWordInstance().run {
+                setText(text)
+                val end = following(offset)
+                val start = previous()
+                if (end != JavaBreakIterator.DONE) intArrayOf(start, end)
+                else intArrayOf(start, start)
+            }
         }
     }
 
