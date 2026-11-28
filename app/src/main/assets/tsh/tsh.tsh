@@ -149,7 +149,7 @@
         { node: "array_block", field: "name", style: "type", priority: 115 },
         { node: "identifier", style: "identifier", priority: 20 },
         { node: "string", style: "string", priority: 125 },
-        { node: "template_string", style: "string", priority: 125 },
+        { node: "raw_string", style: "string", priority: 125 },
         { node: "regex", style: "regex", priority: 130 },
         { node: "color", style: "color", priority: 135 },
         { node: "number", style: "number", priority: 110 },
@@ -158,7 +158,6 @@
         { node: "annotation", style: "annotation", priority: 120 },
         { node: "line_comment", style: "comment", priority: 140 },
         { node: "block_comment", style: "comment", priority: 140 },
-        { node: "dotted_identifier", style: "namespace", priority: 80 }
     ]
 
     treeSitter {
@@ -184,7 +183,7 @@
             {
                 id: "tsh-punctuation"
                 priority: 50
-                source: `["{" "}" "[" "]" "(" ")" "," ":" "=" "."] @punctuationToken`
+                source: `["{" "}" "[" "]" "," ":" "@"] @punctuationToken`
                 captures: { punctuationToken: punctuation }
             },
             {
