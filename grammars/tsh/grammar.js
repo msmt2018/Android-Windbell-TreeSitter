@@ -112,7 +112,7 @@ module.exports = grammar({
 
     raw_string: $ => seq(
       '\x60',
-      repeat(token.immediate(/[^\x60\\]+/)),
+      repeat(token.immediate(/[^\x60]+/)),
       '\x60',
     ),
 
