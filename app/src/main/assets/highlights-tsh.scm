@@ -37,21 +37,6 @@
   "@"
 ] @punctuation.delimiter
 
-[
-  "language"
-  "editor"
-  "comments"
-  "indentation"
-  "completion"
-  "styles"
-  "schemes"
-  "defines"
-  "ast"
-  "treeSitter"
-  "contains"
-  "queries"
-  "captures"
-  "ui"
-  "light"
-  "dark"
-] @keyword
+((identifier) @keyword
+  (#match? @keyword "^(language|editor|comments|indentation|completion|styles|schemes|defines|ast|treeSitter|contains|queries|captures|ui|light|dark)$"))
+
