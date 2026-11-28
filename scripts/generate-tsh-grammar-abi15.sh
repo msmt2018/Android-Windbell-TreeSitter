@@ -13,13 +13,12 @@ ABI=15
 [[ -f "$SOURCE" ]] || { echo "::error::Missing TSH grammar.js"; exit 1; }
 cd "$GRAMMAR_DIR"
 
-# grammar.js is the editable grammar source. The first generation emits the
-# canonical src/grammar.json; the second pass deliberately consumes that JSON
-# so parser.c is reproducible from the checked-in/generated grammar artifact.
-npm exec --yes --package="tree-sitter-cli@$CLI_VERSION" -- tree-sitter generate grammar.js --abi="$ABI"
+# Tree-sitter's supported generation flow reads grammar.js and emits
+# both the canonical src/grammar.json and generated src/parser.c in one pass.
+# grammar.json is generated metadata, not a second grammar.js replacement input.
+npm exec --yes --package="tree-sitter-cli@$CLI_VERSION" -- tree-sitter generate --abi="$ABI"
 [[ -s "$GRAMMAR_JSON" ]] || { echo "::error::Tree-sitter did not emit src/grammar.json"; exit 1; }
 
-npm exec --yes --package="tree-sitter-cli@$CLI_VERSION" -- tree-sitter generate src/grammar.json --abi="$ABI"
 [[ -s "$PARSER" ]] || { echo "::error::Tree-sitter did not emit src/parser.c"; exit 1; }
 [[ -s "$NODE_TYPES" ]] || { echo "::error::Tree-sitter did not emit src/node-types.json"; exit 1; }
 
