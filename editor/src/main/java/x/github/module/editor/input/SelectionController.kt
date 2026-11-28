@@ -22,6 +22,7 @@ import android.animation.ValueAnimator
 import android.content.Context
 import android.graphics.PointF
 import android.graphics.drawable.Drawable
+import android.os.Build
 import android.os.SystemClock
 import android.text.TextPaint
 import android.util.TypedValue
@@ -1594,15 +1595,23 @@ class SelectionController(
                 )
                 return
             }
-            val offset = textPaint.getOffsetForAdvance(
-                text, rowStart, rowEnd, rowStart, rowEnd, false, x - gutterWidth.toFloat()
-            )
+            // Paint.getOffsetForAdvance/getRunAdvance were added in API 23.
+            // Keep the shaped-text path on newer Android versions and use the
+            // measured-advance fallback on API 21–22.
+            val (offset, advance) = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                val resolvedOffset = textPaint.getOffsetForAdvance(
+                    text, rowStart, rowEnd, rowStart, rowEnd, false, x - gutterWidth.toFloat()
+                )
+                resolvedOffset to textPaint.getRunAdvance(
+                    text, rowStart, rowEnd, rowStart, rowEnd, false, resolvedOffset
+                )
+            } else {
+                offsetForAdvance(text, rowStart, rowEnd, x - gutterWidth.toFloat())
+            }
 
             this.column = offset + 1
             moveCursorBar(
-                x = gutterWidth + textPaint.getRunAdvance(
-                    text, rowStart, rowEnd, rowStart, rowEnd, false, offset
-                ).toInt(),
+                x = gutterWidth + advance.toInt(),
                 bottom = Math.min(line, layout.count()) * lineHeight
             )
         }
