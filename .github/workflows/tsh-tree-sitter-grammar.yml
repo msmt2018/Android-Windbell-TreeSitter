@@ -87,6 +87,14 @@ jobs:
             "$grammar_dir/src/node-types.json" "$out/src/"
           printf 'ABI=15\nTREE_SITTER_CLI=0.25.10\n' > "$out/BUILD-METADATA.txt"
 
+      - name: Upload generated grammar sources and Android archives
+        uses: actions/upload-artifact@v4
+        with:
+          name: tsh-tree-sitter-abi15-android
+          path: build/tsh-tree-sitter/
+          if-no-files-found: error
+          retention-days: 90
+
       - name: Commit generated Tree-sitter source files
         shell: bash
         run: |
@@ -101,10 +109,3 @@ jobs:
             echo "Generated Tree-sitter sources are already up to date."
           fi
 
-      - name: Upload generated grammar sources and Android archives
-        uses: actions/upload-artifact@v4
-        with:
-          name: tsh-tree-sitter-abi15-android
-          path: build/tsh-tree-sitter/
-          if-no-files-found: error
-          retention-days: 90
