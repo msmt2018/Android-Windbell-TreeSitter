@@ -30,7 +30,7 @@ module.exports = grammar({
       '}',
     ),
 
-    legacy_document: $ => repeat($._root_entry),
+    legacy_document: $ => repeat1($._root_entry),
 
     _root_entry: $ => choice($.property, $.block),
 
