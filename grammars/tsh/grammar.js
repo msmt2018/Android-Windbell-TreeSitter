@@ -28,6 +28,7 @@ module.exports = grammar({
     _statement: $ => choice(
       $.property,
       $.block,
+      $.array_block,
       $.expression_statement,
     ),
 
@@ -48,6 +49,13 @@ module.exports = grammar({
     ),
 
     expression_statement: $ => seq($._value, optional(',')),
+
+    // TSH scheme sections use the concise "light [ ... ]" form.
+    array_block: $ => seq(
+      field('name', $._key),
+      $.array,
+      optional(','),
+    ),
 
     _key: $ => choice($.identifier, $.dotted_identifier),
 
